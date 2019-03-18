@@ -4325,6 +4325,54 @@ regex_matches (const char *pattern, const char *str, int reg_flags, bool * match
   return NO_ERROR;
 }
 
+extern int
+regex_compile2 (const char *pattern, const char *str, int reg_flags, std::regex * match)
+{
+  int error_status = NO_ERROR;
+
+  // transform flags from cub_regex_t => std::regex_constants
+  std::regex_constants::syntax_option_type std_reg_flags = std::regex::extended;
+  while (reg_flags)
+  {
+    int before_pop = reg_flags;
+    // pop lsb
+    reg_flags &= (reg_flags - 1);
+    int lsb = before_pop ^ reg_flags;
+
+    switch (lsb)
+    {
+    case CUB_REG_NOSUB:
+      std_reg_flags |= std::regex::nosubs;
+      break;
+    case CUB_REG_ICASE:
+      std_reg_flags |= std::regex::icase;
+      break;
+    case CUB_REG_EXTENDED:
+      std_reg_flags |= std::regex::extended;
+      break;
+    default:
+      // unknown flag
+      assert (false);
+      break;
+    }
+  }
+
+  try
+    {
+      std::regex reg (pattern, std_reg_flags);
+      *match = std::regex_match (str, reg);
+    }
+  catch (std::regex_error &e)
+    {
+      // regex compilation exception
+      error_status = ER_REGEX_COMPILE_ERROR;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
+      *match = false;
+      return error_status;
+    }
+  return NO_ERROR;
+}
+
 static int
 regex_compile (cub_regex_t * &rx_compiled_regex, const char *rx_compiled_pattern, int reg_flags)
 {
@@ -4395,7 +4443,7 @@ regex_compile (cub_regex_t * &rx_compiled_regex, const char *rx_compiled_pattern
 
 int
 db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * case_sensitive,
-		 cub_regex_t ** comp_regex, char **comp_pattern, int *result)
+		std::regex ** comp_regex, char **comp_pattern, int *result)
 {
   QSTR_CATEGORY src_category = QSTR_UNKNOWN;
   QSTR_CATEGORY pattern_category = QSTR_UNKNOWN;
@@ -4412,7 +4460,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
   int rx_err = CUB_REG_OKAY;
   int rx_err_len = 0;
   char *rx_compiled_pattern = NULL;
-  cub_regex_t *rx_compiled_regex = NULL;
+  std::regex *rx_compiled_regex = NULL;
 
   /* check for allocated DB values */
   assert (src_string != NULL);
@@ -4507,7 +4555,9 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
       memcpy (rx_compiled_pattern, pattern_char_string_p, pattern_length);
       rx_compiled_pattern[pattern_length] = '\0';
 
-      error_status = regex_compile (rx_compiled_regex, rx_compiled_pattern,
+      rx_compiled_regex =
+
+      error_status = regex_matches (rx_compiled_pattern, rx_compiled_regex,
 				    CUB_REG_EXTENDED | CUB_REG_NOSUB | (is_case_sensitive ? 0 : CUB_REG_ICASE));
       if (error_status != NO_ERROR)
 	{
