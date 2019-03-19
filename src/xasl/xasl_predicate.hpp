@@ -26,8 +26,7 @@
 
 #include "dbtype_def.h"             // DB_TYPE
 
-#include "system.h"     // for regex38a.h
-#include "libregex38a/regex38a.h"
+#include <regex>
 
 // forward definitions
 class regu_variable_node;
