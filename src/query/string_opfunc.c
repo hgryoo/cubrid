@@ -286,7 +286,7 @@ static int print_string_date_token (const STRING_DATE_TOKEN token_type, const IN
 				    int *token_size);
 static void convert_locale_number (char *sz, const int size, const INTL_LANG src_locale, const INTL_LANG dst_locale);
 static int parse_tzd (const char *str, const int max_expect_len);
-static int regex_compile (cub_regex_t * &reg, const char *pattern, int reg_flags);
+static int regex_compile (std::regex * &rx_compiled_regex, const char *rx_compiled_pattern, int reg_flags);
 
 #define TRIM_FORMAT_STRING(sz, n) {if (strlen(sz) > n) sz[n] = 0;}
 #define WHITESPACE(c) ((c) == ' ' || (c) == '\t' || (c) == '\r' || (c) == '\n')
