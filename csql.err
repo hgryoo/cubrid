@@ -1,0 +1,280 @@
+
+Time: 03/20/19 04:53:41.366 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/boot_cl.c, line 1739
+trying to connect 'demodb@localhost'
+
+Time: 03/20/19 04:53:41.367 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/boot_cl.c, line 1761
+ping server with handshake
+
+Time: 03/20/19 04:53:41.367 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/boot_cl.c, line 1154  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 1030) connected to database server 'demodb' on the host 'localhost' (port 1523).
+
+Time: 03/20/19 04:53:41.367 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/boot_cl.c, line 1203
+boot_restart_client: register client { type 2 db demodb user dba password (null) program csql login vagrant host localhost.localdomain pid 1030 }
+
+Time: 03/20/19 04:55:10.472 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/boot_cl.c, line 1203
+boot_restart_client: register client { type 2 db demodb user dba password (null) program csql login vagrant host localhost.localdomain pid 1082 }
+
+Time: 03/20/19 04:55:10.472 - ERROR *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 1330 ERROR CODE = -11, Tran = -1, EID = 1
+Unable to mount disk volume "/vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_lgat". The database "/vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb", to which the disk volume belongs, is in use by user vagrant on process 32428 of host localhost.localdomain since Wed Mar 20 04:07:17 2019.
+
+Time: 03/20/19 04:55:10.473 - ERROR *** file /vagrant/hgryoo_cubrid/src/transaction/boot_sr.c, line 2764 ERROR CODE = -113, Tran = -1, EID = 2
+Unable to restart/initialize the database server. Unable to mount disk volume "/vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_lgat". The database "/vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb", to which the disk volume belongs, is in use by user vagrant on process 32428 of host localhost.localdomain since Wed Mar 20 04:07:17 2019.
+
+Time: 03/20/19 04:55:10.473 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/boot_sr.c, line 224  CODE = -973, Tran = -1, EID = 3
+Server status is DOWN.
+
+Time: 03/20/19 04:55:10.473 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/partition.c, line 750
+deleting partition cache
+
+Time: 03/20/19 04:55:22.536 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/boot_cl.c, line 1203
+boot_restart_client: register client { type 2 db demodb user dba password (null) program csql login vagrant host localhost.localdomain pid 1085 }
+
+Time: 03/20/19 04:55:22.584 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2773
+Destroyed volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_dwb
+
+Time: 03/20/19 04:55:22.585 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2195
+Created volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_dwb
+
+Time: 03/20/19 04:55:22.588 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_manager.c, line 1065
+LOG INITIALIZE
+	db_fullname = /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb 
+	logpath = /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb 
+	prefix_logname = demodb 
+	ismedia_crash = 0 
+
+Time: 03/20/19 04:55:22.659 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_recovery.c, line 679
+RECOVERY: start with 762|2128 and stop at -1
+Time: 03/20/19 04:55:22.659 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_recovery.c, line 2480
+logpb_recovery_analysis: log page 762, checksum -27922030
+
+Time: 03/20/19 04:55:22.660 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/log_recovery.c, line 724  CODE = -1128, Tran = -1, EID = 1
+Log recovery is started. The number of log records to be applied: 0. Log page: 762 ~ 762.
+
+Time: 03/20/19 04:55:22.661 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/log_page_buffer.c, line 7981  CODE = -977, Tran = -1, EID = 2
+Checkpoint started (previous checkpoint page id: 762, previous redo page id: 762).
+
+Time: 03/20/19 04:55:22.661 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_page_buffer.c, line 7983
+start checkpoint
+
+Time: 03/20/19 04:55:22.664 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/page_buffer.c, line 9842
+flushing page 0|0 to disk without logging.
+
+Time: 03/20/19 04:55:22.666 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/log_page_buffer.c, line 8451  CODE = -978, Tran = -1, EID = 3
+Checkpoint finished (checkpoint page id: 762, checkpoint redo page id: 762, flushed page count: 0).
+
+Time: 03/20/19 04:55:22.666 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_page_buffer.c, line 8453
+end checkpoint
+
+Time: 03/20/19 04:55:22.668 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/log_recovery.c, line 840  CODE = -1129, Tran = -1, EID = 4
+Log recovery is finished.
+
+Time: 03/20/19 04:55:22.669 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2773
+Destroyed volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_lgar_t
+
+Time: 03/20/19 04:55:22.669 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2195
+Created volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_lgar_t
+
+Time: 03/20/19 04:55:22.676 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_manager.c, line 1500
+log_initialize_internal: end of log initializaton, append_lsa = (762|2416) 
+
+Time: 03/20/19 04:55:22.694 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2704  CODE = -1190, Tran = -1, EID = 5
+Stand-alone vacuum execution is started.
+
+Time: 03/20/19 04:55:22.694 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2705
+Stand-alone vacuum start.
+
+Time: 03/20/19 04:55:22.695 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2984  CODE = -1191, Tran = -1, EID = 6
+Stand-alone vacuum execution is ended.
+
+Time: 03/20/19 04:55:22.695 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2985
+Stand-alone vacuum end.
+
+Time: 03/20/19 04:55:22.696 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/partition.c, line 715
+creating partition cache
+
+Time: 03/20/19 04:55:22.696 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/boot_sr.c, line 224  CODE = -973, Tran = -1, EID = 7
+Server status is UP.
+
+*** The previous error message is the last one. ***
+
+
+Time: 03/20/19 04:58:47.353 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/boot_cl.c, line 1203
+boot_restart_client: register client { type 2 db demodb user dba password (null) program csql login vagrant host localhost.localdomain pid 1143 }
+
+Time: 03/20/19 04:58:47.407 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2773
+Destroyed volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_dwb
+
+Time: 03/20/19 04:58:47.407 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2195
+Created volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_dwb
+
+Time: 03/20/19 04:58:47.410 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_manager.c, line 1065
+LOG INITIALIZE
+	db_fullname = /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb 
+	logpath = /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb 
+	prefix_logname = demodb 
+	ismedia_crash = 0 
+
+Time: 03/20/19 04:58:47.483 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_recovery.c, line 679
+RECOVERY: start with 762|2336 and stop at -1
+Time: 03/20/19 04:58:47.483 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_recovery.c, line 2480
+logpb_recovery_analysis: log page 762, checksum -27922030
+
+Time: 03/20/19 04:58:47.483 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/log_recovery.c, line 724  CODE = -1128, Tran = -1, EID = 1
+Log recovery is started. The number of log records to be applied: 1. Log page: 762 ~ 762.
+
+Time: 03/20/19 04:58:47.485 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/log_page_buffer.c, line 7981  CODE = -977, Tran = -1, EID = 2
+Checkpoint started (previous checkpoint page id: 762, previous redo page id: 762).
+
+Time: 03/20/19 04:58:47.485 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_page_buffer.c, line 7983
+start checkpoint
+
+Time: 03/20/19 04:58:47.489 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/page_buffer.c, line 9842
+flushing page 0|0 to disk without logging.
+
+Time: 03/20/19 04:58:47.491 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/log_page_buffer.c, line 8451  CODE = -978, Tran = -1, EID = 3
+Checkpoint finished (checkpoint page id: 762, checkpoint redo page id: 762, flushed page count: 0).
+
+Time: 03/20/19 04:58:47.491 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_page_buffer.c, line 8453
+end checkpoint
+
+Time: 03/20/19 04:58:47.493 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/log_recovery.c, line 840  CODE = -1129, Tran = -1, EID = 4
+Log recovery is finished.
+
+Time: 03/20/19 04:58:47.494 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2773
+Destroyed volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_lgar_t
+
+Time: 03/20/19 04:58:47.494 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2195
+Created volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_lgar_t
+
+Time: 03/20/19 04:58:47.501 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_manager.c, line 1500
+log_initialize_internal: end of log initializaton, append_lsa = (762|2584) 
+
+Time: 03/20/19 04:58:47.519 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2704  CODE = -1190, Tran = -1, EID = 5
+Stand-alone vacuum execution is started.
+
+Time: 03/20/19 04:58:47.519 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2705
+Stand-alone vacuum start.
+
+Time: 03/20/19 04:58:47.520 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2984  CODE = -1191, Tran = -1, EID = 6
+Stand-alone vacuum execution is ended.
+
+Time: 03/20/19 04:58:47.520 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2985
+Stand-alone vacuum end.
+
+Time: 03/20/19 04:58:47.521 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/partition.c, line 715
+creating partition cache
+
+Time: 03/20/19 04:58:47.521 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/boot_sr.c, line 224  CODE = -973, Tran = -1, EID = 7
+Server status is UP.
+
+Time: 03/20/19 05:08:48.012 - SYNTAX ERROR *** file /vagrant/hgryoo_cubrid/src/compat/db_vdb.c, line 925 ERROR CODE = -492, Tran = 1, EID = 9
+In line 1, column 1 before '
+exit; '
+Syntax error: unexpected 'q', expecting SELECT or VALUE or VALUES or '('
+
+Time: 03/20/19 05:08:50.133 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2773
+Destroyed volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_dwb
+
+Time: 03/20/19 05:08:50.134 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/boot_sr.c, line 224  CODE = -973, Tran = 1, EID = 10
+Server status is DOWN.
+
+Time: 03/20/19 05:08:50.134 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/partition.c, line 750
+deleting partition cache
+
+Time: 03/20/19 05:18:44.553 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/boot_cl.c, line 1203
+boot_restart_client: register client { type 2 db demodb user dba password (null) program csql login vagrant host localhost.localdomain pid 1623 }
+
+Time: 03/20/19 05:18:44.607 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2195
+Created volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_dwb
+
+Time: 03/20/19 05:18:44.608 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_manager.c, line 1065
+LOG INITIALIZE
+	db_fullname = /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb 
+	logpath = /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb 
+	prefix_logname = demodb 
+	ismedia_crash = 0 
+
+Time: 03/20/19 05:18:44.674 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2773
+Destroyed volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_lgar_t
+
+Time: 03/20/19 05:18:44.674 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2195
+Created volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_lgar_t
+
+Time: 03/20/19 05:18:44.681 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_manager.c, line 1500
+log_initialize_internal: end of log initializaton, append_lsa = (762|2696) 
+
+Time: 03/20/19 05:18:44.694 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2704  CODE = -1190, Tran = -1, EID = 1
+Stand-alone vacuum execution is started.
+
+Time: 03/20/19 05:18:44.694 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2705
+Stand-alone vacuum start.
+
+Time: 03/20/19 05:18:44.695 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2984  CODE = -1191, Tran = -1, EID = 2
+Stand-alone vacuum execution is ended.
+
+Time: 03/20/19 05:18:44.695 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2985
+Stand-alone vacuum end.
+
+Time: 03/20/19 05:18:44.696 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/partition.c, line 715
+creating partition cache
+
+Time: 03/20/19 05:18:44.696 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/boot_sr.c, line 224  CODE = -973, Tran = -1, EID = 3
+Server status is UP.
+
+Time: 03/20/19 05:19:28.733 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2773
+Destroyed volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_dwb
+
+Time: 03/20/19 05:19:28.734 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/boot_sr.c, line 224  CODE = -973, Tran = 1, EID = 5
+Server status is DOWN.
+
+Time: 03/20/19 05:19:28.734 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/partition.c, line 750
+deleting partition cache
+
+Time: 03/20/19 09:25:45.556 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/boot_cl.c, line 1203
+boot_restart_client: register client { type 2 db demodb user dba password (null) program csql login vagrant host localhost.localdomain pid 14097 }
+
+Time: 03/20/19 09:25:45.596 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2195
+Created volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_dwb
+
+Time: 03/20/19 09:25:45.597 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_manager.c, line 1065
+LOG INITIALIZE
+	db_fullname = /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb 
+	logpath = /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb 
+	prefix_logname = demodb 
+	ismedia_crash = 0 
+
+Time: 03/20/19 09:25:45.669 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2773
+Destroyed volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_lgar_t
+
+Time: 03/20/19 09:25:45.669 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2195
+Created volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_lgar_t
+
+Time: 03/20/19 09:25:45.676 - DEBUG *** file /vagrant/hgryoo_cubrid/src/transaction/log_manager.c, line 1500
+log_initialize_internal: end of log initializaton, append_lsa = (753|11600) 
+
+Time: 03/20/19 09:25:45.689 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2704  CODE = -1190, Tran = -1, EID = 1
+Stand-alone vacuum execution is started.
+
+Time: 03/20/19 09:25:45.689 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2705
+Stand-alone vacuum start.
+
+Time: 03/20/19 09:25:45.699 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2984  CODE = -1191, Tran = -1, EID = 2
+Stand-alone vacuum execution is ended.
+
+Time: 03/20/19 09:25:45.699 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/vacuum.c, line 2985
+Stand-alone vacuum end.
+
+Time: 03/20/19 09:25:45.699 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/partition.c, line 715
+creating partition cache
+
+Time: 03/20/19 09:25:45.699 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/boot_sr.c, line 224  CODE = -973, Tran = -1, EID = 3
+Server status is UP.
+
+Time: 03/21/19 00:48:31.772 - DEBUG *** file /vagrant/hgryoo_cubrid/src/storage/file_io.c, line 2773
+Destroyed volume /vagrant/hgryoo_cubrid/build_x86_64_debug/databases/demodb/demodb_dwb
+
+Time: 03/21/19 00:48:31.773 - NOTIFICATION *** file /vagrant/hgryoo_cubrid/src/transaction/boot_sr.c, line 224  CODE = -973, Tran = 1, EID = 5
+Server status is DOWN.
+
+Time: 03/21/19 00:48:31.773 - DEBUG *** file /vagrant/hgryoo_cubrid/src/query/partition.c, line 750
+deleting partition cache

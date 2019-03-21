@@ -258,11 +258,13 @@ if(UNIX)
     endif(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 4.4.7)
 
     set(CMAKE_C_FLAGS_DEBUG "-ggdb -fno-inline -fno-omit-frame-pointer")
-    set(CMAKE_CXX_FLAGS_DEBUG "-Wall -ggdb -fno-inline -fno-omit-frame-pointer -std=c++0x")
-    set(CMAKE_C_FLAGS_RELEASE "-ggdb -O2 -DNDEBUG -finline-functions -fno-omit-frame-pointer -std=c++0x")
-    set(CMAKE_CXX_FLAGS_RELEASE "-ggdb -O2 -DNDEBUG -finline-functions -fno-omit-frame-pointer -std=c++0x")
-    set(CMAKE_C_FLAGS_RELWITHDEBINFO "-ggdb -O2 -DNDEBUG -finline-functions -fno-omit-frame-pointer -std=c++0x")
-    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-ggdb -O2 -DNDEBUG -finline-functions -fno-omit-frame-pointer -std=c++0x")
+    set(CMAKE_CXX_FLAGS_DEBUG "-Wall -ggdb -fno-inline -fno-omit-frame-pointer")
+    set(CMAKE_C_FLAGS_RELEASE "-ggdb -O2 -DNDEBUG -finline-functions -fno-omit-frame-pointer")
+    set(CMAKE_CXX_FLAGS_RELEASE "-ggdb -O2 -DNDEBUG -finline-functions -fno-omit-frame-pointer")
+    set(CMAKE_C_FLAGS_RELWITHDEBINFO "-ggdb -O2 -DNDEBUG -finline-functions -fno-omit-frame-pointer")
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-ggdb -O2 -DNDEBUG -finline-functions -fno-omit-frame-pointer")
+
+    set(CMAKE_CXX_STANDARD 11)
 
     # set has-style
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--hash-style=both")

@@ -55,6 +55,7 @@
 #include "db_elo.h"
 #include <algorithm>
 #include <regex>
+#include "memory_private_allocator.hpp"
 #include <string>
 #if !defined (SERVER_MODE)
 #include "parse_tree.h"
@@ -4277,61 +4278,14 @@ db_string_like (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_
   return ((*result == V_ERROR) ? ER_QSTR_INVALID_ESCAPE_SEQUENCE : error_status);
 }
 
-extern int
-regex_matches (const char *pattern, const char *str, int reg_flags, bool * match)
-{
-  int error_status = NO_ERROR;
-
-  // transform flags from cub_regex_t => std::regex_constants
-  std::regex_constants::syntax_option_type std_reg_flags = std::regex::extended;
-  while (reg_flags)
-  {
-    int before_pop = reg_flags;
-    // pop lsb
-    reg_flags &= (reg_flags - 1);
-    int lsb = before_pop ^ reg_flags;
-
-    switch (lsb)
-    {
-    case CUB_REG_NOSUB:
-      std_reg_flags |= std::regex::nosubs;
-      break;
-    case CUB_REG_ICASE:
-      std_reg_flags |= std::regex::icase;
-      break;
-    case CUB_REG_EXTENDED:
-      std_reg_flags |= std::regex::extended;
-      break;
-    default:
-      // unknown flag
-      assert (false);
-      break;
-    }
-  }
-
-  try
-    {
-      std::regex reg (pattern, std_reg_flags);
-      *match = std::regex_match (str, reg);
-    }
-  catch (std::regex_error &e)
-    {
-      // regex compilation exception
-      error_status = ER_REGEX_COMPILE_ERROR;
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
-      *match = false;
-      return error_status;
-    }
-  return NO_ERROR;
-}
-
 static int
 regex_compile (std::regex * &rx_compiled_regex, const char *rx_compiled_pattern, int reg_flags)
 {
   int error_status = NO_ERROR;
 
   // transform flags from cub_regex_t => std::regex_constants
-  std::regex_constants::syntax_option_type std_reg_flags = std::regex::extended;
+  std::regex_constants::syntax_option_type std_reg_flags = std::regex::ECMAScript;
+  
   while (reg_flags)
   {
     int before_pop = reg_flags;
@@ -4347,16 +4301,14 @@ regex_compile (std::regex * &rx_compiled_regex, const char *rx_compiled_pattern,
     case std::regex::icase:
       std_reg_flags |= std::regex::icase;
       break;
-    case std::regex::extended:
-      std_reg_flags |= std::regex::extended;
-      break;
     default:
       // unknown flag
-      assert (false);
+      // assert (false);
+      reg_flags = 0;
       break;
     }
   }
-
+  
   try
     {
 	  rx_compiled_regex = new std::regex (rx_compiled_pattern, std_reg_flags);
@@ -4522,26 +4474,26 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
 	}
     }
 
-  /* match against pattern; std::regex_match returns true on match */
-  std::string src_string (src_char_string_p, src_length);
-  try
     {
-      *result = std::regex_match (src_string, rx_compiled_regex);
+      /* match against pattern; std::regex_match returns true on match */
+      std::string src_string_p (src_char_string_p, src_length);
+      bool matched = std::regex_search (src_string_p, *rx_compiled_regex);
+      if (matched)
+        {
+          *result = V_TRUE;
+        }
+      else
+        {
+          *result = V_FALSE;
+        }   
     }
-  catch (std::regex_error &e)
-    {
-      // regex compilation exception
-      error_status = ER_REGEX_EXEC_ERROR;
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, rx_err_buf);
-      *result = V_ERROR;
-    }
-
 cleanup:
 
   if ((comp_regex == NULL || error_status != NO_ERROR) && rx_compiled_regex != NULL)
     {
       /* free memory if (using local regex) or (error occurred) */
-      db_private_free_and_init (NULL, rx_compiled_regex);
+      // db_private_free_and_init (NULL, rx_compiled_regex);
+      delete rx_compiled_regex;
     }
 
   if ((comp_pattern == NULL || error_status != NO_ERROR) && rx_compiled_pattern != NULL)
