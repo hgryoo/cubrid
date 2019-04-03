@@ -1342,6 +1342,7 @@ int g_original_buffer_len;
 %token REFERENCES
 %token REFERENCING
 %token REGEXP
+%token REGEXP_REPLACE
 %token RELATIVE_
 %token RENAME
 %token REPLACE
