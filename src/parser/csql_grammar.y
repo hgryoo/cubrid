@@ -17100,6 +17100,11 @@ reserved_func
                     $$ = parser_make_func_with_arg_count (this_parser, F_BENCHMARK, $3, 2, 2);
 		    PARSER_SAVE_ERR_CONTEXT ($$, @$.buffer_pos)
 		DBG_PRINT}}
+		| REGEXP_REPLACE '(' expression_list ')'
+		{{
+			$$ = parser_make_func_with_arg_count (this_parser, PT_REGEXP_REPLACE, $3, 3, 6);
+			PARSER_SAVE_ERR_CONTEXT ($$, @$.buffer_pos)
+		DBG_PRINT}}
 	;
 
 of_cume_dist_percent_rank_function
