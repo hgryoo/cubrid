@@ -153,6 +153,7 @@ typedef enum
 
 #define GUID_STANDARD_BYTES_LENGTH 16
 
+static char db_string_escape_char (char c);
 static int qstr_trim (MISC_OPERAND tr_operand, const unsigned char *trim, int trim_length, int trim_size,
 		      const unsigned char *src_ptr, DB_TYPE src_type, int src_length, int src_size,
 		      INTL_CODESET codeset, unsigned char **res, DB_TYPE * res_type, int *res_length, int *res_size);
@@ -286,7 +287,6 @@ static int print_string_date_token (const STRING_DATE_TOKEN token_type, const IN
 				    int *token_size);
 static void convert_locale_number (char *sz, const int size, const INTL_LANG src_locale, const INTL_LANG dst_locale);
 static int parse_tzd (const char *str, const int max_expect_len);
-static int regex_compile (cub_regex_t * &reg, const char *pattern, int reg_flags);
 
 #define TRIM_FORMAT_STRING(sz, n) {if (strlen(sz) > n) sz[n] = 0;}
 #define WHITESPACE(c) ((c) == ' ' || (c) == '\t' || (c) == '\r' || (c) == '\n')
@@ -1893,8 +1893,28 @@ db_string_substring (const MISC_OPERAND substr_operand, const DB_VALUE * src_str
   return error_status;
 }
 
+static char
+db_string_escape_char (char c)
+{
+  switch (c)
+    {
+    case '\b':
+      return 'b';
+    case '\f':
+      return 'f';
+    case '\n':
+      return 'n';
+    case '\r':
+      return 'r';
+    case '\t':
+      return 't';
+    default:
+      return c;
+    }
+}
+
 int
-db_string_escape (const char *src_str, size_t src_size, char **res_string, size_t * dest_size)
+db_string_escape_str (const char *src_str, size_t src_size, char **res_string, size_t * dest_size)
 {
   size_t dest_crt_pos;
   size_t src_last_pos;
@@ -1924,6 +1944,7 @@ db_string_escape (const char *src_str, size_t src_size, char **res_string, size_
     {
       size_t len = special_idx[i] - src_last_pos;
       memcpy (&result[dest_crt_pos], &src_str[src_last_pos], len);
+      result[dest_crt_pos] = db_string_escape_char (result[dest_crt_pos]);
       dest_crt_pos += len;
       result[dest_crt_pos] = '\\';
       ++dest_crt_pos;
@@ -1931,6 +1952,7 @@ db_string_escape (const char *src_str, size_t src_size, char **res_string, size_
     }
 
   memcpy (&result[dest_crt_pos], &src_str[src_last_pos], src_size - src_last_pos);
+  result[dest_crt_pos] = db_string_escape_char (result[dest_crt_pos]);
   result[*dest_size - 2] = '"';
   result[*dest_size - 1] = '\0';
 
@@ -1959,7 +1981,7 @@ db_string_quote (const DB_VALUE * str, DB_VALUE * res)
 
       char *escaped_string = NULL;
       size_t escaped_string_size;
-      int error_code = db_string_escape (src_str, db_get_string_size (str), &escaped_string, &escaped_string_size);
+      int error_code = db_string_escape_str (src_str, db_get_string_size (str), &escaped_string, &escaped_string_size);
       if (error_code)
 	{
 	  return error_code;
@@ -4277,131 +4299,25 @@ db_string_like (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_
   return ((*result == V_ERROR) ? ER_QSTR_INVALID_ESCAPE_SEQUENCE : error_status);
 }
 
-extern int
-regex_matches (const char *pattern, const char *str, int reg_flags, bool * match)
+static int
+regex_compile (const char *pattern, std::regex * &rx_compiled_regex,
+	       std::regex_constants::syntax_option_type & reg_flags)
 {
   int error_status = NO_ERROR;
 
-#ifndef _USE_LIBREGEX_
-  /* *INDENT-OFF* */  
-
-  // transform flags from cub_regex_t => std::regex_constants
-  std::regex_constants::syntax_option_type std_reg_flags = std::regex::extended;
-  while (reg_flags)
-  {
-    int before_pop = reg_flags;
-    // pop lsb
-    reg_flags &= (reg_flags - 1);
-    int lsb = before_pop ^ reg_flags;
-
-    switch (lsb)
-    {
-    case CUB_REG_NOSUB:
-      std_reg_flags |= std::regex::nosubs;
-      break;
-    case CUB_REG_ICASE:
-      std_reg_flags |= std::regex::icase;
-      break;
-    case CUB_REG_EXTENDED:
-      std_reg_flags |= std::regex::extended;
-      break;
-    default:
-      // unknown flag
-      assert (false);
-      break;
-    }
-  }
-
   try
-    {
-      std::regex reg (pattern, std_reg_flags);
-      *match = std::regex_match (str, reg);
-    }
-  catch (std::regex_error &e)
-    {
-      // regex compilation exception
-      error_status = ER_REGEX_COMPILE_ERROR;
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
-      *match = false;
-      return error_status;
-    }
-  /* *INDENT-ON* */
-  return NO_ERROR;
-
-#else
-  cub_regex_t *reg = NULL;
-  error_status = regex_compile (reg, pattern, reg_flags);
-  if (error_status != NO_ERROR)
-    {
-      ASSERT_ERROR ();
-      return error_status;
-    }
-
-  int rx_code = cub_regexec (reg, str, strlen (str), 0, NULL, 0);
-
-  char reg_err_buf[REGEX_MAX_ERROR_MSG_SIZE] = { '\0' };
-  switch (rx_code)
-    {
-    case CUB_REG_OKAY:
-      *match = true;
-      break;
-
-    case CUB_REG_NOMATCH:
-      *match = false;
-      break;
-
-    default:
-      int rx_err_len = (int) cub_regerror (rx_code, reg, reg_err_buf, REGEX_MAX_ERROR_MSG_SIZE);
-      error_status = ER_REGEX_EXEC_ERROR;
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, reg_err_buf);
-      *match = false;
-      break;
-    }
-
-  cub_regfree (reg);
-  db_private_free_and_init (NULL, reg);
-  return error_status;
-#endif
-}
-
-static int
-regex_compile (cub_regex_t * &rx_compiled_regex, const char *rx_compiled_pattern, int reg_flags)
-{
-  /* initialize regex library memory allocator */
-  cub_regset_malloc ((CUB_REG_MALLOC) db_private_alloc_external);
-  cub_regset_realloc ((CUB_REG_REALLOC) db_private_realloc_external);
-  cub_regset_free ((CUB_REG_FREE) db_private_free_external);
-
-  if (rx_compiled_regex != NULL)
-    {
-      /* free previously allocated memory */
-      cub_regfree (rx_compiled_regex);
-      db_private_free_and_init (NULL, rx_compiled_regex);
-    }
-
-  /* allocate memory for new regex object */
-  rx_compiled_regex = (cub_regex_t *) db_private_alloc (NULL, sizeof (cub_regex_t));
-
-  if (rx_compiled_regex == NULL)
-    {
-      /* out of memory */
-      return ER_OUT_OF_VIRTUAL_MEMORY;
-    }
-
-  /* compile regex */
-  int rx_err = cub_regcomp (rx_compiled_regex, rx_compiled_pattern, reg_flags);
-
-  if (rx_err != CUB_REG_OKAY)
-    {
-      /* regex compilation error */
-      char rx_err_buf[REGEX_MAX_ERROR_MSG_SIZE] = { '\0' };
-      int rx_err_len = (int) cub_regerror (rx_err, rx_compiled_regex, rx_err_buf, REGEX_MAX_ERROR_MSG_SIZE);
-      int error_status = ER_REGEX_COMPILE_ERROR;
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, rx_err_buf);
-      db_private_free_and_init (NULL, rx_compiled_regex);
-      return error_status;
-    }
-
+  {
+    rx_compiled_regex = new std::regex (pattern, reg_flags);
+  }
+  catch (std::regex_error & e)
+  {
+    // regex compilation exception
+    error_status = ER_REGEX_COMPILE_ERROR;
+    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
+    delete rx_compiled_regex;
+    rx_compiled_regex = NULL;
+    return error_status;
+  }
   return NO_ERROR;
 }
 
@@ -4434,7 +4350,7 @@ regex_compile (cub_regex_t * &rx_compiled_regex, const char *rx_compiled_pattern
 
 int
 db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * case_sensitive,
-		 cub_regex_t ** comp_regex, char **comp_pattern, int *result)
+		 std::regex ** comp_regex, char **comp_pattern, int *result)
 {
   QSTR_CATEGORY src_category = QSTR_UNKNOWN;
   QSTR_CATEGORY pattern_category = QSTR_UNKNOWN;
@@ -4448,10 +4364,8 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
   int src_length = 0, pattern_length = 0;
 
   char rx_err_buf[REGEX_MAX_ERROR_MSG_SIZE] = { '\0' };
-  int rx_err = CUB_REG_OKAY;
-  int rx_err_len = 0;
   char *rx_compiled_pattern = NULL;
-  cub_regex_t *rx_compiled_regex = NULL;
+  std::regex * rx_compiled_regex = NULL;
 
   /* check for allocated DB values */
   assert (src_string != NULL);
@@ -4546,8 +4460,14 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
       memcpy (rx_compiled_pattern, pattern_char_string_p, pattern_length);
       rx_compiled_pattern[pattern_length] = '\0';
 
-      error_status = regex_compile (rx_compiled_regex, rx_compiled_pattern,
-				    CUB_REG_EXTENDED | CUB_REG_NOSUB | (is_case_sensitive ? 0 : CUB_REG_ICASE));
+      std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
+      reg_flags |= std::regex_constants::nosubs;
+      if (!is_case_sensitive)
+	{
+	  reg_flags |= std::regex_constants::icase;
+	}
+
+      error_status = regex_compile (rx_compiled_pattern, rx_compiled_regex, reg_flags);
       if (error_status != NO_ERROR)
 	{
 	  ASSERT_ERROR ();
@@ -4556,33 +4476,28 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
 	}
     }
 
-  /* match against pattern; regexec returns zero on match */
-  rx_err = cub_regexec (rx_compiled_regex, src_char_string_p, src_length, 0, NULL, 0);
-  switch (rx_err)
-    {
-    case CUB_REG_OKAY:
-      *result = V_TRUE;
-      break;
-
-    case CUB_REG_NOMATCH:
-      *result = V_FALSE;
-      break;
-
-    default:
-      rx_err_len = (int) cub_regerror (rx_err, rx_compiled_regex, rx_err_buf, REGEX_MAX_ERROR_MSG_SIZE);
-      error_status = ER_REGEX_EXEC_ERROR;
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, rx_err_buf);
-      *result = V_ERROR;
-      break;
-    }
+  try
+  {
+    std::string src (src_char_string_p, src_length);
+    bool match = std::regex_search (src, *rx_compiled_regex);
+    *result = match ? V_TRUE : V_FALSE;
+  }
+  catch (std::regex_error & e)
+  {
+    // regex execution exception, error_complexity or error_stack
+    error_status = ER_REGEX_EXEC_ERROR;
+    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
+    *result = V_ERROR;
+    goto cleanup;
+  }
 
 cleanup:
 
   if ((comp_regex == NULL || error_status != NO_ERROR) && rx_compiled_regex != NULL)
     {
       /* free memory if (using local regex) or (error occurred) */
-      cub_regfree (rx_compiled_regex);
-      db_private_free_and_init (NULL, rx_compiled_regex);
+      delete rx_compiled_regex;
+      rx_compiled_regex = NULL;
     }
 
   if ((comp_pattern == NULL || error_status != NO_ERROR) && rx_compiled_pattern != NULL)
@@ -18692,6 +18607,7 @@ get_number_token (const INTL_LANG lang, char *fsp, int *length, char *last_posit
 	{
 	  return N_INVALID;
 	}
+      /* FALLTHRU */
 
     case '9':
     case '0':
@@ -18730,6 +18646,7 @@ get_number_token (const INTL_LANG lang, char *fsp, int *length, char *last_posit
 	  *next_fsp = &fsp[*length];
 	  return N_SPACE;
 	}
+      return N_INVALID;
 
     case '"':
       *length += 1;
@@ -23802,8 +23719,10 @@ parse_time_string (const char *timestr, int timestr_size, int *sign, int *h, int
 
 	case 1:
 	  ms_string[1] = '0';
+	  /* FALLTHRU */
 	case 2:
 	  ms_string[2] = '0';
+	  /* FALLTHRU */
 	default:
 	  *ms = atoi (ms_string);
 	}

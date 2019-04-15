@@ -17,41 +17,25 @@
  *
  */
 
+//
+// object_fetch.h - how to fetch objects on client
+//
 
-/*
- * elo.h - External interface for ELO objects
- *
- */
+#ifndef _OBJECT_FETCH_H_
+#define _OBJECT_FETCH_H_
 
-#ifndef _ELO_H_
-#define _ELO_H_
+#if defined (SERVER_MODE)
+#error Does not belong to server module
+#endif /* defined (SERVER_MODE) */
 
-#ident "$Id$"
-
-#include <stdio.h>
-#include "object_representation.h"
-
-#ifdef __cplusplus
-extern "C"
+typedef enum au_fetchmode
 {
-#endif
+  AU_FETCH_READ,
+  AU_FETCH_SCAN,		/* scan that does not allow write */
+  AU_FETCH_EXCLUSIVE_SCAN,	/* scan that does allow neither write nor other exclusive scan, i.e, scan for load
+				 * index. */
+  AU_FETCH_WRITE,
+  AU_FETCH_UPDATE
+} AU_FETCHMODE;
 
-  extern void elo_init_structure (DB_ELO * elo);
-
-#ifdef __cplusplus
-}
-#endif
-
-extern int elo_create (DB_ELO * elo);
-
-extern int elo_copy_structure (const DB_ELO * elo, DB_ELO * dest);
-extern void elo_free_structure (DB_ELO * elo);
-
-extern int elo_copy (DB_ELO * elo, DB_ELO * dest);
-extern int elo_delete (DB_ELO * elo, bool force_delete);
-
-extern off_t elo_size (DB_ELO * elo);
-extern ssize_t elo_read (const DB_ELO * elo, off_t pos, void *buf, size_t count);
-extern ssize_t elo_write (DB_ELO * elo, off_t pos, const void *buf, size_t count);
-
-#endif /* _ELO_H_ */
+#endif // not _OBJECT_FETCH_H_
