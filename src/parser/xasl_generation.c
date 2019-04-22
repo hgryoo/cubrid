@@ -6328,6 +6328,7 @@ pt_function_to_regu (PARSER_CONTEXT * parser, PT_NODE * function)
 	  break;
 	case F_INSERT_SUBSTRING:
 	case F_ELT:
+	case PT_REGEXP_REPLACE:
 	  result_type = pt_node_to_db_type (function);
 	  break;
 	case F_BENCHMARK:
@@ -6356,7 +6357,7 @@ pt_function_to_regu (PARSER_CONTEXT * parser, PT_NODE * function)
 	case F_JSON_VALID:
 	  result_type = pt_node_to_db_type (function);
 	  break;
-	default:
+	default: 
 	  PT_ERRORf (parser, function, "Internal error in generate(%d)", __LINE__);
 	}
 
