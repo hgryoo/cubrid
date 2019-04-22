@@ -4593,7 +4593,6 @@ db_string_regex_replace(const DB_VALUE * src, const DB_VALUE * pattern, const DB
 		std::string result_string = std::regex_replace(src_string, *compiled_regex, repl_string);
 
 		int result_domain_length = TP_FLOATING_PRECISION_VALUE;
-
 		qstr_make_typed_string((src_type == DB_TYPE_NCHAR ? DB_TYPE_VARNCHAR : DB_TYPE_VARCHAR), result, result_domain_length,
 			(char *)result_string.c_str(), result_string.size(), db_get_string_codeset(src), db_get_string_collation(src));
 		result->need_clear = true;
