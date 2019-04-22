@@ -53,6 +53,7 @@
 #include "dbtype.h"
 #include "elo.h"
 #include "db_elo.h"
+#include "memory_private_allocator.hpp"
 #include <algorithm>
 #include <regex>
 #include <string>
@@ -4568,9 +4569,11 @@ db_string_regex_replace(const DB_VALUE * src, const DB_VALUE * pattern, const DB
 		//goto cleanu;
 	}
 
-	std::string src_string(db_get_string(src), db_get_string_length(src));
-	std::string pattern_string(db_get_string(pattern), db_get_string_length(pattern));
-	std::string repl_string(db_get_string(replacement), db_get_string_length(replacement));
+	using cub_string = std::basic_string<char, std::char_traits<char>, cubmem::private_allocator<char>>
+
+	cub_string src_string(db_get_string(src), db_get_string_length(src));
+	cub_string pattern_string(db_get_string(pattern), db_get_string_length(pattern));
+	cub_string repl_string(db_get_string(replacement), db_get_string_length(replacement));
 
 	std::regex * compiled_regex = NULL;
 	try
@@ -4590,7 +4593,7 @@ db_string_regex_replace(const DB_VALUE * src, const DB_VALUE * pattern, const DB
 
 	try
 	{
-		std::string result_string = std::regex_replace(src_string, *compiled_regex, repl_string);
+		cub_string result_string = std::regex_replace(src_string, *compiled_regex, repl_string);
 
 		int result_domain_length = TP_FLOATING_PRECISION_VALUE;
 		qstr_make_typed_string((src_type == DB_TYPE_NCHAR ? DB_TYPE_VARNCHAR : DB_TYPE_VARCHAR), result, result_domain_length,
