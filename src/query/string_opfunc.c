@@ -4590,8 +4590,7 @@ db_string_regex_replace(const DB_VALUE * src, const DB_VALUE * pattern, const DB
 
 	try
 	{
-		std::string result_string;
-		std::regex_repleace(src_string, compiled_regex, repl_string);
+		std::string result_string = std::regex_repleace(src_string, compiled_regex, repl_string);
 
 		int result_domain_length = TP_FLOATING_PRECISION_VALUE;
 
