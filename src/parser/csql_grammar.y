@@ -311,7 +311,7 @@ static FUNCTION_MAP functions[] = {
   {"crc32", PT_CRC32},
   {"schema_def", PT_SCHEMA_DEF},
   {"conv_tz", PT_CONV_TZ},
-  {"regexp_replace", PT_REGEXP_REPLACE},
+  {"regexp_replace", F_REGEXP_REPLACE},
 };
 
 
@@ -17103,7 +17103,7 @@ reserved_func
 		DBG_PRINT}}
 		| REGEXP_REPLACE '(' expression_list ')'
 		{{
-			$$ = parser_make_func_with_arg_count (this_parser, PT_REGEXP_REPLACE, $3, 3, 6);
+			$$ = parser_make_func_with_arg_count (this_parser, F_REGEXP_REPLACE, $3, 3, 6);
 			PARSER_SAVE_ERR_CONTEXT ($$, @$.buffer_pos)
 		DBG_PRINT}}
 	;
