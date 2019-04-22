@@ -4562,7 +4562,7 @@ db_string_regex_replace(const DB_VALUE * src, const DB_VALUE * pattern, const DB
 	pattern_category = qstr_get_category(pattern);
 	replacement_category = qstr_get_category(replacement);
 
-	src_type = DB_VALUE_DOMAIN_TYPE(src_string);
+	src_type = DB_VALUE_DOMAIN_TYPE(src);
 	pattern_type = DB_VALUE_DOMAIN_TYPE(pattern);
 	replacement_type = DB_VALUE_DOMAIN_TYPE(replacement);
 
@@ -4573,7 +4573,7 @@ db_string_regex_replace(const DB_VALUE * src, const DB_VALUE * pattern, const DB
 		error_status = ER_QSTR_INVALID_DATA_TYPE;
 		er_set(ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QSTR_INVALID_DATA_TYPE, 0);
 		db_make_null(result);
-		goto cleanup;
+		//goto cleanu;
 	}
 
 	std::string src_string(db_get_string(src), db_get_string_length(src));
@@ -4591,14 +4591,14 @@ db_string_regex_replace(const DB_VALUE * src, const DB_VALUE * pattern, const DB
 		// regex compilation exception
 		error_status = ER_REGEX_COMPILE_ERROR;
 		er_set(ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what());
-		delete rx_compiled_regex;
-		rx_compiled_regex = NULL;
+		delete compiled_regex;
+		compiled_regex = NULL;
 		return error_status;
 	}
 
 	try
 	{
-		std::string result_string = std::regex_repleace(src_string, compiled_regex, repl_string);
+		std::string result_string = std::regex_replace(src_string, *compiled_regex, repl_string);
 
 		int result_domain_length = TP_FLOATING_PRECISION_VALUE;
 
@@ -4612,15 +4612,13 @@ db_string_regex_replace(const DB_VALUE * src, const DB_VALUE * pattern, const DB
 		error_status = ER_REGEX_EXEC_ERROR;
 		er_set(ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what());
 		db_make_null(result);
-		goto cleanup;
+		//goto cleanup;
 	}
 
-cleanup:
-
-	if (rx_compiled_regex != NULL)
+	if (compiled_regex != NULL)
 	{
-		delete rx_compiled_regex;
-		rx_compiled_regex = NULL;
+		delete compiled_regex;
+		compiled_regex = NULL;
 	}
 
 	return error_status;
