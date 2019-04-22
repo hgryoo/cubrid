@@ -559,7 +559,7 @@ fcode_get_uppercase_name (FUNC_TYPE ftype)
       return "JSON_UNQUOTE";
     case F_JSON_VALID:
       return "JSON_VALID";
-    case PT_REGEXP_REPLACE:
+    case F_REGEXP_REPLACE:
       return "REGEXP_REPLACE";
     default:
       return "***UNKNOWN***";
@@ -707,7 +707,7 @@ fcode_get_lowercase_name (FUNC_TYPE ftype)
       return "json_unquote";
     case F_JSON_VALID:
       return "json_valid";
-    case PT_REGEXP_REPLACE:
+    case F_REGEXP_REPLACE:
       return "regexp_replace";
     default:
       return "unknown function";

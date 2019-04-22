@@ -472,7 +472,7 @@ get_signatures (FUNC_TYPE ft)
       return &sig_of_json_arrayagg;
     case PT_JSON_OBJECTAGG:
       return &sig_of_json_objectagg;
-    case PT_REGEXP_REPLACE:
+    case F_REGEXP_REPLACE:
       return &sig_of_regexp_replace;
     default:
       assert (false);

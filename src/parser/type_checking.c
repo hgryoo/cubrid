@@ -12426,7 +12426,7 @@ pt_eval_function_type (PARSER_CONTEXT * parser, PT_NODE * node)
     case F_JSON_TYPE:
     case F_JSON_UNQUOTE:
     case F_JSON_VALID:
-    case PT_REGEXP_REPLACE:
+    case F_REGEXP_REPLACE:
       return pt_eval_function_type_new (parser, node);
 
       // legacy functions are still managed by old checking function; all should be migrated though
@@ -19835,7 +19835,7 @@ pt_evaluate_function_w_args (PARSER_CONTEXT * parser, FUNC_TYPE fcode, DB_VALUE 
       error = db_evaluate_json_valid (result, args, num_args);
       break;
 
-    case PT_REGEXP_REPLACE:
+    case F_REGEXP_REPLACE:
       error = db_string_regex_replace(args[0], args[1], args[2], NULL, NULL, result);
 	  break;
 
