@@ -4540,91 +4540,103 @@ cleanup:
 }
 
 int
-db_string_regex_replace(const DB_VALUE * src, const DB_VALUE * pattern, const DB_VALUE * replacement,
-	std::regex ** comp_regex, char **comp_pattern, DB_VALUE *result)
+db_string_regex_replace (const DB_VALUE * src, const DB_VALUE * pattern, const DB_VALUE * replacement,
+			 std::regex ** comp_regex, char **comp_pattern, DB_VALUE * result)
 {
-	int error_status = NO_ERROR;
+  int error_status = NO_ERROR;
 
-	QSTR_CATEGORY src_category = QSTR_UNKNOWN;
-	QSTR_CATEGORY pattern_category = QSTR_UNKNOWN;
-	QSTR_CATEGORY replacement_category = QSTR_UNKNOWN;
+  QSTR_CATEGORY src_category = QSTR_UNKNOWN;
+  QSTR_CATEGORY pattern_category = QSTR_UNKNOWN;
+  QSTR_CATEGORY replacement_category = QSTR_UNKNOWN;
 
-	DB_TYPE src_type = DB_TYPE_UNKNOWN;
-	DB_TYPE pattern_type = DB_TYPE_UNKNOWN;
-	DB_TYPE replacement_type = DB_TYPE_UNKNOWN;
+  DB_TYPE src_type = DB_TYPE_UNKNOWN;
+  DB_TYPE pattern_type = DB_TYPE_UNKNOWN;
+  DB_TYPE replacement_type = DB_TYPE_UNKNOWN;
 
-	/* check for allocated DB values */
-	assert(src != (DB_VALUE *) NULL);
-	assert(pattern != (DB_VALUE *) NULL);
-	assert(replacement != (DB_VALUE *) NULL);
+  /* check for allocated DB values */
+  assert (src != (DB_VALUE *) NULL);
+  assert (pattern != (DB_VALUE *) NULL);
+  assert (replacement != (DB_VALUE *) NULL);
 
-	/* type checking */
-	src_category = qstr_get_category(src);
-	pattern_category = qstr_get_category(pattern);
-	replacement_category = qstr_get_category(replacement);
+  /* type checking */
+  src_category = qstr_get_category (src);
+  pattern_category = qstr_get_category (pattern);
+  replacement_category = qstr_get_category (replacement);
 
-	src_type = DB_VALUE_DOMAIN_TYPE(src);
-	pattern_type = DB_VALUE_DOMAIN_TYPE(pattern);
-	replacement_type = DB_VALUE_DOMAIN_TYPE(replacement);
+  src_type = DB_VALUE_DOMAIN_TYPE (src);
+  pattern_type = DB_VALUE_DOMAIN_TYPE (pattern);
+  replacement_type = DB_VALUE_DOMAIN_TYPE (replacement);
 
-	db_make_null(result);
+  db_make_null (result);
 
-	if (!QSTR_IS_ANY_CHAR(src_type) || !QSTR_IS_ANY_CHAR(pattern_type) || !QSTR_IS_ANY_CHAR(replacement_type))
-	{
-		error_status = ER_QSTR_INVALID_DATA_TYPE;
-		er_set(ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QSTR_INVALID_DATA_TYPE, 0);
-		db_make_null(result);
-		//goto cleanu;
-	}
+  if (!QSTR_IS_ANY_CHAR (src_type) || !QSTR_IS_ANY_CHAR (pattern_type) || !QSTR_IS_ANY_CHAR (replacement_type))
+    {
+      error_status = ER_QSTR_INVALID_DATA_TYPE;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QSTR_INVALID_DATA_TYPE, 0);
+      db_make_null (result);
+      //goto cleanu;
+    }
 
-	using cub_string = std::basic_string<char, std::char_traits<char>, cubmem::private_allocator<char>>
+  std::string src_string (db_get_string (src), db_get_string_length (src));
+  std::string pattern_string (db_get_string (pattern), db_get_string_length (pattern));
+  std::string repl_string (db_get_string (replacement), db_get_string_length (replacement));
 
-	cub_string src_string(db_get_string(src), db_get_string_length(src));
-	cub_string pattern_string(db_get_string(pattern), db_get_string_length(pattern));
-	cub_string repl_string(db_get_string(replacement), db_get_string_length(replacement));
+  std::regex * compiled_regex = NULL;
+  try
+  {
+    std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
+    compiled_regex = new std::regex (pattern_string, reg_flags);
+  }
+  catch (std::regex_error & e)
+  {
+    // regex compilation exception
+    error_status = ER_REGEX_COMPILE_ERROR;
+    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
+    delete compiled_regex;
+    compiled_regex = NULL;
+    return error_status;
+  }
 
-	std::regex * compiled_regex = NULL;
-	try
-	{
-		std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
-		compiled_regex = new std::regex(pattern_string, reg_flags);
-	}
-	catch (std::regex_error & e)
-	{
-		// regex compilation exception
-		error_status = ER_REGEX_COMPILE_ERROR;
-		er_set(ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what());
-		delete compiled_regex;
-		compiled_regex = NULL;
-		return error_status;
-	}
+  try
+  {
+    std::string result_string = std::regex_replace (src_string, *compiled_regex, repl_string);
 
-	try
-	{
-		cub_string result_string = std::regex_replace(src_string, *compiled_regex, repl_string);
+    char *result_char_string = NULL;
+    int result_char_len = result_string.size();
+    result_char_string = (char *) db_private_alloc (NULL, result_char_len + 1);
+    
+	if (result_char_string == NULL)
+    {
+      /* out of memory */
+      error_status = ER_OUT_OF_VIRTUAL_MEMORY;
+      return error_status;
+    }
 
-		int result_domain_length = TP_FLOATING_PRECISION_VALUE;
+    memcpy (result_char_string, result_string.c_str(), result_char_len);
+    result_char_string[result_char_len] = '\0';
 
-		qstr_make_typed_string((src_type == DB_TYPE_NCHAR ? DB_TYPE_VARNCHAR : DB_TYPE_VARCHAR), result, result_domain_length,
-			(char *)result_string.c_str(), result_string.size(), db_get_string_codeset(src), db_get_string_collation(src));
-		result->need_clear = true;
-	}
-	catch (std::regex_error & e)
-	{
-		// regex execution exception, error_complexity or error_stack
-		error_status = ER_REGEX_EXEC_ERROR;
-		er_set(ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what());
-		db_make_null(result);
-		//goto cleanup;
-	}
+    int result_domain_length = TP_FLOATING_PRECISION_VALUE;
+    qstr_make_typed_string ((src_type == DB_TYPE_NCHAR ? DB_TYPE_VARNCHAR : DB_TYPE_VARCHAR), result,
+			    result_domain_length, result_char_string, result_char_len,
+			    db_get_string_codeset (src), db_get_string_collation (src));
+    result->need_clear = true;
+  }
+  catch (std::regex_error & e)
+  {
+    // regex execution exception, error_complexity or error_stack
+    error_status = ER_REGEX_EXEC_ERROR;
+    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
+    db_make_null (result);
+    //goto cleanup;
+  }
 
-	if (compiled_regex != NULL)
-	{
-		delete compiled_regex;
-		compiled_regex = NULL;
-	}
+  if (compiled_regex != NULL)
+    {
+      delete compiled_regex;
+      compiled_regex = NULL;
+    }
 
-	return error_status;
+  return error_status;
 }
 
 /*
