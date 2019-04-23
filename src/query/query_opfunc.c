@@ -8515,8 +8515,8 @@ qdata_regexp_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function
   assert (index == no_args);
   assert (index >= 2);
 
-  error_status = db_string_regex_replace (args[0], args[1], args[2], NULL, NULL, function_p->value)
-    if (error_status != NO_ERROR)
+  error_status = db_string_regex_replace (args[0], args[1], args[2], NULL, NULL, function_p->value);
+  if (error_status != NO_ERROR)
     {
       goto exit;
     }
