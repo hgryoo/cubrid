@@ -216,7 +216,7 @@ static int qdata_benchmark (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p,
 			    OID * obj_oid_p, QFILE_TUPLE tuple);
 
 static int qdata_regexp_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR * val_desc_p,
-	    OID * obj_oid_p, QFILE_TUPLE tuple);
+					  OID * obj_oid_p, QFILE_TUPLE tuple);
 
 static int qdata_convert_operands_to_value_and_call (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p,
 						     VAL_DESCR * val_desc_p, OID * obj_oid_p, QFILE_TUPLE tuple,
@@ -8476,54 +8476,54 @@ qdata_benchmark (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR 
  */
 static int
 qdata_regexp_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR * val_desc_p,
-	    OID * obj_oid_p, QFILE_TUPLE tuple)
+			       OID * obj_oid_p, QFILE_TUPLE tuple)
 {
-	DB_VALUE *value;
-	REGU_VARIABLE_LIST operand;
-	int error_status = NO_ERROR;
-	int no_args = 0, index = 0;
-	DB_VALUE **args;
+  DB_VALUE *value;
+  REGU_VARIABLE_LIST operand;
+  int error_status = NO_ERROR;
+  int no_args = 0, index = 0;
+  DB_VALUE **args;
 
-	assert (function_p != NULL);
-	assert (function_p->value != NULL);
-	assert (function_p->operand != NULL);
+  assert (function_p != NULL);
+  assert (function_p->value != NULL);
+  assert (function_p->operand != NULL);
 
-	operand = function_p->operand;
+  operand = function_p->operand;
 
-	while (operand != NULL)
-	{
-	  no_args++;
-	  operand = operand->next;
-	}
+  while (operand != NULL)
+    {
+      no_args++;
+      operand = operand->next;
+    }
 
-	args = (DB_VALUE **) db_private_alloc (thread_p, sizeof (DB_VALUE *) * no_args);
+  args = (DB_VALUE **) db_private_alloc (thread_p, sizeof (DB_VALUE *) * no_args);
 
-	operand = function_p->operand;
-	while (operand != NULL)
-	{
-	  error_status = fetch_peek_dbval (thread_p, &operand->value, val_desc_p, NULL, obj_oid_p, tuple, &value);
-	  if (error_status != NO_ERROR)
-	{
-	  goto exit;
-	}
-
-	  args[index++] = value;
-
-	  operand = operand->next;
-	}
-
-	assert (index == no_args);
-	assert (index >= 2);
-
-	error_status = db_string_regex_replace (args[0], args[1], args[2], NULL, NULL, function_p->value)
-	if (error_status != NO_ERROR)
+  operand = function_p->operand;
+  while (operand != NULL)
+    {
+      error_status = fetch_peek_dbval (thread_p, &operand->value, val_desc_p, NULL, obj_oid_p, tuple, &value);
+      if (error_status != NO_ERROR)
 	{
 	  goto exit;
 	}
 
-	exit:
-	db_private_free (thread_p, args);
-	return error_status;
+      args[index++] = value;
+
+      operand = operand->next;
+    }
+
+  assert (index == no_args);
+  assert (index >= 2);
+
+  error_status = db_string_regex_replace (args[0], args[1], args[2], NULL, NULL, function_p->value)
+    if (error_status != NO_ERROR)
+    {
+      goto exit;
+    }
+
+exit:
+  db_private_free (thread_p, args);
+  return error_status;
 }
 
 static int
