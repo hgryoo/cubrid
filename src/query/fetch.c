@@ -4109,55 +4109,56 @@ fetch_peek_dbval (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 		      }		/* if (!is_null_elt) */
 		  }		/* else */
 	    case F_REGEXP_REPLACE:
-	      /* should sync with qdata_regexp_replace () */
-	      {
-	    		DB_VALUE *value;
-	    		REGU_VARIABLE_LIST operand;
-	    		int error_status = NO_ERROR;
-	    		int no_args = 0, index = 0;
-	    		DB_VALUE **args;
+		/* should sync with qdata_regexp_replace () */
+		{
+		  DB_VALUE *value;
+		  REGU_VARIABLE_LIST operand;
+		  int error_status = NO_ERROR;
+		  int no_args = 0, index = 0;
+		  DB_VALUE **args;
 
-	    		assert (function_p != NULL);
-	    		assert (function_p->value != NULL);
-	    		assert (function_p->operand != NULL);
+		  assert (function_p != NULL);
+		  assert (function_p->value != NULL);
+		  assert (function_p->operand != NULL);
 
-	    		operand = function_p->operand;
+		  operand = function_p->operand;
 
-	    		while (operand != NULL)
-	    		{
-	    		  no_args++;
-	    		  operand = operand->next;
-	    		}
+		  while (operand != NULL)
+		    {
+		      no_args++;
+		      operand = operand->next;
+		    }
 
-	    		args = (DB_VALUE **) db_private_alloc (thread_p, sizeof (DB_VALUE *) * no_args);
+		  args = (DB_VALUE **) db_private_alloc (thread_p, sizeof (DB_VALUE *) * no_args);
 
-	    		operand = function_p->operand;
-	    		while (operand != NULL)
-	    		{
-	    		  error_status = fetch_peek_dbval (thread_p, &operand->value, val_desc_p, NULL, obj_oid_p, tuple, &value);
-	    		  if (error_status != NO_ERROR)
-	    		{
-	    		  goto exit;
-	    		}
+		  operand = function_p->operand;
+		  while (operand != NULL)
+		    {
+		      error_status =
+			fetch_peek_dbval (thread_p, &operand->value, val_desc_p, NULL, obj_oid_p, tuple, &value);
+		      if (error_status != NO_ERROR)
+			{
+			  goto exit;
+			}
 
-	    		  args[index++] = value;
+		      args[index++] = value;
 
-	    		  operand = operand->next;
-	    		}
+		      operand = operand->next;
+		    }
 
-	    		assert (index == no_args);
-	    		assert (index >= 2);
+		  assert (index == no_args);
+		  assert (index >= 2);
 
-	    		error_status = db_string_regex_replace (args[0], args[1], args[2], NULL, NULL, function_p->value)
-	    		if (error_status != NO_ERROR)
-	    		{
-	    		  goto exit;
-	    		}
+		  error_status = db_string_regex_replace (args[0], args[1], args[2], NULL, NULL, function_p->value)
+		    if (error_status != NO_ERROR)
+		    {
+		      goto exit;
+		    }
 
-	    		exit:
-	    		db_private_free (thread_p, args);
-	    		return error_status;
-		  }		/* else */
+		exit:
+		  db_private_free (thread_p, args);
+		  return error_status;
+		}		/* else */
 #if !defined(NDEBUG)
 		if (is_null_elt)
 		  {
