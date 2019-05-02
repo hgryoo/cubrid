@@ -4299,15 +4299,15 @@ db_string_like (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_
   return ((*result == V_ERROR) ? ER_QSTR_INVALID_ESCAPE_SEQUENCE : error_status);
 }
 
-static int
-regex_compile (const char *pattern, std::regex * &rx_compiled_regex,
+template < typename CharT > static int
+regex_compile (const char *pattern, std::basic_regex < CharT > *&rx_compiled_regex,
 	       std::regex_constants::syntax_option_type & reg_flags)
 {
   int error_status = NO_ERROR;
 
   try
   {
-    rx_compiled_regex = new std::regex (pattern, reg_flags);
+    rx_compiled_regex = new std::basic_regex < CharT > (pattern, reg_flags);
   }
   catch (std::regex_error & e)
   {
@@ -4348,9 +4348,9 @@ regex_compile (const char *pattern, std::regex * &rx_compiled_regex,
  *
  */
 
-int
+template < typename CharT > int
 db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * case_sensitive,
-		 std::regex ** comp_regex, char **comp_pattern, int *result)
+		 std::basic_regex < CharT > **comp_regex, char **comp_pattern, int *result)
 {
   QSTR_CATEGORY src_category = QSTR_UNKNOWN;
   QSTR_CATEGORY pattern_category = QSTR_UNKNOWN;
@@ -4365,7 +4365,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
 
   char rx_err_buf[REGEX_MAX_ERROR_MSG_SIZE] = { '\0' };
   char *rx_compiled_pattern = NULL;
-  std::regex * rx_compiled_regex = NULL;
+  std::basic_regex < CharT > *rx_compiled_regex = NULL;
 
   /* check for allocated DB values */
   assert (src_string != NULL);
@@ -4400,7 +4400,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
       goto cleanup;
     }
 
-  if (src_category != pattern_category)
+  if (src_category != pattern_category || (db_get_string_codeset (src_string) != db_get_string_codeset (pattern)))
     {
       error_status = ER_QSTR_INCOMPATIBLE_CODE_SETS;
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
@@ -4422,73 +4422,88 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
       goto cleanup;
     }
 
-  src_char_string_p = db_get_string (src_string);
-  src_length = db_get_string_size (src_string);
+  {
+    int coll_id = -1;
+    LANG_RT_COMMON_COLL (db_get_string_collation (src_string), db_get_string_collation (pattern), coll_id);
+    if (coll_id == -1)
+      {
+	error_status = ER_QSTR_INCOMPATIBLE_COLLATIONS;
+	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+	*result = V_ERROR;
+	goto cleanup;
+      }
 
-  pattern_char_string_p = db_get_string (pattern);
-  pattern_length = db_get_string_size (pattern);
+    LANG_COLLATION *collation = lang_get_collation (coll_id);
 
-  /* extract case sensitivity */
-  is_case_sensitive = (case_sensitive->data.i != 0);
+    src_char_string_p = db_get_string (src_string);
+    src_length = db_get_string_size (src_string);
 
-  /* check for recompile */
-  if (rx_compiled_pattern == NULL || rx_compiled_regex == NULL || pattern_length != strlen (rx_compiled_pattern)
-      || strncmp (rx_compiled_pattern, pattern_char_string_p, pattern_length) != 0)
+    pattern_char_string_p = db_get_string (pattern);
+    pattern_length = db_get_string_size (pattern);
+
+    /* extract case sensitivity */
+    is_case_sensitive = (case_sensitive->data.i != 0);
+
+    /* check for recompile */
+    if (rx_compiled_pattern == NULL || rx_compiled_regex == NULL || pattern_length != strlen (rx_compiled_pattern)
+	|| strncmp (rx_compiled_pattern, pattern_char_string_p, pattern_length) != 0)
+      {
+	/* regex must be recompiled if regex object is not specified, pattern is not specified or compiled pattern does
+	 * not match current pattern */
+
+	/* update compiled pattern */
+	if (rx_compiled_pattern != NULL)
+	  {
+	    /* free old memory */
+	    db_private_free_and_init (NULL, rx_compiled_pattern);
+	  }
+
+	/* allocate new memory */
+	rx_compiled_pattern = (char *) db_private_alloc (NULL, pattern_length + 1);
+
+	if (rx_compiled_pattern == NULL)
+	  {
+	    /* out of memory */
+	    error_status = ER_OUT_OF_VIRTUAL_MEMORY;
+	    *result = V_ERROR;
+	    goto cleanup;
+	  }
+
+	/* copy string */
+	memcpy (rx_compiled_pattern, pattern_char_string_p, pattern_length);
+	rx_compiled_pattern[pattern_length] = '\0';
+
+	std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
+	reg_flags |= std::regex_constants::nosubs;
+	reg_flags |= std::regex_constants::collate;
+	if (!is_case_sensitive)
+	  {
+	    reg_flags |= std::regex_constants::icase;
+	  }
+
+	error_status = regex_compile (rx_compiled_pattern, rx_compiled_regex, reg_flags);
+	if (error_status != NO_ERROR)
+	  {
+	    ASSERT_ERROR ();
+	    *result = V_ERROR;
+	    goto cleanup;
+	  }
+      }
+
+    try
     {
-      /* regex must be recompiled if regex object is not specified, pattern is not specified or compiled pattern does
-       * not match current pattern */
-
-      /* update compiled pattern */
-      if (rx_compiled_pattern != NULL)
-	{
-	  /* free old memory */
-	  db_private_free_and_init (NULL, rx_compiled_pattern);
-	}
-
-      /* allocate new memory */
-      rx_compiled_pattern = (char *) db_private_alloc (NULL, pattern_length + 1);
-
-      if (rx_compiled_pattern == NULL)
-	{
-	  /* out of memory */
-	  error_status = ER_OUT_OF_VIRTUAL_MEMORY;
-	  *result = V_ERROR;
-	  goto cleanup;
-	}
-
-      /* copy string */
-      memcpy (rx_compiled_pattern, pattern_char_string_p, pattern_length);
-      rx_compiled_pattern[pattern_length] = '\0';
-
-      std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
-      reg_flags |= std::regex_constants::nosubs;
-      if (!is_case_sensitive)
-	{
-	  reg_flags |= std::regex_constants::icase;
-	}
-
-      error_status = regex_compile (rx_compiled_pattern, rx_compiled_regex, reg_flags);
-      if (error_status != NO_ERROR)
-	{
-	  ASSERT_ERROR ();
-	  *result = V_ERROR;
-	  goto cleanup;
-	}
+      std::string src (src_char_string_p, src_length);
+      bool match = std::regex_search (src, *rx_compiled_regex);
+      *result = match ? V_TRUE : V_FALSE;
     }
-
-  try
-  {
-    std::string src (src_char_string_p, src_length);
-    bool match = std::regex_search (src, *rx_compiled_regex);
-    *result = match ? V_TRUE : V_FALSE;
-  }
-  catch (std::regex_error & e)
-  {
-    // regex execution exception, error_complexity or error_stack
-    error_status = ER_REGEX_EXEC_ERROR;
-    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
-    *result = V_ERROR;
-    goto cleanup;
+    catch (std::regex_error & e)
+    {
+      // regex execution exception, error_complexity or error_stack
+      error_status = ER_REGEX_EXEC_ERROR;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
+      *result = V_ERROR;
+      goto cleanup;
+    }
   }
 
 cleanup:
