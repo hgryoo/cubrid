@@ -4560,13 +4560,16 @@ db_string_regex_replace (const DB_VALUE * src, const DB_VALUE * pattern, const D
   replacement_type = DB_VALUE_DOMAIN_TYPE (replacement);
 
   db_make_null (result);
+  if (DB_IS_NULL (src) || DB_IS_NULL (pattern) || (DB_IS_NULL (replacement)))
+    {
+	  goto exit;
+    }
 
   if (!QSTR_IS_ANY_CHAR (src_type) || !QSTR_IS_ANY_CHAR (pattern_type) || !QSTR_IS_ANY_CHAR (replacement_type))
     {
       error_status = ER_QSTR_INVALID_DATA_TYPE;
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QSTR_INVALID_DATA_TYPE, 0);
-      db_make_null (result);
-      //goto cleanu;
+      goto exit;
     }
 
   std::string src_string (db_get_string (src), db_get_string_length (src));
@@ -4584,9 +4587,7 @@ db_string_regex_replace (const DB_VALUE * src, const DB_VALUE * pattern, const D
     // regex compilation exception
     error_status = ER_REGEX_COMPILE_ERROR;
     er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
-    delete compiled_regex;
-    compiled_regex = NULL;
-    return error_status;
+    goto exit;
   }
 
   try
@@ -4601,7 +4602,7 @@ db_string_regex_replace (const DB_VALUE * src, const DB_VALUE * pattern, const D
     {
       /* out of memory */
       error_status = ER_OUT_OF_VIRTUAL_MEMORY;
-      return error_status;
+      goto exit;
     }
 
     memcpy (result_char_string, result_string.c_str(), result_char_len);
@@ -4622,13 +4623,13 @@ db_string_regex_replace (const DB_VALUE * src, const DB_VALUE * pattern, const D
     //goto cleanup;
   }
 
-  if (compiled_regex != NULL)
-    {
-      delete compiled_regex;
-      compiled_regex = NULL;
-    }
-
-  return error_status;
+  exit:
+    if (compiled_regex != NULL)
+      {
+        delete compiled_regex;
+        compiled_regex = NULL;
+      }
+    return error_status;
 }
 
 /*
