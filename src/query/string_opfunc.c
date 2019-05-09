@@ -4567,40 +4567,42 @@ db_string_regex_replace (const DB_VALUE * src, const DB_VALUE * pattern, const D
   pattern_type = DB_VALUE_DOMAIN_TYPE (pattern);
   replacement_type = DB_VALUE_DOMAIN_TYPE (replacement);
 
-  db_make_null (result);
-  if (DB_IS_NULL (src) || DB_IS_NULL (pattern) || (DB_IS_NULL (replacement)))
-    {
-      goto exit;
-    }
-
-  if (!QSTR_IS_ANY_CHAR (src_type) || !QSTR_IS_ANY_CHAR (pattern_type) || !QSTR_IS_ANY_CHAR (replacement_type))
-    {
-      error_status = ER_QSTR_INVALID_DATA_TYPE;
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QSTR_INVALID_DATA_TYPE, 0);
-      goto exit;
-    }
-
-  std::string src_string (db_get_string (src), db_get_string_length (src));
-  std::string pattern_string (db_get_string (pattern), db_get_string_length (pattern));
-  std::string repl_string (db_get_string (replacement), db_get_string_length (replacement));
-
   std::regex * compiled_regex = NULL;
-  try
-  {
-    std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
-    compiled_regex = new std::regex (pattern_string, reg_flags);
-  }
-  catch (std::regex_error & e)
-  {
-    // regex compilation exception
-    error_status = ER_REGEX_COMPILE_ERROR;
-    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
-    goto exit;
-  }
+  db_make_null (result);
 
-  try
   {
-    std::string result_string = std::regex_replace (src_string, *compiled_regex, repl_string);
+    if (DB_IS_NULL (src) || DB_IS_NULL (pattern) || (DB_IS_NULL (replacement)))
+      {
+	goto exit;
+      }
+
+    if (!QSTR_IS_ANY_CHAR (src_type) || !QSTR_IS_ANY_CHAR (pattern_type) || !QSTR_IS_ANY_CHAR (replacement_type))
+      {
+	error_status = ER_QSTR_INVALID_DATA_TYPE;
+	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QSTR_INVALID_DATA_TYPE, 0);
+	goto exit;
+      }
+
+    std::string src_string (db_get_string (src), db_get_string_length (src));
+    std::string pattern_string (db_get_string (pattern), db_get_string_length (pattern));
+    std::string repl_string (db_get_string (replacement), db_get_string_length (replacement));
+
+    try
+    {
+      std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
+      compiled_regex = new std::regex (pattern_string, reg_flags);
+    }
+    catch (std::regex_error & e)
+    {
+      // regex compilation exception
+      error_status = ER_REGEX_COMPILE_ERROR;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
+      goto exit;
+    }
+
+    try
+    {
+      std::string result_string = std::regex_replace (src_string, *compiled_regex, repl_string);
 
     char *result_char_string = NULL;
     int result_char_len = result_string.size ();
@@ -4612,25 +4614,25 @@ db_string_regex_replace (const DB_VALUE * src, const DB_VALUE * pattern, const D
       error_status = ER_OUT_OF_VIRTUAL_MEMORY;
       goto exit;
     }
+      
+      memcpy (result_char_string, result_string.c_str (), result_char_len);
+      result_char_string[result_char_len] = '\0';
 
-    memcpy (result_char_string, result_string.c_str (), result_char_len);
-    result_char_string[result_char_len] = '\0';
-
-    int result_domain_length = TP_FLOATING_PRECISION_VALUE;
-    qstr_make_typed_string ((src_type == DB_TYPE_NCHAR ? DB_TYPE_VARNCHAR : DB_TYPE_VARCHAR), result,
-			    result_domain_length, result_char_string, result_char_len,
-			    db_get_string_codeset (src), db_get_string_collation (src));
-    result->need_clear = true;
+      int result_domain_length = TP_FLOATING_PRECISION_VALUE;
+      qstr_make_typed_string ((src_type == DB_TYPE_NCHAR ? DB_TYPE_VARNCHAR : DB_TYPE_VARCHAR), result,
+			      result_domain_length, result_char_string, result_char_len,
+			      db_get_string_codeset (src), db_get_string_collation (src));
+      result->need_clear = true;
+    }
+    catch (std::regex_error & e)
+    {
+      // regex execution exception, error_complexity or error_stack
+      error_status = ER_REGEX_EXEC_ERROR;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
+      db_make_null (result);
+      //goto cleanup;
+    }
   }
-  catch (std::regex_error & e)
-  {
-    // regex execution exception, error_complexity or error_stack
-    error_status = ER_REGEX_EXEC_ERROR;
-    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
-    db_make_null (result);
-    //goto cleanup;
-  }
-
 exit:
   if (compiled_regex != NULL)
     {
