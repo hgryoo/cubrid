@@ -338,9 +338,11 @@ func_all_signatures sig_of_benchmark =
 
 func_all_signatures sig_of_regexp_replace =
 {
-// all signatures: src, pattern, replacement [,occurrence [, match_type]]] -> STRING
-// first overload: json_doc, one_or_all_str, search_str:
+// all signatures: src, pattern, replacement [,position [,occurrence [, match_type]]] -> STRING
   {PT_TYPE_VARCHAR, {PT_GENERIC_TYPE_STRING, PT_GENERIC_TYPE_STRING, PT_GENERIC_TYPE_STRING}, {}},
+  {PT_TYPE_VARCHAR, {PT_GENERIC_TYPE_STRING, PT_GENERIC_TYPE_STRING, PT_GENERIC_TYPE_STRING}, {PT_TYPE_INTEGER}},
+  {PT_TYPE_VARCHAR, {PT_GENERIC_TYPE_STRING, PT_GENERIC_TYPE_STRING, PT_GENERIC_TYPE_STRING}, {PT_TYPE_INTEGER, PT_TYPE_INTEGER}},
+  {PT_TYPE_VARCHAR, {PT_GENERIC_TYPE_STRING, PT_GENERIC_TYPE_STRING, PT_GENERIC_TYPE_STRING}, {PT_TYPE_INTEGER, PT_TYPE_INTEGER, PT_GENERIC_TYPE_STRING}},
 };
 
 func_all_signatures *
