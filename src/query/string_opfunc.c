@@ -4570,7 +4570,7 @@ db_string_regex_replace (const DB_VALUE * src, const DB_VALUE * pattern, const D
   db_make_null (result);
   if (DB_IS_NULL (src) || DB_IS_NULL (pattern) || (DB_IS_NULL (replacement)))
     {
-	  goto exit;
+      goto exit;
     }
 
   if (!QSTR_IS_ANY_CHAR (src_type) || !QSTR_IS_ANY_CHAR (pattern_type) || !QSTR_IS_ANY_CHAR (replacement_type))
@@ -4603,7 +4603,7 @@ db_string_regex_replace (const DB_VALUE * src, const DB_VALUE * pattern, const D
     std::string result_string = std::regex_replace (src_string, *compiled_regex, repl_string);
 
     char *result_char_string = NULL;
-    int result_char_len = result_string.size();
+    int result_char_len = result_string.size ();
     result_char_string = (char *) db_private_alloc (NULL, result_char_len + 1);
     
 	if (result_char_string == NULL)
@@ -4613,7 +4613,7 @@ db_string_regex_replace (const DB_VALUE * src, const DB_VALUE * pattern, const D
       goto exit;
     }
 
-    memcpy (result_char_string, result_string.c_str(), result_char_len);
+    memcpy (result_char_string, result_string.c_str (), result_char_len);
     result_char_string[result_char_len] = '\0';
 
     int result_domain_length = TP_FLOATING_PRECISION_VALUE;
@@ -4631,13 +4631,13 @@ db_string_regex_replace (const DB_VALUE * src, const DB_VALUE * pattern, const D
     //goto cleanup;
   }
 
-  exit:
-    if (compiled_regex != NULL)
-      {
-        delete compiled_regex;
-        compiled_regex = NULL;
-      }
-    return error_status;
+exit:
+  if (compiled_regex != NULL)
+    {
+      delete compiled_regex;
+      compiled_regex = NULL;
+    }
+  return error_status;
 }
 
 /*
