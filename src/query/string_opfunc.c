@@ -4532,41 +4532,36 @@ cleanup:
 }
 
 int
-db_string_regex_replace (const DB_VALUE * src, const DB_VALUE * pattern, const DB_VALUE * replacement,
-			 std::regex ** comp_regex, char **comp_pattern, DB_VALUE * result)
+db_string_regex_replace (DB_VALUE * result, DB_VALUE * arg[], int const num_args,
+			 std::regex ** comp_regex, char **comp_pattern)
 {
   int error_status = NO_ERROR;
-
-  QSTR_CATEGORY src_category = QSTR_UNKNOWN;
-  QSTR_CATEGORY pattern_category = QSTR_UNKNOWN;
-  QSTR_CATEGORY replacement_category = QSTR_UNKNOWN;
-
-  DB_TYPE src_type = DB_TYPE_UNKNOWN;
-  DB_TYPE pattern_type = DB_TYPE_UNKNOWN;
-  DB_TYPE replacement_type = DB_TYPE_UNKNOWN;
-
-  /* check for allocated DB values */
-  assert (src != (DB_VALUE *) NULL);
-  assert (pattern != (DB_VALUE *) NULL);
-  assert (replacement != (DB_VALUE *) NULL);
-
-  /* type checking */
-  src_category = qstr_get_category (src);
-  pattern_category = qstr_get_category (pattern);
-  replacement_category = qstr_get_category (replacement);
-
-  src_type = DB_VALUE_DOMAIN_TYPE (src);
-  pattern_type = DB_VALUE_DOMAIN_TYPE (pattern);
-  replacement_type = DB_VALUE_DOMAIN_TYPE (replacement);
-
   std::regex * compiled_regex = NULL;
-  db_make_null (result);
 
   {
+    const DB_VALUE *src = arg[0];
+    const DB_VALUE *pattern = arg[1];
+    const DB_VALUE *replacement = arg[2];
+
+    /* check for allocated DB values */
+    assert (src != (DB_VALUE *) NULL);
+    assert (pattern != (DB_VALUE *) NULL);
+    assert (replacement != (DB_VALUE *) NULL);
+
     if (DB_IS_NULL (src) || DB_IS_NULL (pattern) || (DB_IS_NULL (replacement)))
       {
+	db_make_null (result);
 	goto exit;
       }
+
+    /* type checking */
+    QSTR_CATEGORY src_category = qstr_get_category (src);
+    QSTR_CATEGORY pattern_category = qstr_get_category (pattern);
+    QSTR_CATEGORY replacement_category = qstr_get_category (replacement);
+
+    DB_TYPE src_type = DB_VALUE_DOMAIN_TYPE (src);
+    DB_TYPE pattern_type = DB_VALUE_DOMAIN_TYPE (pattern);
+    DB_TYPE replacement_type = DB_VALUE_DOMAIN_TYPE (replacement);
 
     if (!QSTR_IS_ANY_CHAR (src_type) || !QSTR_IS_ANY_CHAR (pattern_type) || !QSTR_IS_ANY_CHAR (replacement_type))
       {
@@ -4621,16 +4616,22 @@ db_string_regex_replace (const DB_VALUE * src, const DB_VALUE * pattern, const D
       // regex execution exception, error_complexity or error_stack
       error_status = ER_REGEX_EXEC_ERROR;
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
-      db_make_null (result);
-      //goto cleanup;
+      goto exit;
     }
   }
+
 exit:
   if (compiled_regex != NULL)
     {
       delete compiled_regex;
       compiled_regex = NULL;
     }
+
+  if (error_status != NO_ERROR)
+    {
+      db_make_null (result);
+    }
+
   return error_status;
 }
 
