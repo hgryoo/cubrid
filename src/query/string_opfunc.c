@@ -4536,7 +4536,6 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * arg[], int const num_args
 			 std::regex ** comp_regex, char **comp_pattern)
 {
   int error_status = NO_ERROR;
-  std::regex * compiled_regex = NULL;
 
   {
     const DB_VALUE *src = arg[0];
@@ -4569,6 +4568,9 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * arg[], int const num_args
 	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QSTR_INVALID_DATA_TYPE, 0);
 	goto exit;
       }
+
+    // *INDENT-OFF*
+    std::regex * compiled_regex = NULL;
 
     std::string src_string (db_get_string (src), db_get_string_length (src));
     std::string pattern_string (db_get_string (pattern), db_get_string_length (pattern));
@@ -4618,6 +4620,7 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * arg[], int const num_args
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
       goto exit;
     }
+    // *INDENT-ON*
   }
 
 exit:
