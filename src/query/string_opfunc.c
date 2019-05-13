@@ -4545,11 +4545,15 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
 {
   int error_status = NO_ERROR;
 
+  // *INDENT-OFF*
+  std::regex *compiled_regex = NULL;
+  // *INDENT-ON*
+
   {
     const DB_VALUE *src = args[0];
     const DB_VALUE *pattern = args[1];
     const DB_VALUE *replacement = args[2];
-
+    
     /* check for allocated DB values */
     assert (src != (DB_VALUE *) NULL);
     assert (pattern != (DB_VALUE *) NULL);
@@ -4578,8 +4582,6 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
       }
 
     // *INDENT-OFF*
-    std::regex * compiled_regex = NULL;
-
     std::string src_string (db_get_string (src), db_get_string_length (src));
     std::string pattern_string (db_get_string (pattern), db_get_string_length (pattern));
     std::string repl_string (db_get_string (replacement), db_get_string_length (replacement));
@@ -4587,6 +4589,36 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
     try
     {
       std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
+    
+      const DB_VALUE *match_type = NULL;
+      std::string match_type_value = "";
+
+      if (num_args == 6)
+      {
+        match_type = args[5];
+        assert (match_type != (DB_VALUE *) NULL);
+        match_type_value.assign (db_get_string (match_type), db_get_string_length (match_type));
+      }
+
+      std::string::iterator mt_iter = match_type_value.begin();
+      for (; mt_iter != match_type_value.end(); ++mt_iter)
+      {
+        char opt = *(mt_iter);
+        switch (opt)
+        {
+          case 'c':
+            reg_flags &= ~(std::regex_constants::icase);
+            break;
+          case 'i':
+            reg_flags |= std::regex_constants::icase;
+            break;
+          case 'm':
+          case 'n':
+          case 'u':
+            break;
+        }
+      }
+
       compiled_regex = new std::regex (pattern_string, reg_flags);
     }
     catch (std::regex_error & e)
@@ -4597,48 +4629,78 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
       goto exit;
     }
 
+    /* position option */
     const DB_VALUE *position = NULL;
-    const DB_VALUE *occurrence = NULL;
-    const DB_VALUE *match_type = NULL;
-
     int position_value = 0;
-    int occurrence_value = -1;
-
     if (num_args >= 4)
     {
-  	  position = arg[3];
+  	  position = args[3];
   	  assert (position != (DB_VALUE *) NULL);
-  	  position_value = db_get_int(position);
+  	  position_value = db_get_int(position) - 1;
     }
 
+    std::string prev;
+    std::string target;
+
+    if (position_value != 0 && position_value < src_string.size())
+    {
+      prev = src_string.substr(0, position_value);
+      target = src_string.substr(position_value, src_string.size() - position_value);
+    }
+    else
+    {
+      target = src_string;
+    }
+    /* occurrence option */
+    const DB_VALUE *occurrence = NULL;
+    int occurrence_value = 0;
     if (num_args >= 5)
     {
-      occurrence = arg[4];
+      occurrence = args[4];
       assert (occurrence != (DB_VALUE *) NULL);
       occurrence_value = db_get_int(occurrence);
     }
 
-    if (num_args == 6)
-    {
-      match_type = arg[5];
-      assert (match_type != (DB_VALUE *) NULL);
-    }
-
-    std::string::iterator src_iter = src_string.begin();
-    std::advance (src_iter, position_value);
-
-    std::string fmt = "";
-    if (occurrence_value != -1)
-    {
-      fmt = "$" + std::to_string(occurrence_value);
-    } else {
-      fmt = "$&";
-    }
-
     try
     {
-      std::string::iterator result_iter;
-      std::regex_replace (result_iter, src_iter, src_string.end(), *compiled_regex, fmt);
+
+    if (occurrence_value == 0)
+    {
+      target = std::regex_replace (target, *compiled_regex, repl_string);
+    }
+    else
+    {
+      auto reg_iter = std::sregex_iterator(target.begin(), target.end(), *compiled_regex);
+      auto reg_end = std::sregex_iterator();
+
+      size_t match_size = std::distance(reg_iter, reg_end);
+      int occurrence_idx = occurrence_value - 1;
+
+      std::string nth_replace;
+      auto out = std::back_inserter(nth_replace);
+      auto last_iter = reg_iter;
+
+      for(std::size_t n = occurrence_value; n-- && reg_iter != reg_end; ++reg_iter)
+      {
+        std::string prefix = reg_iter->prefix().str();
+        out = std::copy(prefix.begin(), prefix.end(), out);
+        if (n == 0)
+        {
+          out = reg_iter->format(out, repl_string);
+        }
+        else
+        {
+          std::string match_str = reg_iter->str();
+          out = std::copy(match_str.begin(), match_str.end(), out);
+        }
+        last_iter = reg_iter;
+      }
+      std::string suffix = last_iter->suffix().str();
+      out = std::copy(suffix.begin(), suffix.end(), out);
+      target = nth_replace;
+    }
+
+      std::string result_string = prev.append(target);
 
     char *result_char_string = NULL;
     int result_char_len = result_string.size ();
