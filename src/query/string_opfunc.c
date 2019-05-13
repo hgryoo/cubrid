@@ -4531,16 +4531,15 @@ cleanup:
 }
 
 int
-db_string_regex_replace (DB_VALUE * result, DB_VALUE * arg[], int const num_args,
+db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_args,
 			 std::regex ** comp_regex, char **comp_pattern)
 {
   int error_status = NO_ERROR;
-  std::regex * compiled_regex = NULL;
 
   {
-    const DB_VALUE *src = arg[0];
-    const DB_VALUE *pattern = arg[1];
-    const DB_VALUE *replacement = arg[2];
+    const DB_VALUE *src = args[0];
+    const DB_VALUE *pattern = args[1];
+    const DB_VALUE *replacement = args[2];
 
     /* check for allocated DB values */
     assert (src != (DB_VALUE *) NULL);
@@ -4569,6 +4568,9 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * arg[], int const num_args
 	goto exit;
       }
 
+    // *INDENT-OFF*
+    std::regex * compiled_regex = NULL;
+
     std::string src_string (db_get_string (src), db_get_string_length (src));
     std::string pattern_string (db_get_string (pattern), db_get_string_length (pattern));
     std::string repl_string (db_get_string (replacement), db_get_string_length (replacement));
@@ -4586,10 +4588,50 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * arg[], int const num_args
       goto exit;
     }
 
+    const DB_VALUE *position = NULL;
+    const DB_VALUE *occurrence = NULL;
+    const DB_VALUE *match_type = NULL;
+
+    int position_value = 0;
+    int occurrence_value = -1;
+
+    if (num_args >= 4)
+    {
+  	  position = arg[3];
+  	  assert (position != (DB_VALUE *) NULL);
+  	  position_value = db_get_int(position);
+    }
+
+    if (num_args >= 5)
+    {
+      occurrence = arg[4];
+      assert (occurrence != (DB_VALUE *) NULL);
+      occurrence_value = db_get_int(occurrence);
+    }
+
+    if (num_args == 6)
+    {
+      match_type = arg[5];
+      assert (match_type != (DB_VALUE *) NULL);
+    }
+
+    std::string::iterator src_iter = src_string.begin();
+    std::advance (src_iter, position_value);
+
+    std::string fmt = "";
+    if (occurrence_value != -1)
+    {
+      fmt = "$" + std::to_string(occurrence_value);
+    } else {
+      fmt = "$&";
+    }
+
     try
     {
-      std::string result_string = std::regex_replace (src_string, *compiled_regex, repl_string);
+      std::string::iterator result_iter;
+      std::regex_replace (result_iter, src_iter, src_string.end(), *compiled_regex, fmt);
 
+      std::string repl_string { *result_iter };
       char *result_char_string = NULL;
       int result_char_len = result_string.size ();
       result_char_string = (char *) db_private_alloc (NULL, result_char_len + 1);
@@ -4617,6 +4659,7 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * arg[], int const num_args
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
       goto exit;
     }
+    // *INDENT-ON*
   }
 
 exit:
