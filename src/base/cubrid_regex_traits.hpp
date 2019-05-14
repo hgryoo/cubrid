@@ -28,78 +28,80 @@
 #include <string>
 #include <functional>
 
-namespace cublang {
+namespace cublang
+{
 
   /*
   template typename<charT>
   class cub_locale_facet
   {
     public:
-	  static std::locale::id id;
+    static std::locale::id id;
   };
   */
 
   class cub_collate : public std::collate<char>
   {
     public:
-      cub_collate(int collation_id) : collate()
+      cub_collate (int collation_id) : collate()
       {
-    	coll_id = collation_id;
-        coll = lang_get_collation(collation_id);
+	coll_id = collation_id;
+	coll = lang_get_collation (collation_id);
       }
     protected:
-      virtual int do_compare (const char* low1, const char* high1
-              const char* low2, const char* high2) const
+      virtual int do_compare (const char *low1, const char *high1,
+			      const char *low2, const char *high2) const
       {
-        size_t str1_size = (high1 - low1)/sizeof(char);
-        size_t str2_size = (high2 - low2)/sizeof(char);
+	size_t str1_size = (high1 - low1)/sizeof (char);
+	size_t str2_size = (high2 - low2)/sizeof (char);
 
-        int result = coll->fastcmp (coll, low1, str1_size, low2, str2_size);
-        return result;
+	int result = coll->fastcmp (coll, (unsigned char *) low1, str1_size, (unsigned char *) low2, str2_size);
+	return result;
       }
 
-      virtual std::string do_transform (const char* low, const char* high) const
+      virtual std::string do_transform (const char *low, const char *high) const
       {
-    	std::string transformed;
-	    INTL_CODESET codeset = coll->codeset;
+	INTL_CODESET codeset = coll->codeset;
+	LOCALE_LOCALE_DATA *locale_data = coll->default_lang;
+	TEXT_CONVERSION *txt_conv = locale_data->txt_conv;
 
-	    using namespace std::placeholders;
-	    std::function<int ()> next_coll_seq = std::bind(coll->next_coll_seq, coll, _1, _2, _3, _4);
+	char *transformed_char_p;
+	int transformed_size;
 
-	    char_type* cur = low;
-	    while(cur != high)
-	    {
-	  	  int char_size = 0;
-		  unsigned char* next_char = intl_next_char(cur, codeset, &char_size);
-		  transformed.push_back(next_char);
-		  cur += char_size;
-	    }
+	size_t str_size = (high - low)/sizeof (char);
+	txt_conv->text_to_utf8 ((char *) low, str_size, &transformed_char_p, &transformed_size);
 
-	    return transformed;
+	unsigned char *next_char;
+	int next_size;
+	coll->next_coll_seq (coll, transformed_char_p, transformed_size, next_char, &next_size);
+
+	std::string transformed ((char *) next_char, next_size);
+
+	return transformed;
       }
 
-      virtual long do_hash (const char* low, const char* high) const
+      virtual long do_hash (const char *low, const char *high) const
       {
-        size_t str_size = (high1 - low1)/sizeof(char);
-        unsigned int pseudo_key = coll->mht2str (coll, low1, str1_size, low2, str2_size);
-        return pseudo_key;
+	size_t str_size = (high - low)/sizeof (char);
+	unsigned int pseudo_key = coll->mht2str (coll, (unsigned char *) low, str_size);
+	return pseudo_key;
       }
     private:
       int coll_id;
       LANG_COLLATION *coll {nullptr};
   };
 
-/*
-  template typename<charT>
-  class cub_regex_traits : public regex_traits<charT>
-  {
-  	  public:
-	  	  charT translate(char c) const;
-	  	  charT translate_nocase(char c) const;
-	  	  template< class ForwardIt >
-	  	  string_type transform( ForwardIt first, ForwardIt last) const;
-  };
-*/
+  /*
+    template typename<charT>
+    class cub_regex_traits : public regex_traits<charT>
+    {
+    	  public:
+  	  	  charT translate(char c) const;
+  	  	  charT translate_nocase(char c) const;
+  	  	  template< class ForwardIt >
+  	  	  string_type transform( ForwardIt first, ForwardIt last) const;
+    };
+  */
 }
 
 #ifndef _CUBRID_REGEX_TRAITS_HPP_
