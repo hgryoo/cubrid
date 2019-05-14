@@ -4312,8 +4312,8 @@ regex_compile (const char *pattern, std::regex * &rx_compiled_regex,
   try
   {
     rx_compiled_regex = new std::regex ();
-    rx_compiled_regex.imbue(loc);
-    rx_compiled_regex.assign(pattern, reg_flags);
+    rx_compiled_regex->imbue(loc);
+    rx_compiled_regex->assign(pattern, reg_flags);
   }
   catch (std::regex_error & e)
   {
@@ -4483,6 +4483,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
       // *INDENT-OFF*
       std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
       reg_flags |= std::regex_constants::nosubs;
+      reg_flags |= std::regex_constants::collate;
       if (!is_case_sensitive)
 	{
 	  reg_flags |= std::regex_constants::icase;
@@ -4495,8 +4496,8 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
       const char* lang_name = collation->default_lang->lang_name;
 
       std::string locale_str (lang_name);
-      locale_str.push_back(".");
-      locale_str.push_back(codeset_name);
+      locale_str += ".";
+      locale_str.append(codeset_name);
 
       std::locale loc( std::locale(locale_str), new cublang::cub_collate(coll_id) );
 
