@@ -4664,33 +4664,34 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
       auto reg_iter = std::sregex_iterator(target.begin(), target.end(), *compiled_regex);
       auto reg_end = std::sregex_iterator();
 
-      size_t match_size = std::distance(reg_iter, reg_end);
-      int occurrence_idx = occurrence_value - 1;
-
-      std::string nth_replace;
-      auto out = std::back_inserter(nth_replace);
-      auto last_iter = reg_iter;
-
-      for(std::size_t n = occurrence_value; n-- && reg_iter != reg_end; ++reg_iter)
+      if (reg_iter != reg_end)
       {
-        std::string prefix = reg_iter->prefix().str();
-        out = std::copy(prefix.begin(), prefix.end(), out);
-        if (n == 0)
-        {
-          out = reg_iter->format(out, repl_string);
-        }
-        else
-        {
-          std::string match_str = reg_iter->str();
-          out = std::copy(match_str.begin(), match_str.end(), out);
-        }
-        last_iter = reg_iter;
-      }
-      std::string suffix = last_iter->suffix().str();
-      out = std::copy(suffix.begin(), suffix.end(), out);
-      target = nth_replace;
-    }
+        size_t match_size = std::distance(reg_iter, reg_end);
 
+        std::string replaced_str;
+        auto out = std::back_inserter(replaced_str);
+        auto last_iter = reg_iter;
+
+        for(std::size_t n = occurrence_value; n-- && reg_iter != reg_end; ++reg_iter)
+        {
+          std::string prefix = reg_iter->prefix().str();
+          out = std::copy(prefix.begin(), prefix.end(), out);
+          if (n == 0)
+          {
+            out = reg_iter->format(out, repl_string);
+          }
+          else
+          {
+            std::string match_str = reg_iter->str();
+            out = std::copy(match_str.begin(), match_str.end(), out);
+          }
+          last_iter = reg_iter;
+        }
+        std::string suffix = last_iter->suffix().str();
+        out = std::copy(suffix.begin(), suffix.end(), out);
+        target = replaced_str;
+      }
+     }
       std::string result_string = prev.append(target);
 
       char *result_char_string = NULL;
