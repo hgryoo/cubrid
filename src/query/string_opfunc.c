@@ -56,6 +56,9 @@
 #include <algorithm>
 #include <regex>
 #include <string>
+#include <locale>
+#include "cubrid_regex_traits.hpp"
+
 #if !defined (SERVER_MODE)
 #include "parse_tree.h"
 #include "es_common.h"
@@ -4301,14 +4304,16 @@ db_string_like (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_
 
 static int
 regex_compile (const char *pattern, std::regex * &rx_compiled_regex,
-	       std::regex_constants::syntax_option_type & reg_flags)
+	       std::regex_constants::syntax_option_type & reg_flags, std::locale & loc)
 {
   int error_status = NO_ERROR;
 
   // *INDENT-OFF*
   try
   {
-    rx_compiled_regex = new std::regex (pattern, reg_flags);
+    rx_compiled_regex = new std::regex ();
+    rx_compiled_regex.imbue(loc);
+    rx_compiled_regex.assign(pattern, reg_flags);
   }
   catch (std::regex_error & e)
   {
@@ -4364,6 +4369,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
   const char *pattern_char_string_p = NULL;
   bool is_case_sensitive = false;
   int src_length = 0, pattern_length = 0;
+  int coll_id = -1;
 
   char rx_err_buf[REGEX_MAX_ERROR_MSG_SIZE] = { '\0' };
   char *rx_compiled_pattern = NULL;
@@ -4427,6 +4433,15 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
       goto cleanup;
     }
 
+  LANG_RT_COMMON_COLL (db_get_string_collation (src_string), db_get_string_collation (pattern), coll_id);
+  if (coll_id == -1)
+    {
+      error_status = ER_QSTR_INCOMPATIBLE_COLLATIONS;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+      *result = V_ERROR;
+      goto cleanup;
+    }
+
   src_char_string_p = db_get_string (src_string);
   src_length = db_get_string_size (src_string);
 
@@ -4472,9 +4487,21 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
 	{
 	  reg_flags |= std::regex_constants::icase;
 	}
-      // *INDENT-ON*
 
-      error_status = regex_compile (rx_compiled_pattern, rx_compiled_regex, reg_flags);
+      LANG_COLLATION *collation = lang_get_collation(coll_id);
+      assert (collation != NULL);
+      INTL_CODESET codeset = collation->codeset;
+      const char* codeset_name = lang_get_codeset_name(codeset);
+      const char* lang_name = collation->default_lang->lang_name;
+
+      std::string locale_str (lang_name);
+      locale_str.push_back(".");
+      locale_str.push_back(codeset_name);
+
+      std::locale loc( std::locale(locale_str), new cublang::cub_collate(coll_id) );
+
+      // *INDENT-ON*
+      error_status = regex_compile (rx_compiled_pattern, rx_compiled_regex, reg_flags, loc);
       if (error_status != NO_ERROR)
 	{
 	  ASSERT_ERROR ();
