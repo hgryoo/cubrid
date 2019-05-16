@@ -146,7 +146,7 @@ set(BASE_HEADERS
   ${BASE_DIR}/porting_inline.hpp
   ${BASE_DIR}/printer.hpp
   ${BASE_DIR}/resource_tracker.hpp
-  ${BASE_DIR}/cubrid_regex_traits.hpp
+  ${BASE_DIR}/cubrid_locale.hpp
 )
 
 set(HEAPLAYER_SOURCES
