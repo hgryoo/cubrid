@@ -2524,7 +2524,7 @@ eval_pred_rlike7 (THREAD_ENTRY * thread_p, const PRED_EXPR * pr, val_descr * vd,
     }
 
   /* evaluate regular expression match */
-  db_string_rlike (peek_val1, peek_val2, peek_val3, &et_rlike->compiled_regex, &et_rlike->compiled_pattern,
+  db_string_rlike (peek_val1, peek_val2, peek_val3, &et_rlike->compiled_regex, &et_rlike->compiled_pattern, &et_rlike->char_type,
 		   &regexp_res);
 
   return (DB_LOGICAL) regexp_res;

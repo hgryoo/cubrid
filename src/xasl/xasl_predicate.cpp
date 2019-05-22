@@ -61,14 +61,32 @@ namespace cubxasl
 	    free_regu_not_null (pe.m_eval_term.et.et_rlike.src);
 	    free_regu_not_null (pe.m_eval_term.et.et_rlike.pattern);
 	    free_regu_not_null (pe.m_eval_term.et.et_rlike.case_sensitive);
+
+        C_TYPE ctype = pe.m_eval_term.et.et_rlike.char_type;
 	    if (pe.m_eval_term.et.et_rlike.compiled_regex != NULL)
 	      {
-		delete pe.m_eval_term.et.et_rlike.compiled_regex;
-		pe.m_eval_term.et.et_rlike.compiled_regex = NULL;
+            void *compiled_regex = pe.m_eval_term.et.et_rlike.compiled_regex;
+            if (ctype == C_TYPE::CHAR)
+            {
+              delete static_cast<std::basic_regex<char> *> (compiled_regex);
+            }
+            else
+            {
+              delete static_cast<std::basic_regex<wchar_t> *> (compiled_regex);
+            }
+		    pe.m_eval_term.et.et_rlike.compiled_regex = NULL;
 	      }
 	    if (pe.m_eval_term.et.et_rlike.compiled_pattern != NULL)
 	      {
-		db_private_free_and_init (NULL, pe.m_eval_term.et.et_rlike.compiled_pattern);
+           void *compiled_pattern = pe.m_eval_term.et.et_rlike.compiled_pattern;
+           if (ctype == C_TYPE::CHAR)
+           {
+              db_private_free_and_init (NULL, (char *) compiled_pattern);
+           }            
+           else
+           {
+              db_private_free_and_init (NULL, (wchar_t *) compiled_pattern);
+           }
 	      }
 	    break;
 	  }

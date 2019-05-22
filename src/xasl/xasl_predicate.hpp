@@ -93,6 +93,13 @@ typedef enum
   F_SOME
 } QL_FLAG;
 
+typedef enum
+{
+  CHAR,
+  WCHAR,
+  NONE
+} C_TYPE;
+
 namespace cubxasl
 {
   // forward definitions
@@ -134,8 +141,9 @@ namespace cubxasl
     regu_variable_node *src;
     regu_variable_node *pattern;
     regu_variable_node *case_sensitive;
-    mutable std::regex *compiled_regex;
+    mutable void *compiled_regex;
     mutable char *compiled_pattern;
+    mutable C_TYPE char_type;
   };
 
   struct eval_term
