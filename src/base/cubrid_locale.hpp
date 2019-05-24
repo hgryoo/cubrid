@@ -108,8 +108,7 @@ namespace cublang
   //
   // common functions
   //
-
-  std::locale get_standard_locale(const LANG_COLLATION * lang_coll)
+  std::string get_standard_name(const LANG_COLLATION * lang_coll)
   {
     INTL_CODESET codeset = lang_coll->codeset;
     const char* codeset_name = lang_get_codeset_name(codeset);
@@ -119,11 +118,18 @@ namespace cublang
     locale_str += ".";
     locale_str += codeset_name;
 
+    return locale_str;
+  }
+
+  std::locale get_standard_locale(const LANG_COLLATION * lang_coll)
+  {
+    std::string locale_str = get_standard_name (lang_coll);
     std::locale loc (locale_str.c_str());
     //std::locale loc_w_facet (loc, new cub_collate(lang_coll->coll.coll_id));
 
     return loc;
   }
+  
   //
   // cub_ctype
   //

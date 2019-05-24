@@ -4304,7 +4304,7 @@ db_string_like (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_
 
 template <typename charT>
 static int
-regex_compile (const charT *pattern, std::basic_regex<charT> * &rx_compiled_regex,
+regex_compile (const std::basic_string<charT> &pattern, std::basic_regex<charT, std::regex_traits<charT> > * &rx_compiled_regex,
 	       std::regex_constants::syntax_option_type & reg_flags, std::locale & loc)
 {
   int error_status = NO_ERROR;
@@ -4312,7 +4312,7 @@ regex_compile (const charT *pattern, std::basic_regex<charT> * &rx_compiled_rege
   // *INDENT-OFF*
   try
   {
-    rx_compiled_regex = new std::basic_regex<charT> ();
+    rx_compiled_regex = new std::basic_regex<charT, std::regex_traits<charT> > ();
     rx_compiled_regex->imbue(loc);
     rx_compiled_regex->assign(pattern, reg_flags);
   }
@@ -4356,9 +4356,10 @@ regex_compile (const charT *pattern, std::basic_regex<charT> * &rx_compiled_rege
  *
  */
 
+template <typename charT>
 int
 db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * case_sensitive,
-		 void ** comp_regex, char **comp_pattern, C_TYPE *char_type, int *result)
+		std::basic_regex<charT, std::regex_traits<charT> > ** comp_regex, char **comp_pattern, CHAR_TYPE *char_type, int *result)
 {
   QSTR_CATEGORY src_category = QSTR_UNKNOWN;
   QSTR_CATEGORY pattern_category = QSTR_UNKNOWN;
@@ -4373,10 +4374,10 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
   int coll_id = -1;
 
   char rx_err_buf[REGEX_MAX_ERROR_MSG_SIZE] = { '\0' };
-  
   char *rx_compiled_pattern = NULL;
-  void *rx_compiled_regex = NULL;
+  std::basic_regex<charT, std::regex_traits<charT> > *rx_compiled_regex = NULL;
 
+  {
   /* check for allocated DB values */
   assert (src_string != NULL);
   assert (pattern != NULL);
@@ -4443,23 +4444,29 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
   bool is_variable_char = false;
   if (LANG_VARIABLE_CHARSET (collation->codeset))
   {
+    if (char_type != NULL) {
+      *char_type = CHAR_TYPE::WCHAR;
+    }
     is_variable_char = true;
   }
+
+  typedef std::codecvt_byname<char, wchar_t, std::mbstate_t> CVT;
+  auto wstring_conv = std::wstring_convert <CVT> (
+                new CVT(
+                    cublang::get_standard_name(collation)));
+
   std::locale loc = cublang::get_standard_locale(collation);
-
-  if (char_type != C_TYPE::NONE)
+  
+  /* get compiled pattern */
+  if (comp_pattern != NULL)
   {
-    /* get compiled pattern */
-    if (comp_pattern != NULL)
-      {
-        rx_compiled_pattern = *comp_pattern;
-      }
+    rx_compiled_pattern = *comp_pattern;
+  }
 
-    /* if regex object was specified, use local regex */
-    if (comp_regex != NULL)
-      {
-        rx_compiled_regex = *comp_regex;
-      }
+  /* if regex object was specified, use local regex */
+  if (comp_regex != NULL)
+  {
+    rx_compiled_regex = *comp_regex;
   }
 
   /* check for recompile */
@@ -4491,6 +4498,16 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
       memcpy (rx_compiled_pattern, pattern_char_string_p, pattern_length);
       rx_compiled_pattern[pattern_length] = '\0';
 
+      std::basic_string<charT> pattern;
+      if (is_variable_char)
+      {
+        pattern = wstring_conv.from_bytes (rx_compiled_pattern);
+      }
+      else
+      {
+        pattern = std::basic_string<char> (rx_compiled_pattern);
+      }
+
       // *INDENT-OFF*
       std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
       reg_flags |= std::regex_constants::nosubs;
@@ -4501,7 +4518,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
 	}
 
       // *INDENT-ON*
-      error_status = regex_compile (rx_compiled_pattern, rx_compiled_regex, reg_flags, loc);
+      error_status = regex_compile (pattern, rx_compiled_regex, reg_flags, loc);
       if (error_status != NO_ERROR)
 	{
 	  ASSERT_ERROR ();
@@ -4513,7 +4530,16 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
   // *INDENT-OFF*
   try
     {
-      std::basic_string<charT> src (src_char_string_p, src_length);
+      std::basic_string<charT> src;
+      if (is_variable_char)
+      {
+        src = wstring_conv.from_bytes (src_char_string_p);
+      }
+      else
+      {
+        src = std::basic_string<char> (src_char_string_p, src_length);
+      }
+
       bool match = std::regex_search (src, *rx_compiled_regex);
       *result = match ? V_TRUE : V_FALSE;
     }
@@ -4525,6 +4551,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
       *result = V_ERROR;
       goto cleanup;
     }
+  }
   // *INDENT-ON*
 
 cleanup:

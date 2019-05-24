@@ -26,8 +26,6 @@
 
 #include "dbtype_def.h"             // DB_TYPE
 
-#include <regex>
-
 // forward definitions
 class regu_variable_node;
 
@@ -95,10 +93,9 @@ typedef enum
 
 typedef enum
 {
-  CHAR,
-  WCHAR,
-  NONE
-} C_TYPE;
+  CHAR = 1,
+  WCHAR
+} CHAR_TYPE;
 
 namespace cubxasl
 {
@@ -143,7 +140,7 @@ namespace cubxasl
     regu_variable_node *case_sensitive;
     mutable void *compiled_regex;
     mutable char *compiled_pattern;
-    mutable C_TYPE char_type;
+    mutable CHAR_TYPE char_type;
   };
 
   struct eval_term

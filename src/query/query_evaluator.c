@@ -43,6 +43,8 @@
 #include "thread_entry.hpp"
 #include "xasl_predicate.hpp"
 
+#include <regex>
+
 #define UNKNOWN_CARD   -2	/* Unknown cardinality of a set member */
 
 static DB_LOGICAL eval_negative (DB_LOGICAL res);
@@ -2524,10 +2526,18 @@ eval_pred_rlike7 (THREAD_ENTRY * thread_p, const PRED_EXPR * pr, val_descr * vd,
     }
 
   /* evaluate regular expression match */
-  db_string_rlike (peek_val1, peek_val2, peek_val3, &et_rlike->compiled_regex, &et_rlike->compiled_pattern, &et_rlike->char_type,
+  DB_VALUE *src = peek_val1;
+  if (!DB_IS_NULL (src) && LANG_VARIABLE_CHARSET (db_get_string_codeset (src)))
+  {
+     db_string_rlike (peek_val1, peek_val2, peek_val3, (std::wregex **) &et_rlike->compiled_regex, &et_rlike->compiled_pattern, &et_rlike->char_type, 
 		   &regexp_res);
-
-  return (DB_LOGICAL) regexp_res;
+  }
+  else
+  {
+     db_string_rlike (peek_val1, peek_val2, peek_val3, (std::regex **) &et_rlike->compiled_regex, &et_rlike->compiled_pattern, &et_rlike->char_type,
+		   &regexp_res);
+  }
+    return (DB_LOGICAL) regexp_res;
 }
 
 /*

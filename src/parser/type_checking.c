@@ -32,6 +32,7 @@
 #include <math.h>
 #include <limits.h>
 #include <vector>
+#include <regex>
 
 #if defined(WINDOWS)
 #include "porting.h"
@@ -18317,7 +18318,18 @@ pt_evaluate_db_value_expr (PARSER_CONTEXT * parser, PT_NODE * expr, PT_OP_TYPE o
 	case PT_RLIKE_BINARY:
 	case PT_NOT_RLIKE_BINARY:
 	  {
-	    int err = db_string_rlike (arg1, arg2, arg3, NULL, NULL, &cmp);
+        int err = NO_ERROR;
+        DB_VALUE *src = arg1;
+
+        if (!DB_IS_NULL (src) && LANG_VARIABLE_CHARSET (db_get_string_codeset (src)))
+        {
+	      err = db_string_rlike (arg1, arg2, arg3, (std::wregex **) NULL, NULL, NULL, &cmp);
+        }
+        else
+        {
+          err = db_string_rlike (arg1, arg2, arg3, (std::regex **) NULL, NULL, NULL, &cmp);
+        }
+
 
 	    switch (err)
 	      {
