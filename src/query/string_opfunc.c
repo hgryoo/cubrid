@@ -4329,14 +4329,6 @@ regex_compile (const std::basic_string<charT> &pattern, std::basic_regex<charT, 
   return error_status;
 }
 
-// utility wrapper to adapt locale-bound facets for wstring/wbuffer convert
-template<class Facet>
-struct deletable_facet : Facet
-{
-    using Facet::Facet; // inherit constructors
-    ~deletable_facet() {}
-};
-
 /*
  * db_string_rlike () - check for match between string and regex
  *
@@ -4449,13 +4441,9 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
   LANG_COLLATION *collation = lang_get_collation(coll_id);
   assert (collation != NULL);
 
-  typedef deletable_facet<std::codecvt_byname<wchar_t, char, std::mbstate_t>> CVT;
-  std::wstring_convert <CVT> wstring_conv (
-              new CVT(
-                    cublang::get_standard_name(collation)));
-
   std::locale loc = cublang::get_standard_locale(collation);
-  
+  std::wstring_convert <cublang::CVT> wstring_conv (cublang::get_codecvt_facet(collation));
+
   /* get compiled pattern */
   if (comp_pattern != NULL)
   {
