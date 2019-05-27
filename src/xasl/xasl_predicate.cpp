@@ -65,16 +65,8 @@ namespace cubxasl
         CHAR_TYPE ctype = pe.m_eval_term.et.et_rlike.char_type;
 	    if (pe.m_eval_term.et.et_rlike.compiled_regex != NULL)
 	      {
-            void *compiled_regex = pe.m_eval_term.et.et_rlike.compiled_regex;
-            if (ctype == CHAR_TYPE::CHAR)
-            {
-              delete static_cast<std::regex *> (compiled_regex);
-            }
-            else
-            {
-              delete static_cast<std::wregex *> (compiled_regex);
-            }
-		    pe.m_eval_term.et.et_rlike.compiled_regex = NULL;
+            delete  pe.m_eval_term.et.et_rlike.compiled_regex;
+	        pe.m_eval_term.et.et_rlike.compiled_regex = NULL;
 	      }
 	    if (pe.m_eval_term.et.et_rlike.compiled_pattern != NULL)
 	      {

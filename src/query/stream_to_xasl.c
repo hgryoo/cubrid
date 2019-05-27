@@ -4266,7 +4266,6 @@ stx_build_rlike_eval_term (THREAD_ENTRY * thread_p, char *ptr, RLIKE_EVAL_TERM *
   /* initialize regex object pointer */
   rlike_eval_term->compiled_regex = NULL;
   rlike_eval_term->compiled_pattern = NULL;
-  rlike_eval_term->char_type = CHAR_TYPE::CHAR;
 
   return ptr;
 

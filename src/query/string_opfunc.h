@@ -222,9 +222,8 @@ extern int db_string_like (const DB_VALUE * src_string, const DB_VALUE * pattern
 			   int *result);
 
 #ifdef __cplusplus
-template <typename charT>
 extern int db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * case_sensitive,
-			    std::basic_regex<charT, std::regex_traits<charT> > ** comp_regex, char **comp_pattern, CHAR_TYPE *char_type, int *result);
+			    std::wregex ** comp_regex, char **comp_pattern, int *result);
 #endif
 
 extern int db_string_limit_size_string (DB_VALUE * src_string, DB_VALUE * result, const int new_size, int *spare_bytes);

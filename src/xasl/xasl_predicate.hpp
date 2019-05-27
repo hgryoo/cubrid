@@ -25,6 +25,7 @@
 #define _XASL_PREDICATE_HPP_
 
 #include "dbtype_def.h"             // DB_TYPE
+#include <regex>
 
 // forward definitions
 class regu_variable_node;
@@ -138,9 +139,8 @@ namespace cubxasl
     regu_variable_node *src;
     regu_variable_node *pattern;
     regu_variable_node *case_sensitive;
-    mutable void *compiled_regex;
+    mutable std::wregex *compiled_regex;
     mutable char *compiled_pattern;
-    mutable CHAR_TYPE char_type;
   };
 
   struct eval_term

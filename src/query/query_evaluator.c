@@ -2526,17 +2526,7 @@ eval_pred_rlike7 (THREAD_ENTRY * thread_p, const PRED_EXPR * pr, val_descr * vd,
     }
 
   /* evaluate regular expression match */
-  DB_VALUE *src = peek_val1;
-  if (!DB_IS_NULL (src) && LANG_VARIABLE_CHARSET (db_get_string_codeset (src)))
-  {
-     db_string_rlike (peek_val1, peek_val2, peek_val3, (std::wregex **) &et_rlike->compiled_regex, &et_rlike->compiled_pattern, &et_rlike->char_type, 
-		   &regexp_res);
-  }
-  else
-  {
-     db_string_rlike (peek_val1, peek_val2, peek_val3, (std::regex **) &et_rlike->compiled_regex, &et_rlike->compiled_pattern, &et_rlike->char_type,
-		   &regexp_res);
-  }
+    db_string_rlike (peek_val1, peek_val2, peek_val3, &et_rlike->compiled_regex, &et_rlike->compiled_pattern, &regexp_res);
     return (DB_LOGICAL) regexp_res;
 }
 

@@ -4329,6 +4329,14 @@ regex_compile (const std::basic_string<charT> &pattern, std::basic_regex<charT, 
   return error_status;
 }
 
+// utility wrapper to adapt locale-bound facets for wstring/wbuffer convert
+template<class Facet>
+struct deletable_facet : Facet
+{
+    using Facet::Facet; // inherit constructors
+    ~deletable_facet() {}
+};
+
 /*
  * db_string_rlike () - check for match between string and regex
  *
@@ -4356,10 +4364,9 @@ regex_compile (const std::basic_string<charT> &pattern, std::basic_regex<charT, 
  *
  */
 
-template <typename charT>
 int
 db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * case_sensitive,
-		std::basic_regex<charT, std::regex_traits<charT> > ** comp_regex, char **comp_pattern, CHAR_TYPE *char_type, int *result)
+		std::wregex ** comp_regex, char **comp_pattern, int *result)
 {
   QSTR_CATEGORY src_category = QSTR_UNKNOWN;
   QSTR_CATEGORY pattern_category = QSTR_UNKNOWN;
@@ -4375,7 +4382,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
 
   char rx_err_buf[REGEX_MAX_ERROR_MSG_SIZE] = { '\0' };
   char *rx_compiled_pattern = NULL;
-  std::basic_regex<charT, std::regex_traits<charT> > *rx_compiled_regex = NULL;
+  std::wregex *rx_compiled_regex = NULL;
 
   {
   /* check for allocated DB values */
@@ -4441,18 +4448,10 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
 
   LANG_COLLATION *collation = lang_get_collation(coll_id);
   assert (collation != NULL);
-  bool is_variable_char = false;
-  if (LANG_VARIABLE_CHARSET (collation->codeset))
-  {
-    if (char_type != NULL) {
-      *char_type = CHAR_TYPE::WCHAR;
-    }
-    is_variable_char = true;
-  }
 
-  typedef std::codecvt_byname<char, wchar_t, std::mbstate_t> CVT;
-  auto wstring_conv = std::wstring_convert <CVT> (
-                new CVT(
+  typedef deletable_facet<std::codecvt_byname<wchar_t, char, std::mbstate_t>> CVT;
+  std::wstring_convert <CVT> wstring_conv (
+              new CVT(
                     cublang::get_standard_name(collation)));
 
   std::locale loc = cublang::get_standard_locale(collation);
@@ -4498,15 +4497,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
       memcpy (rx_compiled_pattern, pattern_char_string_p, pattern_length);
       rx_compiled_pattern[pattern_length] = '\0';
 
-      std::basic_string<charT> pattern;
-      if (is_variable_char)
-      {
-        pattern = wstring_conv.from_bytes (rx_compiled_pattern);
-      }
-      else
-      {
-        pattern = std::basic_string<char> (rx_compiled_pattern);
-      }
+      std::wstring pattern = wstring_conv.from_bytes (rx_compiled_pattern);
 
       // *INDENT-OFF*
       std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
@@ -4518,7 +4509,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
 	}
 
       // *INDENT-ON*
-      error_status = regex_compile (pattern, rx_compiled_regex, reg_flags, loc);
+      error_status = regex_compile<wchar_t> (pattern, rx_compiled_regex, reg_flags, loc);
       if (error_status != NO_ERROR)
 	{
 	  ASSERT_ERROR ();
@@ -4530,16 +4521,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
   // *INDENT-OFF*
   try
     {
-      std::basic_string<charT> src;
-      if (is_variable_char)
-      {
-        src = wstring_conv.from_bytes (src_char_string_p);
-      }
-      else
-      {
-        src = std::basic_string<char> (src_char_string_p, src_length);
-      }
-
+      std::wstring src = wstring_conv.from_bytes (src_char_string_p);
       bool match = std::regex_search (src, *rx_compiled_regex);
       *result = match ? V_TRUE : V_FALSE;
     }
