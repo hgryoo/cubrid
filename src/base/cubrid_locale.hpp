@@ -29,8 +29,13 @@
 #include "language_support.h"
 #include "string_opfunc.h"
 #include <locale>
+#include <codecvt>
 #include <string>
 #include <functional>
+
+#define EUC_SPACE 0xa1
+#define ASCII_SPACE 0x20
+#define ZERO '\0'
 
 namespace cublang
 {
@@ -69,32 +74,22 @@ namespace cublang
 
       int coll_id;
   };
-
-  class cub_collate : public std::collate<char>
+*/
+  class cub_collate : public std::collate<wchar_t>
   {
     public:
       cub_collate (int collation_id);
     protected:
-      virtual int do_compare (const char *low1, const char *high1,
-			      const char *low2, const char *high2) const;
-      virtual std::string do_transform (const char *low, const char *high) const;
-      virtual long do_hash (const char *low, const char *high) const;
+      virtual int do_compare (const wchar_t *low1, const wchar_t *high1,
+			      const wchar_t *low2, const wchar_t *high2) const;
+      virtual std::wstring do_transform (const wchar_t *low, const wchar_t *high) const;
+      virtual long do_hash (const wchar_t *low, const wchar_t *high) const;
+
+      COLL_CONTRACTION * get_contr (const COLL_DATA &coll_data, const wchar_t cp) const;
 
       int coll_id;
-      LANG_COLLATION *coll {nullptr};
+      LANG_COLLATION *lang_coll {nullptr};
   };
-*/
-  /*
-    template typename<charT>
-    class cub_regex_traits : public regex_traits<charT>
-    {
-    	  public:
-  	  	  charT translate(char c) const;
-  	  	  charT translate_nocase(char c) const;
-  	  	  template< class ForwardIt >
-  	  	  string_type transform( ForwardIt first, ForwardIt last) const;
-    };
-  */
 }
 
 namespace cublang
@@ -127,8 +122,8 @@ namespace cublang
     try
     {
       std::locale loc (locale_str.c_str());
-      //std::locale loc_w_facet (loc, new cub_collate(lang_coll->coll.coll_id));
-      return loc;
+      std::locale loc_w_facet (loc, new cub_collate(lang_coll->coll.coll_id));
+      return loc_w_facet;
     }
     catch (std::exception &e)
     {
@@ -258,87 +253,216 @@ namespace cublang
   cub_ctype::do_tonarrow (char *beg, const char *end, cat dflt, char *dst) const
   {
   }
-
+  */
   //
   // cub_collate
   //
   cub_collate::cub_collate (int collation_id) : collate()
   {
     coll_id = collation_id;
-    coll = lang_get_collation (collation_id);
+    lang_coll = lang_get_collation (collation_id);
   }
 
   int
-  cub_collate::do_compare (const char *low1, const char *high1,
-			   const char *low2, const char *high2) const
+  cub_collate::do_compare (const wchar_t *low1, const wchar_t *high1,
+			   const wchar_t *low2, const wchar_t *high2) const
   {
-    size_t str1_size = (high1 - low1) / sizeof (char);
-    size_t str2_size = (high2 - low2) / sizeof (char);
+    INTL_CODESET codeset = lang_coll->codeset;
 
-    int result = coll->fastcmp (coll, (unsigned char *) low1, str1_size, (unsigned char *) low2, str2_size);
-    return result;
+    size_t size1 = (high1 - low1) / sizeof(wchar_t);
+    size_t size2 = (high2 - low2) / sizeof(wchar_t);
+    std::wstring wstr1 (low1, size1);
+    std::wstring wstr2 (low2, size2);
+
+    if (codeset == INTL_CODESET_UTF8)
+    {
+      std::wstring_convert<std::codecvt_utf8<wchar_t>> conv;
+      std::string u8str1 = conv.to_bytes(wstr1);
+      std::string u8str2 = conv.to_bytes(wstr2);
+
+      int result = lang_coll->fastcmp (lang_coll, (unsigned char *) u8str1.c_str(), u8str1.size(), (unsigned char *) u8str2.c_str(), u8str2.size());
+      return result;
+    }
+    else
+    {
+      return std::collate<wchar_t>::do_compare(low1, high1, low2, high2);
+    }
   }
 
-  std::string
-  cub_collate::do_transform (const char *low, const char *high) const
+  COLL_CONTRACTION*
+  cub_collate::get_contr (const COLL_DATA &coll_data, const wchar_t cp) const
   {
-    INTL_CODESET codeset = coll->codeset;
+    const int *first_contr;
+    int contr_id;
+    COLL_CONTRACTION *contr;
+    int cmp;
 
-    std::string transformed;
-    int size_byte;
+    first_contr = coll_data.cp_first_contr_array;
+    (first_contr != NULL);
+    contr_id = first_contr[(unsigned int) cp - coll_data.cp_first_contr_offset];
 
-    char *ptr = low;
-    while (ptr < low)
+    if (contr_id == -1)
     {
-      coll->next_coll_seq (coll, (unsigned char *) transformed_char_p, transformed_size, next_char, &size_byte);
-      ptr += size_byte;
+      return NULL;
     }
 
-    size_t size = (high - low) / sizeof (char);
-    int len = 0;
-    intl_char_count (low, size, codeset, &len);
+    assert (contr_id >= 0 && contr_id < coll_data.count_contr);
+    contr = &(coll_data.contr_list[contr_id]);
 
-    std::string transformed (len);
-    char *ptr = low;
-    char *next = ptr;
-    int dummy;
-    for (int i = 0; i < len; i++)
+    std::wstring_convert<std::codecvt_utf8<wchar_t>> conv;
+    std::string u8str = conv.to_bytes(cp);
+    size_t u8str_size = u8str.size();
+    do
+    {
+      if ((int) contr->size > u8str_size)
       {
-	INTL_NEXT_CHAR (next, ptr, codeset, &dummy);
-	ptr = next;
+        cmp = memcmp (contr->c_buf, u8str.c_str(), u8str_size);
+        if (cmp == 0)
+          {
+            cmp = 1;
+          }
+      }
+          else
+      {
+        cmp = memcmp (contr->c_buf, u8str.c_str(), contr->size);
       }
 
-    LANG_LOCALE_DATA *locale_data = coll->default_lang;
-    INTL_LANG lang_id = locale_data->lang_id;
+      if (cmp >= 0)
+      {
+        break;
+      }
+      contr++;
+      contr_id++;
+    }
+    while (contr_id < coll_data.count_contr);
 
-    const LANG_LOCALE_DATA *specific_loc = lang_get_specific_locale (lang_id, codeset);
+    if (cmp != 0)
+      {
+        contr = NULL;
+      }
 
-    assert (specific_loc->txt_conv != NULL);
-    TEXT_CONVERSION *txt_conv = specific_loc->txt_conv;
+    return contr;
+  }
 
-    char *transformed_char_p;
-    int transformed_size;
+  std::wstring
+  cub_collate::do_transform (const wchar_t *low, const wchar_t *high) const
+  {
+    INTL_CODESET codeset = lang_coll->codeset;
 
-    size_t str_size = (high - low) / sizeof (char);
-    txt_conv->text_to_utf8_func ((char *) low, str_size, &transformed_char_p, &transformed_size);
+    size_t size = (high - low) / sizeof(wchar_t);
+    std::wstring s (low, size);
 
-    unsigned char *next_char;
-    int next_size;
-    coll->next_coll_seq (coll, (unsigned char *) transformed_char_p, transformed_size, next_char, &next_size);
+    wchar_t *ptr = (wchar_t *)low;
+    const wchar_t *end = high;
+    
+    std::wstring t;
+    
+    if (codeset == INTL_CODESET_UTF8)
+    {
+      const int alpha_cnt = lang_coll->coll.w_count;
+      const unsigned int *weight_ptr = lang_coll->coll.weights;
+      const COLL_DATA &coll = lang_coll->coll;
+      if (coll.uca_exp_num >1)
+      {
+        t = s;
+      }
+      else if (coll.count_contr > 0)
+      {
+        while (ptr < end)
+        {
+          if (*ptr < (wchar_t) alpha_cnt)
+          {
+            COLL_CONTRACTION *contr = NULL;
+            wchar_t cp = *ptr;
+            if ( cp >= coll.cp_first_contr_offset 
+                 && cp < (coll.cp_first_contr_offset + coll.cp_first_contr_count)
+                 && (contr = this->get_contr(coll, (const wchar_t) cp)) != NULL)
+            {
+              assert (contr != NULL);
+              unsigned int w_cp = contr->wv;
+              t.push_back((wchar_t) w_cp);
+            }
+            else
+            {
+              t.push_back((wchar_t) weight_ptr[*ptr]);
+            }
+          }
+          else
+          {
+            t.push_back(*ptr);
+          }
+          ptr++;
+        }
+      }
+      else
+      {
+        while (ptr < end)
+        {
+          if (*ptr < (wchar_t) alpha_cnt)
+          {
+            t.push_back((wchar_t) weight_ptr[*ptr]);
+          }
+          else
+          {
+            t.push_back(*ptr);
+          }
+          ptr++;
+        }
+      }
+    }
+    else if (codeset == INTL_CODESET_KSC5601_EUC)
+    {
+      while (ptr < end)
+      {
+        if (*ptr == ASCII_SPACE || *ptr == EUC_SPACE)
+        {
+          t.push_back((wchar_t) ZERO);
+        }
+        else
+        {
+          t.push_back(*ptr);
+        }
+        ptr++;
+      }
+    }
+    else if (codeset == INTL_CODESET_ISO88591)
+    {
+#define PAD ' '			/* str_pad_char(INTL_CODESET_ISO88591, pad, &pad_size) */
+      while (ptr < end)
+      {
+        if (*ptr == PAD)
+        {
+          t.push_back((wchar_t) ZERO);
+        }
+        else
+        {
+          t.push_back(*ptr);
+        }
+        ptr++;
+      }
+#undef PAD
+    }
+    else
+    {
+      t = s;
+    }
 
-    std::string transformed ((char *) next_char, next_size);
-
-    return transformed;
+    return t;
   }
 
   long
-  cub_collate::do_hash (const char *low, const char *high) const
+  cub_collate::do_hash (const wchar_t *low, const wchar_t *high) const
   {
-    size_t str_size = (high - low) / sizeof (char);
-    unsigned int pseudo_key = coll->mht2str (coll, (unsigned char *) low, str_size);
+    size_t size = (high - low) / sizeof(wchar_t);
+    std::wstring wstr (low, size);
+
+    std::wstring_convert<std::codecvt_utf8<wchar_t>> conv;
+    std::string u8str = conv.to_bytes(wstr);
+    size_t u8str_size = u8str.size();
+    
+    unsigned int pseudo_key = lang_coll->mht2str (lang_coll, (unsigned char *) u8str.c_str(), u8str_size);
     return pseudo_key;
   }
-  */
 
 }
 
