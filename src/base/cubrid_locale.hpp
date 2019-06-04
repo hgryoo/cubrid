@@ -47,34 +47,37 @@ namespace cublang
       ~deletable_facet() {}
   };
 
-/*
-  class cub_ctype : public std::ctype<char>
+  class cub_ctype : public std::ctype<wchar_t>
   {
     public:
       cub_ctype(int collation_id);
 
     protected:
-      virtual bool do_is (mask m, char c);
-      virtual const char *do_is (char *low, const char *high, mask *vec) const;
+      /*
+      virtual bool do_is (mask m, wchar_t c);
+      virtual const char *do_is (wchar_t *low, const wchar_t *high, mask *vec) const;
 
-      virtual const char *do_scan_is ( mask m, const char *beg, const char *end) const;
-      virtual const char *do_scan_not ( mask m, const char *beg, const char *end) const;
+      virtual const char *do_scan_is ( mask m, const wchar_t *beg, const wchar_t *end) const;
+      virtual const char *do_scan_not ( mask m, const wchar_t *beg, const wchar_t *end) const;
+      */
 
-      virtual char do_toupper (char c) const;
-      virtual const char *do_toupper (char *beg, const char *end) const;
+      virtual wchar_t do_toupper (wchar_t c) const;
+      virtual const wchar_t *do_toupper (wchar_t *beg, const wchar_t *end) const;
 
-      virtual char do_tolower (char c) const;
-      virtual const char *do_tolower (char *beg, const char *end) const;
+      virtual wchar_t do_tolower (wchar_t c) const;
+      virtual const wchar_t *do_tolower (wchar_t *beg, const wchar_t *end) const;
 
+      /*
       virtual char do_widen (char c) const;
-      virtual const char *do_widen (char *low, const char *high, char *to) const;
+      virtual const char *do_widen (wchar_t *low, const wchar_t *high, wchar_t *to) const;
 
-      virtual char do_narrow (char c, char dflt) const;
-      virtual const char *do_narrow (char *low, const char *high, char dflt, char *to) const;
+      virtual char do_narrow (wchar_t c, wchar_t dflt) const;
+      virtual const char *do_narrow (wchar_t *low, const wchar_t *high, wchar_t dflt, wchar_t *to) const;
+      */
 
-      int coll_id;
+      LANG_COLLATION *lang_coll {nullptr};
   };
-*/
+
   class cub_collate : public std::collate<wchar_t>
   {
     public:
@@ -87,7 +90,6 @@ namespace cublang
 
       COLL_CONTRACTION * get_contr (const COLL_DATA &coll_data, const wchar_t cp) const;
 
-      int coll_id;
       LANG_COLLATION *lang_coll {nullptr};
   };
 }
@@ -122,8 +124,9 @@ namespace cublang
     try
     {
       std::locale loc (locale_str.c_str());
-      std::locale loc_w_facet (loc, new cub_collate(lang_coll->coll.coll_id));
-      return loc_w_facet;
+      std::locale loc_w_collate (loc, new cub_collate(lang_coll->coll.coll_id));
+      std::locale loc_w_ctype (loc_w_collate, new cub_ctype(lang_coll->coll.coll_id));
+      return loc_w_ctype;
     }
     catch (std::exception &e)
     {
@@ -149,15 +152,14 @@ namespace cublang
     return cvt;
   }
 
-  /*
   //
   // cub_ctype 
   //
-  cub_ctype::cub_ctype(int collation_id) : std::ctype<char>()
+  cub_ctype::cub_ctype(int collation_id) : std::ctype<wchar_t>()
   {
-    coll_id = collation_id;
+    lang_coll = lang_get_collation (collation_id);
   }
-
+  /*
   bool
   cub_ctype::do_is (mask m, char c)
   {
@@ -180,59 +182,129 @@ namespace cublang
   cub_ctype::do_scan_not ( mask m, const char *beg, const char *end) const
   {
   }
+  */
 
-  char
-  cub_ctype::do_toupper (char c) const
+  wchar_t
+  cub_ctype::do_toupper (wchar_t c) const
   {
-    ALPHABET_DATA user_alphabet = lang_user_alphabet_w_coll(coll_id);
+    const ALPHABET_DATA *alphabet = lang_user_alphabet_w_coll (lang_coll->coll.coll_id);
     
-  }
+    switch (alphabet->codeset)
+    {
+      case INTL_CODESET_RAW_BYTES:
+        return c;
+        break;
 
-  const char *
-  cub_ctype::do_toupper (char *beg, const char *end) const
-  {
-    size_t str1_size = (high1 - low1) / sizeof (char);
-    ALPHABET_DATA alphabet = lang_user_alphabet_w_coll(coll_id);
-    INTL_CODESET codeset = lang_get_collation(coll_id)->codeset;
-    int length = 1; //default
-    int size = 1;
-    intl_char_count (beg, size, codeset, &length);
-    int upper_size = intl_upper_string_size (alphabet, (unsigned char *) db_get_string (beg), db_get_string_size (string),
-                  src_length);
-  
-        upper_str = (unsigned char *) db_private_alloc (NULL, upper_size + 1);
-        if (!upper_str)
-      {
-        error_status = ER_OUT_OF_VIRTUAL_MEMORY;
-      }
-        else
-      {
-        int upper_length = TP_FLOATING_PRECISION_VALUE;
-        intl_upper_string (alphabet, (unsigned char *) db_get_string (string), upper_str, src_length);
-  
-        upper_str[upper_size] = 0;
-        if (db_value_precision (string) != TP_FLOATING_PRECISION_VALUE)
+      case INTL_CODESET_ISO88591:
+        return (wchar_t) char_toupper_iso8859 ((wchar_t) c);
+        break;
+      
+      case INTL_CODESET_KSC5601_EUC:
+        return (wchar_t) char_toupper ((wchar_t) c);
+        break;
+
+      case INTL_CODESET_UTF8:
+        // from intl_char_toupper_utf8()
+        unsigned int cp = (unsigned int) c;
+        if (cp < (unsigned int) (alphabet->l_count))
+        {
+          if (alphabet->upper_multiplier == 1)
           {
-            intl_char_count (upper_str, upper_size, db_get_string_codeset (string), &upper_length);
+            return (wchar_t) alphabet->upper_cp[cp];
           }
-        qstr_make_typed_string (str_type, upper_string, upper_length, (char *) upper_str, upper_size,
-                    db_get_string_codeset (string), db_get_string_collation (string));
-        upper_string->need_clear = true;
-      }
+          else
+          {
+            int count = 0;
+
+            assert (alphabet->upper_multiplier > 1 && alphabet->upper_multiplier <= INTL_CASING_EXPANSION_MULTIPLIER);
+            
+            const unsigned int *case_p = &(alphabet->upper_cp[cp * alphabet->upper_multiplier]);
+            while((count < alphabet->upper_multiplier && *case_p != 0))
+            {
+              case_p++;
+              count++;
+            }
+            return (wchar_t) *case_p;
+          }
+        }
+        return c;
+        break;
+    }
   }
 
-  char
-  cub_ctype::do_tolower (char c) const
+  const wchar_t *
+  cub_ctype::do_toupper (wchar_t *beg, const wchar_t *end) const
   {
-
+    std::wstring r;
+    wchar_t *ptr = beg;
+    while(ptr < end)
+    {
+      r.push_back(do_toupper(*ptr++));
+    }
+    return r.c_str();
   }
 
-  const char *
-  cub_ctype::do_tolower (char *beg, const char *end) const
+  wchar_t
+  cub_ctype::do_tolower (wchar_t c) const
   {
+    const ALPHABET_DATA *alphabet = lang_user_alphabet_w_coll (lang_coll->coll.coll_id);
+    
+    switch (alphabet->codeset)
+    {
+      case INTL_CODESET_RAW_BYTES:
+        return c;
+        break;
 
+      case INTL_CODESET_ISO88591:
+        return (wchar_t) char_tolower_iso8859 ((wchar_t) c);
+        break;
+      
+      case INTL_CODESET_KSC5601_EUC:
+        return (wchar_t) char_tolower ((wchar_t) c);
+        break;
+
+      case INTL_CODESET_UTF8:
+        // from intl_char_tolower_utf8()
+        unsigned int cp = (unsigned int) c;
+        if (cp < (unsigned int) (alphabet->l_count))
+        {
+          if (alphabet->lower_multiplier == 1)
+          {
+            return (wchar_t) alphabet->lower_cp[cp];
+          }
+          else
+          {
+            int count = 0;
+
+            assert (alphabet->lower_multiplier > 1 && alphabet->lower_multiplier <= INTL_CASING_EXPANSION_MULTIPLIER);
+            
+            const unsigned int *case_p = &(alphabet->lower_cp[cp * alphabet->lower_multiplier]);
+            while((count < alphabet->lower_multiplier && *case_p != 0))
+            {
+              case_p++;
+              count++;
+            }
+            return (wchar_t) *case_p;
+          }
+        }
+        return c;
+        break;
+    }
   }
 
+  const wchar_t *
+  cub_ctype::do_tolower (wchar_t *beg, const wchar_t *end) const
+  {
+    std::wstring r;
+    wchar_t *ptr = beg;
+    while(ptr < end)
+    {
+      r.push_back(do_tolower(*ptr++));
+    }
+    return r.c_str();
+  }
+
+  /*
   char
   cub_ctype::do_towiden (char c) const
   {
@@ -254,12 +326,12 @@ namespace cublang
   {
   }
   */
+
   //
   // cub_collate
   //
   cub_collate::cub_collate (int collation_id) : collate()
   {
-    coll_id = collation_id;
     lang_coll = lang_get_collation (collation_id);
   }
 
@@ -362,19 +434,20 @@ namespace cublang
       const int alpha_cnt = lang_coll->coll.w_count;
       const unsigned int *weight_ptr = lang_coll->coll.weights;
       const COLL_DATA &coll = lang_coll->coll;
-      if (coll.uca_exp_num >1)
+      if (coll.uca_exp_num > 1)
       {
+        /* compare level 1 */
         t = s;
       }
       else if (coll.count_contr > 0)
       {
         while (ptr < end)
         {
-          if (*ptr < (wchar_t) alpha_cnt)
+          wchar_t cp = *ptr;
+          if (cp < (wchar_t) alpha_cnt)
           {
             COLL_CONTRACTION *contr = NULL;
-            wchar_t cp = *ptr;
-            if ( cp >= coll.cp_first_contr_offset 
+            if (cp >= coll.cp_first_contr_offset 
                  && cp < (coll.cp_first_contr_offset + coll.cp_first_contr_count)
                  && (contr = this->get_contr(coll, (const wchar_t) cp)) != NULL)
             {
@@ -384,12 +457,12 @@ namespace cublang
             }
             else
             {
-              t.push_back((wchar_t) weight_ptr[*ptr]);
+              t.push_back((wchar_t) weight_ptr[cp]);
             }
           }
           else
           {
-            t.push_back(*ptr);
+            t.push_back(cp);
           }
           ptr++;
         }
@@ -398,13 +471,14 @@ namespace cublang
       {
         while (ptr < end)
         {
-          if (*ptr < (wchar_t) alpha_cnt)
+          wchar_t cp = *ptr;
+          if (cp < (wchar_t) alpha_cnt)
           {
-            t.push_back((wchar_t) weight_ptr[*ptr]);
+            t.push_back((wchar_t) weight_ptr[cp]);
           }
           else
           {
-            t.push_back(*ptr);
+            t.push_back(cp);
           }
           ptr++;
         }
