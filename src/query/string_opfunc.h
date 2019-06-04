@@ -222,7 +222,7 @@ extern int db_string_like (const DB_VALUE * src_string, const DB_VALUE * pattern
 
 #ifdef __cplusplus
 extern int db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * case_sensitive,
-			    std::regex ** comp_regex, char **comp_pattern, int *result);
+			    std::wregex ** comp_regex, char **comp_pattern, int *result);
 #endif
 
 extern int db_string_limit_size_string (DB_VALUE * src_string, DB_VALUE * result, const int new_size, int *spare_bytes);
