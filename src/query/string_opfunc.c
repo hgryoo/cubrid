@@ -4299,16 +4299,20 @@ db_string_like (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_
   return ((*result == V_ERROR) ? ER_QSTR_INVALID_ESCAPE_SEQUENCE : error_status);
 }
 
+// *INDENT-OFF*
+template <typename charT>
 static int
-regex_compile (const char *pattern, std::regex * &rx_compiled_regex,
-	       std::regex_constants::syntax_option_type & reg_flags)
+regex_compile (const std::basic_string<charT> &pattern, std::basic_regex<charT, std::regex_traits<charT> > * &rx_compiled_regex,
+	       std::regex_constants::syntax_option_type & reg_flags, std::locale & loc)
 {
   int error_status = NO_ERROR;
 
-  // *INDENT-OFF*
+
   try
   {
-    rx_compiled_regex = new std::regex (pattern, reg_flags);
+    rx_compiled_regex = new std::basic_regex<charT, std::regex_traits<charT> > ();
+    rx_compiled_regex->imbue(loc);
+    rx_compiled_regex->assign(pattern, reg_flags);
   }
   catch (std::regex_error & e)
   {
@@ -4318,10 +4322,10 @@ regex_compile (const char *pattern, std::regex * &rx_compiled_regex,
     delete rx_compiled_regex;
     rx_compiled_regex = NULL;
   }
-  // *INDENT-ON*
 
   return error_status;
 }
+// *INDENT-ON*
 
 /*
  * db_string_rlike () - check for match between string and regex
@@ -4352,7 +4356,7 @@ regex_compile (const char *pattern, std::regex * &rx_compiled_regex,
 
 int
 db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * case_sensitive,
-		 std::regex ** comp_regex, char **comp_pattern, int *result)
+		 std::wregex ** comp_regex, char **comp_pattern, int *result)
 {
   QSTR_CATEGORY src_category = QSTR_UNKNOWN;
   QSTR_CATEGORY pattern_category = QSTR_UNKNOWN;
@@ -4369,7 +4373,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
   char *rx_compiled_pattern = NULL;
 
   // *INDENT-OFF*
-  std::regex *rx_compiled_regex = NULL;
+  std::wregex *rx_compiled_regex = NULL;
   // *INDENT-ON*
 
   /* check for allocated DB values */
