@@ -53,9 +53,13 @@
 #include "dbtype.h"
 #include "elo.h"
 #include "db_elo.h"
+#include "cublocale.hpp"
+
 #include <algorithm>
 #include <regex>
 #include <string>
+#include <locale>
+
 #if !defined (SERVER_MODE)
 #include "parse_tree.h"
 #include "es_common.h"
@@ -4368,6 +4372,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
   const char *pattern_char_string_p = NULL;
   bool is_case_sensitive = false;
   int src_length = 0, pattern_length = 0;
+  int coll_id = -1;
 
   char rx_err_buf[REGEX_MAX_ERROR_MSG_SIZE] = { '\0' };
   char *rx_compiled_pattern = NULL;
@@ -4376,6 +4381,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
   std::wregex *rx_compiled_regex = NULL;
   // *INDENT-ON*
 
+  {
   /* check for allocated DB values */
   assert (src_string != NULL);
   assert (pattern != NULL);
@@ -4430,6 +4436,18 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
       *result = V_ERROR;
       goto cleanup;
     }
+  
+  LANG_RT_COMMON_COLL (db_get_string_collation (src_string), db_get_string_collation (pattern), coll_id);
+  if (coll_id == -1)
+    {
+      error_status = ER_QSTR_INCOMPATIBLE_COLLATIONS;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+      *result = V_ERROR;
+      goto cleanup;
+    }
+
+  LANG_COLLATION *collation = lang_get_collation(coll_id);
+  assert (collation != NULL);
 
   src_char_string_p = db_get_string (src_string);
   src_length = db_get_string_size (src_string);
@@ -4440,6 +4458,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
   /* extract case sensitivity */
   is_case_sensitive = (case_sensitive->data.i != 0);
 
+  std::locale loc = cublocale::get_locale(collation);
   /* check for recompile */
   if (rx_compiled_pattern == NULL || rx_compiled_regex == NULL || pattern_length != strlen (rx_compiled_pattern)
       || strncmp (rx_compiled_pattern, pattern_char_string_p, pattern_length) != 0)
@@ -4470,15 +4489,18 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
       rx_compiled_pattern[pattern_length] = '\0';
 
       // *INDENT-OFF*
+      std::wstring pattern = cublocale::convert_to_wstring(std::string(rx_compiled_pattern), collation);
+
       std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
       reg_flags |= std::regex_constants::nosubs;
+      reg_flags |= std::regex_constants::collate;
       if (!is_case_sensitive)
 	{
 	  reg_flags |= std::regex_constants::icase;
 	}
-      // *INDENT-ON*
 
-      error_status = regex_compile (rx_compiled_pattern, rx_compiled_regex, reg_flags);
+      error_status = regex_compile<wchar_t> (pattern, rx_compiled_regex, reg_flags, loc);
+      // *INDENT-ON*
       if (error_status != NO_ERROR)
 	{
 	  ASSERT_ERROR ();
@@ -4490,7 +4512,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
   // *INDENT-OFF*
   try
     {
-      std::string src (src_char_string_p, src_length);
+      std::wstring src = cublocale::convert_to_wstring(std::string(src_char_string_p, src_length), collation);
       bool match = std::regex_search (src, *rx_compiled_regex);
       *result = match ? V_TRUE : V_FALSE;
     }
@@ -4503,7 +4525,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
       goto cleanup;
     }
   // *INDENT-ON*
-
+}
 cleanup:
 
   if ((comp_regex == NULL || error_status != NO_ERROR) && rx_compiled_regex != NULL)
