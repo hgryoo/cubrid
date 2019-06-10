@@ -4572,6 +4572,23 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
 	goto exit;
       }
 
+    int coll_id_temp = -1, coll_id = -1;
+    LANG_RT_COMMON_COLL (db_get_string_collation (src), db_get_string_collation (pattern), coll_id_tmp);
+    if (coll_id_tmp == -1)
+      {
+        error_status = ER_QSTR_INCOMPATIBLE_COLLATIONS;
+        er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+        goto exit;
+      }
+
+    LANG_RT_COMMON_COLL (coll_id_tmp, db_get_string_collation (replacement), coll_id);
+    if (coll_id == -1)
+  	{
+  	  error_status = ER_QSTR_INCOMPATIBLE_COLLATIONS;
+  	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+  	  goto exit;
+  	}
+
     // *INDENT-OFF*
     std::string src_string (db_get_string (src), db_get_string_length (src));
     std::string pattern_string (db_get_string (pattern), db_get_string_length (pattern));
@@ -4580,15 +4597,17 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
     try
     {
       std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
-    
-      const DB_VALUE *match_type = NULL;
+      
       std::string match_type_value = "";
-
       if (num_args == 6)
       {
-        match_type = args[5];
+        const DB_VALUE *match_type = args[5];
         assert (match_type != (DB_VALUE *) NULL);
-        match_type_value.assign (db_get_string (match_type), db_get_string_length (match_type));
+
+        if (!DB_IS_NULL (match_type))
+        {
+          match_type_value.assign (db_get_string (match_type), db_get_string_length (match_type));
+        }
       }
 
       std::string::iterator mt_iter = match_type_value.begin();
@@ -4621,11 +4640,10 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
     }
 
     /* position option */
-    const DB_VALUE *position = NULL;
     int position_value = 0;
     if (num_args >= 4)
     {
-  	  position = args[3];
+  	  const DB_VALUE *position = args[3];
   	  assert (position != (DB_VALUE *) NULL);
   	  position_value = db_get_int(position) - 1;
     }
@@ -4642,19 +4660,18 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
     {
       target = src_string;
     }
+    
     /* occurrence option */
-    const DB_VALUE *occurrence = NULL;
     int occurrence_value = 0;
     if (num_args >= 5)
     {
-      occurrence = args[4];
+      const DB_VALUE *occurrence = args[4];
       assert (occurrence != (DB_VALUE *) NULL);
       occurrence_value = db_get_int(occurrence);
     }
 
     try
     {
-
     if (occurrence_value == 0)
     {
       target = std::regex_replace (target, *compiled_regex, repl_string);
@@ -4697,14 +4714,12 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
       char *result_char_string = NULL;
       int result_char_len = result_string.size ();
       result_char_string = (char *) db_private_alloc (NULL, result_char_len + 1);
-
       if (result_char_string == NULL)
 	{
 	  /* out of memory */
 	  error_status = ER_OUT_OF_VIRTUAL_MEMORY;
 	  goto exit;
 	}
-
       memcpy (result_char_string, result_string.c_str (), result_char_len);
       result_char_string[result_char_len] = '\0';
 
