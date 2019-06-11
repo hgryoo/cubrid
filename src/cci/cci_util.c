@@ -50,10 +50,7 @@
 #include <windows.h>
 #endif
 #include <sys/types.h>
-
-#ifdef __cplusplus
 #include <regex>
-#endif
 
 /************************************************************************
  * OTHER IMPORTED HEADER FILES						*
@@ -998,6 +995,8 @@ cci_url_match (const char *src, char *token[])
   static int match_idx[] = { 2, 3, 4, 5, 6, 7, -1 };
 
   int error = CCI_ER_NO_ERROR;
+
+  // *INDENT-OFF*
   using namespace std::regex_constants;
   try
   {
@@ -1024,7 +1023,7 @@ cci_url_match (const char *src, char *token[])
 		break;
 	      }
 	    std::string t = sub_by_idx.str ();
-	    strcpy (token[i], t.c_str ());
+	    strncpy (token[i], t.c_str (), n);
 	    token[i][n] = '\0';
 	  }
       }
@@ -1046,6 +1045,7 @@ cci_url_match (const char *src, char *token[])
       }
     fprintf (stderr, "regex_error : %s\n", e.what ());
   }
+  // *INDENT-ON*
 
   if (error != CCI_ER_NO_ERROR)
     {

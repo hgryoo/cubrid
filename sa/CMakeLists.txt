@@ -596,7 +596,6 @@ target_external_dependencies(cubridsa
   LIBGCRYPT
   LIBLZO
   LIBEXPAT
-  LIBREGEX
   LIBEDIT
   )
 target_include_directories(cubridsa PRIVATE
