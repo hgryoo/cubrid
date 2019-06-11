@@ -4553,7 +4553,7 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
     const DB_VALUE *src = args[0];
     const DB_VALUE *pattern = args[1];
     const DB_VALUE *replacement = args[2];
-    
+
     /* check for allocated DB values */
     assert (src != (DB_VALUE *) NULL);
     assert (pattern != (DB_VALUE *) NULL);
@@ -4581,22 +4581,22 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
 	goto exit;
       }
 
-    int coll_id_temp = -1, coll_id = -1;
+    int coll_id_tmp = -1, coll_id = -1;
     LANG_RT_COMMON_COLL (db_get_string_collation (src), db_get_string_collation (pattern), coll_id_tmp);
     if (coll_id_tmp == -1)
       {
-        error_status = ER_QSTR_INCOMPATIBLE_COLLATIONS;
-        er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
-        goto exit;
+	error_status = ER_QSTR_INCOMPATIBLE_COLLATIONS;
+	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+	goto exit;
       }
 
     LANG_RT_COMMON_COLL (coll_id_tmp, db_get_string_collation (replacement), coll_id);
     if (coll_id == -1)
-  	{
-  	  error_status = ER_QSTR_INCOMPATIBLE_COLLATIONS;
-  	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
-  	  goto exit;
-  	}
+      {
+	error_status = ER_QSTR_INCOMPATIBLE_COLLATIONS;
+	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+	goto exit;
+      }
 
     // *INDENT-OFF*
     std::string src_string (db_get_string (src), db_get_string_length (src));
@@ -4606,7 +4606,9 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
     try
     {
       std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
-      
+      reg_flags |= std::regex_constants::icase;
+      reg_flags |= std::regex_constants::collate;
+
       std::string match_type_value = "";
       if (num_args == 6)
       {
@@ -4654,7 +4656,10 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
     {
   	  const DB_VALUE *position = args[3];
   	  assert (position != (DB_VALUE *) NULL);
+      if (!DB_IS_NULL (position))
+        {
   	  position_value = db_get_int(position) - 1;
+        }
     }
 
     std::string prev;
@@ -4676,14 +4681,18 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
     {
       const DB_VALUE *occurrence = args[4];
       assert (occurrence != (DB_VALUE *) NULL);
-      occurrence_value = db_get_int(occurrence);
+      if (!DB_IS_NULL (occurrence))
+        {
+  	  occurrence_value = db_get_int(occurrence);
+        }
     }
 
     try
     {
+    std::string replaced_str;
     if (occurrence_value == 0)
     {
-      target = std::regex_replace (target, *compiled_regex, repl_string);
+      replaced_str = std::regex_replace (target, *compiled_regex, repl_string);
     }
     else
     {
@@ -4693,8 +4702,6 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
       if (reg_iter != reg_end)
       {
         size_t match_size = std::distance(reg_iter, reg_end);
-
-        std::string replaced_str;
         auto out = std::back_inserter(replaced_str);
         auto last_iter = reg_iter;
 
@@ -4715,10 +4722,9 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
         }
         std::string suffix = last_iter->suffix().str();
         out = std::copy(suffix.begin(), suffix.end(), out);
-        target = replaced_str;
       }
      }
-      std::string result_string = prev.append(target);
+     std::string result_string = prev.append(replaced_str);
 
     char *result_char_string = NULL;
     int result_char_len = result_string.size ();
