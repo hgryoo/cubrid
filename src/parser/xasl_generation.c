@@ -6357,7 +6357,7 @@ pt_function_to_regu (PARSER_CONTEXT * parser, PT_NODE * function)
 	case F_JSON_VALID:
 	  result_type = pt_node_to_db_type (function);
 	  break;
-	default: 
+	default:
 	  PT_ERRORf (parser, function, "Internal error in generate(%d)", __LINE__);
 	}
 
