@@ -53,6 +53,7 @@
 #include "dbtype.h"
 #include "elo.h"
 #include "db_elo.h"
+#include "memory_private_allocator.hpp"
 #include <algorithm>
 #include <regex>
 #include <string>
@@ -4535,6 +4536,236 @@ cleanup:
     }
 
   /* return */
+  return error_status;
+}
+
+int
+db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_args,
+			 std::regex ** comp_regex, char **comp_pattern)
+{
+  int error_status = NO_ERROR;
+
+  // *INDENT-OFF*
+  std::regex *compiled_regex = NULL;
+  // *INDENT-ON*
+
+  {
+    const DB_VALUE *src = args[0];
+    const DB_VALUE *pattern = args[1];
+    const DB_VALUE *replacement = args[2];
+
+    /* check for allocated DB values */
+    assert (src != (DB_VALUE *) NULL);
+    assert (pattern != (DB_VALUE *) NULL);
+    assert (replacement != (DB_VALUE *) NULL);
+
+    if (DB_IS_NULL (src) || DB_IS_NULL (pattern) || (DB_IS_NULL (replacement)))
+      {
+	db_make_null (result);
+	goto exit;
+      }
+
+    /* type checking */
+    QSTR_CATEGORY src_category = qstr_get_category (src);
+    QSTR_CATEGORY pattern_category = qstr_get_category (pattern);
+    QSTR_CATEGORY replacement_category = qstr_get_category (replacement);
+
+    DB_TYPE src_type = DB_VALUE_DOMAIN_TYPE (src);
+    DB_TYPE pattern_type = DB_VALUE_DOMAIN_TYPE (pattern);
+    DB_TYPE replacement_type = DB_VALUE_DOMAIN_TYPE (replacement);
+
+    if (!QSTR_IS_ANY_CHAR (src_type) || !QSTR_IS_ANY_CHAR (pattern_type) || !QSTR_IS_ANY_CHAR (replacement_type))
+      {
+	error_status = ER_QSTR_INVALID_DATA_TYPE;
+	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QSTR_INVALID_DATA_TYPE, 0);
+	goto exit;
+      }
+
+    int coll_id_tmp = -1, coll_id = -1;
+    LANG_RT_COMMON_COLL (db_get_string_collation (src), db_get_string_collation (pattern), coll_id_tmp);
+    if (coll_id_tmp == -1)
+      {
+	error_status = ER_QSTR_INCOMPATIBLE_COLLATIONS;
+	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+	goto exit;
+      }
+
+    LANG_RT_COMMON_COLL (coll_id_tmp, db_get_string_collation (replacement), coll_id);
+    if (coll_id == -1)
+      {
+	error_status = ER_QSTR_INCOMPATIBLE_COLLATIONS;
+	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+	goto exit;
+      }
+
+    // *INDENT-OFF*
+    std::string src_string (db_get_string (src), db_get_string_length (src));
+    std::string pattern_string (db_get_string (pattern), db_get_string_length (pattern));
+    std::string repl_string (db_get_string (replacement), db_get_string_length (replacement));
+
+    try
+    {
+      std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
+      reg_flags |= std::regex_constants::icase;
+      reg_flags |= std::regex_constants::collate;
+
+      std::string match_type_value = "";
+      if (num_args == 6)
+      {
+        const DB_VALUE *match_type = args[5];
+        assert (match_type != (DB_VALUE *) NULL);
+
+        if (!DB_IS_NULL (match_type))
+        {
+          match_type_value.assign (db_get_string (match_type), db_get_string_length (match_type));
+        }
+      }
+
+      std::string::iterator mt_iter = match_type_value.begin();
+      for (; mt_iter != match_type_value.end(); ++mt_iter)
+      {
+        char opt = *(mt_iter);
+        switch (opt)
+        {
+          case 'c':
+            reg_flags &= ~(std::regex_constants::icase);
+            break;
+          case 'i':
+            reg_flags |= std::regex_constants::icase;
+            break;
+          case 'm':
+          case 'n':
+          case 'u':
+            break;
+        }
+      }
+
+      compiled_regex = new std::regex (pattern_string, reg_flags);
+    }
+    catch (std::regex_error & e)
+    {
+      // regex compilation exception
+      error_status = ER_REGEX_COMPILE_ERROR;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
+      goto exit;
+    }
+
+    /* position option */
+    int position_value = 0;
+    if (num_args >= 4)
+    {
+  	  const DB_VALUE *position = args[3];
+  	  assert (position != (DB_VALUE *) NULL);
+      if (!DB_IS_NULL (position))
+        {
+  	  position_value = db_get_int(position) - 1;
+        }
+    }
+
+    std::string prev;
+    std::string target;
+
+    if (position_value != 0 && position_value < src_string.size())
+    {
+      prev = src_string.substr(0, position_value);
+      target = src_string.substr(position_value, src_string.size() - position_value);
+    }
+    else
+    {
+      target = src_string;
+    }
+    
+    /* occurrence option */
+    int occurrence_value = 0;
+    if (num_args >= 5)
+    {
+      const DB_VALUE *occurrence = args[4];
+      assert (occurrence != (DB_VALUE *) NULL);
+      if (!DB_IS_NULL (occurrence))
+        {
+  	  occurrence_value = db_get_int(occurrence);
+        }
+    }
+
+    try
+    {
+    std::string replaced_str;
+    if (occurrence_value == 0)
+    {
+      replaced_str = std::regex_replace (target, *compiled_regex, repl_string);
+    }
+    else
+    {
+      auto reg_iter = std::sregex_iterator(target.begin(), target.end(), *compiled_regex);
+      auto reg_end = std::sregex_iterator();
+
+      if (reg_iter != reg_end)
+      {
+        size_t match_size = std::distance(reg_iter, reg_end);
+        auto out = std::back_inserter(replaced_str);
+        auto last_iter = reg_iter;
+
+        for(std::size_t n = occurrence_value; n-- && reg_iter != reg_end; ++reg_iter)
+        {
+          std::string prefix = reg_iter->prefix().str();
+          out = std::copy(prefix.begin(), prefix.end(), out);
+          if (n == 0)
+          {
+            out = reg_iter->format(out, repl_string);
+          }
+          else
+          {
+            std::string match_str = reg_iter->str();
+            out = std::copy(match_str.begin(), match_str.end(), out);
+          }
+          last_iter = reg_iter;
+        }
+        std::string suffix = last_iter->suffix().str();
+        out = std::copy(suffix.begin(), suffix.end(), out);
+      }
+     }
+     std::string result_string = prev.append(replaced_str);
+
+      char *result_char_string = NULL;
+      int result_char_len = result_string.size ();
+      result_char_string = (char *) db_private_alloc (NULL, result_char_len + 1);
+      if (result_char_string == NULL)
+	{
+	  /* out of memory */
+	  error_status = ER_OUT_OF_VIRTUAL_MEMORY;
+	  goto exit;
+	}
+      memcpy (result_char_string, result_string.c_str (), result_char_len);
+      result_char_string[result_char_len] = '\0';
+
+      int result_domain_length = TP_FLOATING_PRECISION_VALUE;
+      qstr_make_typed_string ((src_type == DB_TYPE_NCHAR ? DB_TYPE_VARNCHAR : DB_TYPE_VARCHAR), result,
+			      result_domain_length, result_char_string, result_char_len,
+			      db_get_string_codeset (src), db_get_string_collation (src));
+      result->need_clear = true;
+    }
+    catch (std::regex_error & e)
+    {
+      // regex execution exception, error_complexity or error_stack
+      error_status = ER_REGEX_EXEC_ERROR;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
+      goto exit;
+    }
+    // *INDENT-ON*
+  }
+
+exit:
+  if (compiled_regex != NULL)
+    {
+      delete compiled_regex;
+      compiled_regex = NULL;
+    }
+
+  if (error_status != NO_ERROR)
+    {
+      db_make_null (result);
+    }
+
   return error_status;
 }
 
