@@ -59,6 +59,8 @@
 #include "dbtype.h"
 
 #include <chrono>
+#include <memory>
+#include <regex>
 
 #define NOT_NULL_VALUE(a, b)	((a) ? (a) : (b))
 #define INITIAL_OID_STACK_SIZE  1
@@ -215,7 +217,7 @@ static int qdata_elt (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_D
 static int qdata_benchmark (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR * val_desc_p,
 			    OID * obj_oid_p, QFILE_TUPLE tuple);
 
-static int qdata_regexp_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR * val_desc_p,
+static int qdata_regex_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR * val_desc_p,
 					  OID * obj_oid_p, QFILE_TUPLE tuple);
 
 static int qdata_convert_operands_to_value_and_call (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p,
@@ -6884,7 +6886,7 @@ qdata_evaluate_function (THREAD_ENTRY * thread_p, regu_variable_node * function_
 						       db_evaluate_json_valid);
 
     case F_REGEXP_REPLACE:
-      return qdata_regexp_replace_function (thread_p, funcp, val_desc_p, obj_oid_p, tuple);
+      return qdata_regex_replace_function (thread_p, funcp, val_desc_p, obj_oid_p, tuple);
 
     default:
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QPROC_INVALID_XASLNODE, 0);
@@ -8466,7 +8468,7 @@ qdata_benchmark (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR 
 }
 
 /*
- * qdata_regexp_replace_function () - Evaluates regexp_replace() function.
+ * qdata_regex_replace_function () - Evaluates regexp_replace() function.
  *   return: NO_ERROR, or ER_FAILED code
  *   thread_p   : thread context
  *   funcp(in)  : function structure pointer
@@ -8475,7 +8477,7 @@ qdata_benchmark (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR 
  *   tpl(in)    : tuple
  */
 static int
-qdata_regexp_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR * val_desc_p,
+qdata_regex_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR * val_desc_p,
 			       OID * obj_oid_p, QFILE_TUPLE tuple)
 {
   DB_VALUE *value;
@@ -8484,6 +8486,7 @@ qdata_regexp_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function
   int no_args = 0, index = 0;
   DB_VALUE **args;
 
+  {
   assert (function_p != NULL);
   assert (function_p->value != NULL);
   assert (function_p->operand != NULL);
@@ -8513,13 +8516,22 @@ qdata_regexp_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function
     }
 
   assert (index == no_args);
-  assert (index >= 2);
 
-  error_status = db_string_regex_replace (function_p->value, args, no_args, NULL, NULL);
+  if(!function_p->tmp)
+  {
+    function_p->tmp.reset(new COMPILED_REGEX());
+  }
+
+  std::shared_ptr<void> tmp(function_p->tmp);
+  COMPILED_REGEX *compiled_regex = static_cast<COMPILED_REGEX *>(tmp.get());
+  std::regex *reg = compiled_regex->regex;
+  char* pattern = compiled_regex->pattern;
+  error_status = db_string_regex_replace (function_p->value, args, no_args, &reg, &pattern);
   if (error_status != NO_ERROR)
     {
       goto exit;
     }
+}
 
 exit:
   db_private_free (thread_p, args);

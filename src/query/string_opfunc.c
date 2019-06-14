@@ -4539,6 +4539,19 @@ cleanup:
   return error_status;
 }
 
+compiled_regex::~compiled_regex()
+{
+  if(regex != NULL)
+  {
+    delete regex;
+  }
+
+  if(pattern != NULL)
+  {
+    db_private_free(NULL, pattern);
+  }
+}
+
 int
 db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_args,
 			 std::regex ** comp_regex, char **comp_pattern)
@@ -4546,7 +4559,8 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
   int error_status = NO_ERROR;
 
   // *INDENT-OFF*
-  std::regex *compiled_regex = NULL;
+  std::regex *rx_compiled_regex = NULL;
+  char *rx_compiled_pattern = NULL;
   // *INDENT-ON*
 
   {
@@ -4558,6 +4572,18 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
     assert (src != (DB_VALUE *) NULL);
     assert (pattern != (DB_VALUE *) NULL);
     assert (replacement != (DB_VALUE *) NULL);
+
+    /* get compiled pattern */
+    if (comp_pattern != NULL)
+    {
+      rx_compiled_pattern = *comp_pattern;
+    }
+
+    /* if regex object was specified, use local regex */
+    if (comp_regex != NULL)
+    {
+      rx_compiled_regex = *comp_regex;
+    }
 
     if (DB_IS_NULL (src) || DB_IS_NULL (pattern) || (DB_IS_NULL (replacement)))
       {
@@ -4599,12 +4625,39 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
       }
 
     // *INDENT-OFF*
-    std::string src_string (db_get_string (src), db_get_string_length (src));
-    std::string pattern_string (db_get_string (pattern), db_get_string_length (pattern));
-    std::string repl_string (db_get_string (replacement), db_get_string_length (replacement));
+    std::string src_string (db_get_string (src), db_get_string_size (src));
+    std::string pattern_string (db_get_string (pattern), db_get_string_size (pattern));
+    std::string repl_string (db_get_string (replacement), db_get_string_size (replacement));
 
-    try
+    int pattern_length = pattern_string.size();
+    /* check for recompile */
+    if (rx_compiled_pattern == NULL || rx_compiled_regex == NULL || pattern_length != strlen (rx_compiled_pattern)
+        || strncmp (rx_compiled_pattern, pattern_string.c_str(), pattern_length) != 0)
     {
+      /* regex must be recompiled if regex object is not specified, pattern is not specified or compiled pattern does
+       * not match current pattern */
+
+      /* update compiled pattern */
+      if (rx_compiled_pattern != NULL)
+      {
+        /* free old memory */
+        db_private_free_and_init (NULL, rx_compiled_pattern);
+      }
+
+      /* allocate new memory */
+      rx_compiled_pattern = (char *) db_private_alloc (NULL, pattern_length + 1);
+
+      if (rx_compiled_pattern == NULL)
+      {
+        /* out of memory */
+        error_status = ER_OUT_OF_VIRTUAL_MEMORY;
+        goto exit;
+      }
+
+      /* copy string */
+      memcpy (rx_compiled_pattern, pattern_string.data(), pattern_length);
+      rx_compiled_pattern[pattern_length] = '\0';
+
       std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
       reg_flags |= std::regex_constants::icase;
       reg_flags |= std::regex_constants::collate;
@@ -4617,7 +4670,7 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
 
         if (!DB_IS_NULL (match_type))
         {
-          match_type_value.assign (db_get_string (match_type), db_get_string_length (match_type));
+          match_type_value.assign (db_get_string (match_type), db_get_string_size (match_type));
         }
       }
 
@@ -4640,14 +4693,12 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
         }
       }
 
-      compiled_regex = new std::regex (pattern_string, reg_flags);
-    }
-    catch (std::regex_error & e)
-    {
-      // regex compilation exception
-      error_status = ER_REGEX_COMPILE_ERROR;
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
-      goto exit;
+      error_status = regex_compile (rx_compiled_pattern, rx_compiled_regex, reg_flags);
+      if (error_status != NO_ERROR)
+      {
+        ASSERT_ERROR ();
+        goto exit;
+      }
     }
 
     /* position option */
@@ -4692,11 +4743,11 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
     std::string replaced_str;
     if (occurrence_value == 0)
     {
-      replaced_str = std::regex_replace (target, *compiled_regex, repl_string);
+      replaced_str = std::regex_replace (target, *rx_compiled_regex, repl_string);
     }
     else
     {
-      auto reg_iter = std::sregex_iterator(target.begin(), target.end(), *compiled_regex);
+      auto reg_iter = std::sregex_iterator(target.begin(), target.end(), *rx_compiled_regex);
       auto reg_end = std::sregex_iterator();
 
       if (reg_iter != reg_end)
@@ -4756,10 +4807,30 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
   }
 
 exit:
-  if (compiled_regex != NULL)
+  
+  if ((comp_regex == NULL || error_status != NO_ERROR) && rx_compiled_regex != NULL)
     {
-      delete compiled_regex;
-      compiled_regex = NULL;
+      /* free memory if (using local regex) or (error occurred) */
+      delete rx_compiled_regex;
+      rx_compiled_regex = NULL;
+    }
+
+  if ((comp_pattern == NULL || error_status != NO_ERROR) && rx_compiled_pattern != NULL)
+    {
+      /* free memory if (using local pattern) or (error occurred) */
+      db_private_free_and_init (NULL, rx_compiled_pattern);
+    }
+
+  if (comp_regex != NULL)
+    {
+      /* pass compiled regex object out */
+      *comp_regex = rx_compiled_regex;
+    }
+
+  if (comp_pattern != NULL)
+    {
+      /* pass compiled pattern out */
+      *comp_pattern = rx_compiled_pattern;
     }
 
   if (error_status != NO_ERROR)

@@ -144,6 +144,7 @@ regu_variable_node::clear_xasl_local ()
     case TYPE_FUNC:
       assert (value.funcp != NULL);
       pr_clear_value (value.funcp->value);
+      value.funcp->tmp.reset();
       break;
 
     case TYPE_DBVAL:
