@@ -221,6 +221,15 @@ extern int db_string_like (const DB_VALUE * src_string, const DB_VALUE * pattern
 			   int *result);
 
 #ifdef __cplusplus
+typedef struct compiled_regex COMPILED_REGEX;
+struct compiled_regex {
+  std::regex *regex;
+  char *pattern;
+
+  compiled_regex() :regex(NULL), pattern(NULL) {}
+  ~compiled_regex();
+};
+
 extern int db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * case_sensitive,
 			    std::regex ** comp_regex, char **comp_pattern, int *result);
 extern int db_string_regex_replace(DB_VALUE * result, DB_VALUE * args[], const int num_args,

@@ -30,6 +30,7 @@
 #include "string_opfunc.h"
 
 #include <functional>
+#include <memory>
 
 // forward definitions
 struct xasl_node;
@@ -142,6 +143,9 @@ struct function_node
   DB_VALUE *value;		/* value of the function */
   REGU_VARIABLE_LIST operand;	/* operands */
   FUNC_TYPE ftype;		/* function to call */
+  std::shared_ptr<void> tmp;
+
+  function_node () = default;
 };
 
 /* regular variable flags */

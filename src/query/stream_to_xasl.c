@@ -435,7 +435,7 @@ stx_restore_function_type (THREAD_ENTRY * thread_p, char *ptr)
       return function;
     }
 
-  function = (FUNCTION_TYPE *) stx_alloc_struct (thread_p, sizeof (*function));
+  function = (FUNCTION_TYPE *) stx_alloc_struct (thread_p, sizeof (FUNCTION_TYPE));
   if (function == NULL)
     {
       stx_set_xasl_errcode (thread_p, ER_OUT_OF_VIRTUAL_MEMORY);
@@ -5671,7 +5671,7 @@ stx_build_function_type (THREAD_ENTRY * thread_p, char *ptr, FUNCTION_TYPE * fun
 	  return NULL;
 	}
     }
-
+    
   return ptr;
 }
 
