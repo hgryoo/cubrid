@@ -4539,19 +4539,6 @@ cleanup:
   return error_status;
 }
 
-compiled_regex::~compiled_regex()
-{
-  if(regex != NULL)
-  {
-    delete regex;
-  }
-
-  if(pattern != NULL)
-  {
-    db_private_free(NULL, pattern);
-  }
-}
-
 int
 db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_args,
 			 std::regex ** comp_regex, char **comp_pattern)
@@ -4624,15 +4611,19 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
 	goto exit;
       }
 
+    char *src_char_string_p = db_get_string (src);
+    int src_length = db_get_string_size (src);
+    
+    char *pattern_char_string_p = db_get_string (pattern);
+    int pattern_length = db_get_string_size (pattern);
+
     // *INDENT-OFF*
     std::string src_string (db_get_string (src), db_get_string_size (src));
     std::string pattern_string (db_get_string (pattern), db_get_string_size (pattern));
-    std::string repl_string (db_get_string (replacement), db_get_string_size (replacement));
 
-    int pattern_length = pattern_string.size();
     /* check for recompile */
     if (rx_compiled_pattern == NULL || rx_compiled_regex == NULL || pattern_length != strlen (rx_compiled_pattern)
-        || strncmp (rx_compiled_pattern, pattern_string.c_str(), pattern_length) != 0)
+        || strncmp (rx_compiled_pattern, pattern_char_string_p, pattern_length) != 0)
     {
       /* regex must be recompiled if regex object is not specified, pattern is not specified or compiled pattern does
        * not match current pattern */
@@ -4655,7 +4646,7 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
       }
 
       /* copy string */
-      memcpy (rx_compiled_pattern, pattern_string.data(), pattern_length);
+      memcpy (rx_compiled_pattern, pattern_char_string_p, pattern_length);
       rx_compiled_pattern[pattern_length] = '\0';
 
       std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript;
@@ -4738,6 +4729,7 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
         }
     }
 
+    std::string repl_string (db_get_string (replacement), db_get_string_size (replacement));
     try
     {
     std::string replaced_str;
