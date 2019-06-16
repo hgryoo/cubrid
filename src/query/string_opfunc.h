@@ -227,7 +227,6 @@ struct compiled_regex {
   char *pattern;
 
   compiled_regex() :regex(NULL), pattern(NULL) {}
-  ~compiled_regex();
 };
 
 extern int db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * case_sensitive,
