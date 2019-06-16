@@ -148,11 +148,13 @@ regu_variable_node::clear_xasl_local ()
       switch (value.funcp->ftype)
       {
         case F_REGEXP_REPLACE:
-          COMPILED_REGEX *compiled_regex = static_cast<COMPILED_REGEX *>(value.funcp->tmp);
-          if (compiled_regex != NULL)
           {
-            delete compiled_regex;
-            value.funcp->tmp = NULL;
+            COMPILED_REGEX *compiled_regex = static_cast<COMPILED_REGEX *>(value.funcp->tmp);
+            if (compiled_regex != NULL)
+            {
+              delete compiled_regex;
+              value.funcp->tmp = NULL;
+            }
           }
           break;
         default:
