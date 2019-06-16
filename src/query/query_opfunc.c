@@ -8517,15 +8517,15 @@ qdata_regex_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_
 
   assert (index == no_args);
 
-  if(!function_p->tmp)
+  if(function_p->tmp == NULL)
   {
-    function_p->tmp.reset(new COMPILED_REGEX());
+    function_p->tmp = new COMPILED_REGEX();
   }
 
-  std::shared_ptr<void> tmp(function_p->tmp);
-  COMPILED_REGEX *compiled_regex = static_cast<COMPILED_REGEX *>(tmp.get());
+  COMPILED_REGEX *compiled_regex = static_cast<COMPILED_REGEX *>(function_p->tmp);
   std::regex *reg = compiled_regex->regex;
   char* pattern = compiled_regex->pattern;
+  
   error_status = db_string_regex_replace (function_p->value, args, no_args, &reg, &pattern);
   if (error_status != NO_ERROR)
     {
