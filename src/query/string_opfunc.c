@@ -53,7 +53,6 @@
 #include "dbtype.h"
 #include "elo.h"
 #include "db_elo.h"
-#include "memory_private_allocator.hpp"
 #include <algorithm>
 #include <regex>
 #include <string>
@@ -4539,8 +4538,22 @@ cleanup:
   return error_status;
 }
 
+compiled_regex::~compiled_regex()
+{
+  if (regex != NULL)
+  {
+      delete regex;
+      regex = NULL;
+  }
+  if (pattern != NULL)
+  {		
+      delete[] pattern;
+      pattern = NULL;
+  }
+}
+
 int
-db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_args,
+db_string_regexp_replace (DB_VALUE * result, DB_VALUE * args[], int const num_args,
 			 std::regex ** comp_regex, char **comp_pattern)
 {
   int error_status = NO_ERROR;
@@ -4618,8 +4631,7 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
     int pattern_length = db_get_string_size (pattern);
 
     // *INDENT-OFF*
-    std::string src_string (db_get_string (src), db_get_string_size (src));
-    std::string pattern_string (db_get_string (pattern), db_get_string_size (pattern));
+    std::string src_string (src_char_string_p, src_length);
 
     /* check for recompile */
     if (rx_compiled_pattern == NULL || rx_compiled_regex == NULL || pattern_length != strlen (rx_compiled_pattern)
@@ -4632,11 +4644,11 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
       if (rx_compiled_pattern != NULL)
       {
         /* free old memory */
-        db_private_free_and_init (NULL, rx_compiled_pattern);
+        delete[] rx_compiled_pattern;
       }
 
       /* allocate new memory */
-      rx_compiled_pattern = (char *) db_private_alloc (NULL, pattern_length + 1);
+      rx_compiled_pattern = new char[pattern_length + 1];
 
       if (rx_compiled_pattern == NULL)
       {
@@ -4707,10 +4719,10 @@ db_string_regex_replace (DB_VALUE * result, DB_VALUE * args[], int const num_arg
     std::string prev;
     std::string target;
 
-    if (position_value != 0 && position_value < src_string.size())
+    if (position_value != 0 && position_value < src_length)
     {
       prev = src_string.substr(0, position_value);
-      target = src_string.substr(position_value, src_string.size() - position_value);
+      target = src_string.substr(position_value, src_length - position_value);
     }
     else
     {
@@ -4810,7 +4822,8 @@ exit:
   if ((comp_pattern == NULL || error_status != NO_ERROR) && rx_compiled_pattern != NULL)
     {
       /* free memory if (using local pattern) or (error occurred) */
-      db_private_free_and_init (NULL, rx_compiled_pattern);
+      delete[] rx_compiled_pattern;
+      rx_compiled_pattern = NULL;
     }
 
   if (comp_regex != NULL)

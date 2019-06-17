@@ -217,7 +217,7 @@ static int qdata_elt (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_D
 static int qdata_benchmark (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR * val_desc_p,
 			    OID * obj_oid_p, QFILE_TUPLE tuple);
 
-static int qdata_regex_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR * val_desc_p,
+static int qdata_regexp_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR * val_desc_p,
 					  OID * obj_oid_p, QFILE_TUPLE tuple);
 
 static int qdata_convert_operands_to_value_and_call (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p,
@@ -6886,7 +6886,7 @@ qdata_evaluate_function (THREAD_ENTRY * thread_p, regu_variable_node * function_
 						       db_evaluate_json_valid);
 
     case F_REGEXP_REPLACE:
-      return qdata_regex_replace_function (thread_p, funcp, val_desc_p, obj_oid_p, tuple);
+      return qdata_regexp_replace_function (thread_p, funcp, val_desc_p, obj_oid_p, tuple);
 
     default:
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QPROC_INVALID_XASLNODE, 0);
@@ -8477,7 +8477,7 @@ qdata_benchmark (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR 
  *   tpl(in)    : tuple
  */
 static int
-qdata_regex_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR * val_desc_p,
+qdata_regexp_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR * val_desc_p,
 			       OID * obj_oid_p, QFILE_TUPLE tuple)
 {
   DB_VALUE *value;
@@ -8520,13 +8520,11 @@ qdata_regex_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_
   if(function_p->tmp == NULL)
   {
     function_p->tmp = new COMPILED_REGEX();
+    COMPILED_REGEX *compiled_regex = static_cast<COMPILED_REGEX *>(function_p->tmp);
   }
 
   COMPILED_REGEX *compiled_regex = static_cast<COMPILED_REGEX *>(function_p->tmp);
-  std::regex* &reg = compiled_regex->regex;
-  char* &pattern = compiled_regex->pattern;
-  
-  error_status = db_string_regex_replace (function_p->value, args, no_args, &reg, &pattern);
+  error_status = db_string_regexp_replace (function_p->value, args, no_args, &compiled_regex->regex, &compiled_regex->pattern);
   if (error_status != NO_ERROR)
     {
       goto exit;

@@ -19836,7 +19836,7 @@ pt_evaluate_function_w_args (PARSER_CONTEXT * parser, FUNC_TYPE fcode, DB_VALUE 
       break;
 
     case F_REGEXP_REPLACE:
-      error = db_string_regex_replace(result, args, num_args, NULL, NULL);
+      error = db_string_regexp_replace(result, args, num_args, NULL, NULL);
 	  break;
 
     default:
