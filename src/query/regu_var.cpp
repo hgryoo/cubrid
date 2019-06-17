@@ -152,20 +152,9 @@ regu_variable_node::clear_xasl_local ()
             COMPILED_REGEX *compiled_regex = static_cast<COMPILED_REGEX *>(value.funcp->tmp);
             if (compiled_regex != NULL)
             {
-               if (compiled_regex->regex != NULL)
-  		{
-    		  delete compiled_regex->regex;
-    		  compiled_regex->regex = NULL;
-  		}
-
-  		if (compiled_regex->pattern != NULL)
- 	 	{		
-    		  db_private_free_and_init (NULL, compiled_regex->pattern);
-  		}
-                
-		delete compiled_regex;
-                value.funcp->tmp = NULL;
+              delete compiled_regex;
             }
+            value.funcp->tmp = NULL;
           }
           break;
         default:
