@@ -70,7 +70,7 @@ import cubrid.jdbc.jci.UConnection;
 import cubrid.jdbc.jci.UJCIUtil;
 import cubrid.sql.CUBRIDOID;
 
-public class ExecuteThread extends Thread {
+public class ExecuteThread implements Runnable {
 	public static final int DB_NULL = 0;
 
 	public static final int DB_INT = 1;

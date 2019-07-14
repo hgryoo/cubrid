@@ -34,6 +34,9 @@ import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -51,13 +54,15 @@ public class Server {
 
 	private static final String LOG_DIR = "log";
 
+	private static ExecutorService executorService;
+	
 	public Server(String name, String path, String version, String rPath)
 			throws IOException {
 		serverName = name;
 		spPath = path;
 		rootPath = rPath;
 		serverSocket = new ServerSocket(0);
-
+		
 		try {
 			Class.forName("cubrid.jdbc.driver.CUBRIDDriver");
 		} catch (ClassNotFoundException e1) {
@@ -66,6 +71,10 @@ public class Server {
 		System.setSecurityManager(new SpSecurityManager());
 		System.setProperty("cubrid.server.version", version);
 
+		executorService = Executors.newFixedThreadPool(
+			    Runtime.getRuntime().availableProcessors()
+		);
+		
 		new Thread(new Runnable() {
 			public void run() {
 				Socket client = null;
@@ -73,7 +82,7 @@ public class Server {
 					try {
 						client = serverSocket.accept();
 						client.setTcpNoDelay(true);
-						new ExecuteThread(client).start();
+						executorService.submit(new ExecuteThread(client));
 					} catch (IOException e) {
 						log(e);
 					}
