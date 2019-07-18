@@ -4721,7 +4721,6 @@ db_string_regexp_like (DB_VALUE *result, DB_VALUE *args[], int const num_args,
 	  }
       }
 
-  // *INDENT-OFF*
   try
     {
       std::string src_string (db_get_string (src), db_get_string_size (src));
@@ -4744,49 +4743,52 @@ db_string_regexp_like (DB_VALUE *result, DB_VALUE *args[], int const num_args,
       result_value = V_ERROR;
       goto exit;
     }
-  // *INDENT-ON*
-  }
+}
 
 exit:
 
-  if ((comp_regex == NULL || error_status != NO_ERROR) && rx_compiled_regex != NULL)
-    {
-      /* free memory if (using local regex) or (error occurred) */
-      delete rx_compiled_regex;
-      rx_compiled_regex = NULL;
-    }
+if ((comp_regex == NULL || error_status != NO_ERROR) && rx_compiled_regex != NULL)
+  {
+    /* free memory if (using local regex) or (error occurred) */
+    delete rx_compiled_regex;
+    rx_compiled_regex = NULL;
+  }
 
-  if ((comp_pattern == NULL || error_status != NO_ERROR) && rx_compiled_pattern != NULL)
-    {
-      /* free memory if (using local pattern) or (error occurred) */
-      delete[] rx_compiled_pattern;
-      rx_compiled_pattern = NULL;
-    }
+if ((comp_pattern == NULL || error_status != NO_ERROR) && rx_compiled_pattern != NULL)
+  {
+    /* free memory if (using local pattern) or (error occurred) */
+    delete[]rx_compiled_pattern;
+    rx_compiled_pattern = NULL;
+  }
 
-  if (comp_regex != NULL)
-    {
-      /* pass compiled regex object out */
-      *comp_regex = rx_compiled_regex;
-    }
+if (comp_regex != NULL)
+  {
+    /* pass compiled regex object out */
+    *comp_regex = rx_compiled_regex;
+  }
 
-  if (comp_pattern != NULL)
-    {
-      /* pass compiled pattern out */
-      *comp_pattern = rx_compiled_pattern;
-    }
-	  
-  if (error_status != NO_ERROR)
-    {
-      db_make_null (result);
-      if (prm_get_bool_value (PRM_ID_RETURN_NULL_ON_FUNCTION_ERRORS))
-	{
-	  /* clear error and return NULL */
-	  er_clear ();
-	  return NO_ERROR;
-	}
-    }
+if (comp_pattern != NULL)
+  {
+    /* pass compiled pattern out */
+    *comp_pattern = rx_compiled_pattern;
+  }
 
-  return error_status;
+if (error_status != NO_ERROR)
+  {
+    db_make_int (result, 0);
+    if (prm_get_bool_value (PRM_ID_RETURN_NULL_ON_FUNCTION_ERRORS))
+      {
+	/* clear error and return NULL */
+	er_clear ();
+	return NO_ERROR;
+      }
+  }
+  else
+  {
+    db_make_int (result, result_value);
+  }
+
+return error_status;
 }
 // *INDENT-ON*
 
@@ -5369,9 +5371,7 @@ db_string_regexp_substr (DB_VALUE *result, DB_VALUE *args[], int const num_args,
 
 	    if (reg_iter != reg_end)
 	      {
-          auto last_iter = reg_iter;
-
-          std::size_t n = occurrence_value;
+          std::size_t n = (occurrence_value > 0) ? occurrence_value - 1 : occurrence_value;
           do
           {
             if (n == 0)
@@ -5651,14 +5651,15 @@ db_string_regexp_instr (DB_VALUE *result, DB_VALUE *args[], int const num_args,
     std::wstring wsrc;
     if (cublocale::convert_to_wstring (wsrc, src_string, collation) == false)
       {
-	db_make_null (result);
+	db_make_int (result, 0);
 	goto exit;
       }
 
     int src_length = wsrc.size();
+    int position_value = 0;
     if (position)
       {
-	int position_value = db_get_int (position) - 1;
+	position_value = db_get_int (position) - 1;
 	if (position_value >= 0 && position_value < src_length)
 	  {
 	    target = std::move (wsrc.substr (position_value, src_length - position_value));
@@ -5697,31 +5698,30 @@ db_string_regexp_instr (DB_VALUE *result, DB_VALUE *args[], int const num_args,
 	    auto reg_iter = std::wsregex_iterator (target.begin (), target.end (), *rx_compiled_regex);
 	    auto reg_end = std::wsregex_iterator ();
 
+      int instr = 0;
 	    if (reg_iter != reg_end)
 	      {
-          auto last_iter = reg_iter;
-
-          std::size_t n = occurrence_value;
+          std::size_t n = (occurrence_value > 0) ? occurrence_value - 1 : occurrence_value;
           do
           {
             if (n == 0)
               {
-                int instr = reg_iter->position () + 1;
+                instr = reg_iter->position () + 1;
                 if (return_opt_value == 1)
                 {
                   instr += reg_iter->length ();
                 }
-                db_make_int (result, instr);
+                db_make_int (result, instr + position_value);
                 break;
               }
             ++reg_iter;
             --n;
           } while (reg_iter != reg_end);
         }
-      else
+
+        if (instr == 0)
         {
           db_make_int (result, 0);
-          goto exit;
         }
     }
     else

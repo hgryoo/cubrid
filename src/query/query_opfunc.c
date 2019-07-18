@@ -217,7 +217,7 @@ static int qdata_benchmark (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p,
 			    OID * obj_oid_p, QFILE_TUPLE tuple);
 
 static int qdata_regexp_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR * val_desc_p,
-					  OID * obj_oid_p, QFILE_TUPLE tuple);
+				  OID * obj_oid_p, QFILE_TUPLE tuple);
 
 static int qdata_convert_operands_to_value_and_call (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p,
 						     VAL_DESCR * val_desc_p, OID * obj_oid_p, QFILE_TUPLE tuple,
@@ -8481,7 +8481,7 @@ qdata_benchmark (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR 
  */
 static int
 qdata_regexp_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_DESCR * val_desc_p,
-			       OID * obj_oid_p, QFILE_TUPLE tuple)
+		       OID * obj_oid_p, QFILE_TUPLE tuple)
 {
   DB_VALUE *value;
   REGU_VARIABLE_LIST operand;
@@ -8528,25 +8528,25 @@ qdata_regexp_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_
 
     COMPILED_REGEX *compiled_regex = function_p->tmp_obj->compiled_regex;
 
-    std::function<int(DB_VALUE*, DB_VALUE*[], const int, std::wregex**, char**)> regexp_func;
+    std::function < int (DB_VALUE *, DB_VALUE *[], const int, std::wregex **, char **) > regexp_func;
     switch (function_p->ftype)
-    {
+      {
       case F_REGEXP_COUNT:
-        regexp_func = db_string_regexp_count;
-        break;
+	regexp_func = db_string_regexp_count;
+	break;
       case F_REGEXP_INSTR:
-        regexp_func = db_string_regexp_instr;
-        break;
+	regexp_func = db_string_regexp_instr;
+	break;
       case F_REGEXP_LIKE:
-        regexp_func = db_string_regexp_like;
-        break;
+	regexp_func = db_string_regexp_like;
+	break;
       case F_REGEXP_REPLACE:
-        regexp_func = db_string_regexp_replace;
-        break;
+	regexp_func = db_string_regexp_replace;
+	break;
       case F_REGEXP_SUBSTR:
-        regexp_func = db_string_regexp_substr;
-        break;
-    }
+	regexp_func = db_string_regexp_substr;
+	break;
+      }
     error_status = regexp_func (function_p->value, args, no_args, &compiled_regex->regex, &compiled_regex->pattern);
     if (error_status != NO_ERROR)
       {
