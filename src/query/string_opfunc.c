@@ -4577,6 +4577,41 @@ cleanup:
 }
 
 // *INDENT-OFF*
+/*
+ * db_string_regexp_like ()  checks given string is matched by regex pattern
+ *
+ * Arguments:
+ *        result:       (IN) Result String
+ *        args:         (IN) Array of Arguments
+ *	      num_args:     (IN) # of Arguments
+ *	      comp_regex:   (IN/OUT) Compiled regex object
+ *	      comp_pattern: (IN/OUT) Compiled regex pattern
+ *
+ * Returns: int
+ *
+ * Errors:
+ *      ER_QSTR_INVALID_DATA_TYPE:
+ *          <src>, <pattern> (if it’s not NULL)
+ *          is not a character string.
+ *
+ *      ER_QSTR_INCOMPATIBLE_CODE_SETS:
+ *          <src_string>, <pattern> (if it’s not NULL)
+ *          have different character code sets.
+ *
+ *      ER_QSTR_INCOMPATIBLE_COLLATIONS:
+ *          <src_string>, <pattern> (if it's not NULL)
+ *          are incompatible collations.
+ *
+ *      ER_REGEX_COMPILE_ERROR:
+ *          An illegal regex pattern is specified.
+ *
+ *      ER_REGEX_EXEC_ERROR:
+ *          An regex pattern is too complex or insufficient memory while executing regex matching
+ * 
+ *      ER_QPROC_INVALID_PARAMETER:
+ *          Invalid parameter exists
+ * 
+ */
 int
 db_string_regexp_like (DB_VALUE *result, DB_VALUE *args[], int const num_args,
 			  std::wregex **comp_regex, char **comp_pattern)
@@ -4697,7 +4732,7 @@ db_string_regexp_like (DB_VALUE *result, DB_VALUE *args[], int const num_args,
 		    reg_flags |= std::regex_constants::icase;
 		    break;
 		  default:
-		    error_status = ER_OBJ_INVALID_ARGUMENTS;
+		    error_status = ER_QPROC_INVALID_PARAMETER;
 		    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
 		    goto exit;
 		    break;
@@ -4820,11 +4855,11 @@ return error_status;
  *      ER_REGEX_COMPILE_ERROR:
  *          An illegal regex pattern is specified.
  *
- *      ER_REGEX_EXECUTION_ERROR:
- *          An illegal regex pattern is specified.
+ *      ER_REGEX_EXEC_ERROR:
+ *          An regex pattern is too complex or insufficient memory while executing regex matching
  * 
- *      ER_OBJ_INVALID_ARGUMENTS:
- *          invalid function arguments exist
+ *      ER_QPROC_INVALID_PARAMETER:
+ *          Invalid parameter exists
  * 
  */
 // *INDENT-OFF*
@@ -4863,14 +4898,14 @@ db_string_regexp_replace (DB_VALUE *result, DB_VALUE *args[], int const num_args
       {
 	occurrence = args[4];
 	assert (occurrence != (DB_VALUE *) NULL);
-	is_any_null |= DB_IS_NULL (position);
+	is_any_null |= DB_IS_NULL (occurrence);
       }
 
     if (num_args == 6)
       {
 	match_type = args[5];
 	assert (match_type != (DB_VALUE *) NULL);
-	is_any_null |= DB_IS_NULL (position);
+	is_any_null |= DB_IS_NULL (match_type);
       }
 
     if (is_any_null)
@@ -4976,7 +5011,7 @@ db_string_regexp_replace (DB_VALUE *result, DB_VALUE *args[], int const num_args
 		    reg_flags |= std::regex_constants::icase;
 		    break;
 		  default:
-		    error_status = ER_OBJ_INVALID_ARGUMENTS;
+		    error_status = ER_QPROC_INVALID_PARAMETER;
 		    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
 		    goto exit;
 		    break;
@@ -5021,17 +5056,19 @@ db_string_regexp_replace (DB_VALUE *result, DB_VALUE *args[], int const num_args
 	    prefix = std::move (wsrc.substr (0, position_value));
 	    target = std::move (wsrc.substr (position_value, src_length - position_value));
 	  }
-	else
-	  {
-	    error_status = ER_OBJ_INVALID_ARGUMENTS;
-	    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
-	    goto exit;
-	  }
+  else if (position_value < 0)
+    {
+      error_status = ER_QPROC_INVALID_PARAMETER;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+      goto exit;
+    }
       }
-    else
-      {
-	target = std::move (wsrc);
-      }
+
+    // position is not specified or bigger than length of src_string
+    if (target.empty ())
+    {
+      target = std::move (wsrc);
+    }
 
     try
       {
@@ -5082,7 +5119,9 @@ db_string_regexp_replace (DB_VALUE *result, DB_VALUE *args[], int const num_args
 	  }
 	else
 	  {
-	    wresult_string = std::move (target);
+      error_status = ER_QPROC_INVALID_PARAMETER;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+      goto exit;
 	  }
 
 	/* concatenate with prefix */
@@ -5166,6 +5205,41 @@ exit:
 }
 // *INDENT-ON*
 
+/*
+ * db_string_regexp_substr ()  returns searched string by regex pattern
+ *
+ * Arguments:
+ *        result:       (IN) Result String
+ *        args:         (IN) Array of Arguments
+ *	      num_args:     (IN) # of Arguments
+ *	      comp_regex:   (IN/OUT) Compiled regex object
+ *	      comp_pattern: (IN/OUT) Compiled regex pattern
+ *
+ * Returns: int
+ *
+ * Errors:
+ *      ER_QSTR_INVALID_DATA_TYPE:
+ *          <src>, <patter n> (if it’s not NULL)
+ *          is not a character string.
+ *
+ *      ER_QSTR_INCOMPATIBLE_CODE_SETS:
+ *          <src_string>, <pattern> (if it’s not NULL)
+ *          have different character code sets.
+ *
+ *      ER_QSTR_INCOMPATIBLE_COLLATIONS:
+ *          <src_string>, <pattern> (if it's not NULL)
+ *          are incompatible collations.
+ *
+ *      ER_REGEX_COMPILE_ERROR:
+ *          An illegal regex pattern is specified.
+ *
+ *      ER_REGEX_EXEC_ERROR:
+ *          An regex pattern is too complex or insufficient memory while executing regex matching
+ * 
+ *      ER_QPROC_INVALID_PARAMETER:
+ *          Invalid parameter exists
+ * 
+ */
 // *INDENT-OFF*
 int
 db_string_regexp_substr (DB_VALUE *result, DB_VALUE *args[], int const num_args,
@@ -5238,7 +5312,7 @@ db_string_regexp_substr (DB_VALUE *result, DB_VALUE *args[], int const num_args,
     if (!QSTR_IS_ANY_CHAR (src_type) || !QSTR_IS_ANY_CHAR (pattern_type))
       {
 	error_status = ER_QSTR_INVALID_DATA_TYPE;
-	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QSTR_INVALID_DATA_TYPE, 0);
+	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
 	goto exit;
       }
 
@@ -5303,7 +5377,7 @@ db_string_regexp_substr (DB_VALUE *result, DB_VALUE *args[], int const num_args,
 		    reg_flags |= std::regex_constants::icase;
 		    break;
 		  default:
-		    error_status = ER_OBJ_INVALID_ARGUMENTS;
+		    error_status = ER_QPROC_INVALID_PARAMETER;
 		    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
 		    goto exit;
 		    break;
@@ -5346,21 +5420,22 @@ db_string_regexp_substr (DB_VALUE *result, DB_VALUE *args[], int const num_args,
 	  {
 	    target = std::move (wsrc.substr (position_value, src_length - position_value));
 	  }
-	else
+	else if (position_value < 0)
 	  {
-	    error_status = ER_OBJ_INVALID_ARGUMENTS;
+	    error_status = ER_QPROC_INVALID_PARAMETER;
 	    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
 	    goto exit;
 	  }
       }
-    else
-      {
-	target = std::move (wsrc);
-      }
+
+    // position is not specified or bigger than length of src_string
+    if (target.empty ())
+    {
+      target = std::move (wsrc);
+    }
 
     try
       {
-    
     std::wstring wresult_string;
 	  /* occurrence option */
 	  int occurrence_value = (occurrence != NULL) ? db_get_int (occurrence) : 0;
@@ -5391,7 +5466,7 @@ db_string_regexp_substr (DB_VALUE *result, DB_VALUE *args[], int const num_args,
     }
     else
     {
-      error_status = ER_OBJ_INVALID_ARGUMENTS;
+      error_status = ER_QPROC_INVALID_PARAMETER;
 	    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
 	    goto exit;
     }
@@ -5474,7 +5549,41 @@ exit:
 }
 // *INDENT-ON*
 
-
+/*
+ * db_string_regexp_instr ()  returns an integer indicating the beginning position of matched by regex pattern
+ *
+ * Arguments:
+ *        result:       (IN) Result String
+ *        args:         (IN) Array of Arguments
+ *	      num_args:     (IN) # of Arguments
+ *	      comp_regex:   (IN/OUT) Compiled regex object
+ *	      comp_pattern: (IN/OUT) Compiled regex pattern
+ *
+ * Returns: int
+ *
+ * Errors:
+ *      ER_QSTR_INVALID_DATA_TYPE:
+ *          <src>, <pattern>, <replace> (if it’s not NULL)
+ *          is not a character string.
+ *
+ *      ER_QSTR_INCOMPATIBLE_CODE_SETS:
+ *          <src_string>, <pattern> (if it’s not NULL)
+ *          have different character code sets.
+ *
+ *      ER_QSTR_INCOMPATIBLE_COLLATIONS:
+ *          <src_string>, <pattern>, <replace> (if it's not NULL)
+ *          are incompatible collations.
+ *
+ *      ER_REGEX_COMPILE_ERROR:
+ *          An illegal regex pattern is specified.
+ *
+ *      ER_REGEX_EXEC_ERROR:
+ *          An regex pattern is too complex or insufficient memory while executing regex matching
+ * 
+ *      ER_QPROC_INVALID_PARAMETER:
+ *          Invalid parameter exists
+ * 
+ */
 // *INDENT-OFF*
 int
 db_string_regexp_instr (DB_VALUE *result, DB_VALUE *args[], int const num_args,
@@ -5620,7 +5729,7 @@ db_string_regexp_instr (DB_VALUE *result, DB_VALUE *args[], int const num_args,
 		    reg_flags |= std::regex_constants::icase;
 		    break;
 		  default:
-		    error_status = ER_OBJ_INVALID_ARGUMENTS;
+		    error_status = ER_QPROC_INVALID_PARAMETER;
 		    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
 		    goto exit;
 		    break;
@@ -5664,17 +5773,19 @@ db_string_regexp_instr (DB_VALUE *result, DB_VALUE *args[], int const num_args,
 	  {
 	    target = std::move (wsrc.substr (position_value, src_length - position_value));
 	  }
-	else
-	  {
-	    error_status = ER_OBJ_INVALID_ARGUMENTS;
-	    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
-	    goto exit;
-	  }
+	else if (position_value < 0)
+    {
+      error_status = ER_QPROC_INVALID_PARAMETER;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+      goto exit;
+    }
       }
-    else
-      {
-	target = std::move (wsrc);
-      }
+    
+    // position is not specified or bigger than length of src_string
+    if (target.empty ())
+    {
+      target = std::move (wsrc);
+    }
 
     try
       {
@@ -5726,7 +5837,7 @@ db_string_regexp_instr (DB_VALUE *result, DB_VALUE *args[], int const num_args,
     }
     else
     {
-      error_status = ER_OBJ_INVALID_ARGUMENTS;
+      error_status = ER_QPROC_INVALID_PARAMETER;
 	    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
 	    goto exit;
     }
@@ -5784,7 +5895,7 @@ exit:
 // *INDENT-ON*
 
 /*
- * db_string_regexp_count ()  returns replaced string by regex pattern
+ * db_string_regexp_count ()  returns the number of times a pattern occurs in a given string
  *
  * Arguments:
  *        result:       (IN) Result String
@@ -5990,17 +6101,19 @@ db_string_regexp_count (DB_VALUE *result, DB_VALUE *args[], int const num_args,
 	  {
 	    target = std::move (wsrc.substr (position_value, src_length - position_value));
 	  }
-	else
+	else if (position_value < 0)
 	  {
-	    error_status = ER_OBJ_INVALID_ARGUMENTS;
+	    error_status = ER_QPROC_INVALID_PARAMETER;
 	    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
 	    goto exit;
 	  }
       }
-    else
-      {
-	target = std::move (wsrc);
-      }
+
+    // position is not specified or bigger than length of src_string
+    if (target.empty ())
+    {
+      target = std::move (wsrc);
+    }
 
     try
       {
