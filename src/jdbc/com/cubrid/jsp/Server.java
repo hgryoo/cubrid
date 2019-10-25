@@ -54,8 +54,6 @@ public class Server {
 
 	private static final String LOG_DIR = "log";
 
-	private static ExecutorService executorService;
-	
 	public Server(String name, String path, String version, String rPath)
 			throws IOException {
 		serverName = name;
@@ -71,12 +69,10 @@ public class Server {
 		System.setSecurityManager(new SpSecurityManager());
 		System.setProperty("cubrid.server.version", version);
 
-		executorService = Executors.newFixedThreadPool(
-			    Runtime.getRuntime().availableProcessors()
-		);
-		
 		new Thread(new Runnable() {
 			public void run() {
+				ExecutorService executorService = Executors.newCachedThreadPool();
+
 				Socket client = null;
 				while (true) {
 					try {
