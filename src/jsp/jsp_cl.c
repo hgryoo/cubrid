@@ -2701,12 +2701,20 @@ jsp_receive_response (const SOCKET sockfd, const SP_ARGS * sp_args)
   char *buffer, *ptr = NULL;
   int nbytes;
   DB_ARG_LIST *arg_list_p;
-  int i;
+  int i = 0;
   DB_VALUE temp;
   int error_code = NO_ERROR;
 
 redo:
   nbytes = jsp_readn (sockfd, (char *) &start_code, (int) sizeof (int));
+  
+  /* try consume EOF */
+  if (nbytes == 0 && i == 0)
+    {
+      ++i;
+      goto redo;
+    }
+
   if (nbytes != (int) sizeof (int))
     {
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_NETWORK_ERROR, 1, nbytes);
@@ -2980,11 +2988,11 @@ retry:
   error = jsp_receive_response (sock_fd, args);
 
 end:
-  call_cnt--;
   if (call_cnt > 0)
     {
       jsp_close_internal_connection (sock_fd);
     }
+  call_cnt--;
 
   return error;
 }

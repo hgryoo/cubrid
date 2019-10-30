@@ -109,13 +109,17 @@ public class ExecuteThread implements Runnable {
 
 	public static final int DB_DATETIME = 32;
 
+	public static final int CODE_SUCCESS = 0x02;
+
+	public static final int CODE_ERROR = 0x04;
+	
 	private Socket client;
 
 	private DataOutputStream toClient;
 
-	private ByteArrayOutputStream byteBuf = new ByteArrayOutputStream(1024);
+	private ByteArrayOutputStream byteBuf;
 
-	private DataOutputStream outBuf = new DataOutputStream(byteBuf);
+	private DataOutputStream outBuf;
 
 	private Connection jdbcConnection = null;
 
@@ -124,8 +128,6 @@ public class ExecuteThread implements Runnable {
 	ExecuteThread(Socket client) throws IOException {
 		super();
 		this.client = client;
-		toClient = new DataOutputStream(new BufferedOutputStream(this.client
-				.getOutputStream()));
 	}
 
 	public Socket getSocket() {
@@ -144,53 +146,42 @@ public class ExecuteThread implements Runnable {
 	}
 
 	public void run() {
-		while (true) {
-			try {
-				Object resolvedResult = null;
+		try {
+			toClient = new DataOutputStream(new BufferedOutputStream(this.client.getOutputStream()));
+			byteBuf = new ByteArrayOutputStream(1024);
+			outBuf = new DataOutputStream(byteBuf);
+			
+			Object resolvedResult = null;
 
-				StoredProcedure sp = makeStoredProcedure();
-				Value result = sp.invoke();
+			StoredProcedure sp = makeStoredProcedure();
+			Value result = sp.invoke();
 
-				closeJdbcConnection();
-
-				if (result != null) {
-					resolvedResult = toDbTypeValue(sp.getReturnType(), result);
-				}
-
-				byteBuf.reset();
-				sendValue(resolvedResult, outBuf, sp.getReturnType());
-				returnOutArgs(sp, outBuf);
-				outBuf.flush();
-
-				toClient.writeInt(0x2);
-				toClient.writeInt(byteBuf.size() + 4);
-				byteBuf.writeTo(toClient);
-				toClient.writeInt(0x2);
-				toClient.flush();
-
-				sp = null;
-				result = null;
-
-				// toClient.close();
-				// client.close();
-			} catch (Throwable e) {
-				if (e instanceof IOException) {
-					break;
-				} else if (e instanceof InvocationTargetException) {
-					Server.log(((InvocationTargetException) e)
-							.getTargetException());
-				} else {
-					Server.log(e);
-				}
-				closeJdbcConnection();
-				try {
-					sendError(e, client);
-				} catch (IOException e1) {
-					Server.log(e1);
-				}
-			} finally {
-				closeJdbcConnection();
+			if (result != null) {
+				resolvedResult = toDbTypeValue(sp.getReturnType(), result);
 			}
+
+			sendSuccess(sp, resolvedResult);
+
+			sp = null;
+			result = null;
+		} catch (Throwable e) {
+			e.printStackTrace();
+			if (e instanceof IOException) {
+				Server.log(e);
+			} else if (e instanceof InvocationTargetException) {
+				Server.log(((InvocationTargetException) e)
+						.getTargetException());
+			} else {
+				Server.log(e);
+			}
+
+			try {
+				sendError(e);
+			} catch (IOException e1) {
+				Server.log(e1);
+			}
+		} finally {
+			closeJdbcConnection();
 		}
 
 		try {
@@ -207,6 +198,34 @@ public class ExecuteThread implements Runnable {
 		outBuf = null;
 		jdbcConnection = null;
 		charSet = null;
+	}
+
+	private void sendSuccess(StoredProcedure sp, Object result) throws Exception {
+		byteBuf.reset();
+
+		sendValue(result, outBuf, sp.getReturnType());
+		returnOutArgs(sp, outBuf);
+
+		outBuf.flush();
+		toClient.writeInt(CODE_SUCCESS);
+		toClient.writeInt(byteBuf.size() + 4);
+		byteBuf.writeTo(toClient);
+		toClient.writeInt(CODE_SUCCESS);
+		toClient.flush();
+	}
+
+	private void sendError(Throwable e) throws IOException {
+		byteBuf.reset();
+
+		sendValue(new Integer(1), outBuf, DB_INT);
+		sendValue(e.toString(), outBuf, DB_STRING);
+
+		outBuf.flush();
+		toClient.writeInt(CODE_ERROR);
+		toClient.writeInt(byteBuf.size() + 4);
+		byteBuf.writeTo(toClient);
+		toClient.writeInt(CODE_ERROR);
+		toClient.flush();
 	}
 
 	private Object toDbTypeValue(int dbType, Value result)
@@ -316,52 +335,35 @@ public class ExecuteThread implements Runnable {
 		return sp.makeReturnValue(obj);
 	}
 
-	private void sendError(Throwable e, Socket socket) throws IOException {
-		byteBuf.reset();
-
-		sendValue(new Integer(1), outBuf, DB_INT);
-		sendValue(e.toString(), outBuf, DB_STRING);
-
-		outBuf.flush();
-		toClient.writeInt(0x4);
-		toClient.writeInt(byteBuf.size() + 4);
-		byteBuf.writeTo(toClient);
-		toClient.writeInt(0x4);
-		toClient.flush();
-
-		// toClient.close();
-		// client.close();
-	}
-
 	private StoredProcedure makeStoredProcedure() throws Exception {
 		DataInputStream dis = new DataInputStream(new BufferedInputStream(
 				this.client.getInputStream()));
 
 		int startCode = dis.readInt();
-		// System.out.println("startCode= " + startCode);
+		System.out.println("startCode= " + startCode);
 		if (startCode != 0x1)
 			return null;
 
 		int methodSigLength = dis.readInt();
-		// System.out.println("methodSigLength= " + methodSigLength);
+		System.out.println("methodSigLength= " + methodSigLength);
 
 		byte[] methodSig = new byte[methodSigLength];
 		dis.readFully(methodSig);
-		// System.out.println("methodSig= " + new String(methodSig));
+		System.out.println("methodSig= " + new String(methodSig));
 
 		int paramCount = dis.readInt();
-		// System.out.println("paramCount= " + paramCount);
+		System.out.println("paramCount= " + paramCount);
 
 		Value[] args = readArguments(dis, paramCount);
-		// for (int i = 0; i < args.length; i++) {
-		// System.out.println("arg[" + i + "]= " + args[i]);
-		// }
+		for (int i = 0; i < args.length; i++) {
+		 System.out.println("arg[" + i + "]= " + args[i]);
+		 }
 
 		int returnType = dis.readInt();
-		// System.out.println("returnType= " + returnType);
+		 System.out.println("returnType= " + returnType);
 
 		int endCode = dis.readInt();
-		// System.out.println("endcode= " + endCode);
+		 System.out.println("endcode= " + endCode);
 		if (startCode != endCode)
 			return null;
 

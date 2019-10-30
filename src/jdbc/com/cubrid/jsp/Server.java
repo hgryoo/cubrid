@@ -41,7 +41,7 @@ import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public class Server {
+public class Server extends Thread {
 	private static String serverName;
 
 	private static String spPath;
@@ -53,6 +53,8 @@ public class Server {
 	private static Logger logger = Logger.getLogger("com.cubrid.jsp");
 
 	private static final String LOG_DIR = "log";
+
+	private static ExecutorService executorService = Executors.newCachedThreadPool();
 
 	public Server(String name, String path, String version, String rPath)
 			throws IOException {
@@ -69,22 +71,19 @@ public class Server {
 		System.setSecurityManager(new SpSecurityManager());
 		System.setProperty("cubrid.server.version", version);
 
-		new Thread(new Runnable() {
-			public void run() {
-				ExecutorService executorService = Executors.newCachedThreadPool();
+		this.start();
+	}
 
-				Socket client = null;
-				while (true) {
-					try {
-						client = serverSocket.accept();
-						client.setTcpNoDelay(true);
-						executorService.submit(new ExecuteThread(client));
-					} catch (IOException e) {
-						log(e);
-					}
-				}
+	public void run() {
+		while (true) {
+			try {
+				Socket client = serverSocket.accept();
+				client.setTcpNoDelay(true);
+				executorService.execute(new ExecuteThread(client));
+			} catch (IOException e) {
+				log(e);
 			}
-		}).start();
+		}
 	}
 
 	private int getServerPort() {
