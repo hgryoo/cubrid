@@ -284,8 +284,12 @@ backupdb (UTIL_FUNCTION_ARG * arg)
       /* resolve relative path */
       if (getcwd (dirname, PATH_MAX) != NULL)
 	{
-	  int ret = snprintf (verbose_file_realpath, PATH_MAX - 1, "%s/%s", dirname, backup_verbose_file);
-	  (void) ret;		// suppress format-truncate warning
+	  if (snprintf (verbose_file_realpath, PATH_MAX - 1, "%s/%s", dirname, backup_verbose_file) < 0)
+	    {
+	      assert (false);
+	      db_shutdown ();
+	      goto error_exit;
+	    }
 	  backup_verbose_file = verbose_file_realpath;
 	}
     }
@@ -701,7 +705,7 @@ checkdb (UTIL_FUNCTION_ARG * arg)
 	    {
 	      continue;
 	    }
-	  strncpy (n, p, SM_MAX_IDENTIFIER_LENGTH);
+	  strncpy_bufsize (n, p);
 	  if (da_add (darray, n) != NO_ERROR)
 	    {
 	      util_log_write_errid (MSGCAT_UTIL_GENERIC_NO_MEM);
@@ -2585,7 +2589,7 @@ copylogdb (UTIL_FUNCTION_ARG * arg)
   char *binary_name;
   char executable_path[PATH_MAX];
 #endif
-  INT64 start_pageid;
+  INT64 start_pageid = 0;
 
   if (utility_get_option_string_table_size (arg_map) != 1)
     {

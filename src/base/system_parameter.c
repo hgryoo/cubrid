@@ -54,6 +54,7 @@
 #include "util_func.h"
 #include "log_comm.h"
 #include "memory_alloc.h"
+#include "object_representation.h"
 #include "environment_variable.h"
 #include "intl_support.h"
 #include "message_catalog.h"
@@ -665,8 +666,10 @@ static const char sysprm_ha_conf_file_name[] = "cubrid_ha.conf";
 #define PRM_NAME_LOG_CHKPT_DETAILED "detailed_checkpoint_logging"
 #define PRM_NAME_IB_TASK_MEMSIZE "index_load_task_memsize"
 #define PRM_NAME_STATS_ON "stats_on"
+#define PRM_NAME_LOADDB_WORKER_COUNT "loaddb_worker_count"
 #define PRM_NAME_PERF_TEST_MODE "perf_test_mode"
 #define PRM_NAME_REPR_CACHE_LOG "er_log_repr_cache"
+#define PRM_NAME_ENABLE_NEW_LFHASH "new_lfhash"
 
 #define PRM_VALUE_DEFAULT "DEFAULT"
 #define PRM_VALUE_MAX "MAX"
@@ -2240,6 +2243,12 @@ bool PRM_STATS_ON = false;
 static bool prm_stats_on_default = false;
 static unsigned int prm_stats_on_flag = 0;
 
+int PRM_LOADDB_WORKERS = 8;
+static int prm_loaddb_workers_default = 8;
+static int prm_loaddb_workers_upper = 64;
+static int prm_loaddb_workers_lower = 2;
+static unsigned int prm_loaddb_workers_flag = 0;
+
 bool PRM_PERF_TEST_MODE = false;
 static bool prm_perf_test_mode_default = false;
 static unsigned int prm_perf_test_mode_flag = 0;
@@ -2247,6 +2256,10 @@ static unsigned int prm_perf_test_mode_flag = 0;
 bool PRM_REPR_CACHE_LOG = false;
 static bool prm_repr_cache_log_default = false;
 static unsigned int prm_repr_cache_log_flag = 0;
+
+bool PRM_NEW_LFHASH = false;
+static bool prm_new_lfhash_default = false;
+static unsigned int prm_new_lfhash_flag = 0;
 
 typedef int (*DUP_PRM_FUNC) (void *, SYSPRM_DATATYPE, void *, SYSPRM_DATATYPE);
 
@@ -3241,7 +3254,7 @@ static SYSPRM_PARAM prm_Def[] = {
    (DUP_PRM_FUNC) NULL},
   {PRM_ID_NO_BACKSLASH_ESCAPES,
    PRM_NAME_NO_BACKSLASH_ESCAPES,
-   (PRM_FOR_CLIENT | PRM_TEST_CHANGE),
+   (PRM_FOR_CLIENT | PRM_FOR_SESSION | PRM_FOR_SERVER | PRM_USER_CHANGE),
    PRM_BOOLEAN,
    &prm_no_backslash_escapes_flag,
    (void *) &prm_no_backslash_escapes_default,
@@ -4552,7 +4565,7 @@ static SYSPRM_PARAM prm_Def[] = {
    (DUP_PRM_FUNC) NULL},
   {PRM_ID_INTL_CHECK_INPUT_STRING,
    PRM_NAME_INTL_CHECK_INPUT_STRING,
-   (PRM_FOR_CLIENT | PRM_TEST_CHANGE),
+   (PRM_FOR_CLIENT | PRM_FOR_SERVER | PRM_TEST_CHANGE),
    PRM_BOOLEAN,
    &prm_intl_check_input_string_flag,
    (void *) &prm_intl_check_input_string_default,
@@ -5759,6 +5772,17 @@ static SYSPRM_PARAM prm_Def[] = {
    (char *) NULL,
    (DUP_PRM_FUNC) NULL,
    (DUP_PRM_FUNC) NULL},
+  {PRM_ID_LOADDB_WORKER_COUNT,
+   PRM_NAME_LOADDB_WORKER_COUNT,
+   (PRM_FOR_SERVER | PRM_USER_CHANGE),
+   PRM_INTEGER,
+   &prm_loaddb_workers_flag,
+   (void *) &prm_loaddb_workers_default,
+   (void *) &PRM_LOADDB_WORKERS,
+   (void *) &prm_loaddb_workers_upper, (void *) &prm_loaddb_workers_lower,
+   (char *) NULL,
+   (DUP_PRM_FUNC) NULL,
+   (DUP_PRM_FUNC) NULL},
   {PRM_ID_PERF_TEST_MODE,
    PRM_NAME_PERF_TEST_MODE,
    (PRM_FOR_SERVER | PRM_HIDDEN),
@@ -5777,6 +5801,17 @@ static SYSPRM_PARAM prm_Def[] = {
    &prm_repr_cache_log_flag,
    (void *) &prm_repr_cache_log_default,
    (void *) &PRM_REPR_CACHE_LOG,
+   (void *) NULL, (void *) NULL,
+   (char *) NULL,
+   (DUP_PRM_FUNC) NULL,
+   (DUP_PRM_FUNC) NULL},
+  {PRM_ID_ENABLE_NEW_LFHASH,
+   PRM_NAME_ENABLE_NEW_LFHASH,
+   (PRM_FOR_SERVER | PRM_HIDDEN),
+   PRM_BOOLEAN,
+   &prm_new_lfhash_flag,
+   (void *) &prm_new_lfhash_default,
+   (void *) &PRM_NEW_LFHASH,
    (void *) NULL, (void *) NULL,
    (char *) NULL,
    (DUP_PRM_FUNC) NULL,
@@ -6247,7 +6282,7 @@ sysprm_set_er_log_file (const char *db_name)
       return;
     }
 
-  strncpy (local_db_name, db_name, DB_MAX_IDENTIFIER_LENGTH);
+  strncpy_bufsize (local_db_name, db_name);
   s = strchr (local_db_name, '@');
   if (s)
     {
@@ -6320,7 +6355,7 @@ sysprm_load_and_init_internal (const char *db_name, const char *conf_file, bool 
     }
   else
     {
-      strncpy (local_db_name, db_name, DB_MAX_IDENTIFIER_LENGTH);
+      strncpy_bufsize (local_db_name, db_name);
       s = strchr (local_db_name, '@');
       if (s)
 	{
@@ -6382,7 +6417,7 @@ sysprm_load_and_init_internal (const char *db_name, const char *conf_file, bool 
       conf_file = envvar_get ("HA_CONF_FILE");
       if (conf_file != NULL && conf_file[0] != '\0')
 	{
-	  strncpy (file_being_dealt_with, conf_file, PATH_MAX);
+	  strncpy_bufsize (file_being_dealt_with, conf_file);
 	}
       else
 	{
@@ -6451,9 +6486,7 @@ sysprm_load_and_init_internal (const char *db_name, const char *conf_file, bool 
 #endif
 
   intl_Mbs_support = prm_get_bool_value (PRM_ID_INTL_MBS_SUPPORT);
-#if !defined (SERVER_MODE)
   intl_String_validation = prm_get_bool_value (PRM_ID_INTL_CHECK_INPUT_STRING);
-#endif
 
   /* count the number of session parameters */
   num_session_parameters = 0;
@@ -7332,7 +7365,7 @@ sysprm_validate_escape_char_parameters (const SYSPRM_ASSIGN_VALUE * assignment_l
   SYSPRM_PARAM *prm = NULL;
   const SYSPRM_ASSIGN_VALUE *assignment = NULL;
   bool set_require_like_escape, set_no_backslash_escape;
-  bool is_require_like_escape, is_no_backslash_escape;
+  bool is_require_like_escape = false, is_no_backslash_escape = false;
 
   set_require_like_escape = set_no_backslash_escape = false;
   for (assignment = assignment_list; assignment != NULL; assignment = assignment->next)
