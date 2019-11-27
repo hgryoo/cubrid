@@ -270,7 +270,6 @@ opzioni valide:\n\
       --no-check               non controllare la consistenza del database; predefinito: controlla\n\
   -t, --thread-count=COUNT     COUNT numero threads; predefinito: 0(auto)\n\
   -z, --compress               compress volumi backup; predefinito: uncompress\n\
-  -e, --except-active-log      non includere il log di volume attivo; predefinito: includere\n\
       --sleep-msecs=N          aspetta N millisecondi per 1M read; predefinito: 0\n
 71 Argomenti incompatibili, \"%1$s\", e \"%2$s\"\n
 
@@ -1042,18 +1041,18 @@ opzioni valide:\n\
 
 $set 49 MSGCAT_UTIL_SET_TRANLIST
 20 Inserire la password %1$s:
-22 Tran index          User name      Host name      Process id      Program name\n
-23 -------------------------------------------------------------------------------\n
-24 %1$4d%2$-10s %3$14s %4$14s %5$15d %6$17s\n
+22 Tran index            User name      Host name      Process id      Program name\n
+23 ---------------------------------------------------------------------------------\n
+24 %1$4d%2$-12s %3$14s %4$14s %5$15d %6$17s\n
 25 Non ci sono transazioni\n
 26 tranlist può essere eseguita solo dal DBA o un membro del gruppo DBA.\n
 27 sort-key numero di colonna(%1$d) non è valido.\n
-32 Tran index         Process id    Program name              Query time    Tran time              Wait for lock holder      SQL_ID       SQL Text\n
-33 %1$4d%2$-10s %3$14d    %4$-25s %5$10.2f %6$12.2f    %7$28s     %8$13s   %9$s\n
-34 --------------------------------------------------------------------------------------------------------------------------------------------------\n
-42 Tran index          User name      Host name      Process id    Program name              Query time    Tran time              Wait for lock holder      SQL_ID       SQL Text\n
-43 %1$4d%2$-10s %3$14s %4$14s %5$14d    %6$-25s %7$10.2f %8$12.2f    %9$28s     %10$13s   %11$s\n
-44 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n
+32 Tran index           Process id    Program name              Query time    Tran time              Wait for lock holder      SQL_ID       SQL Text\n
+33 %1$4d%2$-12s %3$14d    %4$-25s %5$10.2f %6$12.2f    %7$28s     %8$13s   %9$s\n
+34 ----------------------------------------------------------------------------------------------------------------------------------------------------\n
+42 Tran index            User name      Host name      Process id    Program name              Query time    Tran time              Wait for lock holder      SQL_ID       SQL Text\n
+43 %1$4d%2$-12s %3$14s %4$14s %5$14d    %6$-25s %7$10.2f %8$12.2f    %9$28s     %10$13s   %11$s\n
+44 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n
 45 Tran index : %1$d
 46 SQL_ID: %1$s\n
 59 tranlist non può essere eseguito nella modalità standalone.\n

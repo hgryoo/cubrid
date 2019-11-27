@@ -270,7 +270,6 @@ backupdb: 备份一个数据库.\n\
       --no-check               不检测数据库的一致性; 默认: 检测\n\
   -t, --thread-count=COUNT     线程数; 默认: 0(auto)\n\
   -z, --compress               压缩备份卷; 默认: 不压缩\n\
-  -e, --except-active-log      不包括活动日志卷; 默认: 包括\n\
       --sleep-msecs=N          每读 1M 休眠 N  毫秒; 默认: 0\n
 71 不兼容的参数, \"%1$s\", 和 \"%2$s\"\n
 
@@ -1042,18 +1041,18 @@ synccolldb: 从数据库的排序规则同步到系统的排序规则.\n\
 
 $set 49 MSGCAT_UTIL_SET_TRANLIST
 20 输入密码 %1$s:
-22 Tran index          User name      Host name      Process id    Program name   \n
-23 -------------------------------------------------------------------------------\n
-24 %1$4d%2$-10s %3$14s %4$14s %5$15d %6$17s\n
+22 Tran index            User name      Host name      Process id    Program name   \n
+23 ---------------------------------------------------------------------------------\n
+24 %1$4d%2$-12s %3$14s %4$14s %5$15d %6$17s\n
 25 没有事务\n
 26 tranlist只能被DBA或DBA组成员来执行.\n
 27 sort-key 列序号 (%1$d) 不可用.\n
-32 Tran index         Process id    Program name              Query time    Tran time              Wait for lock holder      SQL_ID       SQL Text\n
-33 %1$4d%2$-10s %3$14d    %4$-25s %5$10.2f %6$12.2f    %7$28s     %8$13s   %9$s\n
-34 --------------------------------------------------------------------------------------------------------------------------------------------------\n
-42 Tran index          User name      Host name      Process id    Program name              Query time    Tran time              Wait for lock holder      SQL_ID       SQL Text\n
-43 %1$4d%2$-10s %3$14s %4$14s %5$14d    %6$-25s %7$10.2f %8$12.2f    %9$28s     %10$13s   %11$s\n
-44 ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n
+32 Tran index           Process id    Program name              Query time    Tran time              Wait for lock holder      SQL_ID       SQL Text\n
+33 %1$4d%2$-12s %3$14d    %4$-25s %5$10.2f %6$12.2f    %7$28s     %8$13s   %9$s\n
+34 ----------------------------------------------------------------------------------------------------------------------------------------------------\n
+42 Tran index            User name      Host name      Process id    Program name              Query time    Tran time              Wait for lock holder      SQL_ID       SQL Text\n
+43 %1$4d%2$-12s %3$14s %4$14s %5$14d    %6$-25s %7$10.2f %8$12.2f    %9$28s     %10$13s   %11$s\n
+44 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n
 45 Tran index : %1$d
 46 SQL_ID: %1$s\n
 59 tranlist 无法在单机模式下运行.\n
