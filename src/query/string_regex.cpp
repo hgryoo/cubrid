@@ -71,7 +71,7 @@ namespace cubregex
 
   std::string compiled_regex::replace (const std::string &src, const std::string &repl)
   {
-    return std::regex_replace (src, * (this->reg), this->pattern);
+    return std::regex_replace (src, * (this->reg), repl);
   }
 
   std::string compiled_regex::replace (const std::string &src, const std::string &repl, const int position)
