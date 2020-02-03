@@ -4326,8 +4326,8 @@ db_string_like (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_
  *
  */
 int
-db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * case_sensitive,
-		 compiled_regex ** comp_regex, int *result)
+db_string_rlike (const DB_VALUE * src, const DB_VALUE * pattern, const DB_VALUE * case_sensitive,
+		 COMPILED_REGEX *comp_regex, int *result)
 {
   QSTR_CATEGORY src_category = QSTR_UNKNOWN;
   QSTR_CATEGORY pattern_category = QSTR_UNKNOWN;
@@ -4337,9 +4337,7 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
   DB_TYPE case_sens_type = DB_TYPE_UNKNOWN;
   bool is_case_sensitive = false;
 
-  char *rx_compiled_pattern = NULL;
-  cub_regex_object *rx_compiled_regex = NULL;
-
+  COMPILED_REGEX local_compiled_regex;
   /* check for allocated DB values */
   assert (src != NULL);
   assert (pattern != NULL);
@@ -4391,8 +4389,10 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
       }
 
     /* get compiled pattern and regex object */
-    rx_compiled_pattern = (comp_pattern != NULL) ? *comp_pattern : NULL;
-    rx_compiled_regex = (comp_regex != NULL) ? *comp_regex : NULL;
+    if (comp_regex != NULL)
+    {
+      local_compiled_regex.set (std::move (*comp_regex));
+    }
 
     /* extract case sensitivity */
     is_case_sensitive = (case_sensitive->data.i != 0);
@@ -4412,7 +4412,8 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
     try
       {
   // *INDENT-OFF*
-	error_status = cubregex::compile_regex <char, cubregex::cub_reg_traits> (rx_compiled_pattern, rx_compiled_regex, reg_flags);
+  std::string pattern_str (db_get_string (pattern), db_get_string_size (pattern));
+	error_status = cubregex::compile_regex (pattern_str, reg_flags, local_compiled_regex);
   // *INDENT-ON*
 	if (error_status != NO_ERROR)
 	  {
@@ -4432,8 +4433,8 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
 // *INDENT-OFF*
   try
     {
-      std::string src (src_char_string_p, src_length);
-      bool match = std::regex_search (src, *rx_compiled_regex);
+      std::string src_string (db_get_string (src), db_get_string_size (src));
+      bool match = local_compiled_regex.search (src_string);
       *result = match ? V_TRUE : V_FALSE;
     }
   catch (std::regex_error &e)
@@ -4448,29 +4449,15 @@ db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB
 
 cleanup:
 
-  if ((comp_regex == NULL || error_status != NO_ERROR) && rx_compiled_regex != NULL)
+  if (comp_regex == NULL || error_status != NO_ERROR)
     {
-      /* free memory if (using local regex) or (error occurred) */
-      delete rx_compiled_regex;
-      rx_compiled_regex = NULL;
+      /* free memory if (using local pattern and regex object) or (error occurred) */
+      local_compiled_regex.clear ();
     }
-
-  if ((comp_pattern == NULL || error_status != NO_ERROR) && rx_compiled_pattern != NULL)
-    {
-      /* free memory if (using local pattern) or (error occurred) */
-      db_private_free_and_init (NULL, rx_compiled_pattern);
-    }
-
-  if (comp_regex != NULL)
-    {
-      /* pass compiled regex object out */
-      *comp_regex = rx_compiled_regex;
-    }
-
-  if (comp_pattern != NULL)
+  else
     {
       /* pass compiled pattern out */
-      *comp_pattern = rx_compiled_pattern;
+      comp_regex->set (std::move (local_compiled_regex));
     }
 
   if (prm_get_bool_value (PRM_ID_RETURN_NULL_ON_FUNCTION_ERRORS) && error_status != NO_ERROR)
@@ -4524,11 +4511,10 @@ cleanup:
 // *INDENT-OFF*
 int
 db_string_regexp_replace (DB_VALUE *result, DB_VALUE *args[], int const num_args,
-			  std::regex **comp_regex, char **comp_pattern)
+			COMPILED_REGEX *comp_regex)
 {
   int error_status = NO_ERROR;
-  char *rx_compiled_pattern = NULL;
-  std::regex *rx_compiled_regex = NULL;
+  COMPILED_REGEX local_compiled_regex;
   {
     for (int i = 0; i < num_args; i++)
       {
@@ -4551,7 +4537,7 @@ db_string_regexp_replace (DB_VALUE *result, DB_VALUE *args[], int const num_args
     const DB_VALUE *occurrence = (num_args >= 5) ? args[4] : NULL;
     const DB_VALUE *match_type = (num_args == 6) ? args[5] : NULL;
 
-    /* type check */
+    /* argument type check */
     if (!is_char_string (src) || !is_char_string (pattern) || !is_char_string (replace))
       {
 	error_status = ER_QSTR_INVALID_DATA_TYPE;
@@ -4616,8 +4602,39 @@ db_string_regexp_replace (DB_VALUE *result, DB_VALUE *args[], int const num_args
 	goto exit;
       }
 
-    /* check pattern string */
-    if (db_get_string_size (pattern) == 0)
+    /* position argument semantic check */
+    int position_value = (position != NULL) ? db_get_int (position) - 1 : 0;
+    if (position_value < 0)
+      {
+	error_status = ER_QPROC_INVALID_PARAMETER;
+	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+	goto exit;
+      }
+
+    /* occurrence argument semantic check */
+    int occurrence_value = (occurrence != NULL) ? db_get_int (occurrence) : 0;
+    if (occurrence_value < 0)
+      {
+	error_status = ER_QPROC_INVALID_PARAMETER;
+	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+	goto exit;
+      }
+
+    /* match_type argument check */
+    std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript | std::regex_constants::icase;
+    if (match_type)
+    {
+    std::string match_type_str (db_get_string (match_type), db_get_string_size (match_type));
+    error_status = cubregex::parse_match_type (match_type_str, reg_flags);
+    if (error_status != NO_ERROR)
+      {
+	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+	goto exit;
+      }
+    }
+
+    /* return source string if check pattern string is empty or if position value is bigger than source string */
+    if (db_get_string_size (pattern) == 0 || position_value >= db_get_string_size (src))
       {
 	error_status = pr_clone_value ((DB_VALUE *) src, result);
 	DB_TYPE src_type = DB_VALUE_DOMAIN_TYPE (src);
@@ -4632,23 +4649,17 @@ db_string_regexp_replace (DB_VALUE *result, DB_VALUE *args[], int const num_args
 	goto exit;
       }
 
-    /* make option flags for regex from match_type string */
-    std::regex_constants::syntax_option_type reg_flags = std::regex_constants::ECMAScript | std::regex_constants::icase;
-    error_status = regex_parse_match_type (match_type, reg_flags);
-    if (error_status != NO_ERROR)
-      {
-	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
-	goto exit;
-      }
-
     /* get compiled pattern and regex object */
-    rx_compiled_pattern = (comp_pattern != NULL) ? *comp_pattern : NULL;
-    rx_compiled_regex = (comp_regex != NULL) ? *comp_regex : NULL;
+    if (comp_regex != NULL)
+    {
+      local_compiled_regex.set (std::move (*comp_regex));
+    }
 
     /* compile pattern if needed */
     try
       {
-	error_status = regex_compile (pattern, reg_flags, rx_compiled_pattern, rx_compiled_regex);
+  std::string pattern_string (db_get_string (pattern), db_get_string_size (pattern));
+	error_status = cubregex::compile_regex (pattern_string, reg_flags, local_compiled_regex);
 	if (error_status != NO_ERROR)
 	  {
 	    /* regex pattern compilation error */
@@ -4664,92 +4675,12 @@ db_string_regexp_replace (DB_VALUE *result, DB_VALUE *args[], int const num_args
 	goto exit;
       }
 
-    std::string result_string;
-    std::string regex_target;
-    std::string src_string (db_get_string (src), db_get_string_size (src));
-
-    /* split source string by position value */
-    int position_value = (position != NULL) ? db_get_int (position) - 1 : 0;
-    int src_length = src_string.size();
-    if (position_value >= 0 && position_value < src_length)
-      {
-	result_string = src_string.substr (0, position_value);
-	regex_target = std::move (src_string).substr (position_value, src_length - position_value);
-      }
-    else if (position_value < 0)
-      {
-	error_status = ER_QPROC_INVALID_PARAMETER;
-	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
-	goto exit;
-      }
-    else
-      {
-	error_status = pr_clone_value ((DB_VALUE *) src, result);
-	DB_TYPE src_type = DB_VALUE_DOMAIN_TYPE (src);
-	if (src_type == DB_TYPE_CHAR || src_type == DB_TYPE_NCHAR)
-	  {
-	    /* convert CHARACTER(N) to CHARACTER VARYING(N) */
-	    qstr_make_typed_string ((src_type == DB_TYPE_NCHAR ? DB_TYPE_VARNCHAR : DB_TYPE_VARCHAR), result,
-				    DB_VALUE_PRECISION (result), db_get_string (result), db_get_string_size (result),
-				    db_get_string_codeset (src), coll_id);
-	  }
-	result->need_clear = true;
-	goto exit;
-      }
-
-    int occurrence_value = (occurrence != NULL) ? db_get_int (occurrence) : 0;
-    if (occurrence_value < 0)
-      {
-	error_status = ER_QPROC_INVALID_PARAMETER;
-	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
-	goto exit;
-      }
-
-    /* perform regular expression according to the occurence value */
     try
       {
-	std::string repl_string (db_get_string (replace), db_get_string_size (replace));
-	if (occurrence_value == 0)
-	  {
-	    result_string.append (std::regex_replace (regex_target, *rx_compiled_regex, repl_string));
-	  }
-	else if (occurrence_value > 0)
-	  {
-	    auto reg_iter = std::sregex_iterator (regex_target.begin (), regex_target.end (), *rx_compiled_regex);
-	    auto reg_end = std::sregex_iterator ();
-
-	    if (reg_iter != reg_end)
-	      {
-		auto out = std::back_inserter (result_string);
-		auto last_iter = reg_iter;
-
-		for (int n = occurrence_value; n-- && reg_iter != reg_end; ++reg_iter)
-		  {
-		    std::string prefix = reg_iter->prefix ().str ();
-		    out = std::copy (prefix.begin (), prefix.end (), out);
-		    if (n == 0)
-		      {
-			out = reg_iter->format (out, repl_string);
-		      }
-		    else
-		      {
-			std::string match_str = reg_iter->str ();
-			out = std::copy (match_str.begin (), match_str.end (), out);
-		      }
-		    last_iter = reg_iter;
-		  }
-		std::string suffix = last_iter->suffix ().str ();
-		out = std::copy (suffix.begin (), suffix.end (), out);
-	      }
-	  }
-      }
-    catch (std::regex_error &e)
-      {
-	// regex execution exception, error_complexity or error_stack
-	error_status = ER_REGEX_EXEC_ERROR;
-	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
-	goto exit;
-      }
+    std::string src_string (db_get_string (src), db_get_string_size (src));
+    std::string repl_string (db_get_string (replace), db_get_string_size (replace));
+    
+    std::string result_string = local_compiled_regex.replace (src_string, repl_string, position_value, occurrence_value);
 
     /* make result */
     int result_char_size = result_string.size ();
@@ -4768,31 +4699,35 @@ db_string_regexp_replace (DB_VALUE *result, DB_VALUE *args[], int const num_args
 			    result_char_size, result_char_string, result_char_size,
 			    db_get_string_codeset (src), coll_id);
     result->need_clear = true;
+      }
+    catch (std::regex_error &e)
+      {
+	// regex execution exception, error_complexity or error_stack
+	error_status = ER_REGEX_EXEC_ERROR;
+	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
+	goto exit;
+      }
   }
 
 exit:
-  if (comp_regex == NULL || comp_pattern == NULL)
+
+  if (comp_regex == NULL || error_status != NO_ERROR)
     {
-      /* free memory if this function is invoked in constant folding */
-      regex_clear (rx_compiled_pattern, rx_compiled_regex);
+      /* free memory if (using local pattern and regex object) or (error occurred) */
+      local_compiled_regex.clear ();
     }
   else
     {
-      /* pass compiled regex object and compiled pattern out to reuse them */
-      *comp_pattern = rx_compiled_pattern;
-      *comp_regex = rx_compiled_regex;
+      /* pass compiled pattern out */
+      comp_regex->set (std::move (local_compiled_regex));
     }
 
-  if (error_status != NO_ERROR)
+  if (prm_get_bool_value (PRM_ID_RETURN_NULL_ON_FUNCTION_ERRORS) && error_status != NO_ERROR)
     {
+      /* we must not return an error code */
       db_make_null (result);
-      regex_clear (rx_compiled_pattern, rx_compiled_regex);
-      if (prm_get_bool_value (PRM_ID_RETURN_NULL_ON_FUNCTION_ERRORS))
-	{
-	  /* we must not return an error code */
-	  er_clear ();
-	  error_status = NO_ERROR;
-	}
+      er_clear ();
+      return NO_ERROR;
     }
 
   return error_status;

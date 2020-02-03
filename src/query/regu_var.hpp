@@ -28,6 +28,7 @@
 #include "object_domain.h"
 #include "query_list.h"
 #include "string_opfunc.h"
+#include "string_regex.hpp"
 
 #include <functional>
 

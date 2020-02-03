@@ -60,7 +60,6 @@
 #include "dbtype.h"
 
 #include <chrono>
-#include <regex>
 
 #define NOT_NULL_VALUE(a, b)	((a) ? (a) : (b))
 #define INITIAL_OID_STACK_SIZE  1
@@ -8530,7 +8529,7 @@ qdata_regexp_replace_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function
 
     COMPILED_REGEX *compiled_regex = function_p->tmp_obj->compiled_regex;
     error_status =
-      db_string_regexp_replace (function_p->value, args, no_args, &compiled_regex->regex, &compiled_regex->pattern);
+      db_string_regexp_replace (function_p->value, args, no_args, compiled_regex);
     if (error_status != NO_ERROR)
       {
 	goto exit;

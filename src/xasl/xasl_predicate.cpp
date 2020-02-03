@@ -66,10 +66,6 @@ namespace cubxasl
 		delete pe.m_eval_term.et.et_rlike.compiled_regex;
 		pe.m_eval_term.et.et_rlike.compiled_regex = NULL;
 	      }
-	    if (pe.m_eval_term.et.et_rlike.compiled_pattern != NULL)
-	      {
-		db_private_free_and_init (NULL, pe.m_eval_term.et.et_rlike.compiled_pattern);
-	      }
 	    break;
 	  }
 	break;

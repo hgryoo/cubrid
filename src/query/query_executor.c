@@ -1760,12 +1760,6 @@ qexec_clear_pred (THREAD_ENTRY * thread_p, XASL_NODE * xasl_p, PRED_EXPR * pr, b
 		delete et_rlike->compiled_regex;
 		et_rlike->compiled_regex = NULL;
 	      }
-
-	    /* free memory of regex compiled pattern */
-	    if (et_rlike->compiled_pattern != NULL)
-	      {
-		db_private_free_and_init (NULL, et_rlike->compiled_pattern);
-	      }
 	  }
 	  break;
 	}

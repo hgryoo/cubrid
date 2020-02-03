@@ -26,21 +26,12 @@
 
 #ifdef __cplusplus
 #include <regex>
+#include <string>
 
 #include "error_manager.h"
 
 namespace cubregex
 {
-  typedef struct compiled_regex COMPILED_REGEX;
-  struct compiled_regex
-  {
-    mutable std::regex *regex;
-    mutable char *pattern;
-
-    compiled_regex ();
-    ~compiled_regex ();
-  };
-
   /* it throws the error_collate when collatename syntax ([[. .]]), which gives an inconsistent result, is detected. */
   struct cub_reg_traits : std::regex_traits<char>
   {
@@ -51,23 +42,50 @@ namespace cubregex
     }
   };
 
-  template< class CharT, class Reg_Traits >
-  inline void clear_regex (char *&compiled_pattern, std::basic_regex<CharT, Reg_Traits> *&compiled_regex);
+  typedef std::regex_iterator<std::string::iterator, char, cub_reg_traits> cub_regex_iterator;
+
+  class compiled_regex
+  {
+    public:
+
+      std::basic_regex <char, cub_reg_traits> *reg;
+      char *pattern;
+
+      compiled_regex ();
+      ~compiled_regex ();
+
+      void set (std::basic_regex <char, cub_reg_traits> *&reg, char *&pattern);
+      void set (compiled_regex &&regex);
+      void clear ();
+
+      bool is_set ();
+
+      bool search (std::string &src);
+
+      std::string replace (const std::string &src, const std::string &repl);
+      std::string replace (const std::string &src, const std::string &repl, const int position);
+      std::string replace (const std::string &src, const std::string &repl, const int position, const int occurrence);
+  };
+
+  inline void clear_regex (char *&compiled_pattern, std::basic_regex<char, cub_reg_traits> *&compiled_regex);
 
   /* because regex_error::what() gives different messages depending on compiler, an error message should be returned by error code of regex_error explicitly. */
   std::string parse_regex_exception (std::regex_error &e);
 
   int parse_match_type (const std::string &opt_str, std::regex_constants::syntax_option_type &reg_flags);
 
-  int compile_regex (const std::string &pattern, const std::regex_constants::syntax_option_type &reg_flags,
-		 char *&compiled_pattern, std::regex *&compiled_regex);
+  int compile_regex (const std::string &pattern_str, const std::regex_constants::syntax_option_type &reg_flags,
+		     compiled_regex &regex);
 
-  template< class CharT, class Reg_Traits >
-  int compile_regex_internal (const CharT *pattern, std::basic_regex<CharT, Reg_Traits> *&rx_compiled_regex,
-		     std::regex_constants::syntax_option_type &reg_flags);
+  int compile_regex_internal (const std::basic_string<char> &pattern_str,
+			      std::basic_regex<char, cub_reg_traits> *&rx_compiled_regex,
+			      const std::regex_constants::syntax_option_type &reg_flags);
 }
 
-using cub_regex_object = std::basic_regex <char, cubregex::cub_reg_traits>;
+using COMPILED_REGEX_OBJECT = std::basic_regex <char, cubregex::cub_reg_traits>;
+using COMPILED_REGEX = cubregex::compiled_regex;
+#else
+typedef void COMPILED_REGEX;
 #endif
 
 #endif // _STRING_REGEX_HPP_

@@ -217,10 +217,12 @@ extern int db_string_pad (const MISC_OPERAND pad_operand, const DB_VALUE * src_s
 extern int db_string_like (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * esc_char,
 			   int *result);
 
+#ifdef __cplusplus
 extern int db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * case_sensitive,
-			    cubregex::compiled_regex ** regex_object, int *result);
+			    COMPILED_REGEX *comp_regex, int *result);
 extern int db_string_regexp_replace (DB_VALUE *result, DB_VALUE *args[], const int num_args,
-				     cubregex::compiled_regex ** regex_object);
+				  COMPILED_REGEX *comp_regex);
+#endif
 
 extern int db_string_limit_size_string (DB_VALUE * src_string, DB_VALUE * result, const int new_size, int *spare_bytes);
 extern int db_string_fix_string_size (DB_VALUE * src_string);
