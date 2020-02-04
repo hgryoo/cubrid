@@ -43,6 +43,7 @@ namespace cubregex
   };
 
   typedef std::regex_iterator<std::string::iterator, char, cub_reg_traits> cub_regex_iterator;
+  typedef std::match_results <std::string::iterator> cub_regex_results;
 
   class compiled_regex
   {
@@ -56,6 +57,8 @@ namespace cubregex
 
       void set (std::basic_regex <char, cub_reg_traits> *&reg, char *&pattern);
       void set (compiled_regex &&regex);
+      void swap (compiled_regex &regex);
+
       void clear ();
 
       bool is_set ();

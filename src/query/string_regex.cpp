@@ -25,6 +25,8 @@
 
 #include "error_manager.h"
 #include "memory_alloc.h"
+
+#include <algorithm>
 #include <string>
 
 namespace cubregex
@@ -104,35 +106,38 @@ namespace cubregex
       }
     else
       {
-	auto reg_iter = cub_regex_iterator (target.begin (), target.end (), * (this->reg));
-	auto reg_end = cub_regex_iterator ();
-	auto last_iter = reg_iter;
-	int n = occurrence;
-	auto out = std::back_inserter (result);
-	while (reg_iter != reg_end)
-	  {
-	    last_iter = reg_iter;
-	    std::string match_prefix = reg_iter->prefix ().str ();
-	    out = std::copy (match_prefix.begin (), match_prefix.end (), out);
-	    if (n == 0)
-	      {
-		out = reg_iter->format (out, repl);
-	      }
-	    else
-	      {
-		std::string match_str = reg_iter->str ();
-		out = std::copy (match_str.begin (), match_str.end (), out);
-	      }
-	    ++reg_iter;
-	  }
+        auto reg_iter = cub_regex_iterator (target.begin (), target.end (), * (this->reg));
+        auto reg_end = cub_regex_iterator ();
+        std::string match_suffix;
 
-	if (last_iter != reg_end)
-	  {
-	    std::string match_suffix = last_iter->suffix ().str ();
-	    out = std::copy (match_suffix.begin (), match_suffix.end (), out);
-	  }
+        int n = 1;
+        auto out = std::back_inserter (result);
+        std::for_each (reg_iter, reg_end,
+          [&] (const cub_regex_results &match_result)
+          {
+            std::string match_prefix = match_result.prefix ().str ();
+	          out = std::copy (match_prefix.begin (), match_prefix.end (), out);
+
+            if (n == occurrence)
+            {
+        out = match_result.format (out, repl);
+            }
+          else
+            {
+        std::string match_str = match_result.str ();
+        out = std::copy (match_str.begin (), match_str.end (), out);
+            }
+            match_suffix = match_result.suffix ().str ();
+
+            n++;
+          }
+        );
+
+        if (!match_suffix.empty ())
+        {
+          out = std::copy (match_suffix.begin (), match_suffix.end (), out);
+        }
       }
-
     return prefix.append (result);
   }
 
