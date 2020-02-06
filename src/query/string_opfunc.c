@@ -4346,7 +4346,7 @@ db_string_rlike (const DB_VALUE * src, const DB_VALUE * pattern, const DB_VALUE 
   assert (case_sensitive != NULL);
 
   {
-    /* type checking */
+    /* check type */
     src_category = qstr_get_category (src);
     pattern_category = qstr_get_category (pattern);
 
@@ -4358,15 +4358,14 @@ db_string_rlike (const DB_VALUE * src, const DB_VALUE * pattern, const DB_VALUE 
       {
 	error_status = ER_QSTR_INVALID_DATA_TYPE;
 	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
-	*result = V_ERROR;
 	goto cleanup;
       }
 
+    /* check codeset compatible */
     if (src_category != pattern_category)
       {
 	error_status = ER_QSTR_INCOMPATIBLE_CODE_SETS;
 	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
-	*result = V_ERROR;
 	goto cleanup;
       }
 
@@ -4380,7 +4379,6 @@ db_string_rlike (const DB_VALUE * src, const DB_VALUE * pattern, const DB_VALUE 
       {
 	error_status = ER_QPROC_INVALID_PARAMETER;
 	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
-	*result = V_ERROR;
 	goto cleanup;
       }
 
@@ -4401,52 +4399,29 @@ db_string_rlike (const DB_VALUE * src, const DB_VALUE * pattern, const DB_VALUE 
 	{
 	  reg_flags |= std::regex_constants::icase;
 	}
-      error_status = cubregex::compile_regex <char, cubregex::cub_reg_traits> (rx_compiled_pattern, rx_compiled_regex, reg_flags);
+  
+      error_status = cubregex::compile (rx_compiled_regex, std::string (rx_compiled_pattern), reg_flags);
       if (error_status != NO_ERROR)
 	{
-	  ASSERT_ERROR ();
-	  *result = V_ERROR;
 	  goto cleanup;
 	}
 // *INDENT-ON*
-    }
 
-// *INDENT-OFF*
-  try
-    {
-      std::string src_string (db_get_string (src), db_get_string_size (src));
-      bool match = std::regex_search (src_string, *rx_compiled_regex);
-      *result = match ? V_TRUE : V_FALSE;
-    }
-  catch (std::regex_error &e)
-    {
-      // regex execution exception, error_complexity or error_stack
-      error_status = ER_REGEX_EXEC_ERROR;
-      std::string error_message = cubregex::parse_regex_exception (e);
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, error_message.c_str ());
-      *result = V_ERROR;
-    }
-// *INDENT-ON*
-
-    try
+    std::string src_string (db_get_string (src), db_get_string_size (src));
+    bool match = false;
+    error_status = cubregex::search (match, *rx_compiled_regex, src_string);
+    if (error_status != NO_ERROR)
       {
-	std::string src_string (db_get_string (src), db_get_string_size (src));
-	bool match = std::regex_search (src_string, *rx_compiled_regex);
-	*result = match ? V_TRUE : V_FALSE;
+	goto cleanup;
       }
-    catch (std::regex_error &e)
-      {
-	// regex execution exception, error_complexity or error_stack
-	error_status = ER_REGEX_EXEC_ERROR;
-	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
-	*result = V_ERROR;
-      }
+    *result = match ? V_TRUE : V_FALSE;
+  }
 
 cleanup:
   if (comp_regex == NULL || comp_pattern == NULL)
     {
       /* free memory if this function is invoked in constant folding */
-      cubregex::clear_regex (rx_compiled_pattern, rx_compiled_regex);
+      cubregex::clear (rx_compiled_pattern, rx_compiled_regex);
     }
   else
     {
@@ -4457,11 +4432,12 @@ cleanup:
 
   if (error_status != NO_ERROR)
     {
-      *result = V_UNKNOWN;
-      cubregex::clear_regex (rx_compiled_pattern, rx_compiled_regex);
+      *result = V_ERROR;
+      cubregex::clear (rx_compiled_pattern, rx_compiled_regex);
       if (prm_get_bool_value (PRM_ID_RETURN_NULL_ON_FUNCTION_ERRORS))
 	{
 	  /* we must not return an error code */
+	  *result = V_UNKNOWN;
 	  er_clear ();
 	  error_status = NO_ERROR;
 	}
@@ -4469,7 +4445,6 @@ cleanup:
 
   return error_status;
 }
-// *INDENT-ON*
 
 /*
  * db_string_regexp_replace ()  returns replaced string by regex pattern
@@ -4514,6 +4489,7 @@ db_string_regexp_replace (DB_VALUE *result, DB_VALUE *args[], int const num_args
   int error_status = NO_ERROR;
   char *rx_compiled_pattern = NULL;
   cub_regex_object *rx_compiled_regex = NULL;
+  
   {
     for (int i = 0; i < num_args; i++)
       {
@@ -4536,7 +4512,7 @@ db_string_regexp_replace (DB_VALUE *result, DB_VALUE *args[], int const num_args
     const DB_VALUE *occurrence = (num_args >= 5) ? args[4] : NULL;
     const DB_VALUE *match_type = (num_args == 6) ? args[5] : NULL;
 
-    /* type check */
+    /* check type */
     if (!is_char_string (src) || !is_char_string (pattern) || !is_char_string (replace))
       {
 	error_status = ER_QSTR_INVALID_DATA_TYPE;
@@ -4653,39 +4629,24 @@ db_string_regexp_replace (DB_VALUE *result, DB_VALUE *args[], int const num_args
     rx_compiled_regex = (comp_regex != NULL) ? *comp_regex : NULL;
 
     /* compile pattern if needed */
-    try
-      {
-  error_status = cubregex::compile_regex <char, cubregex::cub_reg_traits> (rx_compiled_pattern, rx_compiled_regex, reg_flags);
+  std::string pattern_string (db_get_string (pattern), db_get_string_size (pattern));
+  error_status = cubregex::compile (rx_compiled_regex, pattern_string, reg_flags);
 	if (error_status != NO_ERROR)
 	  {
-	    /* regex pattern compilation error */
-	    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 0);
+      /* regex pattern compilation error */
 	    goto exit;
 	  }
-      }
-    catch (std::regex_error &e)
-      {
-	// regex compile exception
-	error_status = ER_REGEX_COMPILE_ERROR;
-	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
-	goto exit;
-      }
 
     /* perform regular expression according to the occurence value */
     std::string result_string;
-    try
-      {
-        std::string src_string (db_get_string (src), db_get_string_size (src));
-        std::string repl_string (db_get_string (replace), db_get_string_size (replace));
-        result_string = cubregex::replace (*rx_compiled_regex, src_string, repl_string, position_value, occurrence_value);
-      }
-    catch (std::regex_error &e)
-      {
-	// regex execution exception, error_complexity or error_stack
-	error_status = ER_REGEX_EXEC_ERROR;
-	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_status, 1, e.what ());
-	goto exit;
-      }
+    std::string src_string (db_get_string (src), db_get_string_size (src));
+    std::string repl_string (db_get_string (replace), db_get_string_size (replace));
+    error_status = cubregex::replace (result_string, *rx_compiled_regex, src_string, repl_string, position_value, occurrence_value);
+	  if (error_status != NO_ERROR)
+	  {
+	    /* regex execution error */
+	    goto exit;
+	  }
 
     /* make result */
     int result_char_size = result_string.size ();
@@ -4710,7 +4671,7 @@ exit:
   if (comp_regex == NULL || comp_pattern == NULL)
     {
       /* free memory if this function is invoked in constant folding */
-      cubregex::clear_regex (rx_compiled_pattern, rx_compiled_regex);
+      cubregex::clear (rx_compiled_pattern, rx_compiled_regex);
     }
   else
     {
@@ -4722,7 +4683,7 @@ exit:
   if (error_status != NO_ERROR)
     {
       db_make_null (result);
-      cubregex::clear_regex (rx_compiled_pattern, rx_compiled_regex);
+      cubregex::clear (rx_compiled_pattern, rx_compiled_regex);
       if (prm_get_bool_value (PRM_ID_RETURN_NULL_ON_FUNCTION_ERRORS))
 	{
 	  /* we must not return an error code */
