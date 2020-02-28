@@ -1,17 +1,6 @@
 dist: trusty
-language: generic
-matrix:
-  include:
-    - language: c++
-      compiler: gcc
-    - addons:
-        apt:
-          sources:
-          - ubuntu-toolchain-r-test
-          packages:
-          - gcc-8
-          - g++-8
-      env: CC=gcc-8 CXX=g++-8
+language: cpp
+env: CC=gcc-8 CXX=g++-8
 
 os:
 - linux
@@ -20,7 +9,10 @@ addons:
   apt:
     sources:
       - kalakris-cmake
+      - ubuntu-toolchain-r-test
     packages:
+      - gcc-8
+      - g++-8
       - cmake
       - systemtap-sdt-dev
       - libelf-dev
