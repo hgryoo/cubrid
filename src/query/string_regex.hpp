@@ -67,17 +67,13 @@ namespace cubregex
     bool isctype ( char_type c, char_class_type f ) const
     {
 #if !defined(WINDOWS)
-      // iswblank() to match '[[:blank:]]' for ' '(0x20) doesn't work on gcc
+      // HACK: matching '[[:blank:]]' for ' '(0x20) doesn't work on gcc
+      // C++ regex uses std::ctype<char_type>::is () to match character class
+      // But it doesn't work to match ' '(0x20) with [[:blank:]].
+      // Here use iswblank () instead.
       if ((f & std::ctype_base::blank) == 1)
 	{
-	  if (c < 0x80) /* ascii */
-	    {
-	      return std::isblank ((unsigned char) c);
-	    }
-	  else
-	    {
-	      return std::iswblank (c);
-	    }
+	  return std::iswblank (c);
 	}
 #endif
       return std::regex_traits<char_type>::isctype (c, f);
