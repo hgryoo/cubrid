@@ -362,7 +362,7 @@ jsp_start_server (const char *db_name, const char *path)
   const int vm_n_options = 3;
   JavaVMOption options[vm_n_options];
   char classpath[PATH_MAX + 32], logging_prop[PATH_MAX + 32];
-  char port[5];
+  char port[6] = { 0 };
   char *loc_p, *locale;
   const char *envroot;
   char jsp_file_path[PATH_MAX];
@@ -491,8 +491,8 @@ jsp_start_server (const char *db_name, const char *path)
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_CANNOT_START_JVM, 1, "NewStringUTF");
       goto error;
     }
-  
-  sprintf (port, "%d", prm_get_int_value (PRM_ID_JAVA_STORED_PROCEDURE_PORT));
+
+  sprintf (port, "%d", prm_get_integer_value (PRM_ID_JAVA_STORED_PROCEDURE_PORT));
   jstr_port = JVM_NewStringUTF (env_p, port);
   if (jstr_port == NULL)
     {
@@ -521,12 +521,16 @@ jsp_start_server (const char *db_name, const char *path)
   JVM_SetObjectArrayElement (env_p, args, 4, jstr_port);
 
   sp_port = JVM_CallStaticIntMethod (env_p, cls, mid, args);
+  if (sp_port == -1)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_CANNOT_START_JVM, 1, "CallStaticIntMethod");
+      goto error;
+    }
 
   return 0;
 
 error:
   jsp_stop_server ();
-  jvm = NULL;
 
   assert (er_errid () != NO_ERROR);
   return er_errid ();
@@ -542,6 +546,12 @@ error:
 int
 jsp_stop_server (void)
 {
+  if (jsp_jvm_is_loaded ())
+    {
+      jvm->DestroyJavaVM ();
+      jvm = NULL;
+    }
+
   return NO_ERROR;
 }
 

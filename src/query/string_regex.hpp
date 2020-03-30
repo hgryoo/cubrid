@@ -26,6 +26,7 @@
 
 #ifdef __cplusplus
 #include <regex>
+#include <locale>
 
 #include "error_manager.h"
 #include "language_support.h"
@@ -62,6 +63,21 @@ namespace cubregex
     {
       throw std::regex_error (std::regex_constants::error_collate);
     }
+
+    bool isctype ( char_type c, char_class_type f ) const
+    {
+#if !defined(WINDOWS)
+      // HACK: matching '[[:blank:]]' for blank character doesn't work on gcc
+      // C++ regex uses std::ctype<char_type>::is () to match character class
+      // It does not support blank char class type so '[[:blank:]]' doesn't work to match ' '(0x20).
+      // For backward compatability, Here use iswblank () explicitly to match blank character.
+      if ((f & std::ctype_base::blank) == 1)
+	{
+	  return std::iswblank (c);
+	}
+#endif
+      return std::regex_traits<char_type>::isctype (c, f);
+    }
   };
 
   void clear (cub_regex_object *&compiled_regex, char *&compiled_pattern);
@@ -77,9 +93,16 @@ namespace cubregex
   int compile (cub_regex_object *&rx_compiled_regex, const char *pattern,
 	       const std::regex_constants::syntax_option_type reg_flags, const LANG_COLLATION *collation);
   int search (int &result, const cub_regex_object &reg, const std::string &src, const INTL_CODESET codeset);
+
+  int count (int &result, const cub_regex_object &reg, const std::string &src, const int position,
+	     const INTL_CODESET codeset);
+  int instr (int &result, const cub_regex_object &reg, const std::string &src,
+	     const int position, const int occurrence, const int return_opt, const INTL_CODESET codeset);
   int replace (std::string &result, const cub_regex_object &reg, const std::string &src,
 	       const std::string &repl, const int position,
 	       const int occurrence, const INTL_CODESET codeset);
+  int substr (std::string &result, bool &is_matched, const cub_regex_object &reg, const std::string &src,
+	      const int position, const int occurrence, const INTL_CODESET codeset);
 }
 #endif
 
