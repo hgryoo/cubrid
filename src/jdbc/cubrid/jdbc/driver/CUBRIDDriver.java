@@ -226,7 +226,7 @@ public class CUBRIDDriver implements Driver {
 		if (UJCIUtil.isServerSide()) {
 			Thread t = Thread.currentThread();
 			Connection c = (Connection) UJCIUtil.invoke(
-					"com.cubrid.jsp.ExecuteThread", "getJdbcConnection", null,
+					"com.cubrid.jsp.StoredProcedureHandler", "getJdbcConnection", null,
 					t, null);
 			if (c != null) {
 				return c;
@@ -235,7 +235,7 @@ public class CUBRIDDriver implements Driver {
 			UConnection u_con = UJCIManager.connectDefault();
 			CUBRIDConnection con = new CUBRIDConnection(u_con,
 					"jdbc:default:connection:", "default", true);
-			UJCIUtil.invoke("com.cubrid.jsp.ExecuteThread",
+			UJCIUtil.invoke("com.cubrid.jsp.StoredProcedureHandler",
 					"setJdbcConnection", new Class[] { Connection.class }, t,
 					new Object[] { con });
 			return con;

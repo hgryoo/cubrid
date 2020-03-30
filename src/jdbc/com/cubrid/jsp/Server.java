@@ -58,7 +58,8 @@ public class Server {
 		try {
 		  int port_number = Integer.parseInt(port);
 		  serverSocket = new ServerSocket(port_number);
-
+		  System.out.println("port_numer = " + port_number);
+		  
 		  Class.forName("cubrid.jdbc.driver.CUBRIDDriver");
 		  System.setSecurityManager(new SpSecurityManager());
 		  System.setProperty("cubrid.server.version", version);
@@ -102,10 +103,7 @@ public class Server {
 	public static int start(String[] args) {
 		try {
 			Server server = new Server(args[0], args[1], args[2], args[3], args[4]);
-<<<<<<< HEAD
 			server.startSocketListener();
-=======
->>>>>>> upstream/develop
 			return server.getServerPort();
 		} catch (Exception e) {
 			e.printStackTrace();
