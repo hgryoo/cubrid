@@ -70,7 +70,7 @@ import cubrid.jdbc.jci.UConnection;
 import cubrid.jdbc.jci.UJCIUtil;
 import cubrid.sql.CUBRIDOID;
 
-public class ExecuteThread extends Thread {
+public class StoredProcedureHandler extends Thread {
 	public static final int DB_NULL = 0;
 
 	public static final int DB_INT = 1;
@@ -121,7 +121,7 @@ public class ExecuteThread extends Thread {
 
 	private String charSet = System.getProperty("file.encoding");
 
-	ExecuteThread(Socket client) throws IOException {
+	StoredProcedureHandler(Socket client) throws IOException {
 		super();
 		this.client = client;
 		toClient = new DataOutputStream(new BufferedOutputStream(this.client

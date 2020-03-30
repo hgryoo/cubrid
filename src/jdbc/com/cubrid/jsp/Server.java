@@ -39,17 +39,15 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class Server {
+	private static Logger logger = Logger.getLogger("com.cubrid.jsp");
+	private static final String LOG_DIR = "log";
+	
 	private static String serverName;
-
 	private static String spPath;
-
 	private static String rootPath;
 
+	private Thread socketListener;
 	private ServerSocket serverSocket;
-	
-	private static Logger logger = Logger.getLogger("com.cubrid.jsp");
-
-	private static final String LOG_DIR = "log";
 
 	public Server(String name, String path, String version, String rPath, String port)
 			throws IOException {
@@ -69,20 +67,20 @@ public class Server {
 			e.printStackTrace();
 		}
 
-		new Thread(new Runnable() {
+		socketListener = new Thread(new Runnable() {
 			public void run() {
 				Socket client = null;
 				while (true) {
 					try {
 						client = serverSocket.accept();
 						client.setTcpNoDelay(true);
-						new ExecuteThread(client).start();
+						new StoredProcedureHandler(client).start();
 					} catch (IOException e) {
 						log(e);
 					}
 				}
 			}
-		}).start();
+		});
 	}
 
 	private int getServerPort() {
@@ -96,10 +94,15 @@ public class Server {
 	public static String getSpPath() {
 		return spPath;
 	}
-
+	
+	public void startSocketListener() {
+		socketListener.start();
+	}
+	
 	public static int start(String[] args) {
 		try {
 			Server server = new Server(args[0], args[1], args[2], args[3], args[4]);
+			server.startSocketListener();
 			return server.getServerPort();
 		} catch (Exception e) {
 			e.printStackTrace();

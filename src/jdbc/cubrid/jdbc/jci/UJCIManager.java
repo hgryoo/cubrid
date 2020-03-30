@@ -107,8 +107,8 @@ abstract public class UJCIManager {
 	}
 
 	public static UConnection connectDefault() throws SQLException {
-		Object curThread = Thread.currentThread();
-		Socket s = (Socket) UJCIUtil.invoke("com.cubrid.jsp.ExecuteThread",
+		Thread curThread = (Thread) Thread.currentThread();
+		Socket s = (Socket) UJCIUtil.invoke("com.cubrid.jsp.StoredProcedureHandler",
 				"getSocket", null, curThread, null);
 		return new UConnection(s, curThread);
 	}

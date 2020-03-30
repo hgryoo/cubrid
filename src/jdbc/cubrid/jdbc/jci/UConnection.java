@@ -203,7 +203,7 @@ public class UConnection {
 	boolean skip_checkcas = false;
 	Vector<UStatement> pooled_ustmts;
 	Vector<Integer> deferred_close_handle;
-	Object curThread;
+	Thread curThread;
 
 	private UUrlCache url_cache = null;
 	private boolean isAutoCommitBySelf = false;
@@ -279,7 +279,7 @@ public class UConnection {
 	}
 
 	// This constructor is called on the server side.
-	UConnection(Socket socket, Object curThread) throws CUBRIDException {
+	UConnection(Socket socket, Thread curThread) throws CUBRIDException {
 		errorHandler = new UError(this);
 		try {
 			client = socket;
@@ -315,7 +315,7 @@ public class UConnection {
 			isServerSideJdbc = true;
 			lastAutoCommit = false;
 			this.curThread = curThread;
-			UJCIUtil.invoke("com.cubrid.jsp.ExecuteThread", "setCharSet",
+			UJCIUtil.invoke("com.cubrid.jsp.StoredProcedureHandler", "setCharSet",
 					new Class[] { String.class }, this.curThread,
 					new Object[] { connectionProperties.getCharSet() });
 		} catch (IOException e) {
@@ -376,7 +376,7 @@ public class UConnection {
 
 	public void setCharset(String newCharsetName) {
 		if (UJCIUtil.isServerSide() && isServerSideJdbc) {
-			UJCIUtil.invoke("com.cubrid.jsp.ExecuteThread", "setCharSet",
+			UJCIUtil.invoke("com.cubrid.jsp.StoredProcedureHandler", "setCharSet",
 					new Class[] { String.class }, this.curThread,
 					new Object[] { newCharsetName });
 		}
@@ -388,7 +388,7 @@ public class UConnection {
 
 	public void setZeroDateTimeBehavior(String behavior) throws CUBRIDException {
 		if (UJCIUtil.isServerSide() && isServerSideJdbc) {
-			UJCIUtil.invoke("com.cubrid.jsp.ExecuteThread",
+			UJCIUtil.invoke("com.cubrid.jsp.StoredProcedureHandler",
 					"setZeroDateTimeBehavior", new Class[] { String.class },
 					this.curThread, new Object[] { behavior });
 		}
@@ -396,7 +396,7 @@ public class UConnection {
 
 	public void setResultWithCUBRIDTypes(String support) throws CUBRIDException {
 		if (UJCIUtil.isServerSide() && isServerSideJdbc) {
-			UJCIUtil.invoke("com.cubrid.jsp.ExecuteThread",
+			UJCIUtil.invoke("com.cubrid.jsp.StoredProcedureHandler",
 					"setResultWithCUBRIDTypes", new Class[] { String.class },
 					this.curThread, new Object[] { support });
 		}
