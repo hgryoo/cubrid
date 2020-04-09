@@ -137,6 +137,21 @@ public class ByteArrayBuffer {
 	os.flush();
     }
 
+    public void writeToStreamSP(byte[] info, OutputStream o) throws IOException {
+	DataOutputStream os = new DataOutputStream(o);
+	writeHeader(info);
+	
+	Iterator<byte[]> i = byteArrayList.iterator();
+	while (i.hasNext()) {
+	    byte[] b = i.next();
+	    if (b != null) {
+		os.write(b);
+	    }
+	}
+	os.write(buffer, 0, pos);
+	os.flush();
+    }
+    
     public void reset() {
 	byteArrayList = new ArrayList<byte[]>();
 	buffer = baseByteArray;

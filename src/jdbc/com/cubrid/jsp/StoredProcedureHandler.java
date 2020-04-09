@@ -71,55 +71,34 @@ import cubrid.jdbc.jci.UJCIUtil;
 import cubrid.sql.CUBRIDOID;
 
 public class StoredProcedureHandler extends Thread {
+	private String charSet = System.getProperty("file.encoding");
+	
 	public static final int DB_NULL = 0;
-
 	public static final int DB_INT = 1;
-
 	public static final int DB_FLOAT = 2;
-
 	public static final int DB_DOUBLE = 3;
-
 	public static final int DB_STRING = 4;
-
 	public static final int DB_OBJECT = 5;
-
 	public static final int DB_SET = 6;
-
 	public static final int DB_MULTISET = 7;
-
 	public static final int DB_SEQUENCE = 8;
-
 	public static final int DB_TIME = 10;
-
 	public static final int DB_TIMESTAMP = 11;
-
 	public static final int DB_DATE = 12;
-
 	public static final int DB_MONETARY = 13;
-
 	public static final int DB_SHORT = 18;
-
 	public static final int DB_NUMERIC = 22;
-
 	public static final int DB_CHAR = 25;
-
 	public static final int DB_RESULTSET = 28;
-
 	public static final int DB_BIGINT = 31;
-
 	public static final int DB_DATETIME = 32;
 
 	private Socket client;
-
+	private CUBRIDConnection jdbcConnection = null;
+	
 	private DataOutputStream toClient;
-
 	private ByteArrayOutputStream byteBuf = new ByteArrayOutputStream(1024);
-
 	private DataOutputStream outBuf = new DataOutputStream(byteBuf);
-
-	private Connection jdbcConnection = null;
-
-	private String charSet = System.getProperty("file.encoding");
 
 	StoredProcedureHandler(Socket client) throws IOException {
 		super();
@@ -150,8 +129,13 @@ public class StoredProcedureHandler extends Thread {
 
 				StoredProcedure sp = makeStoredProcedure();
 				Value result = sp.invoke();
-
-				closeJdbcConnection();
+				
+				/* cache in */
+				
+				toClient.writeInt(0x16);
+				toClient.flush();
+				
+				//closeJdbcConnection();
 
 				if (result != null) {
 					resolvedResult = toDbTypeValue(sp.getReturnType(), result);
@@ -175,6 +159,7 @@ public class StoredProcedureHandler extends Thread {
 				// client.close();
 			} catch (Throwable e) {
 				if (e instanceof IOException) {
+					closeJdbcConnection();
 					break;
 				} else if (e instanceof InvocationTargetException) {
 					Server.log(((InvocationTargetException) e)
@@ -189,7 +174,7 @@ public class StoredProcedureHandler extends Thread {
 					Server.log(e1);
 				}
 			} finally {
-				closeJdbcConnection();
+				//closeJdbcConnection();
 			}
 		}
 
@@ -549,7 +534,7 @@ public class StoredProcedureHandler extends Thread {
 			bOID[7] = ((byte) ((vol >>> 0) & 0xFF));
 
 			if (jdbcConnection == null) {
-				jdbcConnection = DriverManager
+				jdbcConnection = (CUBRIDConnection) DriverManager
 						.getConnection("jdbc:default:connection:");
 			}
 			arg = new OidValue(new CUBRIDOID((CUBRIDConnection) jdbcConnection,
@@ -674,11 +659,11 @@ public class StoredProcedureHandler extends Thread {
 		}
 	}
 
-	public void setJdbcConnection(Connection con) {
+	public void setJdbcConnection(CUBRIDConnection con) {
 		this.jdbcConnection = con;
 	}
 
-	public Connection getJdbcConnection() {
+	public CUBRIDConnection getJdbcConnection() {
 		return this.jdbcConnection;
 	}
 

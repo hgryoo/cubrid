@@ -61,7 +61,7 @@ import cubrid.jdbc.log.Log;
 import cubrid.jdbc.net.BrokerHandler;
 import cubrid.sql.CUBRIDOID;
 
-public class UConnection {
+public abstract class UConnection {
 	public final static byte DBMS_CUBRID = 1;
 	public final static byte DBMS_MYSQL = 2;
 	public final static byte DBMS_ORACLE = 3;
@@ -98,13 +98,13 @@ public class UConnection {
 	public static final int PROTOCOL_V8 = 8;
 
 	/* Current protocol version */
-	private final static byte CAS_PROTOCOL_VERSION = PROTOCOL_V8;
-	private final static byte CAS_PROTO_INDICATOR = 0x40;
-	private final static byte CAS_PROTO_VER_MASK = 0x3F;
-	private final static byte CAS_RENEWED_ERROR_CODE = (byte) 0x80;
-	private final static byte CAS_SUPPORT_HOLDABLE_RESULT = (byte) 0x40;
+	protected final static byte CAS_PROTOCOL_VERSION = PROTOCOL_V8;
+	protected final static byte CAS_PROTO_INDICATOR = 0x40;
+	protected final static byte CAS_PROTO_VER_MASK = 0x3F;
+	protected final static byte CAS_RENEWED_ERROR_CODE = (byte) 0x80;
+	protected final static byte CAS_SUPPORT_HOLDABLE_RESULT = (byte) 0x40;
 	/* Do not remove and rename CAS_RECONNECT_WHEN_SERVER_DOWN */
-	private final static byte CAS_RECONNECT_WHEN_SERVER_DOWN = (byte) 0x20;
+	protected final static byte CAS_RECONNECT_WHEN_SERVER_DOWN = (byte) 0x20;
 
 	@SuppressWarnings("unused")
 	private final static byte GET_COLLECTION_VALUE = 1,
@@ -116,46 +116,46 @@ public class UConnection {
 			DB_PARAM_LOCK_TIMEOUT = 2, DB_PARAM_AUTO_COMMIT = 4;
 
 	/* end_tran constants */
-	private final static byte END_TRAN_COMMIT = 1;
-	private final static byte END_TRAN_ROLLBACK = 2;
+	protected final static byte END_TRAN_COMMIT = 1;
+	protected final static byte END_TRAN_ROLLBACK = 2;
 
-	private final static int LOCK_TIMEOUT_NOT_USED = -2;
-	private final static int LOCK_TIMEOUT_INFINITE = -1;
+	protected final static int LOCK_TIMEOUT_NOT_USED = -2;
+	protected final static int LOCK_TIMEOUT_INFINITE = -1;
 
-	private final static int SOCKET_TIMEOUT = 5000;
+	protected final static int SOCKET_TIMEOUT = 5000;
 
     /* driver version */
 	private final static int DRIVER_VERSION_MAX_SIZE = 20;
 
 	/* casinfo */
-	private final static byte CAS_INFO_STATUS_INACTIVE = 0;
-	private final static byte CAS_INFO_STATUS_ACTIVE = 1;
-
-	private final static int CAS_INFO_SIZE = 4;
+	protected final static byte CAS_INFO_STATUS_INACTIVE = 0;
+	protected final static byte CAS_INFO_STATUS_ACTIVE = 1;
+	protected final static int CAS_INFO_SIZE = 4;
 
 	/* casinfo field def */
-	private final static int CAS_INFO_STATUS = 0;
-	private final static int CAS_INFO_RESERVED_1 = 1;
-	private final static int CAS_INFO_RESERVED_2 = 2;
-	private final static int CAS_INFO_ADDITIONAL_FLAG = 3;
+	protected final static int CAS_INFO_STATUS = 0;
+	protected final static int CAS_INFO_RESERVED_1 = 1;
+	protected final static int CAS_INFO_RESERVED_2 = 2;
+	protected final static int CAS_INFO_ADDITIONAL_FLAG = 3;
 	
-	private final static byte CAS_INFO_FLAG_MASK_AUTOCOMMIT = 0x01;
-	private final static byte CAS_INFO_FLAG_MASK_FORCE_OUT_TRAN = 0x02;
-	private final static byte CAS_INFO_FLAG_MASK_NEW_SESSION_ID = 0x04;
+	protected final static byte CAS_INFO_FLAG_MASK_AUTOCOMMIT = 0x01;
+	protected final static byte CAS_INFO_FLAG_MASK_FORCE_OUT_TRAN = 0x02;
+	protected final static byte CAS_INFO_FLAG_MASK_NEW_SESSION_ID = 0x04;
 
-	private final static int BROKER_INFO_SIZE = 8;
-	private final static int BROKER_INFO_DBMS_TYPE = 0;
-	private final static int BROKER_INFO_RESERVED4 = 1;
-	private final static int BROKER_INFO_STATEMENT_POOLING = 2;
-	private final static int BROKER_INFO_CCI_PCONNECT = 3;
-	private final static int BROKER_INFO_PROTO_VERSION = 4;
-	private final static int BROKER_INFO_FUNCTION_FLAG = 5;
-	private final static int BROKER_INFO_RESERVED2 = 6;
-	private final static int BROKER_INFO_RESERVED3 = 7;
+	protected final static int BROKER_INFO_SIZE = 8;
+	protected final static int BROKER_INFO_DBMS_TYPE = 0;
+	protected final static int BROKER_INFO_RESERVED4 = 1;
+	protected final static int BROKER_INFO_STATEMENT_POOLING = 2;
+	protected final static int BROKER_INFO_CCI_PCONNECT = 3;
+	protected final static int BROKER_INFO_PROTO_VERSION = 4;
+	protected final static int BROKER_INFO_FUNCTION_FLAG = 5;
+	protected final static int BROKER_INFO_RESERVED2 = 6;
+	protected final static int BROKER_INFO_RESERVED3 = 7;
+	
 	/* For backward compatibility */
-	private final static int BROKER_INFO_MAJOR_VERSION = BROKER_INFO_PROTO_VERSION;
-	private final static int BROKER_INFO_MINOR_VERSION = BROKER_INFO_FUNCTION_FLAG;
-	private final static int BROKER_INFO_PATCH_VERSION = BROKER_INFO_RESERVED2;
+	protected final static int BROKER_INFO_MAJOR_VERSION = BROKER_INFO_PROTO_VERSION;
+	protected final static int BROKER_INFO_MINOR_VERSION = BROKER_INFO_FUNCTION_FLAG;
+	protected final static int BROKER_INFO_PATCH_VERSION = BROKER_INFO_RESERVED2;
 
 	public static final String ZERO_DATETIME_BEHAVIOR_CONVERT_TO_NULL = "convertToNull";
 	public static final String ZERO_DATETIME_BEHAVIOR_EXCEPTION = "exception";
@@ -174,49 +174,48 @@ public class UConnection {
 
 	boolean update_executed; /* for result cache */
 
-	private boolean needReconnection;
-	private UTimedDataInputStream input;
-	private DataOutputStream output;
+	protected boolean needReconnection;
+	protected Socket client;
+	protected UTimedDataInputStream input;
+	protected DataOutputStream output;
 	public String CASIp = "";
 	public int CASPort;
 	public int processId;
 	public int casId;
-	private Socket client;
-	private UError errorHandler;
-	private boolean isClosed = false;
-	private byte[] dbInfo;
-	private int lastIsolationLevel;
-	private int lastLockTimeout = LOCK_TIMEOUT_NOT_USED;
-	private boolean lastAutoCommit = true;
+	protected UError errorHandler;
+	protected boolean isClosed = false;
+	protected byte[] dbInfo;
+	protected int lastIsolationLevel;
+	protected int lastLockTimeout = LOCK_TIMEOUT_NOT_USED;
+	protected boolean lastAutoCommit = true;
 	String dbname = "";
 	String user = "";
 	String passwd = "";
 	String url = null;
-	private ArrayList<String> altHosts = null;
-	private int connectedHostId = 0;
-	// jci 3.0
-	private byte[] broker_info = null;
-	private byte[] casinfo = null;
-	private int brokerVersion = 0;
 
-	private boolean isServerSideJdbc = false;
+	protected ArrayList<String> altHosts = null;
+	protected int connectedHostId = 0;
+	// jci 3.0
+	protected byte[] broker_info = null;
+	protected byte[] casinfo = null;
+	protected int brokerVersion = 0;
+
 	boolean skip_checkcas = false;
 	Vector<UStatement> pooled_ustmts;
 	Vector<Integer> deferred_close_handle;
-	Thread curThread;
 
-	private UUrlCache url_cache = null;
-	private boolean isAutoCommitBySelf = false;
+	protected UUrlCache url_cache = null;
+	protected boolean isAutoCommitBySelf = false;
 
 	public static byte[] driverInfo;
 
-	private ConnectionProperties connectionProperties = new ConnectionProperties();
-	private long lastFailureTime = 0;
+	protected ConnectionProperties connectionProperties = new ConnectionProperties();
+	protected long lastFailureTime = 0;
 	byte sessionId[] = createNullSession();
 	int oldSessionId = 0;
 
-	private Log log;
-	private long beginTime;
+	protected Log log;
+	protected long beginTime;
 
 	static {
 		driverInfo = new byte[10];
@@ -232,98 +231,6 @@ public class UConnection {
 
     private int numShard = 0;
 	UShardInfo[] shardInfo = null;
-
-	/*
-	 * the normal constructor of the class UConnection
-	 */
-
-	UConnection(String ip, int port, String dbname, String user, String passwd,
-			String url) throws CUBRIDException {
-		if (ip != null) {
-			CASIp = ip;
-		}
-		CASPort = port;
-		if (dbname != null) {
-			this.dbname = dbname;
-		}
-		if (user != null) {
-			this.user = user;
-		}
-		if (passwd != null) {
-			this.passwd = passwd;
-		}
-		this.url = url;
-		update_executed = false;
-
-		needReconnection = true;
-	    	errorHandler = new UError(this);
-	}
-
-	UConnection(ArrayList<String> altHostList, String dbname, String user,
-			String passwd, String url) throws CUBRIDException {
-		setAltHosts(altHostList);
-		if (dbname != null) {
-			this.dbname = dbname;
-		}
-		if (user != null) {
-			this.user = user;
-		}
-		if (passwd != null) {
-			this.passwd = passwd;
-		}
-		this.url = url;
-		update_executed = false;
-
-		needReconnection = true;
-	    	errorHandler = new UError(this);
-	}
-
-	// This constructor is called on the server side.
-	UConnection(Socket socket, Thread curThread) throws CUBRIDException {
-		errorHandler = new UError(this);
-		try {
-			client = socket;
-			client.setTcpNoDelay(true);
-
-			output = new DataOutputStream(client.getOutputStream());
-			output.writeInt(0x08);
-			output.flush();
-			input = new UTimedDataInputStream(client.getInputStream(), CASIp, CASPort);
-
-			needReconnection = false;
-			casinfo = new byte[CAS_INFO_SIZE];
-			casinfo[CAS_INFO_STATUS] = CAS_INFO_STATUS_ACTIVE;
-			casinfo[CAS_INFO_RESERVED_1] = 0;
-			casinfo[CAS_INFO_RESERVED_2] = 0;
-			casinfo[CAS_INFO_ADDITIONAL_FLAG] = 0;
-			
-			/* create default broker info */
-			broker_info = new byte[BROKER_INFO_SIZE];
-			broker_info[BROKER_INFO_DBMS_TYPE] = DBMS_CUBRID;
-			broker_info[BROKER_INFO_RESERVED4] = 0;
-			broker_info[BROKER_INFO_STATEMENT_POOLING] = 1;
-			broker_info[BROKER_INFO_CCI_PCONNECT] = 0;
-			broker_info[BROKER_INFO_PROTO_VERSION] 
-			            = CAS_PROTO_INDICATOR | CAS_PROTOCOL_VERSION;
-			broker_info[BROKER_INFO_FUNCTION_FLAG] 
-			            = CAS_RENEWED_ERROR_CODE | CAS_SUPPORT_HOLDABLE_RESULT;
-			broker_info[BROKER_INFO_RESERVED2] = 0;
-			broker_info[BROKER_INFO_RESERVED3] = 0;
-			
-			brokerVersion = makeProtoVersion(CAS_PROTOCOL_VERSION);
-			
-			isServerSideJdbc = true;
-			lastAutoCommit = false;
-			this.curThread = curThread;
-			UJCIUtil.invoke("com.cubrid.jsp.StoredProcedureHandler", "setCharSet",
-					new Class[] { String.class }, this.curThread,
-					new Object[] { connectionProperties.getCharSet() });
-		} catch (IOException e) {
-		    	UJciException je = new UJciException(UErrorCode.ER_CONNECTION);
-		    	je.toUError(errorHandler);
-			throw new CUBRIDException(errorHandler, e);
-		}
-	}
 
 	public void tryConnect() throws CUBRIDException {
 	    initLogger();
@@ -375,11 +282,7 @@ public class UConnection {
 	}
 
 	public void setCharset(String newCharsetName) {
-		if (UJCIUtil.isServerSide() && isServerSideJdbc) {
-			UJCIUtil.invoke("com.cubrid.jsp.StoredProcedureHandler", "setCharSet",
-					new Class[] { String.class }, this.curThread,
-					new Object[] { newCharsetName });
-		}
+
 	}
 
 	public String getCharset() {
@@ -387,19 +290,11 @@ public class UConnection {
 	}
 
 	public void setZeroDateTimeBehavior(String behavior) throws CUBRIDException {
-		if (UJCIUtil.isServerSide() && isServerSideJdbc) {
-			UJCIUtil.invoke("com.cubrid.jsp.StoredProcedureHandler",
-					"setZeroDateTimeBehavior", new Class[] { String.class },
-					this.curThread, new Object[] { behavior });
-		}
+
 	}
 
 	public void setResultWithCUBRIDTypes(String support) throws CUBRIDException {
-		if (UJCIUtil.isServerSide() && isServerSideJdbc) {
-			UJCIUtil.invoke("com.cubrid.jsp.StoredProcedureHandler",
-					"setResultWithCUBRIDTypes", new Class[] { String.class },
-					this.curThread, new Object[] { support });
-		}
+
 	}
 	
 	public String getZeroDateTimeBehavior() {
@@ -517,24 +412,19 @@ public class UConnection {
 			errorHandler.setErrorCode(UErrorCode.ER_IS_CLOSED);
 			return;
 		}
-		// jci 3.0
-		if (client != null) {
-			disconnect();
-		}
+
+		closeInternal ();
 		/*
 		 * jci 2.x if (transactionList != null && transactionList.size() > 0)
 		 * endTransaction(false);
 		 */
-
-		if (!isServerSideJdbc) {
-			if (client != null) {
-		    	    	clientSocketClose();
-			}
-		}
+		
 		// System.gc();
 		// UJCIManager.deleteInList(this);
 		isClosed = true;
 	}
+	
+	protected abstract void closeInternal ();
 
 	synchronized public void dropElementInSequence(CUBRIDOID oid,
 			String attributeName, int index) {
@@ -1692,26 +1582,7 @@ public class UConnection {
 		return -1;
 	}
 
-	synchronized public void setAutoCommit(boolean autoCommit) {
-		if (!isServerSideJdbc) {
-			if (lastAutoCommit != autoCommit) {
-				lastAutoCommit = autoCommit;
-			}
-		}
-
-		/*
-		 * errorHandler = new UError(); if (isClosed == true){
-		 * errorHandler.setErrorCode(UErrorCode.ER_IS_CLOSED); return; } try{
-		 * checkReconnect(); if (errorHandler.getErrorCode() !=
-		 * UErrorCode.ER_NO_ERROR) return; outBuffer.newRequest(out,
-		 * UFunctionCode.SET_DB_PARAMETER);
-		 * outBuffer.addInt(DB_PARAM_AUTO_COMMIT); outBuffer.addInt(autoCommit ?
-		 * 1 : 0 ); UInputBuffer inBuffer; inBuffer = send_recv_msg();
-		 * lastAutoCommit = autoCommit; }catch(UJciException e){
-		 * e.toUError(errorHandler); }catch(IOException e){
-		 * errorHandler.setErrorCode(UErrorCode.ER_COMMUNICATION); }
-		 */
-	}
+	public abstract void setAutoCommit(boolean autoCommit);
 
 	public boolean getAutoCommit() {
 		return lastAutoCommit;
@@ -1814,7 +1685,7 @@ public class UConnection {
 		return url_cache;
 	}
 
-    private int getTimeout(long endTimestamp, int timeout) throws UJciException {
+    protected int getTimeout(long endTimestamp, int timeout) throws UJciException {
 	if (endTimestamp == 0) {
 	    return timeout;
 	}
@@ -1830,94 +1701,7 @@ public class UConnection {
 	return timeout;
     }
 
-    private void reconnectWorker(long endTimestamp) throws IOException, UJciException {
-	if (UJCIUtil.isConsoleDebug()) {
-	    CUBRIDDriver.printDebug(String.format("Try Connect (%s,%d)", CASIp, CASPort));
-	}
-
-	int timeout = connectionProperties.getConnectTimeout() * 1000;
-	client = BrokerHandler.connectBroker(CASIp, CASPort, getTimeout(endTimestamp, timeout));
-	output = new DataOutputStream(client.getOutputStream());
-	input = new UTimedDataInputStream(client.getInputStream(), CASIp, CASPort);
-	connectDB(getTimeout(endTimestamp, timeout));
-
-	client.setTcpNoDelay(true);
-	client.setSoTimeout(SOCKET_TIMEOUT);
-	needReconnection = false;
-	isClosed = false;
-
-	if (lastIsolationLevel != CUBRIDIsolationLevel.TRAN_UNKNOWN_ISOLATION)
-	    setIsolationLevel(lastIsolationLevel);
-	if (lastLockTimeout != LOCK_TIMEOUT_NOT_USED)
-	    setLockTimeout(lastLockTimeout);
-	/*
-	 * if(!lastAutoCommit) setAutoCommit(lastAutoCommit);
-	 */
-    }
-
-	private void connectDB(int timeout) throws IOException, UJciException {
-		UTimedDataInputStream is = new UTimedDataInputStream(client.getInputStream(), CASIp, CASPort, timeout);
-		DataOutputStream os = new DataOutputStream(client.getOutputStream());
-
-		// send database information
-		os.write(dbInfo);
-
-		// receive header
-		int dataLength = is.readInt();
-		casinfo = new byte[CAS_INFO_SIZE];
-		is.readFully(casinfo);
-		if (dataLength < 0) {
-		    throw new UJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
-		}
-
-		// receive data
-		int response = is.readInt();
-		if (response < 0) {
-		    int code = is.readInt();
-		    // the error greater than -10000 with CAS_ERROR_INDICATOR is sent by old broker
-		    // -1018 (CAS_ER_NOT_AUTHORIZED_CLIENT) is especial case
-		    if ((response == UErrorCode.CAS_ERROR_INDICATOR && code > -10000)
-			    || code == -1018) {
-			code -= 9000;
-		    }
-		    byte msg[] = new byte[dataLength - 8];
-		    is.readFully(msg);
-		    throw new UJciException(UErrorCode.ER_DBMS, response, code,
-			    new String(msg, 0, Math.max(msg.length - 1, 0)));
-		}
-
-		processId = response;
-		if (broker_info == null) {
-	    		broker_info = new byte[BROKER_INFO_SIZE];
-		}
-		is.readFully(broker_info);
-
-		/* synchronize with broker_info */
-		byte version = broker_info[BROKER_INFO_PROTO_VERSION];
-		if ((version & CAS_PROTO_INDICATOR) == CAS_PROTO_INDICATOR) {
-			brokerVersion = makeProtoVersion(version & CAS_PROTO_VER_MASK);
-		} else {
-			brokerVersion = makeBrokerVersion(
-				(int) broker_info[BROKER_INFO_MAJOR_VERSION],
-				(int) broker_info[BROKER_INFO_MINOR_VERSION],
-				(int) broker_info[BROKER_INFO_PATCH_VERSION]);
-		}
-
-		if (protoVersionIsAbove(PROTOCOL_V4)) {
-		    casId = is.readInt();
-		} else {
-		    casId = -1;
-		}
-	
-		if (protoVersionIsAbove(PROTOCOL_V3)) {
-		    is.readFully(sessionId);
-		} else {
-		    oldSessionId = is.readInt();
-		}
-
-	}
-
-	private boolean setActiveHost(int hostId) throws UJciException {
+	protected boolean setActiveHost(int hostId) throws UJciException {
 		if (hostId >= altHosts.size())
 			return false;
 
@@ -1926,7 +1710,7 @@ public class UConnection {
 		return true;
 	}
 
-    private long getLoginEndTimestamp(long timestamp) {
+    protected long getLoginEndTimestamp(long timestamp) {
 	int timeout = connectionProperties.getConnectTimeout();
 	if (timeout <= 0) {
 	    return 0;
@@ -1935,54 +1719,7 @@ public class UConnection {
 	return timestamp + (timeout * 1000);
     }
 
-    private void reconnect() throws IOException, UJciException {
-	if (altHosts == null) {
-	    reconnectWorker(getLoginEndTimestamp(beginTime));
-	} else {
-	    int retry = 0;
-	    UUnreachableHostList unreachableHosts = UUnreachableHostList.getInstance();
-	    
-	    do {
-		for (int hostId = 0; hostId < altHosts.size(); hostId++) {
-		    /*
-		     * if all hosts turn out to be unreachable, ignore host
-		     * reachability and try one more time
-		     */
-		    if (!unreachableHosts.contains(altHosts.get(hostId)) || retry == 1) {
-			try {
-			    setActiveHost(hostId);
-			    reconnectWorker(getLoginEndTimestamp(System.currentTimeMillis()));
-			    connectedHostId = hostId;
-			    
-			    unreachableHosts.remove(altHosts.get(hostId));
-			    
-			    return; // success to connect
-			} catch (IOException e) {
-			    logException(e);
-			    throw e;
-			} catch (UJciException e) {
-			    logException(e);
-			    int errno = e.getJciError();
-			    if (errno == UErrorCode.ER_COMMUNICATION
-				    || errno == UErrorCode.ER_CONNECTION
-				    || errno == UErrorCode.ER_TIMEOUT
-				    || errno == UErrorCode.CAS_ER_FREE_SERVER) {
-			    	unreachableHosts.add(altHosts.get(hostId));
-			    } else {
-				throw e;
-			    }
-			}
-		    }
-		    lastFailureTime = System.currentTimeMillis() / 1000;
-		}
-		retry++;
-	    } while (retry < 2);
-	    // failed to connect to neither hosts
-	    throw createJciException(UErrorCode.ER_CONNECTION);
-	}
-    }
-
-	private int makeBrokerVersion(int major, int minor, int patch) {
+	protected int makeBrokerVersion(int major, int minor, int patch) {
 		int version = 0;
 		if ((major < 0 || major > Byte.MAX_VALUE)
 				|| (minor < 0 || minor > Byte.MAX_VALUE)
@@ -1995,7 +1732,7 @@ public class UConnection {
 		return version;
 	}
 
-	private int makeProtoVersion(int ver) {
+	protected int makeProtoVersion(int ver) {
 		return ((int) CAS_PROTO_INDICATOR << 24) | ver;
 	}
 
@@ -2017,13 +1754,7 @@ public class UConnection {
 		return false;
 	}
 
-	public boolean protoVersionIsAbove(int ver) {
-		if (isServerSideJdbc()
-				|| (brokerInfoVersion() >= makeProtoVersion(ver))) {
-			return true;
-		}
-		return false;
-	}
+	public abstract boolean protoVersionIsAbove(int ver);
 
 	private void setConnectInfo(String info) throws UJciException {
 		StringTokenizer st = new StringTokenizer(info, ":");
@@ -2073,7 +1804,7 @@ public class UConnection {
 		send_recv_msg();
 	}
 
-	void checkReconnect() throws IOException, UJciException {
+	protected void checkReconnect() throws IOException, UJciException {
 		if (dbInfo == null) {
 			dbInfo = createDBInfo(dbname, user, passwd, url);
 		}
@@ -2103,28 +1834,6 @@ public class UConnection {
 		if (deferred_close_handle == null) {
 			deferred_close_handle = new Vector<Integer>();
 		}
-
-		if (!isServerSideJdbc) {
-			if (getCASInfoStatus() == CAS_INFO_STATUS_INACTIVE
-					&& check_cas() == false) {
-				clientSocketClose();
-			}
-
-			if (needReconnection == true) {
-				reconnect();
-				if (UJCIUtil.isSendAppInfo()) {
-					sendAppInfo();
-				}
-			}
-		}
-	}
-
-	private void sendAppInfo() {
-		String msg;
-		msg = CUBRIDJdbcInfoTable.getValue();
-		if (msg == null)
-			return;
-		check_cas(msg);
 	}
 
 	public void closeSession() {
@@ -2146,9 +1855,9 @@ public class UConnection {
 	}
 
 	// jci 3.0
-	private void disconnect() {
+	protected void disconnect() {
 		try {
-		    	setBeginTime();
+		    setBeginTime();
 			checkReconnect();
 			if (errorHandler.getErrorCode() != UErrorCode.ER_NO_ERROR)
 				return;
@@ -2170,10 +1879,6 @@ public class UConnection {
 			if (tmp_ustmt != null)
 				tmp_ustmt.close(false);
 		}
-	}
-
-	public boolean isServerSideJdbc() {
-		return isServerSideJdbc;
 	}
 
 	public void turnOnAutoCommitBySelf() {

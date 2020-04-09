@@ -2716,38 +2716,39 @@ redo:
 
   start_code = ntohl (start_code);
 
-  if (start_code == 0x08)
-    {
-      tran_begin_libcas_function ();
-      libcas_main (sockfd);	/* jdbc call */
-      tran_end_libcas_function ();
-      goto redo;
-    }
+  if (start_code == 0x08) /* jdbc call */
+  {
+    tran_begin_libcas_function ();
+    libcas_main (sockfd);	/* jdbc call */
+    tran_end_libcas_function ();
+    goto redo;
+  }
+  else
+  {
+    nbytes = jsp_readn (sockfd, (char *) &res_size, (int) sizeof (int));
+    if (nbytes != (int) sizeof (int))
+      {
+        er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_NETWORK_ERROR, 1, nbytes);
+        return ER_SP_NETWORK_ERROR;
+      }
 
-  nbytes = jsp_readn (sockfd, (char *) &res_size, (int) sizeof (int));
-  if (nbytes != (int) sizeof (int))
-    {
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_NETWORK_ERROR, 1, nbytes);
-      return ER_SP_NETWORK_ERROR;
-    }
+    res_size = ntohl (res_size);
 
-  res_size = ntohl (res_size);
+    buffer = (char *) malloc (res_size);
+    if (!buffer)
+      {
+        er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, (size_t) res_size);
+        return ER_OUT_OF_VIRTUAL_MEMORY;
+      }
 
-  buffer = (char *) malloc (res_size);
-  if (!buffer)
-    {
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, (size_t) res_size);
-      return ER_OUT_OF_VIRTUAL_MEMORY;
-    }
-
-  nbytes = jsp_readn (sockfd, buffer, res_size);
-  if (nbytes != res_size)
-    {
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_NETWORK_ERROR, 1, nbytes);
-      free_and_init (buffer);
-      return ER_SP_NETWORK_ERROR;
-    }
-
+    nbytes = jsp_readn (sockfd, buffer, res_size);
+    if (nbytes != res_size)
+      {
+        er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_NETWORK_ERROR, 1, nbytes);
+        free_and_init (buffer);
+        return ER_SP_NETWORK_ERROR;
+      }
+    
   if (start_code == 0x02)
     {				/* result */
       ptr = jsp_unpack_value (buffer, sp_args->returnval);
@@ -2810,7 +2811,9 @@ redo:
       free_and_init (buffer);
       return ER_SP_NETWORK_ERROR;
     }
+  }
 
+  /* check end_code */
   if (ptr)
     {
       ptr = or_unpack_int (ptr, &end_code);

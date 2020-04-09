@@ -71,7 +71,7 @@ abstract public class UJCIManager {
 			throws java.sql.SQLException {
 		UConnection connection;
 
-		connection = new UConnection(ip, port, name, user, passwd, url);
+		connection = new UConnectionClient(ip, port, name, user, passwd, url);
 		// connectionList.add(connection);
 		return connection;
 	}
@@ -81,7 +81,7 @@ abstract public class UJCIManager {
 			throws java.sql.SQLException {
 		UConnection connection;
 
-		connection = new UConnection(aConList, name, user, passwd, url);
+		connection = new UConnectionClient(aConList, name, user, passwd, url);
 		// connectionList.add(connection);
 		return connection;
 	}
@@ -110,7 +110,7 @@ abstract public class UJCIManager {
 		Thread curThread = (Thread) Thread.currentThread();
 		Socket s = (Socket) UJCIUtil.invoke("com.cubrid.jsp.StoredProcedureHandler",
 				"getSocket", null, curThread, null);
-		return new UConnection(s, curThread);
+		return new UConnectionServer(s, curThread);
 	}
 
 	/*

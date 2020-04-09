@@ -359,15 +359,17 @@ jsp_start_server (const char *db_name, const char *path)
   jstring jstr_dbname, jstr_path, jstr_version, jstr_envroot, jstr_port;
   jobjectArray args;
   JavaVMInitArgs vm_arguments;
-  const int vm_n_options = 3;
+  const int vm_n_options = 5;
   JavaVMOption options[vm_n_options];
-  char classpath[PATH_MAX + 32], logging_prop[PATH_MAX + 32];
+  char classpath[PATH_MAX + 32], logging_prop[PATH_MAX + 32], option_debug2[PATH_MAX + 32];
   char port[6] = { 0 };
   char *loc_p, *locale;
   const char *envroot;
   char jsp_file_path[PATH_MAX];
+  char option_debug[] = "-Xdebug";
   char optionString2[] = "-Xrs";
   CREATE_VM_FUNC create_vm_func = NULL;
+  int debug_port = -1;
 
   if (!prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE))
     {
@@ -392,9 +394,23 @@ jsp_start_server (const char *db_name, const char *path)
   snprintf (logging_prop, sizeof (logging_prop) - 1, "-Djava.util.logging.config.file=%s",
 	    envvar_javadir_file (jsp_file_path, PATH_MAX, "logging.properties"));
 
+  memset (option_debug2, 0, sizeof (option_debug2));
+  debug_port = prm_get_integer_value (PRM_ID_JAVA_STORED_PROCEDURE_DEBUG);
+  if (debug_port != -1)
+    {
+      snprintf (option_debug2, sizeof (option_debug2) - 1,
+		"-agentlib:jdwp=transport=dt_socket,server=y,address=%d,suspend=n", debug_port);
+    }
+  else
+    {
+      memset (option_debug, 0, sizeof (option_debug));
+    }
+
   options[0].optionString = classpath;
   options[1].optionString = logging_prop;
   options[2].optionString = optionString2;
+  options[3].optionString = option_debug;
+  options[4].optionString = option_debug2;
   vm_arguments.version = JNI_VERSION_1_4;
   vm_arguments.options = options;
   vm_arguments.nOptions = vm_n_options;

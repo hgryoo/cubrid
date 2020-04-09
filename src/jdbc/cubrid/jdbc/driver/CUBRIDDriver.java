@@ -123,109 +123,108 @@ public class CUBRIDDriver implements Driver {
 	/*
 	 * java.sql.Driver interface
 	 */
-
 	public Connection connect(String url, Properties info) throws SQLException {
-	    if (!acceptsURL(url)) {
-		return null;
-	    }
-
-	    if (url.toLowerCase().startsWith(JDBC_DEFAULT_CONNECTION)) {
-		return defaultConnection();
-	    }
-
-	    Pattern pattern = Pattern.compile(URL_PATTERN, Pattern.CASE_INSENSITIVE);
-	    Matcher matcher = pattern.matcher(url);
-	    if (!matcher.find()) {
-		throw new CUBRIDException(CUBRIDJDBCErrorCode.invalid_url, url, null);
-	    }
-	    
-	    String match = matcher.group();
-	    if (!match.equals(url)) {
-	      throw new CUBRIDException(CUBRIDJDBCErrorCode.invalid_url, url, null);
-	    }
-
-	    String dummy;
-	    String host = matcher.group(2);
-	    String portString = matcher.group(3);
-	    String db = matcher.group(4);
-	    String user;
-	    String pass;
-	    String prop = matcher.group(7);
-	    int port = default_port;
-
-	    UConnection u_con;
-	    String resolvedUrl;
-	    ConnectionProperties connProperties;
-
-	    if (host == null || host.length() == 0) {
-		host = default_hostname;
-	    }
-
-	    if (portString == null || portString.length() == 0) {
-		port = default_port;
-	    } else {
-		port = Integer.parseInt(portString);
-	    }
-
-	    connProperties = new ConnectionProperties();
-	    connProperties.setProperties(prop);
-
-	    user = info.getProperty("user");
-	    if (user == null) {
-		user = matcher.group(5);
-	    }
-
-	    pass = info.getProperty("password");
-	    if (pass == null) {
-		pass = matcher.group(6);
-	    }
-
-	    resolvedUrl = "jdbc:cubrid:" + host + ":" + port + ":" + db + ":" + user + ":********:";
-	    if (prop != null) {
-		resolvedUrl += prop;
-	    }
-
-	    connProperties.setProperties(info);
-
-	    dummy = connProperties.getAltHosts();
-	    if (dummy != null) {
-		ArrayList<String> altHostList = new ArrayList<String>();
-		altHostList.add(host + ":" + port);
-
-		StringTokenizer st = new StringTokenizer(dummy, ",", false);
-		while (st.hasMoreTokens()) {
-		    altHostList.add(st.nextToken());
+		if (!acceptsURL(url)) {
+			return null;
 		}
-		
-		if (connProperties.getConnLoadBal()) {
-			Collections.shuffle(altHostList);
-		}
-		try {
-		    u_con = UJCIManager.connect(altHostList, db, user, pass, resolvedUrl);
-		} catch (CUBRIDException e) {
-		    throw e;
-		}
-	    } else {
-		try {
-		    u_con = UJCIManager.connect(host, port, db, user, pass, resolvedUrl);
-		} catch (CUBRIDException e) {
-		    throw e;
-		}
-	    }
 
-	    u_con.setCharset(connProperties.getCharSet());
-	    u_con.setZeroDateTimeBehavior(connProperties.getZeroDateTimeBehavior());
-            u_con.setResultWithCUBRIDTypes(connProperties.getResultWithCUBRIDTypes());
+		if (url.toLowerCase().startsWith(JDBC_DEFAULT_CONNECTION)) {
+			return defaultConnection();
+		} else {
+			Pattern pattern = Pattern.compile(URL_PATTERN, Pattern.CASE_INSENSITIVE);
+			Matcher matcher = pattern.matcher(url);
+			if (!matcher.find()) {
+				throw new CUBRIDException(CUBRIDJDBCErrorCode.invalid_url, url, null);
+			}
 
-	    u_con.setConnectionProperties(connProperties);
-	    u_con.tryConnect();
-	    return new CUBRIDConnection(u_con, url, user);
+			String match = matcher.group();
+			if (!match.equals(url)) {
+				throw new CUBRIDException(CUBRIDJDBCErrorCode.invalid_url, url, null);
+			}
+
+			String dummy;
+			String host = matcher.group(2);
+			String portString = matcher.group(3);
+			String db = matcher.group(4);
+			String user;
+			String pass;
+			String prop = matcher.group(7);
+			int port = default_port;
+
+			UConnection u_con;
+			String resolvedUrl;
+			ConnectionProperties connProperties;
+
+			if (host == null || host.length() == 0) {
+				host = default_hostname;
+			}
+
+			if (portString == null || portString.length() == 0) {
+				port = default_port;
+			} else {
+				port = Integer.parseInt(portString);
+			}
+
+			connProperties = new ConnectionProperties();
+			connProperties.setProperties(prop);
+
+			user = info.getProperty("user");
+			if (user == null) {
+				user = matcher.group(5);
+			}
+
+			pass = info.getProperty("password");
+			if (pass == null) {
+				pass = matcher.group(6);
+			}
+
+			resolvedUrl = "jdbc:cubrid:" + host + ":" + port + ":" + db + ":" + user + ":********:";
+			if (prop != null) {
+				resolvedUrl += prop;
+			}
+
+			connProperties.setProperties(info);
+
+			dummy = connProperties.getAltHosts();
+			if (dummy != null) {
+				ArrayList<String> altHostList = new ArrayList<String>();
+				altHostList.add(host + ":" + port);
+
+				StringTokenizer st = new StringTokenizer(dummy, ",", false);
+				while (st.hasMoreTokens()) {
+					altHostList.add(st.nextToken());
+				}
+
+				if (connProperties.getConnLoadBal()) {
+					Collections.shuffle(altHostList);
+				}
+				try {
+					u_con = UJCIManager.connect(altHostList, db, user, pass, resolvedUrl);
+				} catch (CUBRIDException e) {
+					throw e;
+				}
+			} else {
+				try {
+					u_con = UJCIManager.connect(host, port, db, user, pass, resolvedUrl);
+				} catch (CUBRIDException e) {
+					throw e;
+				}
+			}
+
+			u_con.setCharset(connProperties.getCharSet());
+			u_con.setZeroDateTimeBehavior(connProperties.getZeroDateTimeBehavior());
+			u_con.setResultWithCUBRIDTypes(connProperties.getResultWithCUBRIDTypes());
+
+			u_con.setConnectionProperties(connProperties);
+			u_con.tryConnect();
+			return new CUBRIDConnection(u_con, url, user);
+		}
 	}
 
 	public Connection defaultConnection() throws SQLException {
 		if (UJCIUtil.isServerSide()) {
 			Thread t = Thread.currentThread();
-			Connection c = (Connection) UJCIUtil.invoke(
+			CUBRIDConnectionDefault c = (CUBRIDConnectionDefault) UJCIUtil.invoke(
 					"com.cubrid.jsp.StoredProcedureHandler", "getJdbcConnection", null,
 					t, null);
 			if (c != null) {
@@ -233,10 +232,10 @@ public class CUBRIDDriver implements Driver {
 			}
 
 			UConnection u_con = UJCIManager.connectDefault();
-			CUBRIDConnection con = new CUBRIDConnection(u_con,
-					"jdbc:default:connection:", "default", true);
+			CUBRIDConnectionDefault con = new CUBRIDConnectionDefault(u_con,
+					"jdbc:default:connection:", "default");
 			UJCIUtil.invoke("com.cubrid.jsp.StoredProcedureHandler",
-					"setJdbcConnection", new Class[] { Connection.class }, t,
+					"setJdbcConnection", new Class[] { CUBRIDConnectionDefault.class }, t,
 					new Object[] { con });
 			return con;
 		} else {
