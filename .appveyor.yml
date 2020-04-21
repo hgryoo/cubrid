@@ -12,6 +12,7 @@ install:
   - cinst ant -i
 
 build_script:
+  - rm -rf cubridmanager
   - cmake -E make_directory build
   - cmake -E chdir build cmake -G "%CMAKE_GENERATOR%" -DCMAKE_BUILD_TYPE=%BUILD_TYPE% ..
   - cmake --build build --config %BUILD_TYPE%
