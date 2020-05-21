@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE project>
 
-<project default="dist" name="Java Stored Procedure">
+<project xmlns:ivy="antlib:org.apache.ivy.ant" default="dist" name="Java Stored Procedure">
     <property name="basedir" value=""/>
     <property name="src" value="src/jdbc"/>
     <property name="build" value="bin"/>
@@ -36,6 +36,7 @@
                 <include name="com/**/*.java"/>
             </fileset>
         </copy>
+        <ivy:resolve/>
     </target>
 
     <target name="init-jdk6" depends="init" if="isUnderJDK6">
@@ -66,7 +67,9 @@
     </target>
 
     <target name="compile" depends="src-copy">
-        <javac destdir="${build}" source="1.5" target="1.5" encoding="EUC-KR" debug="true" debuglevel="lines,source" deprecation="off" includeantruntime="no">
+        <ivy:retrieve />
+        <ivy:cachepath pathid="compile.path"/>
+        <javac destdir="${build}" source="1.5" target="1.5" encoding="EUC-KR" debug="true" debuglevel="lines,source" deprecation="off" includeantruntime="no" classpathref="compile.path">
             <src path="src-jsp"/>
             <include name="**/*.java"/>
         </javac>

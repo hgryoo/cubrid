@@ -31,6 +31,7 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
@@ -62,6 +63,7 @@
 #include "network_interface_cl.h"
 #include "unicode_support.h"
 #include "dbtype.h"
+#include "environment_variable.h"
 #if defined (SUPPRESS_STRLEN_WARNING)
 #define strlen(s1)  ((int) strlen(s1))
 #endif /* defined (SUPPRESS_STRLEN_WARNING) */
@@ -2924,6 +2926,23 @@ jsp_receive_error (char *&buffer, char *&ptr, const SP_ARGS * sp_args)
   return error_code;
 }
 
+char *
+jsp_get_javasp_path (int server_port)
+{
+  static char path[PATH_MAX];
+  static bool need_init = true;
+
+  if (need_init)
+    {
+      const char *env_root = envvar_root ();
+      const char *cubrid_tmp = "tmp";
+      snprintf (path, PATH_MAX, "%s/%s/javasp_%d.sock", env_root, cubrid_tmp, server_port);
+      need_init = false;
+    }
+
+  return path;
+}
+
 /*
  * jsp_connect_server
  *   return: connect fail - return Error Code
@@ -2936,6 +2955,7 @@ static SOCKET
 jsp_connect_server (void)
 {
   struct sockaddr_in tcp_srv_addr;
+  struct sockaddr_un unix_srv_addr;
   SOCKET sockfd = INVALID_SOCKET;
   int success = -1;
   int server_port = -1;
@@ -2946,6 +2966,7 @@ jsp_connect_server (void)
   union
   {
     struct sockaddr_in in;
+    struct sockaddr_un un;
   } saddr_buf;
   struct sockaddr *saddr = (struct sockaddr *) &saddr_buf;
   socklen_t slen;
@@ -2963,15 +2984,17 @@ jsp_connect_server (void)
 #endif
 
   inaddr = inet_addr (server_host);
-  memset ((void *) &tcp_srv_addr, 0, sizeof (tcp_srv_addr));
-  tcp_srv_addr.sin_family = AF_INET;
-  tcp_srv_addr.sin_port = htons (server_port);
-
-  if (inaddr != INADDR_NONE)
+#if 1
+  if (inaddr == inet_addr ("127.0.0.1") || inaddr == inet_addr ("localhost"))
     {
-      memcpy ((void *) &tcp_srv_addr.sin_addr, (void *) &inaddr, sizeof (inaddr));
+      memset ((void *) &unix_srv_addr, 0, sizeof (unix_srv_addr));
+      unix_srv_addr.sun_family = AF_UNIX;
+      strncpy (unix_srv_addr.sun_path, jsp_get_javasp_path (server_port), sizeof (unix_srv_addr.sun_path) - 1);
+      slen = sizeof (unix_srv_addr);
+      memcpy ((void *) saddr, (void *) &unix_srv_addr, slen);
     }
   else
+#endif
     {
       struct hostent *hp;
       hp = gethostbyname (server_host);
@@ -2995,7 +3018,7 @@ jsp_connect_server (void)
   else
     {
       b = 1;
-      setsockopt (sockfd, IPPROTO_TCP, TCP_NODELAY, (char *) &b, sizeof (b));
+      if (saddr->sa_family == AF_INET) setsockopt (sockfd, IPPROTO_TCP, TCP_NODELAY, (char *) &b, sizeof (b));
     }
 
   success = connect (sockfd, saddr, slen);

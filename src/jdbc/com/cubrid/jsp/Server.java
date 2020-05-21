@@ -49,6 +49,7 @@ public class Server {
 	
 	private ServerSocket serverSocket;
 	private Thread socketListener;
+	private UnixDomainServerSocket udsServerSocket;
 
 	public Server(String name, String path, String version, String rPath, String port)
 			throws IOException {
@@ -56,14 +57,22 @@ public class Server {
 		spPath = path;
 		rootPath = rPath;
 
+		int port_number = Integer.parseInt(port);
 		try {
-		  int port_number = Integer.parseInt(port);
 		  serverSocket = new ServerSocket(port_number);
 
 		  Class.forName("cubrid.jdbc.driver.CUBRIDDriver");
 		  System.setSecurityManager(new SpSecurityManager());
 		  System.setProperty("cubrid.server.version", version);
 		} catch (Exception e) {
+			log(e);
+			e.printStackTrace();
+		}
+		
+		try {
+			port_number = serverSocket.getLocalPort();
+			udsServerSocket = new UnixDomainServerSocket (rootPath + "/tmp/javasp_" + port_number +".sock");
+		} catch (IOException e) {
 			log(e);
 			e.printStackTrace();
 		}
@@ -80,9 +89,23 @@ public class Server {
 						log(e);
 					}
 				}
-			}
-		});
+			}});
 		socketListener.start();
+		
+		new Thread(new Runnable() {
+			public void run() {
+				Socket client = null;
+				while (true) {
+					try {
+						client = udsServerSocket.accept();
+						new ExecuteThread(client).start();
+					} catch (IOException e) {
+						log(e);
+						e.printStackTrace();
+					}
+				}
+			}
+		}).start();
 	}
 
 	private int getServerPort() {

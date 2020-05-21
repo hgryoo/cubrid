@@ -17,7 +17,10 @@
 #
 
 add_custom_target(jsp_build ALL
-  COMMAND ${ANT} dist -buildfile ${CMAKE_SOURCE_DIR}/java/build.xml -Dbasedir=. -Dversion=${BUILD_NUMBER} -Dsrc=${JDBC_DIR}
+  COMMAND ${CMAKE_COMMAND} -E echo "  copying ivy.xml to ${CMAKE_BINARY_DIR}/java/ivy.xml"
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/java/ivy.xml ${CMAKE_BINARY_DIR}/java/ivy.xml
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/java/ivysettings.xml ${CMAKE_BINARY_DIR}/java/ivysettings.xml
+  COMMAND ${ANT} dist -buildfile ${CMAKE_SOURCE_DIR}/java/build.xml -Dbasedir=. -Dversion=${BUILD_NUMBER} -Dsrc=${JDBC_DIR} 
   COMMENT "Build JSP driver with Ant ..."
   )
 

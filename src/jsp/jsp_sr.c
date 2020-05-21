@@ -562,7 +562,7 @@ jsp_start_server (const char *db_name, const char *path)
       goto error;
     }
 
-  jstr_envroot = JVM_NewStringUTF (env_p, envvar_root ());
+  jstr_envroot = JVM_NewStringUTF (env_p, envroot);
   if (jstr_envroot == NULL)
     {
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_CANNOT_START_JVM, 1, "NewStringUTF");

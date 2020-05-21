@@ -1,0 +1,16 @@
+<ivysettings>
+    <properties file="build.properties" />
+    <settings defaultResolver="local-chain"/>
+    <resolvers>
+        <url name="com.springsource.repository.bundles.external">
+			<ivy pattern="http://repository.springsource.com/ivy/bundles/external/[organisation]/[module]/[revision]/[artifact]-[revision].[ext]"/>
+			<artifact pattern="http://repository.springsource.com/ivy/bundles/external/[organisation]/[module]/[revision]/[artifact]-[revision].[ext]"/>
+		</url>
+        <ibiblio name="ibiblio-maven2" m2compatible="true"/>
+        <ibiblio name="default" root="https://repo1.maven.org/maven2/" m2compatible="true" />
+        <chain name="local-chain">
+            <resolver ref="ibiblio-maven2"/>
+            <resolver ref="default"/>
+        </chain>
+    </resolvers>
+</ivysettings>
