@@ -3005,9 +3005,9 @@ jsp_connect_server (void)
 	  return INVALID_SOCKET;
 	}
       memcpy ((void *) &tcp_srv_addr.sin_addr, (void *) hp->h_addr, hp->h_length);
+      slen = sizeof (tcp_srv_addr);
+      memcpy ((void *) saddr, (void *) &tcp_srv_addr, slen);
     }
-  slen = sizeof (tcp_srv_addr);
-  memcpy ((void *) saddr, (void *) &tcp_srv_addr, slen);
 
   sockfd = socket (saddr->sa_family, SOCK_STREAM, 0);
   if (IS_INVALID_SOCKET (sockfd))
