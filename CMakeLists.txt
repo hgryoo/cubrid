@@ -273,9 +273,9 @@ if(UNIX)
     set(CMAKE_CXX_COMMON_FLAGS "${CMAKE_C_COMMON_FLAGS} -std=c++0x")
 
     # C flags for debug build
-    set(CMAKE_C_DEBUG_FLAGS "-Wall -fno-inline ${CMAKE_C_COMMON_FLAGS}")
+    set(CMAKE_C_DEBUG_FLAGS "-Wall -g -pg -fno-inline ${CMAKE_C_COMMON_FLAGS}")
     # C++ flags for debug build
-    set(CMAKE_CXX_DEBUG_FLAGS "-Wall -fno-inline ${CMAKE_CXX_COMMON_FLAGS}")
+    set(CMAKE_CXX_DEBUG_FLAGS "-Wall -g -pg -fno-inline ${CMAKE_CXX_COMMON_FLAGS}")
 
     # C flags for release build
     set(CMAKE_C_RELEASE_FLAGS "-O2 -DNDEBUG -finline-functions ${CMAKE_C_COMMON_FLAGS}")
@@ -301,9 +301,9 @@ if(UNIX)
     endif(WITH_SOURCES)
 
     # set has-style
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--hash-style=both")
-    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--hash-style=both")
-    set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -Wl,--hash-style=both")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--hash-style=both -pg")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--hash-style=both -pg")
+    set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -Wl,--hash-style=both -pg")
 
   else(CMAKE_COMPILER_IS_GNUCC)
     message(FATAL_ERROR "We currently do not support ${CMAKE_CXX_COMPILER_ID} compiler")

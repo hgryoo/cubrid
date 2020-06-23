@@ -103,4 +103,29 @@ extern void jsp_srv_handle_free (int h_id);
 extern int jsp_send_destroy_request_all ();
 extern int jsp_send_destroy_request (const SOCKET sockfd);
 
+extern int jsp_histo_start (void);
+extern int jsp_histo_stop (void);
+extern void jsp_histo_clear (void);
+extern int jsp_histo_print (FILE * stream);
+extern void jsp_histo_add_entry (int idx, int data_sent);
+extern void jsp_histo_request_finished (int idx, int data_received);
+
+enum jsp_routine
+{
+  JSP_ROUTINE_START = 0,
+
+  JSP_ROUTINE_CONNECT = 0,
+  JSP_ALLOC = 1,
+  JSP_SEND_CALL = 2,
+  JSP_RECEIVE_RESULT = 3,
+  JSP_RECEIVE_ERROR = 4,
+  JSP_JDBC_SUBROUTINE = 5,
+  JSP_DESTROY = 6,
+
+  QUERY_METHOD_CALL_FROM_SERVER = 7,
+  QUERY_METHOD_SEND_TO_SERVER = 8,
+
+  JSP_REQUEST_END = 9
+};
+
 #endif /* _JSP_CL_H_ */

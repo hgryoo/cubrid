@@ -120,6 +120,8 @@ static SOCKET sock_fds[MAX_CALL_COUNT] = { INVALID_SOCKET };
 static int call_cnt = 0;
 static bool is_prepare_call[MAX_CALL_COUNT];
 
+static void jsp_histo_setup_names (void);
+
 #if defined(WINDOWS)
 FARPROC jsp_old_hook = NULL;
 static int windows_socket_startup (void);
@@ -188,6 +190,7 @@ static SOCKET jsp_connect_server (void);
 static void jsp_close_internal_connection (const SOCKET sockfd);
 static int jsp_execute_stored_procedure (const SP_ARGS * args);
 static int jsp_do_call_stored_procedure (DB_VALUE * returnval, DB_ARG_LIST * args, const char *name);
+
 
 /*
  * jsp_init - Initialize Java Stored Procedure
@@ -2104,6 +2107,8 @@ jsp_send_call_request (const SOCKET sockfd, const SP_ARGS * sp_args)
 
   req_size =
     (int) sizeof (int) * 4 + or_packed_string_length (sp_args->name, &strlen) + jsp_get_argument_size (sp_args->args);
+  
+  jsp_histo_add_entry (JSP_SEND_CALL, req_size);
 
   buffer = (char *) malloc (req_size);
   if (buffer == NULL)
@@ -2138,6 +2143,8 @@ jsp_send_call_request (const SOCKET sockfd, const SP_ARGS * sp_args)
       error_code = er_errid ();
       goto exit;
     }
+  
+  jsp_histo_request_finished (JSP_SEND_CALL, 0);
 
 exit:
   if (buffer)
@@ -2178,6 +2185,8 @@ jsp_send_destroy_request (const SOCKET sockfd)
   int req_code = 0x10;
   int res = NO_ERROR;
 
+  jsp_histo_add_entry (JSP_DESTROY, (int) sizeof (int));
+
   nbytes = jsp_writen (sockfd, (void *) &req_code, (int) sizeof (int));
   if (nbytes != (int) sizeof (int))
     {
@@ -2188,6 +2197,8 @@ jsp_send_destroy_request (const SOCKET sockfd)
   tran_begin_libcas_function ();
   res = libcas_main (sockfd);	/* jdbc call to destroy resources */
   tran_end_libcas_function ();
+
+  jsp_histo_request_finished (JSP_DESTROY, 0);
 
   return res;
 }
@@ -2771,19 +2782,23 @@ redo:
 
   if (start_code == SP_CODE_INTERNAL_JDBC)
     {
+      jsp_histo_add_entry (JSP_JDBC_SUBROUTINE, 0);
       tran_begin_libcas_function ();
       error_code = libcas_main (sockfd);	/* jdbc call */
+      tran_end_libcas_function ();
+      jsp_histo_request_finished (JSP_JDBC_SUBROUTINE, 0);
       if (error_code != NO_ERROR)
 	{
 	  goto exit;
 	}
-      tran_end_libcas_function ();
       goto redo;
     }
   else if (start_code == SP_CODE_RESULT || start_code == SP_CODE_ERROR)
     {
       /* read size of buffer to allocate and data */
+      jsp_histo_add_entry (JSP_ALLOC, 0);
       error_code = jsp_alloc_response (sockfd, buffer);
+      jsp_histo_request_finished (JSP_ALLOC, 0);
       if (error_code != NO_ERROR)
 	{
 	  goto exit;
@@ -2795,7 +2810,9 @@ redo:
 	  error_code = jsp_receive_result (buffer, ptr, sp_args);
 	  break;
 	case SP_CODE_ERROR:
+    jsp_histo_add_entry (JSP_RECEIVE_ERROR, 0);
 	  error_code = jsp_receive_error (buffer, ptr, sp_args);
+    jsp_histo_request_finished (JSP_RECEIVE_ERROR, 0);
 	  break;
 	}
       if (error_code != NO_ERROR)
@@ -2864,6 +2881,10 @@ jsp_receive_result (char *&buffer, char *&ptr, const SP_ARGS * sp_args)
   int i;
   DB_VALUE temp;
   DB_ARG_LIST *arg_list_p;
+  int received = 0;
+  char * old_ptr = NULL;
+
+  jsp_histo_add_entry (JSP_RECEIVE_RESULT, 0);
 
   ptr = jsp_unpack_value (buffer, sp_args->returnval);
   if (ptr == NULL)
@@ -2872,6 +2893,7 @@ jsp_receive_result (char *&buffer, char *&ptr, const SP_ARGS * sp_args)
       error_code = er_errid ();
       return error_code;
     }
+  received += (int) (ptr - buffer);
 
   for (arg_list_p = sp_args->args, i = 0; arg_list_p != NULL; arg_list_p = arg_list_p->next, i++)
     {
@@ -2879,8 +2901,9 @@ jsp_receive_result (char *&buffer, char *&ptr, const SP_ARGS * sp_args)
 	{
 	  continue;
 	}
-
+      old_ptr = ptr;
       ptr = jsp_unpack_value (ptr, &temp);
+      received += (int) (ptr - old_ptr);
       if (ptr == NULL)
 	{
 	  db_value_clear (&temp);
@@ -2893,6 +2916,8 @@ jsp_receive_result (char *&buffer, char *&ptr, const SP_ARGS * sp_args)
       db_value_clone (&temp, arg_list_p->val);
       db_value_clear (&temp);
     }
+  
+  jsp_histo_request_finished (JSP_RECEIVE_RESULT, received);
 
   return error_code;
 }
@@ -2984,8 +3009,10 @@ jsp_connect_server (void)
 #endif
 
   inaddr = inet_addr (server_host);
+
 #if 1
-  if (inaddr == inet_addr ("127.0.0.1") || inaddr == inet_addr ("localhost"))
+  if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS)
+        && (inaddr == inet_addr ("127.0.0.1") || inaddr == inet_addr ("localhost")))
     {
       memset ((void *) &unix_srv_addr, 0, sizeof (unix_srv_addr));
       unix_srv_addr.sun_family = AF_UNIX;
@@ -2996,15 +3023,26 @@ jsp_connect_server (void)
   else
 #endif
     {
-      struct hostent *hp;
-      hp = gethostbyname (server_host);
-
-      if (hp == NULL)
+      memset ((void *) &tcp_srv_addr, 0, sizeof (tcp_srv_addr));
+      tcp_srv_addr.sin_family = AF_INET;
+      tcp_srv_addr.sin_port = htons (server_port);
+      
+      if (inaddr != INADDR_NONE)
 	{
-	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_HOST_NAME_ERROR, 1, server_host);
-	  return INVALID_SOCKET;
+	  memcpy ((void *) &tcp_srv_addr.sin_addr, (void *) &inaddr, sizeof (inaddr));
 	}
-      memcpy ((void *) &tcp_srv_addr.sin_addr, (void *) hp->h_addr, hp->h_length);
+      else
+	{
+	  struct hostent *hp;
+	  hp = gethostbyname (server_host);
+
+	  if (hp == NULL)
+	    {
+	      er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_HOST_NAME_ERROR, 1, server_host);
+	      return INVALID_SOCKET;
+	    }
+	  memcpy ((void *) &tcp_srv_addr.sin_addr, (void *) hp->h_addr, hp->h_length);
+	}
       slen = sizeof (tcp_srv_addr);
       memcpy ((void *) saddr, (void *) &tcp_srv_addr, slen);
     }
@@ -3018,7 +3056,7 @@ jsp_connect_server (void)
   else
     {
       b = 1;
-      if (saddr->sa_family == AF_INET) setsockopt (sockfd, IPPROTO_TCP, TCP_NODELAY, (char *) &b, sizeof (b));
+      setsockopt (sockfd, IPPROTO_TCP, TCP_NODELAY, (char *) &b, sizeof (b));
     }
 
   success = connect (sockfd, saddr, slen);
@@ -3072,7 +3110,9 @@ jsp_execute_stored_procedure (const SP_ARGS * args)
 retry:
   if (IS_INVALID_SOCKET (sock_fds[call_cnt]))
     {
+      jsp_histo_add_entry (JSP_ROUTINE_CONNECT, 0);
       sock_fds[call_cnt] = jsp_connect_server ();
+      jsp_histo_request_finished (JSP_ROUTINE_CONNECT, 0);
       if (IS_INVALID_SOCKET (sock_fds[call_cnt]))
 	{
 	  assert (er_errid () != NO_ERROR);
@@ -3362,4 +3402,176 @@ void
 jsp_srv_handle_free (int h_id)
 {
   libcas_srv_handle_free (h_id);
+}
+
+struct jsp_statistics
+{
+  const char *name;
+  int request_count;
+  int total_size_sent;
+  int total_size_received;
+  int elapsed_time;
+};
+
+static struct jsp_statistics jsp_stat[JSP_REQUEST_END];
+static int jsp_Histo_setup = 0;
+static int jsp_Histo_call_count = 0;
+static INT64 jsp_Histo_last_call_time = 0;
+static INT64 jsp_Histo_total_server_time = 0;
+
+int
+jsp_histo_start (void)
+{
+  if (jsp_Histo_setup == 0)
+    {
+      jsp_histo_clear ();
+      jsp_histo_setup_names ();
+      jsp_Histo_setup = 1;
+    }
+
+  return NO_ERROR;
+}
+
+int
+jsp_histo_stop (void)
+{
+  int err = NO_ERROR;
+
+  if (jsp_Histo_setup == 1)
+    {
+      jsp_Histo_setup = 0;
+    }
+
+  return err;
+}
+
+void
+jsp_histo_clear (void)
+{
+  unsigned int i;
+
+  jsp_Histo_call_count = 0;
+  jsp_Histo_last_call_time = 0;
+  jsp_Histo_total_server_time = 0;
+  for (i = 0; i < DIM (jsp_stat); i++)
+    {
+      jsp_stat[i].request_count = 0;
+      jsp_stat[i].total_size_sent = 0;
+      jsp_stat[i].total_size_received = 0;
+      jsp_stat[i].elapsed_time = 0;
+    }
+}
+
+static void
+jsp_histo_setup_names (void)
+{
+  unsigned int i;
+
+  for (i = 0; i < DIM (jsp_stat); i++)
+    {
+      jsp_stat[i].name = "";
+      jsp_stat[i].request_count = 0;
+      jsp_stat[i].total_size_sent = 0;
+      jsp_stat[i].total_size_received = 0;
+      jsp_stat[i].elapsed_time = 0;
+    }
+
+  jsp_stat[JSP_ROUTINE_CONNECT].name = "JSP_ROUTINE_CONNECT";
+  jsp_stat[JSP_ALLOC].name = "JSP_ALLOC";
+  jsp_stat[JSP_SEND_CALL].name = "JSP_SEND_CALL (packing)";
+  jsp_stat[JSP_RECEIVE_RESULT].name = "JSP_RECEIVE_RESULT (unpacking)";
+  jsp_stat[JSP_RECEIVE_ERROR].name = "JSP_RECEIVE_ERROR";
+  jsp_stat[JSP_JDBC_SUBROUTINE].name = "JSP_JDBC_SUBROUTINE";
+  jsp_stat[JSP_DESTROY].name = "JSP_DESTROY";
+  jsp_stat[QUERY_METHOD_CALL_FROM_SERVER].name = "QUERY_METHOD_CALL_FROM_SERVER";
+  jsp_stat[QUERY_METHOD_SEND_TO_SERVER].name = "QUERY_METHOD_SEND_TO_SERVER";
+}
+
+void
+jsp_histo_add_entry (int idx, int data_sent)
+{
+#if !defined(WINDOWS)
+  struct timeval tp;
+#endif /* WINDOWS */
+
+  jsp_stat[idx].request_count++;
+  jsp_stat[idx].total_size_sent += data_sent;
+#if !defined(WINDOWS)
+  if (gettimeofday (&tp, NULL) == 0)
+    {
+      jsp_Histo_last_call_time = tp.tv_sec * 1000000LL + tp.tv_usec;
+    }
+#endif /* !WINDOWS */
+  jsp_Histo_call_count++;
+}
+
+void
+jsp_histo_request_finished (int idx, int data_received)
+{
+#if !defined(WINDOWS)
+  struct timeval tp;
+  INT64 current_time;
+#endif /* !WINDOWS */
+
+  jsp_stat[idx].total_size_received += data_received;
+
+#if !defined(WINDOWS)
+  if (gettimeofday (&tp, NULL) == 0)
+    {
+      current_time = tp.tv_sec * 1000000LL + tp.tv_usec;
+      jsp_Histo_total_server_time = current_time - jsp_Histo_last_call_time;
+      jsp_stat[idx].elapsed_time += jsp_Histo_total_server_time;
+    }
+#endif /* !WINDOWS */
+}
+
+int
+jsp_histo_print (FILE * stream)
+{
+  unsigned int i;
+  int found = 0, total_requests = 0, total_size_sent = 0;
+  int total_size_received = 0;
+  float time, total_time = 0;
+  float avg_response_time, avg_client_time;
+  int err = NO_ERROR;
+
+  if (stream == NULL)
+    {
+      stream = stdout;
+    }
+
+  fprintf (stream, "\nHistogram of java sp requests:\n");
+  fprintf (stream, "%-31s %6s  %10s %10s %10s %10s \n", "Name", "Rcount", "Sent size", "Recv size", "time (total)", "time (avg)");
+  for (i = 0; i < DIM (jsp_stat); i++)
+    {
+      if (jsp_stat[i].request_count)
+	{
+	  found = 1;
+	  time = ((float) jsp_stat[i].elapsed_time / 1000000 / (float) (jsp_stat[i].request_count));
+	  fprintf (stream, "%-29s %6d X %10d+%10d b, %10.6f s %10.6f s\n", jsp_stat[i].name,
+		   jsp_stat[i].request_count, jsp_stat[i].total_size_sent,
+		   jsp_stat[i].total_size_received, (float) jsp_stat[i].elapsed_time / 1000000, time);
+	  total_requests += jsp_stat[i].request_count;
+	  total_size_sent += jsp_stat[i].total_size_sent;
+	  total_size_received += jsp_stat[i].total_size_received;
+	  total_time += (time * jsp_stat[i].request_count);
+	}
+    }
+  if (!found)
+    {
+      fprintf (stream, " No java sp requests made\n");
+    }
+  else
+    {
+      fprintf (stream, "-------------------------------------------------------------" "--------------\n");
+      fprintf (stream, "Totals:                       %6d X %10d+%10d b  " "%10.6f s\n", total_requests,
+	       total_size_sent, total_size_received, total_time);
+      avg_response_time = total_time / total_requests;
+      avg_client_time = 0.0;
+      fprintf (stream,
+	       "\n Average response time = %6.6f secs \n"
+	       " Average time between client requests = %6.6f secs \n", avg_response_time, avg_client_time);
+    }
+
+  return err;
 }

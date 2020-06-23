@@ -142,4 +142,9 @@ extern void cas_set_db_connect_status (int status);
 extern int cas_get_db_connect_status (void);
 extern T_BROKER_VERSION cas_get_client_version (void);
 
+int cas_histo_start (void);
+int cas_histo_stop (void);
+void cas_histo_clear (void);
+int cas_histo_print (FILE * stream);
+
 #endif /* _CAS_H_ */

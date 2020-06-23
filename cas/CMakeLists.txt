@@ -49,7 +49,7 @@ if(UNIX)
   set_target_properties(cas PROPERTIES COMPILE_FLAGS "-fPIC")
 endif(UNIX)
 
-target_compile_definitions(cas PRIVATE LIBCAS_FOR_JSP)
+target_compile_definitions(cas PRIVATE LIBCAS_FOR_JSP HISTO)
 if(WIN32)
   target_compile_definitions(cas PRIVATE _MT CAS)
   if(TARGET_PLATFORM_BITS EQUAL 32)

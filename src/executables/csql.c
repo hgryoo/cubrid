@@ -1255,6 +1255,7 @@ csql_do_session_cmd (char *line_read, CSQL_ARGUMENT * csql_arg)
 	    {
 	      if (histo_start (false) == NO_ERROR)
 		{
+      jsp_histo_start ();
 		  csql_Is_histo_on = HISTO_ON;
 		}
 	      else
@@ -1272,6 +1273,7 @@ csql_do_session_cmd (char *line_read, CSQL_ARGUMENT * csql_arg)
 	  else if (!strcasecmp (argument, "off"))
 	    {
 	      (void) histo_stop ();
+        jsp_histo_stop ();
 	      csql_Is_histo_on = HISTO_OFF;
 	    }
 	  else

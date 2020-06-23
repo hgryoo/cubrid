@@ -5,6 +5,7 @@
     <property name="basedir" value=""/>
     <property name="src" value="src/jdbc"/>
     <property name="build" value="bin"/>
+    <property name="dist.lib" value="lib"/>
     <property name="version" value=""/>
     <property name="jar.file" value="jspserver.jar"/>
 
@@ -36,7 +37,10 @@
                 <include name="com/**/*.java"/>
             </fileset>
         </copy>
+
+        <mkdir dir="${dist.lib}"/>
         <ivy:resolve/>
+        <ivy:cachepath pathid="build.path" conf="build"/>
     </target>
 
     <target name="init-jdk6" depends="init" if="isUnderJDK6">
@@ -53,6 +57,7 @@
             <fileset dir="src"/>
             <fileset dir="src-jsp"/>
             <fileset dir="${build}"/>
+            <fileset dir="${dist.lib}"/>
             <fileset file="*.jar"/>
         </delete>
     </target>
@@ -67,11 +72,18 @@
     </target>
 
     <target name="compile" depends="src-copy">
-        <ivy:retrieve />
-        <ivy:cachepath pathid="compile.path"/>
-        <javac destdir="${build}" source="1.5" target="1.5" encoding="EUC-KR" debug="true" debuglevel="lines,source" deprecation="off" includeantruntime="no" classpathref="compile.path">
+        <ivy:retrieve pattern="${dist.lib}/[artifact]-[revision](-[classifier]).[ext]"/>
+
+        <manifestclasspath property="jar.classpath" jarfile="${jar.file}">
+            <classpath>
+                <fileset dir="${dist.lib}" includes="*.jar"/>
+            </classpath>
+        </manifestclasspath>
+
+        <javac destdir="${build}" source="1.5" target="1.5" encoding="EUC-KR" debug="true" debuglevel="lines,source" deprecation="off" includeantruntime="no">
             <src path="src-jsp"/>
             <include name="**/*.java"/>
+            <classpath refid="build.path" />
         </javac>
     </target>
 
@@ -79,7 +91,11 @@
     </target>
 
     <target name="dist" depends="build">
-        <jar jarfile="${jar.file}" basedir="${build}"/>
+        <jar jarfile="${jar.file}" basedir="${build}">
+            <manifest>
+                <attribute name="Class-Path" value="${jar.classpath}" />
+            </manifest>
+        </jar>
     </target>
 </project>
 

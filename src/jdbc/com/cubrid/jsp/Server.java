@@ -39,6 +39,11 @@ import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import com.sun.jna.Pointer;
+import com.sun.jna.Memory;
+
+import com.cubrid.jsp.UnixDomainServerSocket.UnixDomainServerSocketAddress;
+
 public class Server {
 	private static final Logger logger = Logger.getLogger("com.cubrid.jsp");
 	private static final String LOG_DIR = "log";
@@ -60,7 +65,6 @@ public class Server {
 		int port_number = Integer.parseInt(port);
 		try {
 		  serverSocket = new ServerSocket(port_number);
-
 		  Class.forName("cubrid.jdbc.driver.CUBRIDDriver");
 		  System.setSecurityManager(new SpSecurityManager());
 		  System.setProperty("cubrid.server.version", version);
@@ -69,14 +73,6 @@ public class Server {
 			e.printStackTrace();
 		}
 		
-		try {
-			port_number = serverSocket.getLocalPort();
-			udsServerSocket = new UnixDomainServerSocket (rootPath + "/tmp/javasp_" + port_number +".sock");
-		} catch (IOException e) {
-			log(e);
-			e.printStackTrace();
-		}
-
 		socketListener = new Thread(new Runnable() {
 			public void run() {
 				Socket client = null;
@@ -92,20 +88,39 @@ public class Server {
 			}});
 		socketListener.start();
 		
-		new Thread(new Runnable() {
-			public void run() {
-				Socket client = null;
-				while (true) {
-					try {
-						client = udsServerSocket.accept();
-						new ExecuteThread(client).start();
-					} catch (IOException e) {
-						log(e);
-						e.printStackTrace();
+		try {
+			final int pn = serverSocket.getLocalPort();
+			final String sock_path = rootPath + "/tmp/javasp_" + pn +".sock";
+
+			/*
+			File file = new File (sock_path);
+			file.setWritable(true, false);
+			if (file.exists()) {
+				file.delete();
+			}
+			*/
+			
+			udsServerSocket = new UnixDomainServerSocket (sock_path);
+
+			new Thread(new Runnable() {
+				public void run() {
+					Socket client = null;
+					while (true) {
+						try {
+							client = udsServerSocket.accept();
+							new ExecuteThread(client).start();
+						} catch (IOException e) {
+							log(e);
+							e.printStackTrace();
+						}
 					}
 				}
-			}
-		}).start();
+			}).start();
+			
+		} catch (Exception e) {
+			log(e);
+			e.printStackTrace();
+		}
 	}
 
 	private int getServerPort() {
@@ -123,6 +138,7 @@ public class Server {
 	public static int start(String[] args) {
 		try {
 			Server server = new Server(args[0], args[1], args[2], args[3], args[4]);
+			System.out.println ("main :" + server.getServerPort());
 			return server.getServerPort();
 		} catch (Exception e) {
 			e.printStackTrace();

@@ -426,7 +426,9 @@ method_invoke_for_server (unsigned int rc, char *host_p, char *server_name_p, qf
 	      turn_on_auth = 0;
 	      AU_ENABLE (turn_on_auth);
 	      db_disable_modification ();
+        jsp_histo_add_entry(QUERY_METHOD_CALL_FROM_SERVER, 0);
 	      error = jsp_call_from_server (&value, values_p, meth_sig_p->method_name, meth_sig_p->num_method_args);
+        jsp_histo_request_finished(QUERY_METHOD_CALL_FROM_SERVER, 0);
 	      db_enable_modification ();
 	      AU_DISABLE (turn_on_auth);
 	    }
@@ -485,7 +487,9 @@ end:
 
   if (cursor_result == DB_CURSOR_END)
     {
+      jsp_histo_add_entry(QUERY_METHOD_SEND_TO_SERVER, 0);
       error = method_send_eof_to_server (&vacomm_buffer);
+      jsp_histo_request_finished(QUERY_METHOD_CALL_FROM_SERVER, 0);
       method_clear_vacomm_buffer (&vacomm_buffer);
       return error;
     }

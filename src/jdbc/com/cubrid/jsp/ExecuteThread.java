@@ -114,6 +114,10 @@ public class ExecuteThread extends Thread {
 
 	private StoredProcedure storedProcedure = null;
 
+	int numCall = 0;
+	long totalTime = 0;
+	
+
 	ExecuteThread(Socket client) throws IOException {
 		super();
 		this.client = client;
@@ -185,7 +189,11 @@ public class ExecuteThread extends Thread {
 					requestCode = listenCommand();
 					switch (requestCode) {
 					case REQ_CODE_INVOKE_SP: {
+						long startTime = System.currentTimeMillis();
 						processStoredProcedure();
+						long estimatedTime = System.currentTimeMillis() - startTime;
+						totalTime += estimatedTime;
+						numCall++;
 						break;
 					}
 					case REQ_CODE_DESTROY: {
@@ -228,6 +236,7 @@ public class ExecuteThread extends Thread {
 				}
 			}
 		}
+		System.out.println ("num call = " + numCall + "\n" + "total time = " + (totalTime / 1000.0) + "\n" + "avg time (s) = " + (totalTime / 1000.0 / numCall));
 		closeSocket();
 	}
 

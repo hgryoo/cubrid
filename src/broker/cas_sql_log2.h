@@ -47,6 +47,7 @@
 	    sql_log2_write("execute %d", STMT_ID);		\
 	    if ((SQL_LOG2_VALUE) & SQL_LOG2_HISTO) {		\
 	      histo_clear();					\
+		  histo_start(true);                    \
 	    }							\
 	    sql_log2_dup_stdout();				\
 	  }							\
@@ -56,7 +57,8 @@
 	do {							\
 	  if (SQL_LOG2_VALUE) {					\
 	    if ((SQL_LOG2_VALUE) & SQL_LOG2_HISTO) {		\
-	      histo_print(NULL);				\
+	      histo_stop();                     \
+		  histo_print(NULL);				\
 	    }							\
 	    printf("\n");					\
 	    sql_log2_flush();					\

@@ -181,6 +181,8 @@ struct t_attr_table
   const char *comment;
 };
 
+extern int histo_stop (void);
+extern int histo_start (bool);
 extern void histo_print (FILE * stream);
 extern void histo_clear (void);
 

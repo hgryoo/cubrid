@@ -72,6 +72,8 @@
 #include "xasl.h"
 #include "lob_locator.hpp"
 
+#include "jsp_cl.h"
+
 /*
  * Use db_clear_private_heap instead of db_destroy_private_heap
  */
@@ -8680,6 +8682,7 @@ histo_is_supported (void)
 int
 histo_start (bool for_all_trans)
 {
+  jsp_histo_start();
 #if defined (CS_MODE)
   return net_histo_start (for_all_trans);
 #else /* CS_MODE */
@@ -8690,6 +8693,7 @@ histo_start (bool for_all_trans)
 int
 histo_stop (void)
 {
+jsp_histo_stop();
 #if defined (CS_MODE)
   return net_histo_stop ();
 #else /* CS_MODE */
@@ -8702,6 +8706,7 @@ histo_print (FILE * stream)
 {
   int err = NO_ERROR;
 
+  jsp_histo_print (stream);
 #if defined (CS_MODE)
   err = net_histo_print (stream);
 #else /* CS_MODE */
@@ -8728,6 +8733,7 @@ histo_print_global_stats (FILE * stream, bool cumulative, const char *substr)
 void
 histo_clear (void)
 {
+  jsp_histo_clear ();
 #if defined (CS_MODE)
   net_histo_clear ();
 #else /* CS_MODE */

@@ -39,6 +39,8 @@
 #include <jni.h>
 #include <locale.h>
 #include <assert.h>
+#include <unistd.h>
+
 #include <vector>
 #include <string>
 #include <sstream>
@@ -596,6 +598,17 @@ jsp_start_server (const char *db_name, const char *path)
   JVM_SetObjectArrayElement (env_p, args, 2, jstr_version);
   JVM_SetObjectArrayElement (env_p, args, 3, jstr_envroot);
   JVM_SetObjectArrayElement (env_p, args, 4, jstr_port);
+  
+  {
+    int conf_port = prm_get_integer_value (PRM_ID_JAVA_STORED_PROCEDURE_PORT);
+    if (conf_port != 0)
+    {
+      char path[PATH_MAX];
+      const char *cubrid_tmp = "tmp";
+      snprintf (path, PATH_MAX, "%s/%s/javasp_%d.sock", envroot, cubrid_tmp, conf_port);
+      unlink (path); /* ignore error */
+    }
+  }
 
   sp_port = JVM_CallStaticIntMethod (env_p, cls, mid, args);
   if (sp_port == -1)

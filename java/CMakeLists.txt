@@ -29,3 +29,7 @@ install(FILES
   ${CMAKE_CURRENT_BINARY_DIR}/jspserver.jar
   ${JDBC_DIR}/logging.properties
   DESTINATION ${CUBRID_JAVADIR})
+
+install(DIRECTORY
+  ${CMAKE_CURRENT_BINARY_DIR}/lib
+  DESTINATION ${CUBRID_JAVADIR})

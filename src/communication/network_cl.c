@@ -700,16 +700,16 @@ net_histo_print (FILE * stream)
     }
 
   fprintf (stream, "\nHistogram of client requests:\n");
-  fprintf (stream, "%-31s %6s  %10s %10s , %10s \n", "Name", "Rcount", "Sent size", "Recv size", "Server time");
+  fprintf (stream, "%-31s %6s  %10s %10s %10s %10s \n", "Name", "Rcount", "Sent size", "Recv size", "Server time (total)", "Server time (avg)");
   for (i = 0; i < DIM (net_Req_buffer); i++)
     {
       if (net_Req_buffer[i].request_count)
 	{
 	  found = 1;
 	  server_time = ((float) net_Req_buffer[i].elapsed_time / 1000000 / (float) (net_Req_buffer[i].request_count));
-	  fprintf (stream, "%-29s %6d X %10d+%10d b, %10.6f s\n", net_Req_buffer[i].name,
+	  fprintf (stream, "%-29s %6d X %10d+%10d b, %10.6f s %10.6f s\n", net_Req_buffer[i].name,
 		   net_Req_buffer[i].request_count, net_Req_buffer[i].total_size_sent,
-		   net_Req_buffer[i].total_size_received, server_time);
+		   net_Req_buffer[i].total_size_received, (float) net_Req_buffer[i].elapsed_time / 1000000, server_time);
 	  total_requests += net_Req_buffer[i].request_count;
 	  total_size_sent += net_Req_buffer[i].total_size_sent;
 	  total_size_received += net_Req_buffer[i].total_size_received;
@@ -916,6 +916,13 @@ net_client_request_no_reply (int request, char *argbuf, int argsize)
       error = css_Errno;
       return set_server_error (error);
     }
+
+#if defined(HISTO)
+  if (net_Histo_setup)
+    {
+      net_histo_request_finished (request, 0);
+    }
+#endif /* HISTO */
 
   return error;
 }
@@ -2191,8 +2198,13 @@ net_client_request_with_callback (int request, char *argbuf, int argsize, char *
 #if defined(HISTO)
       if (net_Histo_setup)
 	{
+    int response = 0;
+    if (replydatasize_listid) response += *replydatasize_listid;
+    if (replydatasize_page) response += *replydatasize_page;
+    if (replydatasize_plan) response += *replydatasize_plan;
+
 	  net_histo_request_finished (request,
-				      replysize + *replydatasize_listid + *replydatasize_page + *replaydatasize_plan);
+				      replysize + response);
 	}
 #endif /* HISTO */
     }
@@ -2218,6 +2230,13 @@ net_client_check_log_header (LOGWR_CONTEXT * ctx_ptr, char *argbuf, int argsize,
   int request = NET_SERVER_LOGWR_GET_LOG_PAGES;
   QUERY_SERVER_REQUEST server_request;
   int server_request_num;
+
+#if defined(HISTO)
+  if (net_Histo_setup)
+    {
+      net_histo_add_entry (request, argsize);
+    }
+#endif /* HISTO */
 
   if (net_Server_name[0] == '\0')
     {
@@ -2309,6 +2328,14 @@ net_client_check_log_header (LOGWR_CONTEXT * ctx_ptr, char *argbuf, int argsize,
 	  break;
 	}
     }
+
+#if defined(HISTO)
+  if (net_Histo_setup)
+    {
+      net_histo_request_finished (request, replysize);
+    }
+#endif /* HISTO */
+
   return error;
 }
 
@@ -3021,7 +3048,7 @@ net_client_request_3_data_recv_copyarea (int request, char *argbuf, int argsize,
 #if defined(HISTO)
   if (net_Histo_setup)
     {
-      net_histo_add_entry (request, argsize + datasize);
+      net_histo_add_entry (request, argsize + datasize1 + datasize2);
     }
 #endif /* HISTO */
 
@@ -3136,7 +3163,7 @@ net_client_request_3_data_recv_copyarea (int request, char *argbuf, int argsize,
 #if defined(HISTO)
   if (net_Histo_setup)
     {
-      net_histo_request_finished (request, replysize + recvbuffer_size + content_size + packed_desc_size);
+      net_histo_request_finished (request, replysize + content_size + packed_desc_size);
     }
 #endif /* HISTO */
 
@@ -3666,13 +3693,6 @@ net_client_request_recv_stream (int request, char *argbuf, int argsize, char *re
       memcpy (replybuf, recv_replybuf + OR_INT_SIZE, recv_replybuf_size - OR_INT_SIZE);
     }
 
-#if defined(HISTO)
-  if (net_Histo_setup)
-    {
-      net_histo_request_finished (request, recv_replybuf_size + file_size);
-    }
-#endif /* HISTO */
-
   while (file_size > 0)
     {
       css_queue_receive_data_buffer (rc, reply_streamdata, reply_streamdata_size);
@@ -3702,6 +3722,13 @@ net_client_request_recv_stream (int request, char *argbuf, int argsize, char *re
       file_size -= size;
       fwrite (reply_streamdata, 1, size, outfp);
     }
+
+#if defined(HISTO)
+  if (net_Histo_setup)
+    {
+      net_histo_request_finished (request, recv_replybuf_size + file_size);
+    }
+#endif /* HISTO */
 
 end:
   free_and_init (send_argbuffer);
