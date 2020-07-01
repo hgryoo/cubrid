@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE project>
 
-<project default="dist-cubrid" name="CUBRID JDBC Driver">
+<project xmlns:ivy="antlib:org.apache.ivy.ant" default="dist-cubrid" name="CUBRID JDBC Driver">
     <property name="cubrid-jar-file" value="JDBC-${version}-cubrid.jar"/>
     <property name="bin-cubrid" value="bin-cubrid"/>
     <property name="src-cubrid" value="src-cubrid"/>
     <property name="src" value="."/>
+    <property name="dist.lib" value="lib"/>
 
     <target name="init">
         <available property="jdk1.3+" classname="java.lang.StrictMath"/>
@@ -29,6 +30,9 @@
                 <include name="cubrid/**/*.java"/>
             </fileset>
         </copy>
+        <mkdir dir="${dist.lib}"/>
+        <ivy:resolve/>
+        <ivy:cachepath pathid="build.path" conf="build"/>
     </target>
 
     <target name="init-jdk6" depends="init" if="isUnderJDK6">
@@ -46,6 +50,7 @@
             <fileset dir="src"/>
             <fileset dir="${src-cubrid}"/>
             <fileset file="*.jar"/>
+            <fileset dir="${dist.lib}"/>
         </delete>
     </target>
 
@@ -62,9 +67,18 @@
     </target>
 
     <target name="compile-cubrid" depends="src-cubrid">
+        <ivy:retrieve pattern="${dist.lib}/[artifact]-[revision](-[classifier]).[ext]"/>
+
+        <manifestclasspath property="jar.classpath" jarfile="${jar.file}">
+            <classpath>
+                <fileset dir="${dist.lib}" includes="*.jar"/>
+            </classpath>
+        </manifestclasspath>
+
         <javac destdir="${bin-cubrid}" source="1.5" target="1.5" encoding="EUC-KR" debug="true" debuglevel="lines,source,vars" deprecation="off" includeantruntime="no">
             <src path="${src-cubrid}"/>
             <include name="**/*.java"/>
+            <classpath refid="build.path" />
         </javac>
     </target>
 
@@ -85,6 +99,9 @@
             <fileset file="${src}/sql-error-codes.xml"/>
             <fileset file="src/CUBRID-JDBC-${version}"/>
             <service type="java.sql.Driver" provider="cubrid.jdbc.driver.CUBRIDDriver"/>
+            <manifest>
+                <attribute name="Class-Path" value="${jar.classpath}" />
+            </manifest>
         </jar>
     </target>
 

@@ -37,14 +37,17 @@
 package cubrid.jdbc.jci;
 
 import java.io.IOException;
+import java.math.BigInteger;
 import java.sql.Date;
 import java.sql.Time;
+import java.util.Arrays;
 import java.util.Calendar;
 
 import cubrid.jdbc.driver.CUBRIDBlob;
 import cubrid.jdbc.driver.CUBRIDClob;
 import cubrid.jdbc.driver.CUBRIDConnection;
 import cubrid.jdbc.driver.CUBRIDXid;
+import cubrid.jdbc.jci.posix.UShmDataInputStream;
 import cubrid.jdbc.driver.CUBRIDException;
 import cubrid.jdbc.driver.CUBRIDBinaryString;
 import cubrid.sql.CUBRIDOID;
@@ -71,7 +74,9 @@ class UInputBuffer {
 		int readLen = 0;
 		int totalReadLen = 0;
 		byte[] headerData = new byte[8];
-
+		
+		//input.readFully(headerData);
+		
 		while (totalReadLen < 8) {
 			readLen = input.read(headerData, totalReadLen, 8 - totalReadLen, 0);
 			if (readLen == -1) {
@@ -81,10 +86,15 @@ class UInputBuffer {
 		}
 
 		capacity = UJCIUtil.bytes2int(headerData, 0);
+		
+		//System.out.println ("capacity = " + capacity);
+		
 		casinfo = new byte[CAS_INFO_SIZE];
 		System.arraycopy(headerData, 4, casinfo, 0, 4);
 		con.setCASInfo(casinfo);
-
+		
+		//System.out.println ("casinfo = " + Arrays.toString(casinfo));
+		
 		if (capacity <= 0) {
 			resCode = 0;
 			capacity = 0;
@@ -95,7 +105,8 @@ class UInputBuffer {
 		readData();
 
 		resCode = readInt();
-
+		//System.out.println ("resCode = " + Arrays.toString(casinfo));
+		
 		if (resCode < 0) {
 			int eCode = readInt();
 			String msg;
@@ -126,7 +137,7 @@ class UInputBuffer {
 		int readLen = 0;
 		int totalReadLen = 0;
 		byte[] headerData = new byte[8];
-
+		
 		while (totalReadLen < 8) {
 			readLen = input.read(headerData, totalReadLen, 8 - totalReadLen, timeout);
 			if (readLen == -1) {
@@ -134,12 +145,19 @@ class UInputBuffer {
 			}
 			totalReadLen = totalReadLen + readLen;
 		}
-
+		
 		capacity = UJCIUtil.bytes2int(headerData, 0);
+		
+
+		//System.out.println ("capacity = " + capacity);
+		
 		casinfo = new byte[CAS_INFO_SIZE];
 		System.arraycopy(headerData, 4, casinfo, 0, 4);
 		con.setCASInfo(casinfo);
 
+
+		//System.out.println ("casinfo = " + Arrays.toString(casinfo));
+		
 		if (capacity <= 0) {
 			resCode = 0;
 			capacity = 0;
@@ -237,6 +255,7 @@ class UInputBuffer {
 		}
 
 		int data = UJCIUtil.bytes2int(buffer, position);
+		
 		position += 4;
 
 		return data;

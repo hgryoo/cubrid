@@ -153,4 +153,9 @@ public class CUBRIDConnectionDefault extends CUBRIDConnection {
 		shard_mdata = null;
 		is_closed = true;
 	}
+	
+	public void setSHM (int shm) {
+		UServerSideConnection uServerConnection = (UServerSideConnection) u_con;
+		uServerConnection.setSHM(shm);
+	}
 }

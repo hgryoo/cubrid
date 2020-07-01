@@ -45,12 +45,12 @@ import cubrid.jdbc.net.BrokerHandler;
 
 public class UTimedDataInputStream {
     public final static int PING_TIMEOUT = 5000;
-    private DataInputStream stream = null;
-    private String ip = null;
-    private int port = 0;
-    private int timeout = 0;
-    private int pid = 0;
-    private byte session[] = {0, 0, 0, 0};
+    protected DataInputStream stream = null;
+    protected String ip = null;
+    protected int port = 0;
+    protected int timeout = 0;
+    protected int pid = 0;
+    protected byte session[] = {0, 0, 0, 0};
 
     public UTimedDataInputStream(InputStream stream, String ip, int port) {
         this(stream, ip, port, 0);

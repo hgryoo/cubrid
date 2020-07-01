@@ -43,6 +43,7 @@ import java.net.Socket;
 import java.util.List;
 
 import cubrid.jdbc.driver.CUBRIDException;
+import cubrid.jdbc.jci.posix.UShmDataInputStream;
 
 public class UServerSideConnection extends UConnection {
 	public final static int INVOKE = 2;
@@ -52,6 +53,8 @@ public class UServerSideConnection extends UConnection {
 	private Thread curThread;
 	private UStatementHandlerCache stmtHandlerCache;
 	
+	int shm = 0;
+	
 	public UServerSideConnection(Socket socket, Thread curThread) throws CUBRIDException {
 		errorHandler = new UError(this);
 		try {
@@ -59,8 +62,13 @@ public class UServerSideConnection extends UConnection {
 			client.setTcpNoDelay(true);
 
 			output = new DataOutputStream(client.getOutputStream());
-			input = new UTimedDataInputStream(client.getInputStream(), casIp, casPort);
-
+			
+			if (this.shm == 1) {
+				input = new UShmDataInputStream(client.getInputStream(), casIp, casPort);
+			} else {
+				input = new UTimedDataInputStream(client.getInputStream(), casIp, casPort);
+			}
+			
 			needReconnection = false;
 			lastAutoCommit = false;
 			
@@ -80,6 +88,22 @@ public class UServerSideConnection extends UConnection {
 			je.toUError(errorHandler);
 			throw new CUBRIDException(errorHandler, e);
 		}
+	}
+	
+	public void setSHM (int shm) {
+		this.shm = shm;
+		
+		try {
+		if (this.shm == 1) {
+			if (!(input instanceof UShmDataInputStream)) {
+				input = new UShmDataInputStream(client.getInputStream(), casIp, casPort);
+			}
+		} else {
+			if (!input.getClass().equals(UTimedDataInputStream.class)) {
+				input = new UTimedDataInputStream(client.getInputStream(), casIp, casPort);
+			}
+		}
+		} catch (Exception e) {}
 	}
 	
 	private void initBrokerInfo () {
@@ -192,7 +216,7 @@ public class UServerSideConnection extends UConnection {
 		
 		List<UStatementHandlerCacheEntry> entries = stmtHandlerCache.getEntry(sql);	
 		/* try to find cached UStatement */
-	
+		
 		for (UStatementHandlerCacheEntry e: entries) {
 			if (e.isAvailable()) {
 				preparedStmt = e.getStatement();
@@ -215,5 +239,49 @@ public class UServerSideConnection extends UConnection {
 	
 	public void destroy () {
 		stmtHandlerCache.destroy();
+	}
+	
+	@Override
+	UInputBuffer send_recv_msg(boolean recv_result, int timeout) throws UJciException,
+	IOException {
+		byte prev_casinfo[] = casInfo;
+		UInputBuffer inputBuffer;
+		outBuffer.sendData();
+		/* set cas info to UConnection member variable and return InputBuffer */
+		if (input instanceof UShmDataInputStream) {
+			UShmDataInputStream shmInput = (UShmDataInputStream) input;
+			shmInput.readMemory();
+		}
+		if (timeout > 0) {
+			inputBuffer = new UInputBuffer(input, this, timeout*1000 + READ_TIMEOUT);
+		}
+		else {
+			inputBuffer = new UInputBuffer(input, this, 0);
+		}
+
+		return inputBuffer;
+	}
+	
+	@Override
+	UInputBuffer send_recv_msg(int timeout) throws UJciException, IOException {
+		if (client == null) {
+			createJciException(UErrorCode.ER_COMMUNICATION);
+		}
+		return send_recv_msg(true, timeout);
+	}
+	
+	@Override
+	UInputBuffer send_recv_msg(boolean recv_result) throws UJciException,
+	IOException {
+		byte prev_casinfo[] = casInfo;
+		outBuffer.sendData();
+		/* set cas info to UConnection member variable and return InputBuffer */
+		if (input instanceof UShmDataInputStream) {
+			UShmDataInputStream shmInput = (UShmDataInputStream) input;
+			shmInput.readMemory();
+		}
+		UInputBuffer inputBuffer = new UInputBuffer(input, this, 0);
+
+		return inputBuffer;
 	}
 }

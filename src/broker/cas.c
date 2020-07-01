@@ -83,6 +83,8 @@
 #endif /* !CAS_FOR_ORACLE && !CAS_FOR_MYSQL */
 #include "error_manager.h"
 
+#include "posix_shm.h"
+
 static const int DEFAULT_CHECK_INTERVAL = 1;
 
 #define FUNC_NEEDS_RESTORING_CON_STATUS(func_code) \
@@ -1382,6 +1384,8 @@ libcas_main (SOCKET jsp_sock_fd)
   req_info.driver_info[DRIVER_INFO_FUNCTION_FLAG] = (char) (BROKER_RENEWED_ERROR_CODE | BROKER_SUPPORT_HOLDABLE_RESULT);
   client_sock_fd = jsp_sock_fd;
 
+
+  //posix_shm_open_client ("test_client");
   net_buf_init (&net_buf, cas_get_client_version ());
   net_buf.data = (char *) MALLOC (NET_BUF_ALLOC_SIZE);
   if (net_buf.data == NULL)
@@ -2134,10 +2138,19 @@ process_request (SOCKET sock_fd, T_NET_BUF * net_buf, T_REQ_INFO * req_info)
 	}
 
       assert (NET_BUF_CURR_SIZE (net_buf) <= net_buf->alloc_size);
+    
+    if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) 
+    && req_info->driver_info[DRIVER_INFO_CLIENT_TYPE] == CAS_CLIENT_SERVER_SIDE_JDBC)
+  {
+    posix_shm_write_client (net_buf->data, 0, NET_BUF_CURR_SIZE (net_buf), posix_fd_client);
+  }
+    else
+  {
       if (net_write_stream (sock_fd, net_buf->data, NET_BUF_CURR_SIZE (net_buf)) < 0)
-	{
-	  cas_log_write_and_end (0, true, "COMMUNICATION ERROR net_write_stream()");
-	}
+    {
+      cas_log_write_and_end (0, true, "COMMUNICATION ERROR net_write_stream()");
+    }
+  }
     }
 
   if (cas_shard_flag == OFF && cas_send_result_flag && net_buf->post_send_file != NULL)

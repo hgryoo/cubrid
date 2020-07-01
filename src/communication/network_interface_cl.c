@@ -73,6 +73,7 @@
 #include "lob_locator.hpp"
 
 #include "jsp_cl.h"
+#include "posix_shm.h"
 
 /*
  * Use db_clear_private_heap instead of db_destroy_private_heap
@@ -6112,7 +6113,7 @@ qfile_get_list_file_page (QUERY_ID query_id, VOLID volid, PAGEID pageid, char *b
   char *ptr;
   OR_ALIGNED_BUF (OR_PTR_SIZE + OR_INT_SIZE + OR_INT_SIZE) a_request;
   char *request;
-  OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
+  OR_ALIGNED_BUF (OR_INT_SIZE * 4) a_reply;
   char *reply;
 
   request = OR_ALIGNED_BUF_START (a_request);
@@ -6121,13 +6122,33 @@ qfile_get_list_file_page (QUERY_ID query_id, VOLID volid, PAGEID pageid, char *b
   ptr = or_pack_ptr (request, query_id);
   ptr = or_pack_int (ptr, (int) volid);
   ptr = or_pack_int (ptr, (int) pageid);
+  
+  if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+  {
+    req_error =
+      net_client_request (NET_SERVER_LS_GET_LIST_FILE_PAGE, request, OR_ALIGNED_BUF_SIZE (a_request), reply,
+            OR_ALIGNED_BUF_SIZE (a_reply), NULL, 0, NULL, 0);
+  }
+  else
+  {
+    req_error =
+      net_client_request2_no_malloc (NET_SERVER_LS_GET_LIST_FILE_PAGE, request, OR_ALIGNED_BUF_SIZE (a_request), reply,
+            OR_ALIGNED_BUF_SIZE (a_reply), NULL, 0, buffer, buffer_size);
+  }
 
-  req_error =
-    net_client_request2_no_malloc (NET_SERVER_LS_GET_LIST_FILE_PAGE, request, OR_ALIGNED_BUF_SIZE (a_request), reply,
-				   OR_ALIGNED_BUF_SIZE (a_reply), NULL, 0, buffer, buffer_size);
   if (!req_error)
     {
       ptr = or_unpack_int (&reply[OR_INT_SIZE], &error);
+
+      if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+      {
+        int page_size = 0;
+        ptr = or_unpack_int (&reply[0], &page_size);
+
+        posix_shm_open ("test");
+        posix_shm_read (buffer, 0, page_size, posix_fd);
+        *buffer_size = page_size;
+      }
     }
 
   return error;

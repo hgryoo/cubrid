@@ -68,6 +68,8 @@
 #define strlen(s1)  ((int) strlen(s1))
 #endif /* defined (SUPPRESS_STRLEN_WARNING) */
 
+#include "posix_shm.h"
+
 #if !defined(INADDR_NONE)
 #define INADDR_NONE 0xffffffff
 #endif /* !INADDR_NONE */
@@ -2106,7 +2108,7 @@ jsp_send_call_request (const SOCKET sockfd, const SP_ARGS * sp_args)
   char *buffer = NULL, *ptr = NULL;
 
   req_size =
-    (int) sizeof (int) * 4 + or_packed_string_length (sp_args->name, &strlen) + jsp_get_argument_size (sp_args->args);
+    (int) sizeof (int) * 5 + or_packed_string_length (sp_args->name, &strlen) + jsp_get_argument_size (sp_args->args);
   
   jsp_histo_add_entry (JSP_SEND_CALL, req_size);
 
@@ -2120,6 +2122,14 @@ jsp_send_call_request (const SOCKET sockfd, const SP_ARGS * sp_args)
 
   req_code = SP_CODE_INVOKE;
   ptr = or_pack_int (buffer, req_code);
+    if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+  {
+    ptr = or_pack_int (ptr, 1);
+  }
+   else 
+  {
+    ptr = or_pack_int (ptr, 0);
+  }
 
   ptr = or_pack_string_with_length (ptr, sp_args->name, strlen);
 
@@ -3010,7 +3020,7 @@ jsp_connect_server (void)
 
   inaddr = inet_addr (server_host);
 
-#if 1
+#if 0
   if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS)
         && (inaddr == inet_addr ("127.0.0.1") || inaddr == inet_addr ("localhost")))
     {
@@ -3129,7 +3139,11 @@ retry:
       error = er_errid ();
       goto end;
     }
-
+  
+  if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+  {
+    posix_shm_open_client ("test_client");
+  }
   error = jsp_send_call_request (sock_fd, args);
 
   if (error != NO_ERROR)

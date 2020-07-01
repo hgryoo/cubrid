@@ -5402,7 +5402,15 @@ fetch_result (T_SRV_HANDLE * srv_handle, int cursor_pos, int fetch_count, char f
     }
   else
     {
+      if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) 
+          && req_info->driver_info[DRIVER_INFO_CLIENT_TYPE] == CAS_CLIENT_SERVER_SIDE_JDBC)
+        {
+      net_buf_size = NET_BUF_ALLOC_SIZE;
+        }
+      else
+        {
       net_buf_size = NET_BUF_SIZE;
+        }
     }
 
   num_tuple = 0;

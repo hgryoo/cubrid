@@ -88,17 +88,10 @@ public class Server {
 			}});
 		socketListener.start();
 		
+		/*
 		try {
 			final int pn = serverSocket.getLocalPort();
 			final String sock_path = rootPath + "/tmp/javasp_" + pn +".sock";
-
-			/*
-			File file = new File (sock_path);
-			file.setWritable(true, false);
-			if (file.exists()) {
-				file.delete();
-			}
-			*/
 			
 			udsServerSocket = new UnixDomainServerSocket (sock_path);
 
@@ -121,6 +114,7 @@ public class Server {
 			log(e);
 			e.printStackTrace();
 		}
+		*/
 	}
 
 	private int getServerPort() {

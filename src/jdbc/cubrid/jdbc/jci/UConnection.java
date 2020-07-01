@@ -52,6 +52,7 @@ import cubrid.jdbc.driver.CUBRIDConnection;
 import cubrid.jdbc.driver.CUBRIDDriver;
 import cubrid.jdbc.driver.CUBRIDXid;
 import cubrid.jdbc.driver.ConnectionProperties;
+import cubrid.jdbc.jci.posix.UShmDataInputStream;
 import cubrid.jdbc.log.BasicLogger;
 import cubrid.jdbc.log.Log;
 import cubrid.jdbc.net.BrokerHandler;
@@ -1806,6 +1807,7 @@ public abstract class UConnection {
 		UInputBuffer inputBuffer;
 		outBuffer.sendData();
 		/* set cas info to UConnection member variable and return InputBuffer */
+
 		if (timeout > 0) {
 			inputBuffer = new UInputBuffer(input, this, timeout*1000 + READ_TIMEOUT);
 		}
@@ -1832,7 +1834,7 @@ public abstract class UConnection {
 		outBuffer.sendData();
 		/* set cas info to UConnection member variable and return InputBuffer */
 		UInputBuffer inputBuffer = new UInputBuffer(input, this, 0);
-
+		
 		if (UJCIUtil.isConsoleDebug()) {
 			printCasInfo(prev_casinfo, casInfo);
 		}

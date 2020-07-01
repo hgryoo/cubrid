@@ -85,6 +85,8 @@
 #include "elo.h"
 #include "transaction_transient.hpp"
 
+#include "posix_shm.h"
+
 #if defined (SUPPRESS_STRLEN_WARNING)
 #define strlen(s1)  ((int) strlen(s1))
 #endif /* defined (SUPPRESS_STRLEN_WARNING) */
@@ -4405,7 +4407,7 @@ sqfile_get_list_file_page (THREAD_ENTRY * thread_p, unsigned int rid, char *requ
   QUERY_ID query_id;
   int volid, pageid;
   char *ptr;
-  OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
+  OR_ALIGNED_BUF (OR_INT_SIZE * 4) a_reply;
   char *reply = OR_ALIGNED_BUF_START (a_reply);
   char page_buf[IO_MAX_PAGE_SIZE + MAX_ALIGNMENT], *aligned_page_buf;
   int page_size;
@@ -4434,8 +4436,18 @@ sqfile_get_list_file_page (THREAD_ENTRY * thread_p, unsigned int rid, char *requ
       goto empty_page;
     }
 
-  ptr = or_pack_int (reply, page_size);
-  ptr = or_pack_int (ptr, error);
+    ptr = or_pack_int (reply, page_size);
+    ptr = or_pack_int (ptr, error);
+
+  if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+  {
+    posix_shm_open ("test");
+    posix_shm_write (aligned_page_buf, 0, page_size, posix_fd);
+
+    aligned_page_buf = NULL;
+    page_size = 0;
+  }
+  
   css_send_reply_and_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply), aligned_page_buf,
 				     page_size);
   return;
@@ -4446,6 +4458,15 @@ empty_page:
   page_size = QFILE_PAGE_HEADER_SIZE;
   ptr = or_pack_int (reply, page_size);
   ptr = or_pack_int (ptr, error);
+
+  if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+  {
+    posix_shm_open ("test");
+    posix_shm_write (aligned_page_buf, 0, page_size, posix_fd);
+    aligned_page_buf = NULL;
+    page_size = 0;
+  }
+
   css_send_reply_and_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply), aligned_page_buf,
 				     page_size);
 }

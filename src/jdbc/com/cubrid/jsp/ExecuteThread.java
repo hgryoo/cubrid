@@ -102,6 +102,8 @@ public class ExecuteThread extends Thread {
 	public static final int DB_BIGINT = 31;
 	public static final int DB_DATETIME = 32;
 
+	public int IS_SHM = 0;
+	
 	private Socket client;
 	private CUBRIDConnectionDefault connection = null;
 
@@ -154,9 +156,17 @@ public class ExecuteThread extends Thread {
 
 	public void setJdbcConnection(Connection con) {
 		this.connection = (CUBRIDConnectionDefault) con;
+		if (this.connection != null) {
+			this.connection.setSHM(IS_SHM);
+		}
 	}
 
 	public Connection getJdbcConnection() {
+		
+		if (this.connection != null) {
+			this.connection.setSHM(IS_SHM);
+		}
+		
 		return this.connection;
 	}
 
@@ -183,8 +193,10 @@ public class ExecuteThread extends Thread {
 	public void run() {
 		/* main routine handling stored procedure */
 		int requestCode = -1;
+		
 		while (!Thread.interrupted()) {
 			try {
+				
 				do {
 					requestCode = listenCommand();
 					switch (requestCode) {
@@ -236,6 +248,14 @@ public class ExecuteThread extends Thread {
 				}
 			}
 		}
+		
+		if (this.IS_SHM == 1) {
+			System.out.println ("WTIH SHM MODE :");
+		}
+		else {
+			System.out.println ("WTIH SOCKET MODE :");
+		}
+		
 		System.out.println ("num call = " + numCall + "\n" + "total time = " + (totalTime / 1000.0) + "\n" + "avg time (s) = " + (totalTime / 1000.0 / numCall));
 		closeSocket();
 	}
@@ -248,6 +268,9 @@ public class ExecuteThread extends Thread {
 
 	private void processStoredProcedure () throws Exception {
 		setStatus (ExecuteThreadStatus.PARSE);
+		
+		IS_SHM = input.readInt();
+		
 		StoredProcedure procedure = makeStoredProcedure();
 		Method m = procedure.getTarget().getMethod();
 		Object[] resolved = procedure.checkArgs(procedure.getArgs());

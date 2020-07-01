@@ -129,6 +129,7 @@ set(BASE_SOURCES
   ${BASE_DIR}/util_func.c
   ${BASE_DIR}/variable_string.c
   ${BASE_DIR}/xml_parser.c
+  ${BASE_DIR}/posix_shm.c
   )
 
 set(BASE_HEADERS
@@ -482,6 +483,7 @@ target_include_directories(cubridcs PRIVATE ${CMAKE_SOURCE_DIR}/src/heaplayers/u
 if(UNIX)
   target_link_libraries(cubridcs LINK_PRIVATE -Wl,-whole-archive cas ${EP_LIBS} -Wl,-no-whole-archive)
   target_link_libraries(cubridcs LINK_PUBLIC ${CURSES_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
+  target_link_libraries(cubridcs LINK_PRIVATE rt)
 else(UNIX)
   target_link_libraries(cubridcs LINK_PRIVATE cas ${EP_LIBS})
 endif(UNIX)
