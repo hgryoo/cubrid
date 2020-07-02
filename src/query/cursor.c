@@ -619,8 +619,9 @@ cursor_get_list_file_page (CURSOR_ID * cursor_id_p, VPID * vpid_p)
   if (cursor_id_p->buffer == NULL)
     {
       int ret_val;
-
-      cursor_id_p->buffer_area = (char *) posix_shm_open ("test", CURSOR_BUFFER_AREA_SIZE + sizeof (double));
+      if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS)) {
+        cursor_id_p->buffer_area = (char *) posix_shm_open ("test", CURSOR_BUFFER_AREA_SIZE + sizeof (double));
+      }
       ret_val = qfile_get_list_file_page (cursor_id_p->query_id, vpid_p->volid, vpid_p->pageid,
 					  cursor_id_p->buffer_area, &cursor_id_p->buffer_filled_size);
       if (ret_val != NO_ERROR)
