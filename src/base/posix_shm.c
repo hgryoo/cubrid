@@ -102,7 +102,7 @@ void* posix_shm_open_client(char* name, int size)
 {
     if (posix_fd_client == -1)
     {
-        if ((mutex_produce = sem_open (POSIX_SEM_PRODUCE, O_CREAT, 0777, 0)) == SEM_FAILED) {
+        if ((mutex_produce = sem_open (POSIX_SEM_PRODUCE, O_CREAT, 0777, 1)) == SEM_FAILED) {
             er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "sem_open()");
             //return ER_FAILED;
         }
@@ -233,7 +233,3 @@ int sem_post_consume () {
     }
 }
 
-void* posix_shm_data_client (char* buffer, int size, int fd)
-{
-    char* data = (char *) mmap (0, POSIX_SHM_CLIENT_TOTAL, PROT_READ | PROT_WRITE, MAP_SHARED, posix_fd_client, 0);
-}

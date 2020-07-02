@@ -177,11 +177,13 @@ public class UInputBuffer {
 		int readLen = 0;
 		int totalReadLen = 0;
 		byte[] headerData;
+	
+		long startTime = System.currentTimeMillis();
+		
 		if (input instanceof UShmDataInputStream) {
 			UShmDataInputStream shmInput = (UShmDataInputStream) input;
 			totalReadLen = 8;
 			
-			shmInput.waitConsume ();
 			headerData = shmInput.getByteArray(8);
 			capacity = UJCIUtil.bytes2int(headerData, 0);
 			casinfo = new byte[CAS_INFO_SIZE];
@@ -244,6 +246,11 @@ public class UInputBuffer {
 		resCode = readInt();
 		}
 		
+		long estimatedTime = System.currentTimeMillis() - startTime;
+		num_read += 1;
+		totalTime += estimatedTime;
+
+
 		if (resCode < 0) {
 			int eCode = readInt();
 			String msg;
