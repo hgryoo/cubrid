@@ -48,7 +48,7 @@ public class UShmDataInputStream extends UTimedDataInputStream {
 	private static int IO_MAX_PAGE_SIZE = 16 * 1024;
 	private static int MAX_ALIGNMENT = 8;
 	private static int POSIX_SHM_CHUNK_SIZE = (IO_MAX_PAGE_SIZE + MAX_ALIGNMENT);
-	private static int POSIX_SHM_CNT = 7;
+	private static int POSIX_SHM_CNT = 4;
 	private static int SHM_TOTAL = (POSIX_SHM_CHUNK_SIZE * POSIX_SHM_CNT);
 	
 	private static String SEM_NAME_PRODUCE = "mutex-produce";
@@ -114,10 +114,13 @@ public class UShmDataInputStream extends UTimedDataInputStream {
 					posix.open(0, (16 * 1024 + 64 * 1024));
 	    		}
 	    		
-	    		waitConsume ();
+	    		if (mem == null) {
+	    			//waitConsume ();
+	    			mem = posix.getMemory();
+	    		}
 	    		
 	    		//posix.open(0, SHM_TOTAL);
-	    		mem = posix.getMemory();
+	    		
 	    		
 				//ByteBuffer byteBuffer = ByteBuffer.wrap(mem.getByteArray(0, Integer.BYTES));
 			    //byteBuffer.order(ByteOrder.LITTLE_ENDIAN);

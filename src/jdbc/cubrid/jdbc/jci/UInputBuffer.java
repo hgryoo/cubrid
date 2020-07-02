@@ -172,6 +172,7 @@ class UInputBuffer {
 			UShmDataInputStream shmInput = (UShmDataInputStream) input;
 			totalReadLen = 8;
 			
+			shmInput.waitConsume ();
 			headerData = shmInput.getByteArray(8);
 			capacity = UJCIUtil.bytes2int(headerData, 0);
 			casinfo = new byte[CAS_INFO_SIZE];
