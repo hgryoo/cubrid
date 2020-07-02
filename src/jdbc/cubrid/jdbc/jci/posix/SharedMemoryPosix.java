@@ -123,7 +123,7 @@ public class SharedMemoryPosix implements SharedMemory {
 		this.size = size;
         closed = false;
         //fileDescriptor = LibRT.INSTANCE.shm_open(this.name, O_RDWR, S_IRUSR | S_IWUSR);
-        memory = LibRT.INSTANCE.mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fileDescriptor, 0);
+        memory = LibRT.INSTANCE.mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_LOCKED, fileDescriptor, 0);
         if (memory.equals(MAP_FAILED))
             throw new RuntimeException(LibC.INSTANCE.strerror(Native.getLastError()));
         

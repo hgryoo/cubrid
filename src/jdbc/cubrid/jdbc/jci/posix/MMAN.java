@@ -41,6 +41,7 @@ abstract class MMAN {
     static final int PROT_READ;
     static final int PROT_WRITE;
     static final int MAP_SHARED;
+    static final int MAP_LOCKED;
     static final Pointer MAP_FAILED = new Pointer(-1);
 
     static {
@@ -56,7 +57,7 @@ abstract class MMAN {
                 PROT_READ = 0x01;
                 PROT_WRITE = 0x02;
                 MAP_SHARED = 0x0001;
-
+                MAP_LOCKED = 0x02;
                 break;
             default:
 
@@ -65,7 +66,7 @@ abstract class MMAN {
                 PROT_READ = 0x1;
                 PROT_WRITE = 0x2;
                 MAP_SHARED = 0x01;
-
+                MAP_LOCKED = 0x02;
                 break;
         }
     }
