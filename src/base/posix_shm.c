@@ -16,10 +16,10 @@
 
 #define POSIX_SHM_CHUNK_SIZE (IO_MAX_PAGE_SIZE + MAX_ALIGNMENT)
 
-#define POSIX_SHM_CNT 10
+#define POSIX_SHM_CNT 1
 #define POSIX_SHM_TOTAL (POSIX_SHM_CHUNK_SIZE * POSIX_SHM_CNT)
 
-#define POSIX_SHM_CLIENT_CNT (7)
+#define POSIX_SHM_CLIENT_CNT (4)
 #define POSIX_SHM_CLIENT_TOTAL (POSIX_SHM_CHUNK_SIZE * POSIX_SHM_CLIENT_CNT)
 
 #define POSIX_SEM_PRODUCE_CAS "mutex-produce-cas"
@@ -36,27 +36,63 @@ int idxs = 0;
 int ndes = -1;
 
 sem_t *mutex_produce2, *mutex_consume2;
-int posix_shm_open(char* name)
+static void* buffer;
+void* posix_shm_open(char* name, int size)
 {
     if (posix_fd == -1)
     {
         if ((mutex_produce2 = sem_open (POSIX_SEM_PRODUCE_CAS, O_CREAT, 0777, 1)) == SEM_FAILED) {
             er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "sem_open()");
-            return ER_FAILED;
+            //return ER_FAILED;
         }
 
         if ((mutex_consume2 = sem_open (POSIX_SEM_CONSUME_CAS, O_CREAT, 0777, 0)) == SEM_FAILED) {
             er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "sem_open()");
-            return ER_FAILED;
+            //return ER_FAILED;
         }
 
-        posix_fd = shm_open(name, O_CREAT | O_RDWR, 0666);
+        posix_fd = shm_open(name, O_RDWR | O_CREAT, 0777);
         if (posix_fd < 0) {
             er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "shm_open()");
-            return ER_FAILED;
+            //return ER_FAILED;
         }
 
-        ftruncate(posix_fd, POSIX_SHM_TOTAL);
+        if (ftruncate(posix_fd, size) == -1) {
+            er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "ftruncate()");
+            //return ER_FAILED;
+        }
+
+         buffer = (void *) mmap (0, size, PROT_READ | PROT_WRITE, MAP_SHARED, posix_fd, 0);
+    }
+
+    return buffer;
+}
+
+int sem_wait_produce2 () {
+    if (sem_wait (mutex_produce2) == -1) {
+        er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "mutex_produce()");
+            return ER_FAILED;
+    }
+}
+
+int sem_post_produce2 () {
+    if (sem_post (mutex_produce2) == -1) {
+        er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "mutex_produce()");
+            return ER_FAILED;
+    }
+}
+
+int sem_wait_consume2 () {
+    if (sem_wait (mutex_consume2) == -1) {
+        er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "mutex_consume()");
+            return ER_FAILED;
+    }
+}
+
+int sem_post_consume2 () {
+    if (sem_post (mutex_consume2) == -1) {
+        er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "mutex_consume()");
+            return ER_FAILED;
     }
 }
 

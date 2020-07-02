@@ -47,6 +47,8 @@
 #include "thread_manager.hpp"	// for thread_sleep
 #include "xasl.h"
 
+#include "posix_shm.h"
+
 /* TODO */
 #if !defined (SERVER_MODE)
 #define pthread_mutex_init(a, b)
@@ -2147,6 +2149,12 @@ xqfile_get_list_file_page (THREAD_ENTRY * thread_p, QUERY_ID query_id, VOLID vol
 
 get_page:
   /* append pages until a network page is full */
+  
+  //if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+  //{
+  //  sem_wait_produce2 ();
+  //}
+
   while ((*page_size_p + DB_PAGESIZE) <= IO_MAX_PAGE_SIZE)
     {
       page_p = qmgr_get_old_page (thread_p, &vpid, tfile_vfid_p);

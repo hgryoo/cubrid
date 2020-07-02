@@ -6123,7 +6123,6 @@ qfile_get_list_file_page (QUERY_ID query_id, VOLID volid, PAGEID pageid, char *b
   ptr = or_pack_int (ptr, (int) volid);
   ptr = or_pack_int (ptr, (int) pageid);
   
-  /*
   if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
   {
     req_error =
@@ -6132,16 +6131,19 @@ qfile_get_list_file_page (QUERY_ID query_id, VOLID volid, PAGEID pageid, char *b
   }
   else
   {
-  */
     req_error =
       net_client_request2_no_malloc (NET_SERVER_LS_GET_LIST_FILE_PAGE, request, OR_ALIGNED_BUF_SIZE (a_request), reply,
             OR_ALIGNED_BUF_SIZE (a_reply), NULL, 0, buffer, buffer_size);
-    /*
   }
-  */
 
   if (!req_error)
     {
+      int page_size = 0;
+      if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS)) {
+        ptr = or_unpack_int (&reply[0], &page_size);
+        *buffer_size = page_size;
+        //sem_post_consume2 ();
+      }
       ptr = or_unpack_int (&reply[OR_INT_SIZE], &error);
   /*
       if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
