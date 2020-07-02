@@ -1390,6 +1390,9 @@ libcas_main (SOCKET jsp_sock_fd)
     if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
   {
     net_buf.data = (char *) posix_shm_open_client ("test_client", NET_BUF_ALLOC_SIZE);
+    if (net_buf.data == NULL) {
+      exit (1);
+    }
   }
     else
   {

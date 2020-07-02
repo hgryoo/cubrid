@@ -97,7 +97,7 @@ int sem_post_consume2 () {
 }
 
 sem_t *mutex_produce, *mutex_consume;
-static void* data;
+static void* data = NULL;
 void* posix_shm_open_client(char* name, int size)
 {
     if (posix_fd_client == -1)
@@ -123,7 +123,7 @@ void* posix_shm_open_client(char* name, int size)
             //return ER_FAILED;
         }
 
-        data = (void *) mmap (0, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_LOCKED, posix_fd_client, 0);
+        data = (void *) mmap (0, size, PROT_READ | PROT_WRITE, MAP_SHARED, posix_fd_client, 0);
     }
     return data;
 }

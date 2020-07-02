@@ -37,6 +37,7 @@ import com.sun.jna.Pointer;
 import static com.sun.jna.Pointer.NULL;
 import static cubrid.jdbc.jci.posix.FCNTL.O_CREAT;
 import static cubrid.jdbc.jci.posix.FCNTL.O_RDWR;
+import static cubrid.jdbc.jci.posix.FCNTL.O_RDONLY;
 import static cubrid.jdbc.jci.posix.MMAN.*;
 import static cubrid.jdbc.jci.posix.STAT.S_IRUSR;
 import static cubrid.jdbc.jci.posix.STAT.S_IWUSR;
@@ -63,9 +64,9 @@ public class SharedMemoryPosix implements SharedMemory {
         this.name = name;
         
         if (fileDescriptor == -1) {
-	        fileDescriptor = LibRT.INSTANCE.shm_open(this.name, O_RDWR, S_IRUSR | S_IWUSR);
+	        fileDescriptor = LibRT.INSTANCE.shm_open(this.name, O_RDONLY, S_IRUSR | S_IWUSR);
 	        if (fileDescriptor < 0) {
-	            fileDescriptor = LibRT.INSTANCE.shm_open(this.name, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
+	            fileDescriptor = LibRT.INSTANCE.shm_open(this.name, O_RDONLY | O_CREAT, S_IRUSR | S_IWUSR);
 	            hasOwnership = true;
 	        }
 	        if (fileDescriptor < 0)
@@ -123,7 +124,7 @@ public class SharedMemoryPosix implements SharedMemory {
 		this.size = size;
         closed = false;
         //fileDescriptor = LibRT.INSTANCE.shm_open(this.name, O_RDWR, S_IRUSR | S_IWUSR);
-        memory = LibRT.INSTANCE.mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_LOCKED, fileDescriptor, 0);
+        memory = LibRT.INSTANCE.mmap(NULL, size, PROT_READ, MAP_SHARED, fileDescriptor, 0);
         if (memory.equals(MAP_FAILED))
             throw new RuntimeException(LibC.INSTANCE.strerror(Native.getLastError()));
         

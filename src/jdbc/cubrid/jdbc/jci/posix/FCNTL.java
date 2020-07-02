@@ -38,8 +38,9 @@ import com.sun.jna.Platform;
 
 @SuppressWarnings("OctalInteger")
 abstract class FCNTL {
-    final static int O_CREAT;
-    final static int O_RDWR;
+    static final int O_CREAT;
+    static final int O_RDWR;
+    static final int O_RDONLY;
 
     static {
         switch (Platform.getOSType()) {
@@ -49,12 +50,12 @@ abstract class FCNTL {
             case Platform.KFREEBSD:
             case Platform.NETBSD:
                 O_CREAT = 0x0200;
-
+                O_RDONLY = 00;
                 O_RDWR = 2;
                 break;
             default:
                 O_CREAT = 0100;
-
+                O_RDONLY = 00;
                 O_RDWR = 02;
                 break;
         }
