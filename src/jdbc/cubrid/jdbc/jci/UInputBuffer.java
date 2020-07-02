@@ -96,7 +96,11 @@ public class UInputBuffer {
 				return;
 			}
 			
-			buffer = shmInput.getByteArray(capacity);
+			byte[] shm = shmInput.getByteArray(capacity);
+
+			buffer = new byte[capacity];
+			System.arraycopy(shm, 0, buffer, 0, capacity);
+
 			resCode = readInt();
 			/*
 			int realRead = 0, tempRead = 0;
@@ -196,7 +200,12 @@ public class UInputBuffer {
 				return;
 			}
 			
-			buffer = shmInput.getByteArray(capacity);
+			//buffer = shmInput.getByteArray(capacity);
+			byte[] shm = shmInput.getByteArray(capacity);
+
+			buffer = new byte[capacity];
+			System.arraycopy(shm, 0, buffer, 0, capacity);
+
 			resCode = readInt();
 			/*
 			int realRead = 0, tempRead = 0;
