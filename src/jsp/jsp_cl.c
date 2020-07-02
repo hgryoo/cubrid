@@ -3142,7 +3142,7 @@ retry:
   
   if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
   {
-    posix_shm_open_client ("test_client");
+    posix_shm_open_client ("test_client", (16 * 1024 + 64 * 1024));
   }
   error = jsp_send_call_request (sock_fd, args);
 

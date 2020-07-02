@@ -5411,6 +5411,7 @@ fetch_result (T_SRV_HANDLE * srv_handle, int cursor_pos, int fetch_count, char f
         {
       net_buf_size = NET_BUF_SIZE;
         }
+      net_buf_size = NET_BUF_SIZE;
     }
 
   num_tuple = 0;

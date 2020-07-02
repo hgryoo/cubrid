@@ -97,6 +97,7 @@ public class UServerSideConnection extends UConnection {
 		if (this.shm == 1) {
 			if (!(input instanceof UShmDataInputStream)) {
 				input = new UShmDataInputStream(client.getInputStream(), casIp, casPort);
+				System.out.println ("shm initialized");
 			}
 		} else {
 			if (!input.getClass().equals(UTimedDataInputStream.class)) {
@@ -246,12 +247,16 @@ public class UServerSideConnection extends UConnection {
 	IOException {
 		byte prev_casinfo[] = casInfo;
 		UInputBuffer inputBuffer;
+		if (input instanceof UShmDataInputStream) {
+			UShmDataInputStream shmInput = (UShmDataInputStream) input;
+			shmInput.postProduce ();
+		}
 		outBuffer.sendData();
-		/* set cas info to UConnection member variable and return InputBuffer */
 		if (input instanceof UShmDataInputStream) {
 			UShmDataInputStream shmInput = (UShmDataInputStream) input;
 			shmInput.readMemory();
 		}
+		/* set cas info to UConnection member variable and return InputBuffer */
 		if (timeout > 0) {
 			inputBuffer = new UInputBuffer(input, this, timeout*1000 + READ_TIMEOUT);
 		}
@@ -274,12 +279,16 @@ public class UServerSideConnection extends UConnection {
 	UInputBuffer send_recv_msg(boolean recv_result) throws UJciException,
 	IOException {
 		byte prev_casinfo[] = casInfo;
+		if (input instanceof UShmDataInputStream) {
+			UShmDataInputStream shmInput = (UShmDataInputStream) input;
+			shmInput.postProduce ();
+		}
 		outBuffer.sendData();
-		/* set cas info to UConnection member variable and return InputBuffer */
 		if (input instanceof UShmDataInputStream) {
 			UShmDataInputStream shmInput = (UShmDataInputStream) input;
 			shmInput.readMemory();
 		}
+		/* set cas info to UConnection member variable and return InputBuffer */
 		UInputBuffer inputBuffer = new UInputBuffer(input, this, 0);
 
 		return inputBuffer;

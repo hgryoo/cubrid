@@ -61,36 +61,44 @@ int posix_shm_open(char* name)
 }
 
 sem_t *mutex_produce, *mutex_consume;
-int posix_shm_open_client(char* name)
+static void* data;
+void* posix_shm_open_client(char* name, int size)
 {
-    static char *data = NULL;
-    
     if (posix_fd_client == -1)
     {
-        if ((mutex_produce = sem_open (POSIX_SEM_PRODUCE, O_CREAT, 0777, 1)) == SEM_FAILED) {
+        if ((mutex_produce = sem_open (POSIX_SEM_PRODUCE, O_CREAT, 0777, 0)) == SEM_FAILED) {
             er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "sem_open()");
-            return ER_FAILED;
+            //return ER_FAILED;
         }
 
         if ((mutex_consume = sem_open (POSIX_SEM_CONSUME, O_CREAT, 0777, 0)) == SEM_FAILED) {
             er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "sem_open()");
-            return ER_FAILED;
+            //return ER_FAILED;
         }
 
         posix_fd_client = shm_open(name, O_RDWR | O_CREAT, 0777);
         if (posix_fd_client < 0) {
             er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "shm_open()");
-            return ER_FAILED;
+            //return ER_FAILED;
         }
 
-        if (ftruncate(posix_fd_client, POSIX_SHM_CLIENT_TOTAL) == -1) {
+        if (ftruncate(posix_fd_client, size) == -1) {
             er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "ftruncate()");
-            return ER_FAILED;
+            //return ER_FAILED;
         }
+
+        data = (void *) mmap (0, size, PROT_READ | PROT_WRITE, MAP_SHARED, posix_fd_client, 0);
     }
+    return data;
 }
 
-int posix_shm_close(char* name)
+int posix_shm_close(void* mem, int size)
+{
+    munmap (mem, size);
+    return NO_ERROR;
+}
+
+int posix_shm_destroy(char* name)
 {
     shm_unlink(name);
     return NO_ERROR;
@@ -147,10 +155,6 @@ int posix_shm_write_client (char* buffer, int idx, int size, int fd)
     static const char magic[] = "CUB";
     static const char end_magic[] = "CUC";
 
-    int len = size;
-    int offset = 0;
-    idxs = 0;
-
     //printf ("\tCAS mutex_produce()\n");
     if (sem_wait (mutex_produce) == -1) {
         er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "mutex_produce()");
@@ -177,4 +181,23 @@ int posix_shm_write_client (char* buffer, int idx, int size, int fd)
     //printf ("\tCAS mutex_consume(): %d\n", value);
 
     return NO_ERROR;
+}
+
+int sem_wait_produce () {
+    if (sem_wait (mutex_produce) == -1) {
+        er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "mutex_produce()");
+            return ER_FAILED;
+    }
+}
+
+int sem_post_consume () {
+    if (sem_post (mutex_consume) == -1) {
+        er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED, 1, "mutex_consume()");
+            return ER_FAILED;
+    }
+}
+
+void* posix_shm_data_client (char* buffer, int size, int fd)
+{
+    char* data = (char *) mmap (0, POSIX_SHM_CLIENT_TOTAL, PROT_READ | PROT_WRITE, MAP_SHARED, posix_fd_client, 0);
 }

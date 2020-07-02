@@ -1387,7 +1387,15 @@ libcas_main (SOCKET jsp_sock_fd)
 
   //posix_shm_open_client ("test_client");
   net_buf_init (&net_buf, cas_get_client_version ());
-  net_buf.data = (char *) MALLOC (NET_BUF_ALLOC_SIZE);
+    if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+  {
+    net_buf.data = (char *) posix_shm_open_client ("test_client", NET_BUF_ALLOC_SIZE);
+  }
+    else
+  {
+    net_buf.data = (char *) MALLOC (NET_BUF_ALLOC_SIZE);
+  }
+
   if (net_buf.data == NULL)
     {
       return -1;
@@ -1399,8 +1407,15 @@ libcas_main (SOCKET jsp_sock_fd)
       status = process_request (client_sock_fd, &net_buf, &req_info);
     }
 
-  net_buf_clear (&net_buf);
-  net_buf_destroy (&net_buf);
+    if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+  {
+    //posix_shm_close (net_buf.data, NET_BUF_ALLOC_SIZE);
+  }
+    else
+  {
+    net_buf_clear (&net_buf);
+    net_buf_destroy (&net_buf);
+  }
 
   if (status == FN_CLOSE_CONN)
     {
@@ -1983,6 +1998,12 @@ process_request (SOCKET sock_fd, T_NET_BUF * net_buf, T_REQ_INFO * req_info)
   as_info->fn_status = FN_STATUS_BUSY;
 #endif
 
+    if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) 
+    && req_info->driver_info[DRIVER_INFO_CLIENT_TYPE] == CAS_CLIENT_SERVER_SIDE_JDBC)
+  {
+    sem_wait_produce ();
+  }
+
   net_buf->client_version = req_info->client_version;
   set_hang_check_time ();
   fn_ret = (*server_fn) (sock_fd, argc, argv, net_buf, req_info);
@@ -2142,7 +2163,7 @@ process_request (SOCKET sock_fd, T_NET_BUF * net_buf, T_REQ_INFO * req_info)
     if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) 
     && req_info->driver_info[DRIVER_INFO_CLIENT_TYPE] == CAS_CLIENT_SERVER_SIDE_JDBC)
   {
-    posix_shm_write_client (net_buf->data, 0, NET_BUF_CURR_SIZE (net_buf), posix_fd_client);
+    sem_post_consume ();
   }
     else
   {
@@ -2185,6 +2206,14 @@ exit_on_end:
 #endif /* !LIBCAS_FOR_JSP */
 
   net_buf_clear (net_buf);
+
+  /*
+    if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) 
+    && req_info->driver_info[DRIVER_INFO_CLIENT_TYPE] == CAS_CLIENT_SERVER_SIDE_JDBC)
+  {
+    sem_post_consume ();
+  }
+  */
 
   FREE_MEM (read_msg);
   FREE_MEM (argv);

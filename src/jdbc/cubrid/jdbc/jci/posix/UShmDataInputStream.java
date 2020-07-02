@@ -39,6 +39,7 @@ import java.util.List;
 
 import com.sun.jna.Pointer;
 
+import cubrid.jdbc.jci.UJCIUtil;
 import cubrid.jdbc.jci.UJciException;
 import cubrid.jdbc.jci.UTimedDataInputStream;
 
@@ -72,16 +73,25 @@ public class UShmDataInputStream extends UTimedDataInputStream {
 
 	    public UShmDataInputStream(InputStream stream, String ip, int port, int pid, byte session[], int timeout) {
 	    	super (stream, ip, port, pid, session, timeout);
-	    	posix = new SharedMemoryPosix("test_client", (long) SHM_TOTAL);
+	    	posix = new SharedMemoryPosix("test_client", (long) (16 * 1024 + 64 * 1024));
+    		if (!posix.semOpened()) {
+    			posix.openSem(SEM_NAME_PRODUCE, SEM_NAME_CONSUME);
+				posix.open(0, (16 * 1024 + 64 * 1024));
+    		}
 	    }
 
 	    public UShmDataInputStream(InputStream stream, String ip, int port, int timeout) {
 	    	super (stream, ip, port, timeout);
-	    	posix = new SharedMemoryPosix("test_client", (long) SHM_TOTAL);
+	    	posix = new SharedMemoryPosix("test_client", (long) (16 * 1024 + 64 * 1024));
+    		if (!posix.semOpened()) {
+    			posix.openSem(SEM_NAME_PRODUCE, SEM_NAME_CONSUME);
+				posix.open(0, (16 * 1024 + 64 * 1024));
+    		}
 	    }
 
 	    public int readInt(int timeout) throws IOException, UJciException {
-	        int res = receivedBuffer.getInt(currentOffset);
+	        //int res = receivedBuffer.getInt(currentOffset);
+	        int res = mem.getInt(currentOffset);
 	        currentOffset += Integer.BYTES;
 	        return res;
 	    }
@@ -96,36 +106,59 @@ public class UShmDataInputStream extends UTimedDataInputStream {
 
 	    public boolean readMemory ()
 	    {
-	    	if (receivedBuffer == null || !receivedBuffer.hasRemaining() || currentOffset == receivedSize) 
-	    	{
+	    	//receivedBuffer == null || !receivedBuffer.hasRemaining() || 
+	    	//if (receivedSize == -1 || currentOffset == receivedSize) 
+	    	//{
 	    		if (!posix.semOpened()) {
 	    			posix.openSem(SEM_NAME_PRODUCE, SEM_NAME_CONSUME);
+					posix.open(0, (16 * 1024 + 64 * 1024));
 	    		}
 	    		
-	    		posix.waitConsume();
+	    		waitConsume ();
 	    		
-	    		int chunk_size = 0;
-	    		int chunk_idx = 0;
-	    		
-	    		posix.open(0, SHM_TOTAL);
+	    		//posix.open(0, SHM_TOTAL);
 	    		mem = posix.getMemory();
 	    		
-				ByteBuffer byteBuffer = ByteBuffer.wrap(mem.getByteArray(4, Integer.BYTES));
-			    byteBuffer.order(ByteOrder.LITTLE_ENDIAN);
-			    receivedSize = byteBuffer.getInt(0);
+				//ByteBuffer byteBuffer = ByteBuffer.wrap(mem.getByteArray(0, Integer.BYTES));
+			    //byteBuffer.order(ByteOrder.LITTLE_ENDIAN);
+	    		
+	    		byte[] header = mem.getByteArray(0, 8);
+	    		
+	    		receivedSize = UJCIUtil.bytes2int(header, 0) + 8;
+	    		
+			    //receivedSize = mem.getInt(0) + 8;
+			    		//byteBuffer.getInt(0) + 8			    
+			    //System.out.println (receivedSize);
 				
-			    receivedBuffer = ByteBuffer.allocate(receivedSize);
-			    receivedBuffer.put(mem.getByteArray(4 + Integer.BYTES, receivedSize));
-	    		receivedBuffer.flip();
+			    //receivedBuffer = ByteBuffer.wrap(mem.getByteArray(0, receivedSize));
+			    //receivedBuffer = ByteBuffer.allocate(receivedSize);
+			    //receivedBuffer.put(mem.getByteArray(0, receivedSize));
+	    		//receivedBuffer.flip();
 
 	    		currentOffset = 0;
 	    		
-	    		posix.close();
-	    		posix.postProduce();
+	    		//posix.close();
 	    		//posix.closeSem();
-	    	}
+	    	//}
 	    	
     		return true;
+	    }
+	    
+	    public byte[] getByteArray (int size)
+	    {
+	    	byte[] bytes = mem.getByteArray(currentOffset, size);
+	    	currentOffset += size;
+	    	return bytes;
+	    }
+	    
+	    public void postProduce ()
+	    {
+	    	posix.postProduce();
+	    }
+	    
+	    public void waitConsume ()
+	    {
+	    	posix.waitConsume();
 	    }
 	    
     	byte[] magic = {67, 85, 66, 0};
@@ -154,7 +187,10 @@ public class UShmDataInputStream extends UTimedDataInputStream {
 	        try {
 	            //System.out.println ("remaining =" + receivedBuffer.remaining());
 		        //System.out.println ("remaining2 =" + (receivedSize - currentOffset));
-		        receivedBuffer.get(b);
+		        //receivedBuffer.get(b);
+		        //currentOffset += len;
+		        
+		        System.arraycopy(mem, currentOffset, b, 0, len);
 		        currentOffset += len;
 
 		        //System.out.println ("remaining =" + receivedBuffer.remaining());
@@ -164,19 +200,22 @@ public class UShmDataInputStream extends UTimedDataInputStream {
 	        	// parital read
 	        	int offset = 0;
 	        	
-        		int partial_read = receivedBuffer.remaining();
-
+        		int partial_read = receivedSize - currentOffset;
+        		
+        		System.arraycopy(mem, currentOffset, b, 0, partial_read);
+		        currentOffset += partial_read;
+        		
         		//System.out.println ("reamining = " + partial_read);
 
-        		receivedBuffer.get(b, 0, partial_read);
+        		//receivedBuffer.get(b, 0, partial_read);
         		currentOffset += partial_read;
 	        }
 	    }
 
 	    public int readByte(byte[] b, int timeout) throws IOException, UJciException {
 	        long begin = System.currentTimeMillis();
-	        
-	        receivedBuffer.get(b, 0, 1);
+
+	        System.arraycopy(mem, currentOffset, b, 0, 1);
 	        currentOffset += 1;
 	        
 	        return 1;
@@ -192,23 +231,26 @@ public class UShmDataInputStream extends UTimedDataInputStream {
 	        
 	        // System.out.println ("array =" + b.length + " offset = " + off + " len = " + len);
 
-	        
 	        try {
 	        	//System.out.println ("remaining =" + len);
-		        receivedBuffer.get(b, off, len);
+	        	System.arraycopy(mem, currentOffset, b, off, len);
+	        	
+		        //receivedBuffer.get(b, off, len);
 		        currentOffset += len;
         		//System.out.println ("comsumed = " + (receivedSize - currentOffset));
 	        } catch (Exception e) {
 	        	//System.out.println ("READ EXCEPTION");
         		
-	        	int partial_read = receivedBuffer.remaining();
-
+	        	//int partial_read = receivedBuffer.remaining();
+	        	int partial_read = receivedSize - currentOffset;
+	        	System.arraycopy(mem, currentOffset, b, off, partial_read);
+	        	
         		//System.out.println ("reamining = " + partial_read);
         		//if (partial_read > remaining) {
         		//	partial_read = remaining;
         		//}
 
-        		receivedBuffer.get(b, off, partial_read);
+        		//receivedBuffer.get(b, off, partial_read);
         		currentOffset += partial_read;
         		//System.out.println ("comsumed = " + (receivedSize - currentOffset));
 	        	return partial_read;
@@ -220,4 +262,10 @@ public class UShmDataInputStream extends UTimedDataInputStream {
 	    public int read(byte[] b, int off, int len) throws IOException, UJciException {
 	        return read(b, off, len, timeout);
 	    }
+
+		@Override
+		public void close() throws IOException {
+			super.close();
+			posix.close();
+		}
 }

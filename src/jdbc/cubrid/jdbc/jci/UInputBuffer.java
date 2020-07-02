@@ -73,39 +73,70 @@ class UInputBuffer {
 
 		int readLen = 0;
 		int totalReadLen = 0;
-		byte[] headerData = new byte[8];
 		
-		//input.readFully(headerData);
-		
-		while (totalReadLen < 8) {
-			readLen = input.read(headerData, totalReadLen, 8 - totalReadLen, 0);
-			if (readLen == -1) {
-				throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
+		byte[] headerData;
+		if (input instanceof UShmDataInputStream) {
+			UShmDataInputStream shmInput = (UShmDataInputStream) input;
+			totalReadLen = 8;
+			
+			headerData = shmInput.getByteArray(8);
+			capacity = UJCIUtil.bytes2int(headerData, 0);
+			casinfo = new byte[CAS_INFO_SIZE];
+			System.arraycopy(headerData, 4, casinfo, 0, 4);
+			con.setCASInfo(casinfo);
+			
+			if (capacity <= 0) {
+				resCode = 0;
+				capacity = 0;
+				return;
 			}
-			totalReadLen = totalReadLen + readLen;
+			
+			buffer = shmInput.getByteArray(capacity);
+			resCode = readInt();
+			/*
+			int realRead = 0, tempRead = 0;
+			while (realRead < capacity) {
+				tempRead = input.read(buffer, realRead, capacity - realRead);
+				if (tempRead < 0) {
+					capacity = realRead;
+					break;
+				}
+				realRead += tempRead;
+			}
+			*/
 		}
+		else
+		{
+			headerData = new byte[8];
+			while (totalReadLen < 8) {
+				readLen = input.read(headerData, totalReadLen, 8 - totalReadLen, 0);
+				if (readLen == -1) {
+					throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
+				}
+				totalReadLen = totalReadLen + readLen;
+			}
 
-		capacity = UJCIUtil.bytes2int(headerData, 0);
-		
-		//System.out.println ("capacity = " + capacity);
-		
-		casinfo = new byte[CAS_INFO_SIZE];
-		System.arraycopy(headerData, 4, casinfo, 0, 4);
-		con.setCASInfo(casinfo);
-		
-		//System.out.println ("casinfo = " + Arrays.toString(casinfo));
-		
-		if (capacity <= 0) {
-			resCode = 0;
-			capacity = 0;
-			return;
+			capacity = UJCIUtil.bytes2int(headerData, 0);
+			
+			//System.out.println ("capacity = " + capacity);
+			
+			casinfo = new byte[CAS_INFO_SIZE];
+			System.arraycopy(headerData, 4, casinfo, 0, 4);
+			con.setCASInfo(casinfo);
+			
+			//System.out.println ("casinfo = " + Arrays.toString(casinfo));
+			
+			if (capacity <= 0) {
+				resCode = 0;
+				capacity = 0;
+				return;
+			}
+			
+			buffer = new byte[capacity];
+			readData();
+
+			resCode = readInt();
 		}
-
-		buffer = new byte[capacity];
-		readData();
-
-		resCode = readInt();
-		//System.out.println ("resCode = " + Arrays.toString(casinfo));
 		
 		if (resCode < 0) {
 			int eCode = readInt();
@@ -136,8 +167,41 @@ class UInputBuffer {
 
 		int readLen = 0;
 		int totalReadLen = 0;
-		byte[] headerData = new byte[8];
-		
+		byte[] headerData;
+		if (input instanceof UShmDataInputStream) {
+			UShmDataInputStream shmInput = (UShmDataInputStream) input;
+			totalReadLen = 8;
+			
+			headerData = shmInput.getByteArray(8);
+			capacity = UJCIUtil.bytes2int(headerData, 0);
+			casinfo = new byte[CAS_INFO_SIZE];
+			System.arraycopy(headerData, 4, casinfo, 0, 4);
+			con.setCASInfo(casinfo);
+			
+			if (capacity <= 0) {
+				resCode = 0;
+				capacity = 0;
+				return;
+			}
+			
+			buffer = shmInput.getByteArray(capacity);
+			resCode = readInt();
+			/*
+			int realRead = 0, tempRead = 0;
+			while (realRead < capacity) {
+				tempRead = input.read(buffer, realRead, capacity - realRead);
+				if (tempRead < 0) {
+					capacity = realRead;
+					break;
+				}
+				realRead += tempRead;
+			}
+			*/
+		}
+		else
+		{
+		headerData = new byte[8];
+			
 		while (totalReadLen < 8) {
 			readLen = input.read(headerData, totalReadLen, 8 - totalReadLen, timeout);
 			if (readLen == -1) {
@@ -168,7 +232,8 @@ class UInputBuffer {
 		readData();
 
 		resCode = readInt();
-
+		}
+		
 		if (resCode < 0) {
 			int eCode = readInt();
 			String msg;
@@ -188,6 +253,7 @@ class UInputBuffer {
 			eCode = convertErrorByVersion(resCode, eCode);
 			throw uconn.createJciException(UErrorCode.ER_DBMS, resCode, eCode, msg);
 		}
+		
 	}
 
 	int convertErrorByVersion(int indicator, int error) {
@@ -548,13 +614,18 @@ class UInputBuffer {
 
 	private void readData() throws IOException, UJciException {
 		int realRead = 0, tempRead = 0;
-		while (realRead < capacity) {
-			tempRead = input.read(buffer, realRead, capacity - realRead);
-			if (tempRead < 0) {
-				capacity = realRead;
-				break;
+		if (input instanceof UShmDataInputStream) {
+			((UShmDataInputStream) input).getByteArray(capacity);
+		}
+		else {
+			while (realRead < capacity) {
+				tempRead = input.read(buffer, realRead, capacity - realRead);
+				if (tempRead < 0) {
+					capacity = realRead;
+					break;
+				}
+				realRead += tempRead;
 			}
-			realRead += tempRead;
 		}
 	}
 }

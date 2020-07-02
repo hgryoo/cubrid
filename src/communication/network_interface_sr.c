@@ -4439,6 +4439,7 @@ sqfile_get_list_file_page (THREAD_ENTRY * thread_p, unsigned int rid, char *requ
     ptr = or_pack_int (reply, page_size);
     ptr = or_pack_int (ptr, error);
 
+  /*
   if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
   {
     posix_shm_open ("test");
@@ -4447,6 +4448,7 @@ sqfile_get_list_file_page (THREAD_ENTRY * thread_p, unsigned int rid, char *requ
     aligned_page_buf = NULL;
     page_size = 0;
   }
+  */
   
   css_send_reply_and_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply), aligned_page_buf,
 				     page_size);
@@ -4459,6 +4461,7 @@ empty_page:
   ptr = or_pack_int (reply, page_size);
   ptr = or_pack_int (ptr, error);
 
+  /*
   if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
   {
     posix_shm_open ("test");
@@ -4466,6 +4469,7 @@ empty_page:
     aligned_page_buf = NULL;
     page_size = 0;
   }
+  */
 
   css_send_reply_and_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply), aligned_page_buf,
 				     page_size);

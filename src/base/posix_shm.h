@@ -47,14 +47,18 @@ extern int posix_fd_client;
 
 int posix_shm_open(char* name);
 
-int posix_shm_open_client(char* name);
+void* posix_shm_open_client(char* name, int size);
 
-int posix_shm_close(char* name);
+int posix_shm_close(void* mem, int size);
 
 int posix_shm_write (char* buffer, int idx, int size, int fd);
 
 int posix_shm_write_client (char* buffer, int idx, int size, int fd);
 
 int posix_shm_read (char* buffer, int idx, int size, int fd);
+
+int sem_wait_produce ();
+
+int sem_post_consume ();
 
 #endif /* _POSIX_SHM_H_ */
