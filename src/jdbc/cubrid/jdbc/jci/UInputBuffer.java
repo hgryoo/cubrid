@@ -55,7 +55,7 @@ import cubrid.sql.CUBRIDTimestamp;
 import cubrid.sql.CUBRIDTimestamptz;
 import java.util.TimeZone;
 
-class UInputBuffer {
+public class UInputBuffer {
 	private UTimedDataInputStream input;
 	private int position;
 	private int capacity;
@@ -64,6 +64,9 @@ class UInputBuffer {
 	private int resCode;
 	private final static int CAS_INFO_SIZE = 4;
 	private UConnection uconn;
+
+	public static int num_read = 0;
+	public static long totalTime = 0;
 
 	UInputBuffer(UTimedDataInputStream relatedI, UConnection con)
 			throws IOException, UJciException {
@@ -75,6 +78,8 @@ class UInputBuffer {
 		int totalReadLen = 0;
 		
 		byte[] headerData;
+
+		long startTime = System.currentTimeMillis();
 		if (input instanceof UShmDataInputStream) {
 			UShmDataInputStream shmInput = (UShmDataInputStream) input;
 			totalReadLen = 8;
@@ -138,6 +143,10 @@ class UInputBuffer {
 			resCode = readInt();
 		}
 		
+		long estimatedTime = System.currentTimeMillis() - startTime;
+		num_read += 1;
+		totalTime += estimatedTime;
+
 		if (resCode < 0) {
 			int eCode = readInt();
 			String msg;

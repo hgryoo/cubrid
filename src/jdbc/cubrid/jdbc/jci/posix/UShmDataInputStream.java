@@ -112,10 +112,12 @@ public class UShmDataInputStream extends UTimedDataInputStream {
 	    		if (!posix.semOpened()) {
 	    			posix.openSem(SEM_NAME_PRODUCE, SEM_NAME_CONSUME);
 					posix.open(0, (16 * 1024 + 64 * 1024));
-	    		}
-	    		
+				}
+				
+	    		waitConsume ();
+
 	    		if (mem == null) {
-	    			//waitConsume ();
+	    			
 	    			mem = posix.getMemory();
 	    		}
 	    		

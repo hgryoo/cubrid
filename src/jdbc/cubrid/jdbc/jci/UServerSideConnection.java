@@ -249,7 +249,7 @@ public class UServerSideConnection extends UConnection {
 		UInputBuffer inputBuffer;
 		if (input instanceof UShmDataInputStream) {
 			UShmDataInputStream shmInput = (UShmDataInputStream) input;
-			//shmInput.postProduce ();
+			shmInput.postProduce ();
 		}
 		outBuffer.sendData();
 		if (input instanceof UShmDataInputStream) {
@@ -281,7 +281,7 @@ public class UServerSideConnection extends UConnection {
 		byte prev_casinfo[] = casInfo;
 		if (input instanceof UShmDataInputStream) {
 			UShmDataInputStream shmInput = (UShmDataInputStream) input;
-			//shmInput.postProduce ();
+			shmInput.postProduce ();
 		}
 		outBuffer.sendData();
 		if (input instanceof UShmDataInputStream) {

@@ -36,7 +36,7 @@ int idxs = 0;
 int ndes = -1;
 
 sem_t *mutex_produce2, *mutex_consume2;
-static void* buffer;
+void* buffer_shm;
 void* posix_shm_open(char* name, int size)
 {
     if (posix_fd == -1)
@@ -63,9 +63,9 @@ void* posix_shm_open(char* name, int size)
         }
 
     }
-         buffer = (void *) mmap (0, size, PROT_READ | PROT_WRITE, MAP_SHARED, posix_fd, 0);
+         buffer_shm = (void *) mmap (0, size, PROT_READ | PROT_WRITE, MAP_SHARED, posix_fd, 0);
 
-    return buffer;
+    return buffer_shm;
 }
 
 int sem_wait_produce2 () {
@@ -97,7 +97,7 @@ int sem_post_consume2 () {
 }
 
 sem_t *mutex_produce, *mutex_consume;
-static void* data = NULL;
+void* data = NULL;
 void* posix_shm_open_client(char* name, int size)
 {
     if (posix_fd_client == -1)

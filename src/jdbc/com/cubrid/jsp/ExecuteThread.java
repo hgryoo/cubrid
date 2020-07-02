@@ -72,6 +72,8 @@ import cubrid.jdbc.jci.UConnection;
 import cubrid.jdbc.jci.UJCIUtil;
 import cubrid.sql.CUBRIDOID;
 
+import cubrid.jdbc.jci.UInputBuffer;
+
 public class ExecuteThread extends Thread {
 	private String charSet = System.getProperty("file.encoding");
 
@@ -257,6 +259,7 @@ public class ExecuteThread extends Thread {
 		}
 		
 		System.out.println ("num call = " + numCall + "\n" + "total time = " + (totalTime / 1000.0) + "\n" + "avg time (s) = " + (totalTime / 1000.0 / numCall));
+		System.out.println ("num call = " + UInputBuffer.num_read + "\n" + "total time = " + (UInputBuffer.totalTime / 1000.0));
 		closeSocket();
 	}
 

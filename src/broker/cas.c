@@ -2004,7 +2004,7 @@ process_request (SOCKET sock_fd, T_NET_BUF * net_buf, T_REQ_INFO * req_info)
     if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) 
     && req_info->driver_info[DRIVER_INFO_CLIENT_TYPE] == CAS_CLIENT_SERVER_SIDE_JDBC)
   {
-    //sem_wait_produce ();
+    sem_wait_produce ();
   }
 
   net_buf->client_version = req_info->client_version;
