@@ -291,6 +291,13 @@ public class ExecuteThread extends Thread {
 		UInputBuffer.num_read = 0;
 		UInputBuffer.totalTime = 0;
 
+		System.out.println (
+			"RESULT SET => \n" +
+			"move time = " + (CUBRIDResultSet.move_time / 1000.0) + "\n" 
+			+  "fetch next time = " + (CUBRIDResultSet.after_next / 1000.0) + "\n"
+		);
+		CUBRIDResultSet.move_time = 0;
+		CUBRIDResultSet.after_next = 0;
 
 		for (int i = 0; i < 5; i++) {
 			System.out.println ("name : "+ names[i] + "\ntime :" + (times[i] / 1000.0) + "\n");

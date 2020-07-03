@@ -192,6 +192,9 @@ public class CUBRIDResultSet implements ResultSet {
 	 * java.sql.ResultSet interface
 	 */
 
+	static int move_time = 0;
+	static int after_next = 0;
+	
 	public boolean next() throws SQLException {
 		checkIsOpen();
 
@@ -214,7 +217,11 @@ public class CUBRIDResultSet implements ResultSet {
 							return false;
 						}
 
+						int staaaart = System.currentTimeMillis();
 						move();
+						int esteeed = System.currentTimeMillis() - staaaart;
+						move_time += esteeed;
+
 						inserting = false;
 						return AfterNext();
 					}
@@ -235,7 +242,11 @@ public class CUBRIDResultSet implements ResultSet {
 					return false;
 				}
 
+				int staaaart = System.currentTimeMillis();
 				move();
+				int esteeed = System.currentTimeMillis() - staaaart;
+				move_time += esteeed;
+
 				inserting = false;
 				return AfterNext();
 			}
@@ -246,6 +257,7 @@ public class CUBRIDResultSet implements ResultSet {
 		if (u_stmt == null) {
 			return false;
 		}
+		int staaaart = System.currentTimeMillis();
 
 		synchronized (u_stmt) {
 			u_stmt.fetch();
@@ -260,6 +272,9 @@ public class CUBRIDResultSet implements ResultSet {
 			return false;
 		}
 		
+		int esteeed = System.currentTimeMillis() - staaaart;
+		after_next += esteeed;
+
 		return true;
 	}
 
