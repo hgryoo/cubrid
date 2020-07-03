@@ -70,6 +70,7 @@ import cubrid.jdbc.driver.CUBRIDConnectionDefault;
 import cubrid.jdbc.driver.CUBRIDResultSet;
 import cubrid.jdbc.jci.UConnection;
 import cubrid.jdbc.jci.UJCIUtil;
+import cubrid.jdbc.jci.UServerSideConnection;
 import cubrid.sql.CUBRIDOID;
 
 import cubrid.jdbc.jci.UInputBuffer;
@@ -121,11 +122,26 @@ public class ExecuteThread extends Thread {
 	int numCall = 0;
 	long totalTime = 0;
 	
+	String[] names;
+	int[] times;
 
 	ExecuteThread(Socket client) throws IOException {
 		super();
 		this.client = client;
 		output = new DataOutputStream(new BufferedOutputStream(this.client.getOutputStream()));
+
+		names = new String[5];
+		times = new int[5];
+
+		names[0] = "PARSE";
+		names[1] = "CHECK_ARG";
+		names[2] = "INVOKE";
+		names[3] = "RESULT";
+		names[4] = "IDLE";
+
+		for (int i = 0; i < 5; i++) {
+			times[i] = 0;
+		}
 	}
 
 	public Socket getSocket() {
@@ -196,9 +212,12 @@ public class ExecuteThread extends Thread {
 		/* main routine handling stored procedure */
 		int requestCode = -1;
 		
+		UServerSideConnection.send_time = 0;
+		UServerSideConnection.receiv_time = 0;
 		while (!Thread.interrupted()) {
 			try {
-				
+				staaaart = System.currentTimeMillis();
+				UServerSideConnection.reading_time = 0;
 				do {
 					requestCode = listenCommand();
 					switch (requestCode) {
@@ -260,6 +279,23 @@ public class ExecuteThread extends Thread {
 		
 		System.out.println ("num call = " + numCall + "\n" + "total time = " + (totalTime / 1000.0) + "\n" + "avg time (s) = " + (totalTime / 1000.0 / numCall));
 		System.out.println ("num call = " + UInputBuffer.num_read + "\n" + "total time = " + (UInputBuffer.totalTime / 1000.0));
+		
+		System.out.println (
+			"send time = " + (UServerSideConnection.send_time / 1000.0) + "\n" 
+			+  "recv time = " + (UServerSideConnection.receiv_time / 1000.0 + "\n" 
+			+  "client time = " + UServerSideConnection.reading_total / 1000.0 + "\n")
+		);
+		UServerSideConnection.send_time = 0;
+		UServerSideConnection.receiv_time = 0;
+		UServerSideConnection.reading_total = 0;
+		UInputBuffer.num_read = 0;
+		UInputBuffer.totalTime = 0;
+
+
+		for (int i = 0; i < 5; i++) {
+			System.out.println ("name : "+ names[i] + "\ntime :" + (times[i] / 1000.0) + "\n");
+		}
+		
 		closeSocket();
 	}
 
@@ -269,27 +305,45 @@ public class ExecuteThread extends Thread {
 		return input.readInt();
 	}
 
+	long staaaart = 0;
+	long esteeed = 0;
+
 	private void processStoredProcedure () throws Exception {
-		setStatus (ExecuteThreadStatus.PARSE);
+		esteeed = System.currentTimeMillis() - staaaart;
+		times [4] += esteeed;
 		
+		setStatus (ExecuteThreadStatus.PARSE);
 		IS_SHM = input.readInt();
 		
-		StoredProcedure procedure = makeStoredProcedure();
-		Method m = procedure.getTarget().getMethod();
-		Object[] resolved = procedure.checkArgs(procedure.getArgs());
+		staaaart = System.currentTimeMillis();
+			StoredProcedure procedure = makeStoredProcedure();
+		esteeed = System.currentTimeMillis() - staaaart;
+		times [0] += esteeed;
 
-		setStatus (ExecuteThreadStatus.INVOKE);
-		Object result = m.invoke(null, resolved);
+		staaaart = System.currentTimeMillis();
+			Method m = procedure.getTarget().getMethod();
+			Object[] resolved = procedure.checkArgs(procedure.getArgs());
+		esteeed = System.currentTimeMillis() - staaaart;
+		times [1] += esteeed;
 
+		staaaart = System.currentTimeMillis();
+			setStatus (ExecuteThreadStatus.INVOKE);
+			Object result = m.invoke(null, resolved);
+		esteeed = System.currentTimeMillis() - staaaart;
+		times [2] += esteeed;
 		/* close server-side JDBC connection */
 		closeJdbcConnection();
 
 		/* send results */
-		setStatus (ExecuteThreadStatus.RESULT);
-		Value resolvedResult = procedure.makeReturnValue(result);
-		sendResult(resolvedResult, procedure);
+		staaaart = System.currentTimeMillis();
+			setStatus (ExecuteThreadStatus.RESULT);
+			Value resolvedResult = procedure.makeReturnValue(result);
+			sendResult(resolvedResult, procedure);
+		esteeed = System.currentTimeMillis() - staaaart;
+		times [3] += esteeed;
 
 		setStatus (ExecuteThreadStatus.IDLE);
+		staaaart = System.currentTimeMillis();
 	}
 
 	private StoredProcedure makeStoredProcedure() throws Exception {

@@ -1387,7 +1387,7 @@ libcas_main (SOCKET jsp_sock_fd)
 
   //posix_shm_open_client ("test_client");
   net_buf_init (&net_buf, cas_get_client_version ());
-    if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+    if (prm_get_integer_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) >= 1)
   {
     net_buf.data = (char *) posix_shm_open_client ("test_client", NET_BUF_ALLOC_SIZE);
     if (net_buf.data == NULL) {
@@ -1410,7 +1410,7 @@ libcas_main (SOCKET jsp_sock_fd)
       status = process_request (client_sock_fd, &net_buf, &req_info);
     }
 
-    if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+    if (prm_get_integer_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) >= 1)
   {
     //posix_shm_close (net_buf.data, NET_BUF_ALLOC_SIZE);
   }
@@ -2001,10 +2001,10 @@ process_request (SOCKET sock_fd, T_NET_BUF * net_buf, T_REQ_INFO * req_info)
   as_info->fn_status = FN_STATUS_BUSY;
 #endif
 
-    if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) 
+    if (prm_get_integer_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) >= 1 
     && req_info->driver_info[DRIVER_INFO_CLIENT_TYPE] == CAS_CLIENT_SERVER_SIDE_JDBC)
   {
-    sem_wait_produce ();
+    //sem_wait_produce ();
   }
 
   net_buf->client_version = req_info->client_version;
@@ -2163,7 +2163,7 @@ process_request (SOCKET sock_fd, T_NET_BUF * net_buf, T_REQ_INFO * req_info)
 
       assert (NET_BUF_CURR_SIZE (net_buf) <= net_buf->alloc_size);
     
-    if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) 
+    if (prm_get_integer_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) >= 1 
     && req_info->driver_info[DRIVER_INFO_CLIENT_TYPE] == CAS_CLIENT_SERVER_SIDE_JDBC)
   {
     sem_post_consume ();

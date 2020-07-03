@@ -6123,7 +6123,7 @@ qfile_get_list_file_page (QUERY_ID query_id, VOLID volid, PAGEID pageid, char *b
   ptr = or_pack_int (ptr, (int) volid);
   ptr = or_pack_int (ptr, (int) pageid);
   
-  if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+  if (prm_get_integer_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) == 2)
   {
     req_error =
       net_client_request (NET_SERVER_LS_GET_LIST_FILE_PAGE, request, OR_ALIGNED_BUF_SIZE (a_request), reply,
@@ -6139,23 +6139,12 @@ qfile_get_list_file_page (QUERY_ID query_id, VOLID volid, PAGEID pageid, char *b
   if (!req_error)
     {
       int page_size = 0;
-      if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS)) {
+      if (prm_get_integer_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) == 2) {
         ptr = or_unpack_int (&reply[0], &page_size);
         *buffer_size = page_size;
         //sem_post_consume2 ();
       }
       ptr = or_unpack_int (&reply[OR_INT_SIZE], &error);
-  /*
-      if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
-      {
-        int page_size = 0;
-        ptr = or_unpack_int (&reply[0], &page_size);
-
-        posix_shm_open ("test");
-        posix_shm_read (buffer, 0, page_size, posix_fd);
-        *buffer_size = page_size;
-      }
-  */
     }
 
   return error;

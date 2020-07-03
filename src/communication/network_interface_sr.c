@@ -4413,7 +4413,7 @@ sqfile_get_list_file_page (THREAD_ENTRY * thread_p, unsigned int rid, char *requ
   int page_size;
   int error = NO_ERROR;
 
-  if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS)) 
+  if (prm_get_integer_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) == 2) 
     {
       char* page_buf_shared = (char *) posix_shm_open ("test", IO_MAX_PAGE_SIZE + MAX_ALIGNMENT);
       aligned_page_buf = PTR_ALIGN (page_buf_shared, MAX_ALIGNMENT);
@@ -4447,13 +4447,10 @@ sqfile_get_list_file_page (THREAD_ENTRY * thread_p, unsigned int rid, char *requ
     ptr = or_pack_int (reply, page_size);
     ptr = or_pack_int (ptr, error);
 
-  if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+  if (prm_get_integer_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) == 2)
   {
-    //posix_shm_open ("test");
-    //posix_shm_write (aligned_page_buf, 0, page_size, posix_fd);
-
-    //aligned_page_buf = NULL;
-    //page_size = 0;
+    aligned_page_buf = NULL;
+    page_size = 0;
   }
   
   css_send_reply_and_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply), aligned_page_buf,
@@ -4467,15 +4464,11 @@ empty_page:
   ptr = or_pack_int (reply, page_size);
   ptr = or_pack_int (ptr, error);
 
-  /*
-  if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+  if (prm_get_integer_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) == 2)
   {
-    posix_shm_open ("test");
-    posix_shm_write (aligned_page_buf, 0, page_size, posix_fd);
     aligned_page_buf = NULL;
     page_size = 0;
   }
-  */
 
   css_send_reply_and_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply), aligned_page_buf,
 				     page_size);

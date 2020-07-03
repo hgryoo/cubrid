@@ -2122,7 +2122,7 @@ jsp_send_call_request (const SOCKET sockfd, const SP_ARGS * sp_args)
 
   req_code = SP_CODE_INVOKE;
   ptr = or_pack_int (buffer, req_code);
-    if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+    if (prm_get_integer_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) >= 1)
   {
     ptr = or_pack_int (ptr, 1);
   }
@@ -3140,7 +3140,7 @@ retry:
       goto end;
     }
   
-  if (prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS))
+  if (prm_get_integer_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) >= 1)
   {
     posix_shm_open_client ("test_client", (16 * 1024 + 64 * 1024));
   }

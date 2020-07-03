@@ -148,6 +148,10 @@ public class UShmDataInputStream extends UTimedDataInputStream {
 	    	
     		return true;
 	    }
+
+		public Pointer getPtr () {
+			return mem;
+		}
 	    
 	    public byte[] getByteArray (int size)
 	    {
@@ -155,6 +159,16 @@ public class UShmDataInputStream extends UTimedDataInputStream {
 	    	currentOffset += size;
 	    	return bytes;
 	    }
+
+		public byte[] getByteArray (int idx, int size)
+	    {
+	    	byte[] bytes = mem.getByteArray(idx, size);
+	    	return bytes;
+	    }
+
+		public void flip () {
+			currentOffset = 0;
+		}
 	    
 	    public void postProduce ()
 	    {

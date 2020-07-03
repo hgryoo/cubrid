@@ -52,7 +52,8 @@ public class UServerSideConnection extends UConnection {
 	
 	private Thread curThread;
 	private UStatementHandlerCache stmtHandlerCache;
-	
+	private UInputBuffer inputBuffer = null;
+
 	int shm = 0;
 	
 	public UServerSideConnection(Socket socket, Thread curThread) throws CUBRIDException {
@@ -242,28 +243,64 @@ public class UServerSideConnection extends UConnection {
 		stmtHandlerCache.destroy();
 	}
 	
+	public static int send_time = 0;
+	public static int receiv_time = 0;
+
+	public static long reading_time = 0;
+	public static int reading_total = 0;
+
 	@Override
 	UInputBuffer send_recv_msg(boolean recv_result, int timeout) throws UJciException,
 	IOException {
+		if (reading_time != 0)
+		{
+			long estimatedTime = System.currentTimeMillis() - reading_time;
+			reading_total += estimatedTime;
+		}
+
 		byte prev_casinfo[] = casInfo;
-		UInputBuffer inputBuffer;
 		if (input instanceof UShmDataInputStream) {
 			UShmDataInputStream shmInput = (UShmDataInputStream) input;
-			shmInput.postProduce ();
+			//shmInput.postProduce ();
 		}
+		long startTime = System.currentTimeMillis();
 		outBuffer.sendData();
+		long estimatedTime = System.currentTimeMillis() - startTime;
+		send_time += estimatedTime;
+
+		startTime = System.currentTimeMillis();
 		if (input instanceof UShmDataInputStream) {
 			UShmDataInputStream shmInput = (UShmDataInputStream) input;
 			shmInput.readMemory();
-		}
-		/* set cas info to UConnection member variable and return InputBuffer */
-		if (timeout > 0) {
-			inputBuffer = new UInputBuffer(input, this, timeout*1000 + READ_TIMEOUT);
+
+			if (inputBuffer == null) {
+				/* set cas info to UConnection member variable and return InputBuffer */
+				if (timeout > 0) {
+					inputBuffer = new UInputBuffer(input, this, timeout*1000 + READ_TIMEOUT);
+				}
+				else {
+					inputBuffer = new UInputBuffer(input, this, 0);
+				}
+			}
+			else 
+			{
+				//inputBuffer.resetBuffer ();
+				inputBuffer = new UInputBuffer(input, this, 0);
+			}
 		}
 		else {
-			inputBuffer = new UInputBuffer(input, this, 0);
+			/* set cas info to UConnection member variable and return InputBuffer */
+			if (timeout > 0) {
+				inputBuffer = new UInputBuffer(input, this, timeout*1000 + READ_TIMEOUT);
+			}
+			else {
+				inputBuffer = new UInputBuffer(input, this, 0);
+			}
 		}
-
+		estimatedTime = System.currentTimeMillis() - startTime;
+		receiv_time += estimatedTime;
+		
+		reading_time = System.currentTimeMillis();
 		return inputBuffer;
 	}
 	
@@ -278,19 +315,43 @@ public class UServerSideConnection extends UConnection {
 	@Override
 	UInputBuffer send_recv_msg(boolean recv_result) throws UJciException,
 	IOException {
+		if (reading_time != 0)
+		{
+			long estimatedTime = System.currentTimeMillis() - reading_time;
+			reading_total += estimatedTime;
+		}
+
 		byte prev_casinfo[] = casInfo;
 		if (input instanceof UShmDataInputStream) {
 			UShmDataInputStream shmInput = (UShmDataInputStream) input;
-			shmInput.postProduce ();
+			//shmInput.postProduce ();
 		}
+		long startTime = System.currentTimeMillis();
 		outBuffer.sendData();
+		long estimatedTime = System.currentTimeMillis() - startTime;
+		send_time += estimatedTime;
+
+		startTime = System.currentTimeMillis();
 		if (input instanceof UShmDataInputStream) {
 			UShmDataInputStream shmInput = (UShmDataInputStream) input;
 			shmInput.readMemory();
-		}
-		/* set cas info to UConnection member variable and return InputBuffer */
-		UInputBuffer inputBuffer = new UInputBuffer(input, this, 0);
 
+			if (inputBuffer == null) {
+				inputBuffer = new UInputBuffer(input, this, 0);
+			}
+			else 
+			{
+				inputBuffer = new UInputBuffer(input, this, 0);
+			}
+		}
+		else {
+			/* set cas info to UConnection member variable and return InputBuffer */
+			inputBuffer = new UInputBuffer(input, this, 0);
+		}
+		estimatedTime = System.currentTimeMillis() - startTime;
+		receiv_time += estimatedTime;
+
+		reading_time = System.currentTimeMillis();
 		return inputBuffer;
 	}
 }

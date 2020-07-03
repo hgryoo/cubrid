@@ -55,6 +55,9 @@ import cubrid.sql.CUBRIDTimestamp;
 import cubrid.sql.CUBRIDTimestamptz;
 import java.util.TimeZone;
 
+import com.sun.jna.Pointer;
+
+
 public class UInputBuffer {
 	private UTimedDataInputStream input;
 	private int position;
@@ -67,6 +70,8 @@ public class UInputBuffer {
 
 	public static int num_read = 0;
 	public static long totalTime = 0;
+
+    private Pointer mem = null;
 
 	UInputBuffer(UTimedDataInputStream relatedI, UConnection con)
 			throws IOException, UJciException {
@@ -82,9 +87,11 @@ public class UInputBuffer {
 		long startTime = System.currentTimeMillis();
 		if (input instanceof UShmDataInputStream) {
 			UShmDataInputStream shmInput = (UShmDataInputStream) input;
+			shmInput.flip();
 			totalReadLen = 8;
 			
-			headerData = shmInput.getByteArray(8);
+			mem = shmInput.getPtr();
+			headerData = mem.getByteArray(0, 8);
 			capacity = UJCIUtil.bytes2int(headerData, 0);
 			casinfo = new byte[CAS_INFO_SIZE];
 			System.arraycopy(headerData, 4, casinfo, 0, 4);
@@ -96,10 +103,14 @@ public class UInputBuffer {
 				return;
 			}
 			
-			byte[] shm = shmInput.getByteArray(capacity);
-
-			buffer = new byte[capacity];
-			System.arraycopy(shm, 0, buffer, 0, capacity);
+			mem = shmInput.getPtr();
+			//buffer = shmInput.getByteArray(64 * 1024);
+			
+			//byte[] shm = shmInput.getByteArray(capacity);
+			//buffer = new byte[capacity];
+			//System.arraycopy(shm, 0, buffer, 0, capacity);
+			position = 8;
+			capacity = capacity + 8;
 
 			resCode = readInt();
 			/*
@@ -186,9 +197,11 @@ public class UInputBuffer {
 		
 		if (input instanceof UShmDataInputStream) {
 			UShmDataInputStream shmInput = (UShmDataInputStream) input;
+			shmInput.flip();
 			totalReadLen = 8;
 			
-			headerData = shmInput.getByteArray(8);
+			mem = shmInput.getPtr();
+			headerData = mem.getByteArray(0, 8);
 			capacity = UJCIUtil.bytes2int(headerData, 0);
 			casinfo = new byte[CAS_INFO_SIZE];
 			System.arraycopy(headerData, 4, casinfo, 0, 4);
@@ -200,12 +213,14 @@ public class UInputBuffer {
 				return;
 			}
 			
-			//buffer = shmInput.getByteArray(capacity);
-			byte[] shm = shmInput.getByteArray(capacity);
+			position = 8;
+			capacity = capacity + 8;
+			//buffer = shmInput.getByteArray(64 * 1024);
+			//byte[] shm = shmInput.getByteArray(capacity);
 
-			buffer = new byte[capacity];
-			System.arraycopy(shm, 0, buffer, 0, capacity);
-
+			//buffer = new byte[capacity];
+			//System.arraycopy(shm, 0, buffer, 0, capacity);
+			mem = shmInput.getPtr();
 			resCode = readInt();
 			/*
 			int realRead = 0, tempRead = 0;
@@ -282,6 +297,64 @@ public class UInputBuffer {
 		
 	}
 
+	public void resetBuffer () throws IOException, UJciException {
+		UConnection con = uconn;
+		position = 0;
+		int totalReadLen = 0;
+		
+		byte[] headerData;
+
+
+		long startTime = System.currentTimeMillis();
+	
+		UShmDataInputStream shmInput = (UShmDataInputStream) input;
+		shmInput.flip ();
+		totalReadLen = 8;
+
+		mem = shmInput.getPtr();
+		headerData = mem.getByteArray(0, 8);
+		capacity = UJCIUtil.bytes2int(headerData, 0);
+		casinfo = new byte[CAS_INFO_SIZE];
+		System.arraycopy(headerData, 4, casinfo, 0, 4);
+		con.setCASInfo(casinfo);
+		
+		if (capacity <= 0) {
+			resCode = 0;
+			capacity = 0;
+			return;
+		}
+		
+		//buffer = shmInput.getByteArray(64 * 1024);
+
+		mem = shmInput.getPtr();
+		position = 8;
+		resCode = readInt();
+
+		long estimatedTime = System.currentTimeMillis() - startTime;
+		num_read += 1;
+		totalTime += estimatedTime;
+
+		if (resCode < 0) {
+			int eCode = readInt();
+			String msg;
+			
+			if (con.isRenewedSessionId()) {
+				byte[] newSessionId = new byte[20];
+				
+				msg = readString(remainedCapacity() - newSessionId.length, 
+						 UJCIManager.sysCharsetName);
+				readBytes(newSessionId);
+				con.setNewSessionId (newSessionId);
+			} else {
+				msg = readString(remainedCapacity(), 
+						 UJCIManager.sysCharsetName);
+			}
+			
+			eCode = convertErrorByVersion(resCode, eCode);
+			throw uconn.createJciException(UErrorCode.ER_DBMS, resCode, eCode, msg);
+		}
+	}
+
 	int convertErrorByVersion(int indicator, int error) {
 	    if (!uconn.protoVersionIsSame(UConnection.PROTOCOL_V2)
 		    && !uconn.brokerInfoRenewedErrorCode()) {
@@ -308,6 +381,10 @@ public class UInputBuffer {
 			throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
 		}
 
+		if (input instanceof UShmDataInputStream) {
+			return mem.getByte (position++);
+		}
+		
 		return buffer[position++];
 	}
 
@@ -317,6 +394,13 @@ public class UInputBuffer {
 
 		if (position + len > capacity) {
 		    throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
+		}
+
+		if (input instanceof UShmDataInputStream) {
+			byte[] bytes = mem.getByteArray (position, len);
+			System.arraycopy(bytes, 0, value, offset, len);
+			position += len;
+			return;
 		}
 
 		System.arraycopy(buffer, position, value, offset, len);
@@ -346,6 +430,13 @@ public class UInputBuffer {
 			throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
 		}
 
+		if (input instanceof UShmDataInputStream) {
+			byte[] b = mem.getByteArray (position, 4);
+			position += 4;
+			int d = UJCIUtil.bytes2int(b, 0);
+			return d;
+		}
+
 		int data = UJCIUtil.bytes2int(buffer, position);
 		
 		position += 4;
@@ -360,6 +451,15 @@ public class UInputBuffer {
 		    	throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
 		}
 
+		
+		if (input instanceof UShmDataInputStream) {
+			for (int i = 0; i < 8; i++) {
+			data <<= 8;
+			data |= (mem.getByte(position++) & 0xff);
+			}
+			return data;
+		}
+
 		for (int i = 0; i < 8; i++) {
 			data <<= 8;
 			data |= (buffer[position++] & 0xff);
@@ -371,6 +471,13 @@ public class UInputBuffer {
 	short readShort() throws UJciException {
 		if (position + 2 > capacity) {
 		    	throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
+		}
+
+		if (input instanceof UShmDataInputStream) {
+			byte[] b = mem.getByteArray (position, 2);
+			position += 2;
+			short d = UJCIUtil.bytes2short(b, 0);
+			return d;
 		}
 
 		short data = UJCIUtil.bytes2short(buffer, position);
@@ -387,6 +494,22 @@ public class UInputBuffer {
 
 		if (position + size > capacity) {
 		    	throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
+		}
+
+		if (input instanceof UShmDataInputStream) {
+			byte [] bytes = mem.getByteArray (position, size - 1);
+			if (charsetName != null) {
+			try {
+				stringData = new String(bytes, charsetName);
+			} catch (java.io.UnsupportedEncodingException e) {
+				stringData = new String(bytes);
+			}
+			} else {
+				stringData = new String(bytes);
+			}
+			position += size;
+
+			return stringData;
 		}
 
 		if (charsetName != null) {
@@ -413,6 +536,14 @@ public class UInputBuffer {
 
 		if (position + size > capacity) {
 		    	throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
+		}
+
+
+		if (input instanceof UShmDataInputStream) {
+			byteArray = mem.getByteArray (position, size - 1);
+			CUBRIDBinaryString stringData = new CUBRIDBinaryString (byteArray);
+			position += size;
+			return stringData;
 		}
 
 		byteArray = java.util.Arrays.copyOfRange (buffer, position, position + size - 1);

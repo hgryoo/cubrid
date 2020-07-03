@@ -1919,7 +1919,7 @@ csql_execute_statements (const CSQL_ARGUMENT * csql_arg, int type, const void *s
 		  do_abort_transaction = false;
 		}
 	      csql_Num_failures += 1;
-
+        
 	      free_attr_spec (&attr_spec);
 	      continue;
 	    }
@@ -1987,7 +1987,6 @@ csql_execute_statements (const CSQL_ARGUMENT * csql_arg, int type, const void *s
 	default:
 	  break;
 	}
-
       free_attr_spec (&attr_spec);
 
       if (result != NULL)
@@ -2057,7 +2056,8 @@ csql_execute_statements (const CSQL_ARGUMENT * csql_arg, int type, const void *s
   csql_display_msg (csql_Scratch_text);
 
   db_close_session (session);
-
+  jsp_send_destroy_request_all ();
+  
   if (csql_Query_trace == true)
     {
       csql_display_trace ();
@@ -2086,7 +2086,7 @@ error:
     {
       db_close_session (session);
     }
-
+    jsp_send_destroy_request_all ();
   free_attr_spec (&attr_spec);
 
   return 1;
