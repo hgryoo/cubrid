@@ -1295,7 +1295,7 @@ cursor_open (CURSOR_ID * cursor_id_p, QFILE_LIST_ID * list_id_p, bool updatable,
     {
       if (prm_get_integer_value (PRM_ID_JAVA_STORED_PROCEDURE_UDS) >= 2) 
       {
-        cursor_id_p->buffer_area = (char *) posix_shm_open ("test", CURSOR_BUFFER_AREA_SIZE);
+        cursor_id_p->buffer_area = (char *) posix_shm_open ("test", CURSOR_BUFFER_AREA_SIZE + sizoef (double));
       }
       else 
       {
