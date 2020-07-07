@@ -139,6 +139,9 @@ static int br_activate (T_BROKER_INFO * br_info, int master_shm_id, T_SHM_BROKER
 static int br_inactivate (T_BROKER_INFO *);
 static void as_activate (T_SHM_BROKER * shm_br, T_BROKER_INFO * br_info, T_SHM_APPL_SERVER * shm_as_p,
 			 T_APPL_SERVER_INFO * as_info_p, int as_idex, char **env, int env_num);
+static void as_activate_jcas (T_SHM_BROKER * shm_br, T_BROKER_INFO * br_info, T_SHM_APPL_SERVER * shm_as_p,
+			 T_APPL_SERVER_INFO * as_info_p, int as_idex, char **env, int env_num);
+       
 static void as_inactivate (T_APPL_SERVER_INFO * as_info_p, char *broker_name, int shard_flag);
 static int check_shard_conn (T_SHM_APPL_SERVER * shm_as_p, T_SHM_PROXY * shm_proxy_p);
 static int check_shard_as_conn (T_SHM_APPL_SERVER * shm_as_p, T_SHARD_INFO * shard_info_p);
@@ -3002,7 +3005,8 @@ br_activate (T_BROKER_INFO * br_info, int master_shm_id, T_SHM_BROKER * shm_br)
     }
   else
     {
-      for (i = 0; i < shm_appl->num_appl_server && i < APPL_SERVER_NUM_LIMIT; i++)
+      as_activate_jcas (shm_br, br_info, shm_appl, &shm_appl->as_info[0], 0, env, env_num);
+      for (i = 1; i < shm_appl->num_appl_server && i < APPL_SERVER_NUM_LIMIT; i++)
 	{
 	  as_activate (shm_br, br_info, shm_appl, &shm_appl->as_info[i], i, env, env_num);
 	}
@@ -3299,6 +3303,130 @@ as_inactivate (T_APPL_SERVER_INFO * as_info_p, char *broker_name, int shard_flag
   CON_STATUS_LOCK_DESTROY (as_info_p);
 
   return;
+}
+
+static void
+as_activate_jcas (T_SHM_BROKER * shm_br, T_BROKER_INFO * br_info, T_SHM_APPL_SERVER * shm_appl, T_APPL_SERVER_INFO * as_info,
+	     int as_index, char **env, int env_num)
+{
+  int pid;
+  char appl_server_shm_key_env_str[32];
+  char appl_name[APPL_SERVER_NAME_MAX_SIZE] = "cub_jcas";
+  int i;
+  char as_id_env_str[32];
+
+#if !defined(WINDOWS)
+  char process_name[128];
+  char port_name[BROKER_PATH_MAX];
+
+  if (br_info->shard_flag == OFF)
+    {
+      ut_get_as_port_name (port_name, br_info->name, as_index, BROKER_PATH_MAX);
+      unlink (port_name);
+    }
+#endif /* !WINDOWS */
+  /* mutex variable initialize */
+  as_info->mutex_flag[SHM_MUTEX_BROKER] = FALSE;
+  as_info->mutex_flag[SHM_MUTEX_ADMIN] = FALSE;
+  as_info->mutex_turn = SHM_MUTEX_BROKER;
+  CON_STATUS_LOCK_INIT (as_info);
+
+  as_info->num_request = 0;
+  as_info->uts_status = UTS_STATUS_START;
+  as_info->reset_flag = FALSE;
+  as_info->clt_appl_name[0] = '\0';
+  as_info->clt_req_path_info[0] = '\0';
+  as_info->cur_sql_log_mode = shm_appl->sql_log_mode;
+  as_info->cur_slow_log_mode = shm_appl->slow_log_mode;
+
+  memset (&as_info->cas_clt_ip[0], 0x0, sizeof (as_info->cas_clt_ip));
+  as_info->cas_clt_port = 0;
+  as_info->driver_version[0] = '\0';
+
+#if defined(WINDOWS)
+  as_info->pdh_pid = 0;
+  as_info->pdh_workset = 0;
+  as_info->pdh_pct_cpu = 0;
+#endif /* WINDOWS */
+
+  as_info->service_ready_flag = FALSE;
+
+#if defined(WINDOWS)
+  pid = 0;
+#else /* WINDOWS */
+  pid = fork ();
+  if (pid < 0)
+    {
+      perror ("fork");
+    }
+#endif /* !WINDOWS */
+
+  if (pid == 0)
+    {
+      if (env != NULL)
+	{
+	  for (i = 0; i < env_num; i++)
+	    putenv (env[i]);
+	}
+
+      sprintf (appl_server_shm_key_env_str, "%s=%d", APPL_SERVER_SHM_KEY_STR, br_info->appl_server_shm_id);
+      putenv (appl_server_shm_key_env_str);
+
+      snprintf (as_id_env_str, sizeof (as_id_env_str), "%s=%d", AS_ID_ENV_STR, as_index);
+      putenv (as_id_env_str);
+
+#if !defined(WINDOWS)
+
+      if (br_info->shard_flag == ON)
+	{
+	  snprintf (process_name, sizeof (process_name) - 1, "%s_%s_%d_%d_%d", shm_appl->broker_name, appl_name,
+		    as_info->proxy_id + 1, as_info->shard_id, as_info->shard_cas_id + 1);
+	}
+      else if (br_info->appl_server == APPL_SERVER_CAS_ORACLE)
+	{
+	  snprintf (process_name, sizeof (process_name) - 1, "%s", appl_name);
+	}
+      else
+	{
+	  snprintf (process_name, sizeof (process_name) - 1, "%s_%s_%d_jcas", br_info->name, appl_name, as_index + 1);
+	}
+
+      uw_shm_detach (shm_appl);
+      uw_shm_detach (shm_br);
+#endif /* !WINDOWS */
+
+#if defined(WINDOWS)
+      pid = run_child (appl_name);
+#else /* WINDOWS */
+      if (execle (appl_name, process_name, NULL, environ) < 0)
+	{
+	  perror (appl_name);
+	}
+      exit (0);
+#endif /* WINDOWS */
+    }
+
+  if (br_info->shard_flag == OFF)
+    {
+      (void) ut_is_appl_server_ready (pid, &as_info->service_ready_flag);
+    }
+
+  as_info->pid = pid;
+  as_info->last_access_time = time (NULL);
+  as_info->transaction_start_time = (time_t) 0;
+  as_info->psize_time = time (NULL);
+  as_info->psize = getsize (as_info->pid);
+
+  if (br_info->shard_flag == ON)
+    {
+      as_info->uts_status = UTS_STATUS_CON_WAIT;
+    }
+  else
+    {
+      as_info->uts_status = UTS_STATUS_IDLE;
+    }
+
+  as_info->service_flag = SERVICE_ON;
 }
 
 static int

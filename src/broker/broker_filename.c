@@ -76,6 +76,7 @@ set_cubrid_home ()
   const char *p;
 
   p = getenv_cubrid_broker ();
+  printf ("getenv_cubrid_broker : %s\n", p);
   if (p)
     {
       strcpy (cubrid_Dir, p);
@@ -87,6 +88,8 @@ set_cubrid_home ()
       assert (false);
       cubrid_Dir[0] = '\0';
     }
+
+  printf ("cubrid_Dir : %s\n", cubrid_Dir);
 }
 
 char *

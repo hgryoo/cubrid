@@ -465,12 +465,20 @@ main (int argc, char *argv[])
     return -1;
 
 #if !defined(WINDOWS)
-  program_name = argv[0];
-  if (argc == 2 && strcmp (argv[1], "--version") == 0)
+  printf ("argc: %d\n", argc);
+
+  if (argc == 0) {
+    program_name = APPL_SERVER_CAS_NAME;
+  }
+  else {
+    program_name = argv[0];
+    if (argc == 2 && strcmp (argv[1], "--version") == 0)
     {
       printf ("%s\n", makestring (BUILD_NUMBER));
       return 0;
     }
+  }
+
 #else /* !WINDOWS */
 #if defined(CAS_FOR_ORACLE)
   program_name = APPL_SERVER_CAS_ORACLE_NAME;
@@ -886,7 +894,7 @@ cas_main (void)
 
 	unset_hang_check_time ();
 	br_sock_fd = net_connect_client (srv_sock_fd);
-
+  printf ("net_connect_client (br_sock_fd): %d\n", br_sock_fd);
 	if (IS_INVALID_SOCKET (br_sock_fd))
 	  {
 	    goto finish_cas;
@@ -923,6 +931,7 @@ cas_main (void)
 	    CLOSE_SOCKET (br_sock_fd);
 	    goto finish_cas;
 	  }
+  printf ("con_status: %d\n", con_status);
 	if (net_write_int (br_sock_fd, as_info->con_status) < 0)
 	  {
 	    cas_log_write_and_end (0, false, "HANDSHAKE ERROR net_write_int(con_status)");
@@ -931,6 +940,8 @@ cas_main (void)
 	  }
 
 	client_sock_fd = recv_fd (br_sock_fd, &client_ip_addr, do_not_use_driver_info);
+  printf ("client_ip_addr: %d\n", client_ip_addr);
+  printf ("client_sock_fd: %d\n", client_sock_fd);
 	if (client_sock_fd == -1)
 	  {
 	    cas_log_write_and_end (0, false, "HANDSHAKE ERROR recv_fd %d", client_sock_fd);
@@ -2194,6 +2205,10 @@ cas_init ()
   set_cubrid_file (FID_SLOW_LOG_DIR, shm_appl->slow_log_dir);
   set_cubrid_file (FID_CUBRID_ERR_DIR, shm_appl->err_log_dir);
 
+  printf ("%s\n", shm_appl->log_dir);
+  printf ("%s\n", shm_appl->slow_log_dir);
+  printf ("%s\n", shm_appl->err_log_dir);
+
   as_pid_file_create (broker_name, as_info->as_id);
   as_db_err_log_set (broker_name, shm_proxy_id, shm_shard_id, shm_shard_cas_id, shm_as_index, cas_shard_flag);
 
@@ -2761,6 +2776,7 @@ cas_init_shm (void)
     {
       goto return_error;
     }
+  printf ("%s\n", p);
 
   parse_int (&as_shm_key, p, 10);
   SHARD_ERR ("<CAS> APPL_SERVER_SHM_KEY_STR:[%d:%x]\n", as_shm_key, as_shm_key);

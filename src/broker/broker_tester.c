@@ -240,6 +240,7 @@ init_default_conn_info (int appl_server_type)
   switch (appl_server_type)
     {
     case APPL_SERVER_CAS:
+    case APPL_SERVER_CAS_JAVA:
       user_name = DEFAULT_CUB_USER_NAME;
       user_password = DEFAULT_EMPTY_STRING;
       break;

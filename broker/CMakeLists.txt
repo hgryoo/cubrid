@@ -259,6 +259,16 @@ else(UNIX)
   target_link_libraries(cub_cas LINK_PRIVATE ws2_32 dbghelp)
 endif(UNIX)
 
+add_library (cub_cas_shared SHARED ${CUB_CAS_SOURCES})
+target_compile_definitions(cub_cas_shared PRIVATE ${BROKER_DEFS} CAS_CUBRID)
+target_include_directories(cub_cas_shared PRIVATE ${EP_INCLUDES})
+target_link_libraries(cub_cas_shared LINK_PRIVATE cubridcs)
+if(UNIX)
+  target_link_libraries(cub_cas_shared LINK_PRIVATE rt)
+else(UNIX)
+  target_link_libraries(cub_cas_shared LINK_PRIVATE ws2_32 dbghelp)
+endif(UNIX)
+
 
 set(CUB_PROXY_SOURCES
   ${BROKER_DIR}/shard_proxy.c
@@ -495,6 +505,14 @@ install(TARGETS
   LIBRARY DESTINATION ${CUBRID_LIBDIR} COMPONENT Library
   PUBLIC_HEADER DESTINATION ${CUBRID_INCLUDEDIR} COMPONENT Header
   )
+
+install(TARGETS
+  cub_cas_shared
+  RUNTIME DESTINATION ${CUBRID_BINDIR} COMPONENT Application
+  LIBRARY DESTINATION ${CUBRID_LIBDIR} COMPONENT Library
+  PUBLIC_HEADER DESTINATION ${CUBRID_INCLUDEDIR} COMPONENT Header
+)
+
 
 # TODO: compat uc script?
 

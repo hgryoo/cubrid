@@ -33,6 +33,7 @@
 #define APPL_SERVER_CAS_ORACLE_NAME     "cub_cas_oracle"
 #define APPL_SERVER_CAS_MYSQL51_NAME    "cub_cas_mysql51"
 #define APPL_SERVER_CAS_MYSQL_NAME      "cub_cas_mysql"
+#define APPL_SERVER_CAS_JAVA_NAME       "cub_cas_java"
 
 #define NAME_BROKER			"Tbroker"
 #define NAME_PROXY			"cub_proxy"

@@ -515,6 +515,7 @@ set(TOOLS_DIR                ${CMAKE_SOURCE_DIR}/src/tools)
 set(TRANSACTION_DIR          ${CMAKE_SOURCE_DIR}/src/transaction)
 set(WIN_TOOLS_DIR            ${CMAKE_SOURCE_DIR}/src/win_tools)
 set(XASL_DIR                 ${CMAKE_SOURCE_DIR}/src/xasl)
+set(JCAS_DIR                 ${CMAKE_SOURCE_DIR}/src/jcas)
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(
@@ -542,6 +543,7 @@ include_directories(
   src/tools
   src/transaction
   src/xasl
+  src/jcas
   )
 
 include(CheckFunctionExists)
@@ -798,6 +800,7 @@ if(USE_CUBRID_ENV)
   set(CUBRID_LOGDIR log)
   set(CUBRID_TMPDIR tmp)
   set(CUBRID_JDBCDIR jdbc)
+  set(CUBRID_JCASDIR jcas)
   set(CUBRID_SHLOCALESDIR locales)
   set(CUBRID_TZDIR timezones)
   set(CUBRID_DEMODIR demo)
@@ -1243,6 +1246,7 @@ if(WITH_JDBC)
   endif(NOT ANT)
   add_subdirectory(jdbc)
   add_subdirectory(java)
+  add_subdirectory(jcas)
 endif(WITH_JDBC)
 
 if(WIN32)
