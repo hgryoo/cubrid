@@ -21,7 +21,7 @@ add_custom_target(jcas ALL
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/jcas/ivy.xml ${CMAKE_BINARY_DIR}/jcas/ivy.xml
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/jcas/ivysettings.xml ${CMAKE_BINARY_DIR}/jcas/ivysettings.xml
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/jcas/jcas.sh ${CMAKE_BINARY_DIR}/jcas/jcas.sh
-  COMMAND ${ANT} dist -buildfile ${CMAKE_SOURCE_DIR}/jcas/build.xml -Dbasedir=. -Dsrc=${JCAS_DIR}
+  COMMAND ${ANT} dist -buildfile ${CMAKE_SOURCE_DIR}/jcas/build.xml -Dbasedir=. -Dsrc=${JCAS_DIR} -Dcubjava=../java
   COMMENT "Build JCAS with Ant ..."
   )
 

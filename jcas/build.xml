@@ -6,6 +6,7 @@
     <property name="src" value="src/jcas"/>
     <property name="build" value="bin"/>
     <property name="dist.lib" value="lib"/>
+    <property name="cubjava" value="../java"/>
     <property name="version" value=""/>
     <property name="jar.file" value="jcas.jar"/>
     <property name="main.class" value="org.cubrid.JCASWrapper"/>
@@ -39,6 +40,7 @@
         <manifestclasspath property="jar.classpath" jarfile="${jar.file}">
             <classpath>
                 <fileset dir="${dist.lib}" includes="*.jar"/>
+                <fileset dir="${cubjava}" includes="*.jar"/>
             </classpath>
         </manifestclasspath>
 
@@ -46,6 +48,9 @@
             <src path="src"/>
             <include name="**/*.java"/>
             <classpath refid="build.path" />
+            <classpath>
+              <fileset dir="${cubjava}" includes="*.jar"/>
+            </classpath>
         </javac>
     </target>
 

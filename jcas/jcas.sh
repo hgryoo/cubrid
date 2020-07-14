@@ -7,4 +7,8 @@ env=$3
 echo $proc_name
 echo $env
 
-java -jar -Djava.library.path=$LD_LIBRARY_PATH ../jcas/jcas.jar $proc_name $null_arg $env
+java -jar \
+-Djava.library.path=$LD_LIBRARY_PATH \
+-Djava.class.path=../java/jspserver.jar \
+-Djava.util.logging.config.file=../java/logging.properties \
+../jcas/jcas.jar $proc_name $null_arg $env
