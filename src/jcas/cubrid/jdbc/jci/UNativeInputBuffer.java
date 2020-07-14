@@ -37,6 +37,8 @@
 package cubrid.jdbc.jci;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.sql.Date;
 import java.sql.Time;
 import java.util.Calendar;
@@ -52,106 +54,52 @@ import cubrid.sql.CUBRIDTimestamp;
 import cubrid.sql.CUBRIDTimestamptz;
 import java.util.TimeZone;
 
-class UInputBuffer {
-	private UTimedDataInputStream input;
+import org.cubrid.CAS;
+import org.cubrid.CASNetBuf;
+
+class UNativeInputBuffer extends UInputBuffer {
 	private int position;
 	private int capacity;
-	private byte casinfo[];
-	private byte buffer[];
+	private static byte casinfo[];
+	//private byte buffer[];
 	private int resCode;
 	private final static int CAS_INFO_SIZE = 4;
 	private UConnection uconn;
 	
-	public UInputBuffer() {}
+	private CAS.T_NET_BUF netBuf;
 	
-	UInputBuffer(UTimedDataInputStream relatedI, UConnection con)
-			throws IOException, UJciException {
-		input = relatedI;
-		position = 0;
-		uconn = con;
-
-		int readLen = 0;
-		int totalReadLen = 0;
-		byte[] headerData = new byte[8];
-
-		while (totalReadLen < 8) {
-			readLen = input.read(headerData, totalReadLen, 8 - totalReadLen, 0);
-			if (readLen == -1) {
-				throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
-			}
-			totalReadLen = totalReadLen + readLen;
-		}
-
-		capacity = UJCIUtil.bytes2int(headerData, 0);
-		casinfo = new byte[CAS_INFO_SIZE];
-		System.arraycopy(headerData, 4, casinfo, 0, 4);
-		con.setCASInfo(casinfo);
-
-		if (capacity <= 0) {
-			resCode = 0;
-			capacity = 0;
-			return;
-		}
-
-		buffer = new byte[capacity];
-		readData();
-
-		resCode = readInt();
-
-		if (resCode < 0) {
-			int eCode = readInt();
-			String msg;
-			
-			if (con.isRenewedSessionId()) {
-				byte[] newSessionId = new byte[20];
-				
-				msg = readString(remainedCapacity() - newSessionId.length, 
-						 UJCIManager.sysCharsetName);
-				readBytes(newSessionId);
-				con.setNewSessionId (newSessionId);
-			} else {
-				msg = readString(remainedCapacity(), 
-						 UJCIManager.sysCharsetName);
-			}
-			
-			eCode = convertErrorByVersion(resCode, eCode);
-			throw uconn.createJciException(UErrorCode.ER_DBMS, resCode, eCode, msg);
-		}
+	static {
+		casinfo = new byte[4];
+		casinfo[0] = 1; // CAS_INFO_STATUS
+		casinfo[1] = -1; // CAS_INFO_RESERVED_1
+		casinfo[2] = -1; // CAS_INFO_RESERVED_2
+		casinfo[3] = -1; // CAS_INFO_ADDITIONAL_FLAG
 	}
 
-	UInputBuffer(UTimedDataInputStream relatedI, UConnection con, int timeout)
+	public UNativeInputBuffer(CAS.T_NET_BUF netBuf, UConnection con)
 			throws IOException, UJciException {
-		input = relatedI;
 		position = 0;
 		uconn = con;
-
-		int readLen = 0;
-		int totalReadLen = 0;
-		byte[] headerData = new byte[8];
-
-		while (totalReadLen < 8) {
-			readLen = input.read(headerData, totalReadLen, 8 - totalReadLen, timeout);
-			if (readLen == -1) {
-				throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
-			}
-			totalReadLen = totalReadLen + readLen;
-		}
-
-		capacity = UJCIUtil.bytes2int(headerData, 0);
-		casinfo = new byte[CAS_INFO_SIZE];
-		System.arraycopy(headerData, 4, casinfo, 0, 4);
-		con.setCASInfo(casinfo);
+		
+		this.netBuf = netBuf;
+		
+		capacity = netBuf.data_size;
+		
+		position = 8;
+		//buffer = netBuf.data.getByteArray(8, capacity);
+		resCode = readInt();
 
 		if (capacity <= 0) {
 			resCode = 0;
 			capacity = 0;
 			return;
 		}
-
-		buffer = new byte[capacity];
-		readData();
-
-		resCode = readInt();
+		
+		capacity += 8;
+		
+		System.out.println ("data size = " + capacity);
+		System.out.println ("alloc size = " + netBuf.alloc_size);
+		System.out.println ("res code = " + resCode);
 
 		if (resCode < 0) {
 			int eCode = readInt();
@@ -199,8 +147,10 @@ class UInputBuffer {
 		if (position >= capacity) {
 			throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
 		}
+		
+		return netBuf.data.getByte(position++);
 
-		return buffer[position++];
+		//return buffer[position++];
 	}
 
 	void readBytes(byte value[], int offset, int len) throws UJciException {
@@ -210,8 +160,10 @@ class UInputBuffer {
 		if (position + len > capacity) {
 		    throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
 		}
-
-		System.arraycopy(buffer, position, value, offset, len);
+		
+		byte[] bytes = netBuf.data.getByteArray(position, len);
+		
+		System.arraycopy(bytes, 0, value, offset, len);
 		position += len;
 	}
 
@@ -238,7 +190,14 @@ class UInputBuffer {
 			throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
 		}
 
-		int data = UJCIUtil.bytes2int(buffer, position);
+		//int data = UJCIUtil.bytes2int(buffer, position);
+		//int data = netBuf.data.getByteArray(position, Integer.BYTES);
+		
+		//int data = UJCIUtil.bytes2int(buffer, position);
+		
+		byte[] barr = netBuf.data.getByteArray(position, 4);
+		int data = UJCIUtil.bytes2int(barr, 0);
+		//int data = ByteBuffer.wrap(barr).getInt();
 		position += 4;
 
 		return data;
@@ -250,10 +209,13 @@ class UInputBuffer {
 		if (position + 8 > capacity) {
 		    	throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
 		}
-
+		
+		byte[] barr = netBuf.data.getByteArray(position, 8);
+		
+		
 		for (int i = 0; i < 8; i++) {
 			data <<= 8;
-			data |= (buffer[position++] & 0xff);
+			data |= (barr[i++] & 0xff);
 		}
 
 		return data;
@@ -263,8 +225,10 @@ class UInputBuffer {
 		if (position + 2 > capacity) {
 		    	throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
 		}
-
-		short data = UJCIUtil.bytes2short(buffer, position);
+		
+		byte[] barr = netBuf.data.getByteArray(position, 2);
+		
+		short data = UJCIUtil.bytes2short(barr, 0);
 		position += 2;
 
 		return data;
@@ -277,19 +241,22 @@ class UInputBuffer {
 			return null;
 
 		if (position + size > capacity) {
+				System.out.println ("position: " + position);
+				System.out.println ("size: " + size);
+				System.out.println ("capacity: " + capacity);
 		    	throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
 		}
-
+		
+		byte[] b = netBuf.data.getByteArray(position, size - 1);
 		if (charsetName != null) {
 			try {
-				stringData = new String(buffer, position, size - 1, charsetName);
+				stringData = new String(b, charsetName);
 			} catch (java.io.UnsupportedEncodingException e) {
-				stringData = new String(buffer, position, size - 1);
+				stringData = new String(b);
 			}
 		} else {
-			stringData = new String(buffer, position, size - 1);
+			stringData = new String(b);
 		}
-
 
 		position += size;
 
@@ -305,8 +272,8 @@ class UInputBuffer {
 		if (position + size > capacity) {
 		    	throw uconn.createJciException(UErrorCode.ER_ILLEGAL_DATA_SIZE);
 		}
-
-		byteArray = java.util.Arrays.copyOfRange (buffer, position, position + size - 1);
+		byteArray = netBuf.data.getByteArray(position, size - 1);
+		//byteArray = java.util.Arrays.copyOfRange (buffer, position, position + size - 1);
 		
 		CUBRIDBinaryString stringData = new CUBRIDBinaryString (byteArray);
 
@@ -405,7 +372,8 @@ class UInputBuffer {
 		ts_size = position - tmp_position;
 				
 		if (ts_size > 0){
-			timezone = new String (buffer, position, size - ts_size - 1);
+			byte[] byteArray = netBuf.data.getByteArray(position, size - ts_size - 1);
+			timezone = new String (byteArray);
 			position += size - ts_size;
 		}
 		else{
@@ -472,7 +440,8 @@ class UInputBuffer {
 		ts_size = position - tmp_position;
 				
 		if (ts_size > 0){
-			timezone = new String (buffer, position, size - ts_size - 1);
+			byte[] byteArray = netBuf.data.getByteArray(position, size - ts_size - 1);
+			timezone = new String (byteArray);
 			position += size - ts_size;
 		}
 		else{
@@ -527,17 +496,5 @@ class UInputBuffer {
 		byte[] bid = readBytes(bid_size);
 
 		return (new CUBRIDXid(formatId, gid, bid));
-	}
-
-	private void readData() throws IOException, UJciException {
-		int realRead = 0, tempRead = 0;
-		while (realRead < capacity) {
-			tempRead = input.read(buffer, realRead, capacity - realRead);
-			if (tempRead < 0) {
-				capacity = realRead;
-				break;
-			}
-			realRead += tempRead;
-		}
 	}
 }

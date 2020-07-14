@@ -37,10 +37,14 @@
 
 package cubrid.jdbc.jci;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.net.Socket;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Hashtable;
+
+import cubrid.jdbc.driver.CUBRIDConnection;
 
 abstract public class UJCIManager {
 	// static Vector connectionList;
@@ -111,7 +115,30 @@ abstract public class UJCIManager {
 		Thread curThread = Thread.currentThread();
 		Socket s = (Socket) UJCIUtil.invoke("com.cubrid.jsp.ExecuteThread",
 				"getSocket", null, curThread, null);
-		return new UServerSideConnection(s, curThread);
+		
+		UConnection con = null;
+		try {
+			String clsName = "cubrid.jdbc.jci.UServerSideConnection";		
+			Constructor<?> constructor = UJCIUtil.getConstructor(clsName, new Class[] {Socket.class, Thread.class});
+			con = (UConnection) constructor.newInstance(s, curThread);
+		} catch (InstantiationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IllegalAccessException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IllegalArgumentException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (InvocationTargetException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (SecurityException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
+		return con;
 	}
 
 	/*

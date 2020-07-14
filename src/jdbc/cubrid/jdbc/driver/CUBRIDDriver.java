@@ -34,6 +34,8 @@ package cubrid.jdbc.driver;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.PrintStream;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.sql.Connection;
 import java.sql.Driver;
 import java.sql.DriverManager;
@@ -50,8 +52,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import cubrid.jdbc.jci.BrokerHealthCheck;
-import cubrid.jdbc.jci.UConnection;
 import cubrid.jdbc.jci.UClientSideConnection;
+import cubrid.jdbc.jci.UConnection;
 import cubrid.jdbc.jci.UJCIManager;
 import cubrid.jdbc.jci.UJCIUtil;
 
@@ -236,15 +238,35 @@ public class CUBRIDDriver implements Driver {
 			}
 
 			UConnection u_con = UJCIManager.connectServerSide();
-			CUBRIDConnection con = new CUBRIDConnectionDefault(u_con,
-					"jdbc:default:connection:", "default");
-			UJCIUtil.invoke("com.cubrid.jsp.ExecuteThread",
-					"setJdbcConnection", new Class[] { Connection.class }, t,
-					new Object[] { con });
-			UJCIUtil.invoke(
-					"com.cubrid.jsp.ExecuteThread", "sendCall", null,
-					t, null);
-			return con;
+			CUBRIDConnection con;
+			try {
+				String clsName = "cubrid.jdbc.driver.CUBRIDConnectionDefault";		
+				Constructor<?> constructor = UJCIUtil.getConstructor(clsName, new Class[] {UConnection.class, String.class, String.class});
+				con = (CUBRIDConnection) constructor.newInstance(u_con, "jdbc:default:connection:", "default");
+				UJCIUtil.invoke("com.cubrid.jsp.ExecuteThread",
+						"setJdbcConnection", new Class[] { Connection.class }, t,
+						new Object[] { con });
+				UJCIUtil.invoke(
+						"com.cubrid.jsp.ExecuteThread", "sendCall", null,
+						t, null);
+				return con;	
+			} catch (InstantiationException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} catch (IllegalAccessException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} catch (IllegalArgumentException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} catch (InvocationTargetException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} catch (SecurityException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+			return null;
 		} else {
 			return null;
 		}

@@ -56,6 +56,7 @@ public class Server {
 		spPath = path;
 		rootPath = rPath;
 
+		System.out.println ("Server initilaized");
 		try {
 		  int port_number = Integer.parseInt(port);
 		  serverSocket = new ServerSocket(port_number);
@@ -70,6 +71,7 @@ public class Server {
 
 		socketListener = new Thread(new Runnable() {
 			public void run() {
+				System.out.println ("Socket Listener initialized");
 				Socket client = null;
 				while (true) {
 					try {
@@ -85,7 +87,7 @@ public class Server {
 		socketListener.start();
 	}
 
-	private int getServerPort() {
+	public int getServerPort() {
 		return serverSocket.getLocalPort();
 	}
 

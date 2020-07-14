@@ -129,8 +129,8 @@ public class UStatement {
 	public int result_cache_lifetime;
 	private boolean result_cacheable = false;
 	private UStmtCache stmt_cache;
-
-	UStatement(UConnection relatedC, UInputBuffer inBuffer,
+	
+	public UStatement(UConnection relatedC, UInputBuffer inBuffer,
 	        boolean assign_only, String sql, byte _prepare_flag)
 	        throws UJciException {
 		errorHandler = new UError(relatedC);
@@ -160,6 +160,9 @@ public class UStatement {
 		relatedConnection = relatedC;
 
 		serverHandler = inBuffer.getResCode();
+		
+		System.out.println ("serverHandler :" + serverHandler);
+		
 		result_cache_lifetime = inBuffer.readInt();
 		if (result_cache_lifetime >= 0 && UJCIManager.result_cache_enable)
 			result_cacheable = true;
@@ -168,6 +171,9 @@ public class UStatement {
 		parameterNumber = inBuffer.readInt();
 		isUpdatable = (inBuffer.readByte() == 1) ? true : false;
 		columnNumber = inBuffer.readInt();
+		
+		System.out.println ("columnNumber :" + columnNumber);
+		
 		readColumnInfo(inBuffer);
 
 		if (clear_bind_info) {
@@ -734,7 +740,7 @@ public class UStatement {
 		this.maxFetchSize = maxRow;
 	}
 
-	private void writeExecuteRequest(int maxField, boolean isScrollable,
+	protected void writeExecuteRequest(int maxField, boolean isScrollable,
 	        int queryTimeout)
 	        throws IOException, UJciException {
 		byte is_auto_commit = (byte) 0, is_forward_only = (byte) 0;

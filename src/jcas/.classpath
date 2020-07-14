@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
+	<classpathentry kind="src" path=""/>
+	<classpathentry kind="lib" path="/home/hgryoo/javasp_cubrid/build_x86_64_debug/jcas/lib/jna-5.5.0.jar"/>
+	<classpathentry kind="lib" path="/home/hgryoo/javasp_cubrid/build_x86_64_debug/jcas/lib/jna-platform-5.5.0.jar"/>
+	<classpathentry kind="lib" path="/home/hgryoo/javasp_cubrid/build_x86_64_debug/java/jspserver.jar"/>
+	<classpathentry kind="output" path=""/>
+</classpath>
