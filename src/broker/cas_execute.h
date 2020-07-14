@@ -37,6 +37,11 @@
 #include "cas_db_inc.h"
 #endif /* CAS_FOR_ORACLE */
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 #define CAS_TYPE_SET(TYPE)		((TYPE) | CCI_CODE_SET)
 #define CAS_TYPE_MULTISET(TYPE)		((TYPE) | CCI_CODE_MULTISET)
 #define CAS_TYPE_SEQUENCE(TYPE)		((TYPE) | CCI_CODE_SEQUENCE)
@@ -223,4 +228,9 @@ extern int ux_lob_read (DB_VALUE * lob_dbval, int64_t offset, int size, T_NET_BU
 #endif /* !CAS_FOR_ORACLE && !CAS_FOR_MYSQL */
 
 extern int get_tuple_count (T_SRV_HANDLE * srv_handle);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* _CAS_EXECUTE_H_ */
