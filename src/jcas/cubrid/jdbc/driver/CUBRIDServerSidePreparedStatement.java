@@ -31,8 +31,11 @@
 
 package cubrid.jdbc.driver;
 
+import java.sql.ResultSet;
 import java.sql.SQLException;
 
+import cubrid.jdbc.jci.CUBRIDCommandType;
+import cubrid.jdbc.jci.UErrorCode;
 import cubrid.jdbc.jci.UShardInfo;
 import cubrid.jdbc.jci.UStatement;
 
@@ -67,6 +70,108 @@ public class CUBRIDServerSidePreparedStatement extends CUBRIDPreparedStatement {
 				}
 			}
 		} catch (NullPointerException e) {
+		}
+	}
+	
+	@Override
+	public ResultSet executeQuery() throws SQLException {
+		try {
+			synchronized (con) {
+				synchronized (this) {
+				  	long begin = 0;
+
+				   	u_con.setBeginTime();
+					if (u_con.getLogSlowQuery()) {
+				   		begin = System.currentTimeMillis();
+				  	}
+
+					checkIsOpen();
+					if (!completed) {
+						complete();
+					}
+					checkIsOpen();
+					if ((!first_result_type)
+							&& (u_stmt.getCommandType() != CUBRIDCommandType.CUBRID_STMT_CALL_SP)) {
+						throw con.createCUBRIDException(CUBRIDJDBCErrorCode.invalid_query_type_for_executeQuery, null);
+					}
+					executeCore(false);
+					getMoreResults();
+					if (current_result_set != null)
+						((CUBRIDServerSideResultSet) current_result_set).completeOnClose = true;
+					if (u_con.getLogSlowQuery()) {
+					    	long end = System.currentTimeMillis();
+						u_con.logSlowQuery(begin, end, u_stmt.getQuery(), u_stmt.getBindParameter());
+					}
+					return current_result_set;
+				}
+			}
+		} catch (NullPointerException e) {
+		    	throw new CUBRIDException(CUBRIDJDBCErrorCode.prepared_statement_closed);
+		}
+	}
+	
+	public boolean getMoreResults() throws SQLException {
+		try {
+			checkIsOpen();
+
+			synchronized (con) {
+				synchronized (this) {
+					checkIsOpen();
+
+					if (current_result_set != null) {
+						current_result_set.close();
+						current_result_set = null;
+					}
+
+					if (completed) {
+						update_count = -1;
+						return false;
+					}
+
+					if (result_index == result_info.length) {
+						if (u_stmt.getCommandType() != CUBRIDCommandType.CUBRID_STMT_CALL_SP)
+							complete();
+						update_count = -1;
+						return false;
+					}
+
+					if (result_index != 0) {
+						u_stmt.nextResult();
+						error = u_stmt.getRecentError();
+						switch (error.getErrorCode()) {
+						case UErrorCode.ER_NO_ERROR:
+							break;
+						default:
+							throw con.createCUBRIDException(error);
+						}
+					}
+
+					boolean result_type = result_info[result_index]
+							.isResultSet();
+
+					if (result_type) {
+						int rs_type = type;
+						int rs_concurrency = concurrency;
+						if (type == ResultSet.TYPE_SCROLL_SENSITIVE
+								&& u_stmt.isOIDIncluded() == false)
+							rs_type = ResultSet.TYPE_SCROLL_INSENSITIVE;
+						if (concurrency == ResultSet.CONCUR_UPDATABLE
+								&& u_stmt.isOIDIncluded() == false)
+							rs_concurrency = ResultSet.CONCUR_READ_ONLY;
+						current_result_set = new CUBRIDServerSideResultSet(con, this,
+								rs_type, rs_concurrency, is_holdable);
+						update_count = -1;
+					} else {
+						update_count = result_info[result_index]
+								.getResultCount();
+					}
+
+					result_index++;
+					return result_type;
+				}
+			}
+		} catch (NullPointerException e) {
+			throw con.createCUBRIDException(CUBRIDJDBCErrorCode.statement_closed, e);
 		}
 	}
 }

@@ -2,7 +2,6 @@ package org.cubrid;
 
 import java.io.File;
 import java.net.URL;
-import java.net.URLClassLoader;
 
 import com.cubrid.jsp.Server;
 
@@ -20,7 +19,6 @@ public class JCASWrapper {
 			System.out.println (arguments[i]);
 		}
 		
-		/*
 		Thread casThread = new Thread () {
 			@Override
 			public void run() {
@@ -28,7 +26,6 @@ public class JCASWrapper {
 			}
 		};
 		casThread.start();
-		*/
 		
 		Thread javspThread = new Thread () {
 			@Override
@@ -57,12 +54,6 @@ public class JCASWrapper {
 							//.newInstance("demodb", demoPath, "", envvar, "9000");
 					//Server server = cls.newInstance();new Server ("", "", "", "", "9000");
 					System.out.println ("Java SP server port: " + server.getServerPort());
-					
-					while (!Thread.interrupted())
-					{
-						sleep (10000);
-						System.out.println ("Java SP server port: " + server.getServerPort());
-					}
 				} catch (Exception e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
@@ -72,7 +63,7 @@ public class JCASWrapper {
 		};
 		javspThread.start();
 		
-		cas.main(arguments.length, arguments);
+		//cas.main(arguments.length, arguments);
 		
 		javspThread.join();
 		System.out.println ("JCAS terminated");

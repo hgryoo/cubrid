@@ -67,7 +67,7 @@ import com.cubrid.jsp.value.TimestampValue;
 import com.cubrid.jsp.value.Value;
 
 import cubrid.jdbc.driver.CUBRIDConnectionDefault;
-import cubrid.jdbc.driver.CUBRIDResultSet;
+import cubrid.jdbc.driver.CUBRIDServerSideResultSet;
 import cubrid.jdbc.jci.UConnection;
 import cubrid.jdbc.jci.UJCIUtil;
 import cubrid.sql.CUBRIDOID;
@@ -667,7 +667,7 @@ public class ExecuteThread extends Thread {
 			dos.writeInt(UJCIUtil.bytes2short(oid, 6));
 		} else if (result instanceof ResultSet) {
 			dos.writeInt(DB_RESULTSET);
-			dos.writeInt(((CUBRIDResultSet) result).getServerHandle());
+			dos.writeInt(((CUBRIDServerSideResultSet) result).getServerHandle());
 		} else if (result instanceof int[]) {
 			int length = ((int[]) result).length;
 			Integer[] array = new Integer[length];

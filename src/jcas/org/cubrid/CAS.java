@@ -44,14 +44,12 @@ public interface CAS extends Library {
 	
 	public int main(int arc, String[] argv);
 	
-	
 	/* environment */
 	public String envvar_root();
 	public boolean prm_get_bool_value (int prm_id);
 	
 	
 	public int ux_prepare (String sql_stmt, int flag, byte auto_commit_mode, CAS.T_NET_BUF net_buf, CAS.T_REQ_INFO.ByReference req_info, int query_seq_num);
-	
 	public int er_init (Pointer msglog_filename, int exit_ask);
 	
 	public static class T_NET_BUF extends Structure {
@@ -65,7 +63,7 @@ public interface CAS extends Library {
 		public int client_version;
 		
 		public T_NET_BUF () {
-			data = new Memory(80 * 1024);
+			data = null;
 			alloc_size = 0;
 			data_size = 0;
 			err_code = 0;
@@ -73,6 +71,18 @@ public interface CAS extends Library {
 			post_send_file = null;
 			client_version = 0;
 		}
+		
+		/*
+		public T_NET_BUF (int size) {
+			data = new Memory(size);
+			alloc_size = size;
+			data_size = 0;
+			err_code = 0;
+			post_file_size = 0;
+			post_send_file = null;
+			client_version = 0;
+		}
+		*/
 
 		@Override
 		protected List getFieldOrder() {
@@ -102,5 +112,11 @@ public interface CAS extends Library {
 		}
 
 	}
+	
+	/* fr protocol */
+	public int fr_get_cursor_count (int srv_h_id);
+	public int fr_get_cursor_pos (int srv_h_id);
+	public int fr_move_cursor (int srv_h_id, int cursor_pos, int origin);
+	public int fr_peek_cursor (int srv_h_id, char fetch_flag, T_NET_BUF.ByReference net_buf);
 
 }

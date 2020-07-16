@@ -37,52 +37,38 @@
 package cubrid.jdbc.jci;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.sql.Date;
 import java.sql.Time;
 import java.util.Calendar;
+import java.util.TimeZone;
 
+import org.cubrid.CAS;
+
+import cubrid.jdbc.driver.CUBRIDBinaryString;
 import cubrid.jdbc.driver.CUBRIDBlob;
 import cubrid.jdbc.driver.CUBRIDClob;
 import cubrid.jdbc.driver.CUBRIDConnection;
 import cubrid.jdbc.driver.CUBRIDXid;
-import cubrid.jdbc.driver.CUBRIDException;
-import cubrid.jdbc.driver.CUBRIDBinaryString;
 import cubrid.sql.CUBRIDOID;
 import cubrid.sql.CUBRIDTimestamp;
 import cubrid.sql.CUBRIDTimestamptz;
-import java.util.TimeZone;
 
-import org.cubrid.CAS;
-import org.cubrid.CASNetBuf;
+public class UNativeInputBuffer extends UInputBuffer {
+	private CAS.T_NET_BUF.ByReference netBuf;
 
-class UNativeInputBuffer extends UInputBuffer {
-	private int position;
-	private int capacity;
-	private static byte casinfo[];
-	//private byte buffer[];
-	private int resCode;
-	private final static int CAS_INFO_SIZE = 4;
-	private UConnection uconn;
-	
-	private CAS.T_NET_BUF netBuf;
-	
-	static {
+	public UNativeInputBuffer(CAS.T_NET_BUF.ByReference netBuf, UConnection con)
+			throws IOException, UJciException {
+		position = 8;
+		capacity = netBuf.data_size + 8;
+		uconn = con;
+		this.netBuf = netBuf;
+		
 		casinfo = new byte[4];
 		casinfo[0] = 1; // CAS_INFO_STATUS
 		casinfo[1] = -1; // CAS_INFO_RESERVED_1
 		casinfo[2] = -1; // CAS_INFO_RESERVED_2
 		casinfo[3] = -1; // CAS_INFO_ADDITIONAL_FLAG
-	}
-
-	public UNativeInputBuffer(CAS.T_NET_BUF netBuf, UConnection con)
-			throws IOException, UJciException {
-		position = 0;
-		uconn = con;
-		
-		this.netBuf = netBuf;
-		
+		/*
 		capacity = netBuf.data_size;
 		
 		position = 8;
@@ -120,6 +106,7 @@ class UNativeInputBuffer extends UInputBuffer {
 			eCode = convertErrorByVersion(resCode, eCode);
 			throw uconn.createJciException(UErrorCode.ER_DBMS, resCode, eCode, msg);
 		}
+		*/
 	}
 
 	int convertErrorByVersion(int indicator, int error) {
@@ -196,13 +183,21 @@ class UNativeInputBuffer extends UInputBuffer {
 		//int data = UJCIUtil.bytes2int(buffer, position);
 		
 		byte[] barr = netBuf.data.getByteArray(position, 4);
+		
 		int data = UJCIUtil.bytes2int(barr, 0);
 		//int data = ByteBuffer.wrap(barr).getInt();
 		position += 4;
 
 		return data;
 	}
-
+	
+	String byteArrayToHex(byte[] a) {
+	    StringBuilder sb = new StringBuilder();
+	    for(final byte b: a)
+	        sb.append(String.format("%02x ", b&0xff));
+	    return sb.toString();
+	}
+	
 	long readLong() throws UJciException {
 		long data = 0;
 

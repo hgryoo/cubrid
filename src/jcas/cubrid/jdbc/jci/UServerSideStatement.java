@@ -33,7 +33,16 @@
  */
 package cubrid.jdbc.jci;
 
-import org.cubrid.CASNetBuf;
+import java.io.IOException;
+import java.sql.Date;
+import java.sql.Time;
+import java.sql.Timestamp;
+import java.util.HashMap;
+
+import org.cubrid.CAS;
+import org.cubrid.JCASWrapper;
+
+import cubrid.jdbc.driver.CUBRIDOutResultSet;
 
 /**
  * @author hgryoo
@@ -41,10 +50,182 @@ import org.cubrid.CASNetBuf;
  */
 public class UServerSideStatement extends UStatement {
 
-	UServerSideStatement(UConnection arg0, UInputBuffer arg1, boolean arg2, String arg3, byte arg4)
+	public UServerSideStatement(UConnection relatedC, UInputBuffer inBuffer,
+    boolean assign_only, String sql, byte _prepare_flag)
 			throws UJciException {
-		super(arg0, arg1, arg2, arg3, arg4);
+		super(relatedC, inBuffer, assign_only, sql, _prepare_flag);
 		// TODO Auto-generated constructor stub
+		//init(relatedC, inBuffer, sql, _prepare_flag, true);
+	}
+	
+	public UColumnInfo[] getColumnInfo() {
+		return columnInfo;
+	}
+
+	public HashMap<String, Integer> getColumnNameToIndexMap() {
+		return colNameToIndex;
+	}
+	
+	public UServerSideConnection getConnection() {
+		return (UServerSideConnection) relatedConnection;
+	}
+	
+	synchronized public void fetch() {
+		if (isClosed == true) {
+			return;
+		}
+		
+		/* need not to fetch */
+		if (statementType == GET_BY_OID)
+			return;
+
+		UNativeInputBuffer inBuffer;
+		UServerSideConnection uconn = getConnection();
+		try {
+			synchronized (uconn) {
+				CAS.T_NET_BUF.ByReference netBuf = getConnection().getBuffer();
+				byte fetch_flag = (isSensitive == true) ? (byte) 1 : (byte) 0;
+				int result = JCASWrapper.cas.fr_peek_cursor(getServerHandle(), (char) fetch_flag, netBuf);
+				inBuffer = new UNativeInputBuffer (netBuf, uconn);
+			}
+			
+			fetchData(inBuffer, UFunctionCode.FETCH);
+			realFetched = true;
+		}
+		catch (UJciException e) {
+			uconn.logException(e);
+			e.toUError(errorHandler);
+		} catch (IOException e) {
+			uconn.logException(e);
+			errorHandler.setErrorCode(UErrorCode.ER_COMMUNICATION);
+		}
+	}
+	
+	@Override
+	protected void fetchResultData(UInputBuffer inBuffer) throws UJciException {
+		//executeResult = inBuffer.getResCode();
+		executeResult = JCASWrapper.cas.fr_get_cursor_count(getServerHandle());
+		totalTupleNumber = executeResult;
+		batchParameter = null;
+		/*
+		executeResult = JCASWrapper.cas.fr_get_cursor_count(getServerHandle());
+		
+		//if (maxFetchSize > 0) {
+		//	executeResult = Math.min(maxFetchSize, executeResult);
+		//}
+		totalTupleNumber = executeResult;
+		batchParameter = null;
+
+		if (commandTypeIs == CUBRIDCommandType.CUBRID_STMT_SELECT
+		        && totalTupleNumber > 0) {
+			//inBuffer.readInt(); // fetch_rescode
+			JCASWrapper.cas.fr_move_cursor(getServerHandle(), 1, UStatement.CURSOR_SET);
+			
+			CAS.T_NET_BUF.ByReference netBuf = getConnection().getBuffer();
+			UNativeInputBuffer buf;
+			try {
+				byte fetch_flag = (isSensitive == true) ? (byte) 1 : (byte) 0;
+				int result = JCASWrapper.cas.fr_peek_cursor(getServerHandle(), (char) fetch_flag, netBuf);
+				buf = new UNativeInputBuffer (netBuf, getConnection());
+				fetchData(buf, UFunctionCode.FETCH);
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+		*/
+		
+	}
+	
+	private void fetchData(UInputBuffer inBuffer, UFunctionCode functionCode)
+	        throws UJciException {
+		if (tuples == null) {
+			tuples = new UResultTuple[1];
+		}
+		
+		readATuple(0, inBuffer);
+
+		if (functionCode == UFunctionCode.GET_GENERATED_KEYS) {
+			isFetchCompleted = true;
+		}
+	}
+	
+	@Override
+	synchronized public Object getObject(int index) {
+		Object obj = beforeGetXXX(index);
+		if (obj == null)
+			return null;
+
+		Object retValue;
+		try {
+			if ((commandTypeIs != CUBRIDCommandType.CUBRID_STMT_CALL_SP)
+			        && (columnInfo[index].getColumnType() == UUType.U_TYPE_BIT)
+			        && (columnInfo[index].getColumnPrecision() == 8)) {
+				retValue = new Boolean(UGetTypeConvertedValue.getBoolean(obj));
+			} else if (obj instanceof CUBRIDArray)
+				retValue = ((CUBRIDArray) obj).getArrayClone();
+			else if (obj instanceof byte[])
+				retValue = ((byte[]) obj).clone();
+			else if (obj instanceof Date)
+				retValue = ((Date) obj).clone();
+			else if (obj instanceof Time)
+				retValue = ((Time) obj).clone();
+			else if (obj instanceof Timestamp)
+			{
+				if (relatedConnection.getResultWithCUBRIDTypes().equals(
+					UConnection.RESULT_WITH_CUBRID_TYPES_NO))
+						retValue = new Timestamp(((Timestamp) obj).getTime());
+				else
+						retValue = ((Timestamp) obj).clone();
+			}
+			else if (obj instanceof CUBRIDOutResultSet) {
+				try {
+					((CUBRIDOutResultSet) obj).createInstance();
+					retValue = obj;
+				} catch (Exception e) {
+					retValue = null;
+				}
+			} else
+				retValue = obj;
+		} catch (UJciException e) {
+			e.toUError(errorHandler);
+			return null;
+		}
+
+		return retValue;
+	}
+	
+	@Override
+	protected Object beforeGetXXX(int index) {
+		if (isClosed == true) {
+			return null;
+		}
+		
+		if (index < 0 || index >= columnNumber) {
+			errorHandler.setErrorCode(UErrorCode.ER_COLUMN_INDEX);
+			return null;
+		}
+		
+		//if (fetchedTupleNumber <= 0) {
+		//	errorHandler.setErrorCode(UErrorCode.ER_NO_MORE_DATA);
+		//	return null;
+		//}
+
+		/*
+		 * if (tuples == null || tuples[cursorPosition - currentFirstCursor] ==
+		 * null || tuples[cursorPosition-currentFirstCursor].wasNull(index) ==
+		 * true)
+		 */
+		Object obj;
+		if ((tuples == null)
+		        || (tuples[0] == null)
+		        || ((obj = tuples[0]
+		                .getAttribute(index)) == null)) {
+			errorHandler.setErrorCode(UErrorCode.ER_WAS_NULL);
+			return null;
+		}
+
+		return obj;
 	}
 
 }

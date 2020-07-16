@@ -55,7 +55,7 @@ public class UServerSideConnection extends UConnection {
 	private Thread curThread;
 	private UStatementHandlerCache stmtHandlerCache;
 	
-	CAS.T_NET_BUF net_buf_ref = new CAS.T_NET_BUF();
+	CAS.T_NET_BUF.ByReference net_buf_ref = new CAS.T_NET_BUF.ByReference();
 	CAS.T_REQ_INFO.ByReference req_info = new CAS.T_REQ_INFO.ByReference();
 	
 	public UServerSideConnection(Socket socket, Thread curThread) throws CUBRIDException {
@@ -86,6 +86,10 @@ public class UServerSideConnection extends UConnection {
 			je.toUError(errorHandler);
 			throw new CUBRIDException(errorHandler, e);
 		}
+	}
+	
+	public CAS.T_NET_BUF.ByReference getBuffer () {
+		return net_buf_ref;
 	}
 	
 	private void initBrokerInfo () {
@@ -211,9 +215,9 @@ public class UServerSideConnection extends UConnection {
 		
 		/* if entry not found, create new UStatement */
 		if (preparedStmt == null) {
-			/*
 			byte auto_commit = getAutoCommit() ? (byte) 1 : (byte) 0;
 			
+			/*
 			try {
 			JCASWrapper.cas.ux_prepare(sql, (int) flag, auto_commit, net_buf_ref, req_info, 0);
 			} catch (Exception e) {
@@ -233,8 +237,6 @@ public class UServerSideConnection extends UConnection {
 			}
 
 			pooled_ustmts.add(stmt);
-
-			entries.add(new UStatementHandlerCacheEntry (stmt));
 			*/
 			
 			errorHandler.clear();
@@ -250,22 +252,23 @@ public class UServerSideConnection extends UConnection {
 			}
 
 			UInputBuffer inBuffer = send_recv_msg();
-			UStatement stmt;
+			UServerSideStatement stmt;
 			if (recompile) {
 				stmt = new UServerSideStatement(this, inBuffer, true, sql, flag);
 			} else {
 				stmt = new UServerSideStatement(this, inBuffer, false, sql, flag);
 			}
-
+			
 			if (stmt.getRecentError().getErrorCode() != UErrorCode.ER_NO_ERROR) {
 				errorHandler.copyValue(stmt.getRecentError());
 				return null;
 			}
 
 			pooled_ustmts.add(stmt);
-			entries.add(new UStatementHandlerCacheEntry (stmt));
 			
 			//UStatement stmt = super.prepareInternal(sql, flag, recompile);
+			entries.add(new UStatementHandlerCacheEntry (stmt));
+			
 			preparedStmt = stmt;
 		}
 		
