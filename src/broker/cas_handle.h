@@ -35,6 +35,11 @@
 #include "cas_db_inc.h"
 #endif /* !CAS_FOR_ORACLE && !CAS_FOR_MYSQL */
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 #define SRV_HANDLE_QUERY_SEQ_NUM(SRV_HANDLE)    \
         ((SRV_HANDLE) ? (SRV_HANDLE)->query_seq_num : 0)
 
@@ -217,4 +222,9 @@ extern void hm_srv_handle_set_pooled (void);
 
 extern int hm_srv_handle_get_current_count (void);
 extern void hm_srv_handle_unset_prepare_flag_all (void);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* _CAS_HANDLE_H_ */

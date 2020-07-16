@@ -665,7 +665,10 @@ fn_execute_internal (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf,
       if (srv_handle->stmt_type == CUBRID_STMT_SELECT)
 	{
 #endif /* CAS_FOR_MYSQL */
+if (req_info->driver_info[DRIVER_INFO_CLIENT_TYPE] != CAS_CLIENT_SERVER_SIDE_JDBC)
+    {
 	  ux_fetch (srv_handle, 1, 50, 0, 0, net_buf, req_info);
+    }
 #if defined(CAS_FOR_MYSQL)
 	}
 #endif /* CAS_FOR_MYSQL */
