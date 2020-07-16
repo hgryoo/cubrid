@@ -60,63 +60,67 @@ public class UStatement {
 
 	public final static byte QUERY_INFO_PLAN = 0x01;
 
-	private final static byte ASYNC_EXECUTE = 1;
-	private final static byte NORMAL = 0, GET_BY_OID = 1, GET_SCHEMA_INFO = 2,
+	protected final static byte ASYNC_EXECUTE = 1;
+	protected final static byte NORMAL = 0, GET_BY_OID = 1, GET_SCHEMA_INFO = 2,
 	        GET_AUTOINCREMENT_KEYS = 3;
-	private final static byte OLD_TRUE = -128, TRUE = 1, FALSE = 0;
-	private final static int DEFAULT_FETCH_SIZE = 100;
+	protected final static byte OLD_TRUE = -128, TRUE = 1, FALSE = 0;
+	protected final static int DEFAULT_FETCH_SIZE = 100;
 
-	private final static byte EXEC_FLAG_ASYNC = 0x01,
+	protected final static byte EXEC_FLAG_ASYNC = 0x01,
 	        EXEC_FLAG_QUERY_ALL = 0x02, EXEC_FLAG_QUERY_INFO = 0x04,
 	        EXEC_FLAG_ONLY_QUERY_PLAN = 0x08, EXEC_FLAG_HOLDABLE_RESULT = 0x20,
 			EXEC_FLAG_GET_GENERATED_KEYS = 0x40;
 
-	private final static byte MASK_COLLECTION_FROM_TYPE = (byte) 0140;
-	private final static byte MASK_TYPE_HAS_2_BYTES = (byte) 0200;
-	private final static byte MASK_TYPE_FROM_SINGLE_BYTE = (byte) 0037;
-	private final static byte MASK_CHARSET_FROM_TYPE = (byte) 0007;
-	private final static byte DEFAULT_CHARSET = (byte) 0377;
+	protected final static byte MASK_COLLECTION_FROM_TYPE = (byte) 0140;
+	protected final static byte MASK_TYPE_HAS_2_BYTES = (byte) 0200;
+	protected final static byte MASK_TYPE_FROM_SINGLE_BYTE = (byte) 0037;
+	protected final static byte MASK_CHARSET_FROM_TYPE = (byte) 0007;
+	protected final static byte DEFAULT_CHARSET = (byte) 0377;
 
-	private byte statementType;
+	protected byte statementType;
 
-	private UConnection relatedConnection;
-	private boolean isClosed;
-	private boolean realFetched;
-	private boolean isUpdatable;
-	private boolean isSensitive;
+	protected UConnection relatedConnection;
+	protected boolean isClosed;
+	protected boolean realFetched;
+	protected boolean isUpdatable;
+	protected boolean isSensitive;
 
-	private int serverHandler;
-	private int parameterNumber;
-	private int columnNumber;
-	private UBindParameter bindParameter;
-	private ArrayList<UBindParameter> batchParameter;
-	private UColumnInfo columnInfo[];
-	private HashMap<String, Integer> colNameToIndex;
-	private UResultInfo resultInfo[];
-	private byte commandTypeIs;
-	private byte firstStmtType;
-	private byte executeFlag;
+	protected int serverHandler;
+	protected int parameterNumber;
+	protected int columnNumber;
+	protected UBindParameter bindParameter;
+	protected ArrayList<UBindParameter> batchParameter;
+	
+	protected UColumnInfo columnInfo[];
+	protected HashMap<String, Integer> colNameToIndex;
+	
+	protected UResultInfo resultInfo[];
+	protected byte commandTypeIs;
+	protected byte firstStmtType;
+	protected byte executeFlag;
 
-	private int fetchDirection;
-	private int fetchSize;
-	private int maxFetchSize;
-	private int fetchedTupleNumber;
-	private boolean isFetchCompleted;
-	private int totalTupleNumber;
-	private int currentFirstCursor;
-	private int cursorPosition;
-	private int executeResult;
-	private UResultTuple tuples[];
+	protected int fetchDirection;
+	protected int fetchSize;
+	protected int maxFetchSize;
+	protected int fetchedTupleNumber;
+	protected boolean isFetchCompleted;
+	protected int totalTupleNumber;
+	protected int currentFirstCursor;
+	protected int cursorPosition;
+	
+	protected int executeResult;
+	protected UResultTuple tuples[];
+	
 	private int numQueriesExecuted;
 
-	private UError errorHandler;
+	protected UError errorHandler;
 
 	private UOutputBuffer outBuffer;
 
-	private int schemaType;
-	private boolean isReturnable = false;
-	private String sql_stmt;
-	private byte prepare_flag;
+	protected int schemaType;
+	protected boolean isReturnable = false;
+	protected String sql_stmt;
+	protected byte prepare_flag;
 	private UInputBuffer tmp_inbuffer;
 	private boolean isAutoCommit = false;
 	private boolean isGeneratedKeys = false;
@@ -151,7 +155,7 @@ public class UStatement {
 		}
 	}
 
-	private void init(UConnection relatedC, UInputBuffer inBuffer, String sql,
+	protected void init(UConnection relatedC, UInputBuffer inBuffer, String sql,
 	        byte _prepare_flag, boolean clear_bind_info) throws UJciException {
 		sql_stmt = sql;
 		prepare_flag = _prepare_flag;
@@ -816,7 +820,7 @@ public class UStatement {
 		}
 	}
 
-	private void fetchResultData(UInputBuffer inBuffer) throws UJciException {
+	protected void fetchResultData(UInputBuffer inBuffer) throws UJciException {
 		executeResult = inBuffer.getResCode();
 		if (maxFetchSize > 0) {
 			executeResult = Math.min(maxFetchSize, executeResult);
@@ -831,7 +835,7 @@ public class UStatement {
 		}
 	}
 
-	private void executeInternal(int maxRow, int maxField,
+	protected void executeInternal(int maxRow, int maxField,
 	        boolean isScrollable, int queryTimeout) throws UJciException,
 	        IOException {
 		UInputBuffer inBuffer = null;
@@ -1996,7 +2000,7 @@ public class UStatement {
 		errorHandler = localError;
 	}
 
-	private Object beforeGetXXX(int index) {
+	protected Object beforeGetXXX(int index) {
 		if (isClosed == true) {
 			errorHandler.setErrorCode(UErrorCode.ER_IS_CLOSED);
 			return null;
@@ -2258,7 +2262,7 @@ public class UStatement {
 		}
 	}
 
-	private void read_fetch_data(UInputBuffer inBuffer, UFunctionCode functionCode)
+	protected void read_fetch_data(UInputBuffer inBuffer, UFunctionCode functionCode)
 	        throws UJciException {
 		fetchedTupleNumber = inBuffer.readInt();
 		if (fetchedTupleNumber < 0) {
@@ -2280,7 +2284,7 @@ public class UStatement {
 		}
 	}
 
-	private void readATupleByOid(CUBRIDOID oid, UInputBuffer inBuffer)
+	protected void readATupleByOid(CUBRIDOID oid, UInputBuffer inBuffer)
 	        throws UJciException {
 		tuples[0] = new UResultTuple(1, columnNumber);
 		tuples[0].setOid(oid);
@@ -2290,7 +2294,7 @@ public class UStatement {
 		currentFirstCursor = 0;
 	}
 
-	private void readATuple(int index, UInputBuffer inBuffer)
+	protected void readATuple(int index, UInputBuffer inBuffer)
 	        throws UJciException {
 		tuples[index] = new UResultTuple(inBuffer.readInt(), columnNumber);
 		tuples[index].setOid(inBuffer.readOID(relatedConnection.getCUBRIDConnection()));

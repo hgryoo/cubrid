@@ -113,7 +113,7 @@ public class CUBRIDPreparedStatement extends CUBRIDStatement implements
 					executeCore(false);
 					getMoreResults();
 					if (current_result_set != null)
-						current_result_set.complete_on_close = true;
+						((CUBRIDResultSet) current_result_set).complete_on_close = true;
 					if (u_con.getLogSlowQuery()) {
 					    	long end = System.currentTimeMillis();
 						u_con.logSlowQuery(begin, end, u_stmt.getQuery(), u_stmt.getBindParameter());
@@ -503,7 +503,7 @@ public class CUBRIDPreparedStatement extends CUBRIDStatement implements
 
 					if (u_stmt.getNumQueriesExecuted() == 1) {
 						if (current_result_set != null) {
-							current_result_set.complete_on_close = true;
+							((CUBRIDResultSet) current_result_set).complete_on_close = true;
 						}
 
 						int cmdType = u_stmt.getCommandType();

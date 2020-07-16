@@ -64,7 +64,7 @@ public class CUBRIDStatement implements Statement {
 	protected UError error;
 	protected boolean completed;
 	protected UResultInfo[] result_info;
-	protected CUBRIDResultSet current_result_set;
+	protected ResultSet current_result_set;
 	protected CUBRIDResultSet auto_generatedkeys_result_set;
 	protected boolean is_closed;
 	protected int update_count;
@@ -75,16 +75,16 @@ public class CUBRIDStatement implements Statement {
 	private int max_field_size;
 	private int max_rows;
 	int query_timeout;
-	private int type;
-	private int concurrency;
+	protected int type;
+	protected int concurrency;
 	private boolean is_scrollable;
 	private boolean is_updatable;
-	private boolean is_holdable;
+	protected boolean is_holdable;
 	private boolean is_sensitive;
 	private int fetch_direction;
 	private int fetch_size;
 	private ArrayList<String> batchs;
-	private int result_index;
+	protected int result_index;
 	private boolean is_from_current_transaction;
 	private int lastShardId;
 
@@ -158,7 +158,7 @@ public class CUBRIDStatement implements Statement {
 
 					executeCore(false);
 					getMoreResults();
-					current_result_set.complete_on_close = true;
+					((CUBRIDResultSet) current_result_set).complete_on_close = true;
 					if (u_con.getLogSlowQuery()) {
 					    	long end = System.currentTimeMillis();
 						u_con.logSlowQuery(begin, end, sql, null);

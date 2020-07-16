@@ -198,6 +198,21 @@ else(UNIX)
 endif(UNIX)
 
 
+set(JAVASP_SOURCES ${EXECUTABLES_DIR}/javasp.c)
+SET_SOURCE_FILES_PROPERTIES(
+  ${JAVASP_SOURCES}
+  PROPERTIES LANGUAGE CXX
+  )
+
+add_executable(cub_javasp ${JAVASP_SOURCES})
+target_compile_definitions(cub_javasp PRIVATE ${COMMON_DEFS})
+target_include_directories(cub_javasp PRIVATE ${EP_INCLUDES})
+target_link_libraries(cub_javasp LINK_PRIVATE cubrid)
+if(WIN32)
+  target_link_libraries(cub_javasp LINK_PRIVATE dbghelp)
+endif(WIN32)
+
+
 set(CUB_ADMIN_SOURCES
   ${EXECUTABLES_DIR}/util_admin.c
   ${EXECUTABLES_DIR}/util_support.c

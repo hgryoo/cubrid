@@ -2282,6 +2282,8 @@ boot_restart_server (THREAD_ENTRY * thread_p, bool print_restart, const char *db
   tsc_init ();
 #endif /* !SERVER_MODE */
 
+  /* *INDENT-OFF* */
+#if defined (SA_MODE)
   // Initialize java stored procedure server
   error_code = jsp_start_server (db_name, db->pathname);
   if (error_code != NO_ERROR)
@@ -2289,8 +2291,6 @@ boot_restart_server (THREAD_ENTRY * thread_p, bool print_restart, const char *db
       goto error;
     }
 
-  /* *INDENT-OFF* */
-#if defined (SA_MODE)
   // thread_manager was not initialized
   assert (thread_p == NULL);
   cubthread::initialize (thread_p);

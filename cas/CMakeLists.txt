@@ -21,6 +21,7 @@ set(LIBCAS_SOURCES
   ${BROKER_DIR}/cas_network.c 
   ${BROKER_DIR}/cas_net_buf.c 
   ${BROKER_DIR}/cas_function.c 
+  ${BROKER_DIR}/cas_procedure.c 
   ${BROKER_DIR}/cas_execute.c 
   ${BROKER_DIR}/cas_handle.c 
   ${BROKER_DIR}/cas_util.c 

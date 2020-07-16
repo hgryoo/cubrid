@@ -656,5 +656,6 @@ jsp_server_port (void)
 int
 jsp_jvm_is_loaded (void)
 {
-  return jvm != NULL;
+  //return jvm != NULL;
+  return prm_get_bool_value (PRM_ID_JAVA_STORED_PROCEDURE);
 }

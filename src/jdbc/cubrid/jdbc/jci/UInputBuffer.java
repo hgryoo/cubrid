@@ -53,14 +53,15 @@ import cubrid.sql.CUBRIDTimestamptz;
 import java.util.TimeZone;
 
 class UInputBuffer {
+	
 	private UTimedDataInputStream input;
-	private int position;
-	private int capacity;
-	private byte casinfo[];
-	private byte buffer[];
-	private int resCode;
-	private final static int CAS_INFO_SIZE = 4;
-	private UConnection uconn;
+	protected int position;
+	protected int capacity;
+	protected byte casinfo[];
+	protected byte buffer[];
+	protected int resCode;
+	protected final static int CAS_INFO_SIZE = 4;
+	protected UConnection uconn;
 	
 	public UInputBuffer() {}
 	

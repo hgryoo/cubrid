@@ -149,12 +149,14 @@ public class UTimedDataInputStream {
               BrokerHandler.pingBroker(ip, port, PING_TIMEOUT);
               continue;
             }
+            /*
             if (BrokerHandler.statusBroker(ip, port, pid, session, PING_TIMEOUT) != 1) {
               if (retry) {
                 throw new UJciException(UErrorCode.ER_COMMUNICATION);
               }
               retry = true;
             }
+            */
           }
         }
     }
