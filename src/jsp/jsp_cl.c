@@ -62,6 +62,10 @@
 #include "network_interface_cl.h"
 #include "unicode_support.h"
 #include "dbtype.h"
+
+#include <map>
+#include <string>
+
 #if defined (SUPPRESS_STRLEN_WARNING)
 #define strlen(s1)  ((int) strlen(s1))
 #endif /* defined (SUPPRESS_STRLEN_WARNING) */
@@ -114,6 +118,8 @@ typedef struct
 } SP_ARGS;
 
 static SOCKET sock_fds[MAX_CALL_COUNT] = { INVALID_SOCKET };
+static std::map<std::string, MOP> mop_hash;
+static SP_ARGS sp_args_table[MAX_CALL_COUNT];
 
 static int call_cnt = 0;
 static bool is_prepare_call[MAX_CALL_COUNT];
@@ -3129,13 +3135,22 @@ jsp_do_call_stored_procedure (DB_VALUE * returnval, DB_ARG_LIST * args, const ch
   db_make_null (&param);
   memset (&sp_args, 0, sizeof (SP_ARGS));
 
-  mop_p = jsp_find_stored_procedure (name);
-  if (!mop_p)
-    {
-      assert (er_errid () != NO_ERROR);
-      err = er_errid ();
-      goto error;
-    }
+  auto it = mop_hash.find (std::string(name));
+  if (it == mop_hash.end())
+  {
+    mop_p = jsp_find_stored_procedure (name);
+    if (!mop_p)
+      {
+        assert (er_errid () != NO_ERROR);
+        err = er_errid ();
+        goto error;
+      }
+    mop_hash.insert(std::make_pair(name, mop_p));
+  }
+  else
+  {
+    mop_p = *it;
+  }
 
   err = db_get (mop_p, SP_ATTR_TARGET, &method);
   if (err != NO_ERROR)
