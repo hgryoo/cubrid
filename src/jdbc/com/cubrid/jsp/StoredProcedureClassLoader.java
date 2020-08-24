@@ -98,12 +98,12 @@ public class StoredProcedureClassLoader extends URLClassLoader {
 	}
 
 	public Class<?> loadClass(String name) throws ClassNotFoundException {
-		if (!modified()) {
+		//if (!modified()) {
 			return super.loadClass(name);
-		}
+		//}
 
-		instance = new StoredProcedureClassLoader();
-		return instance.loadClass(name);
+		//instance = new StoredProcedureClassLoader();
+		//return instance.loadClass(name);
 	}
 
 	private boolean modified() {

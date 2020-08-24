@@ -3149,7 +3149,7 @@ jsp_do_call_stored_procedure (DB_VALUE * returnval, DB_ARG_LIST * args, const ch
   }
   else
   {
-    mop_p = *it;
+    mop_p = it->second;
   }
 
   err = db_get (mop_p, SP_ATTR_TARGET, &method);

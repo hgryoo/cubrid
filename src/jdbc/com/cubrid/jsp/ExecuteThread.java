@@ -199,6 +199,7 @@ public class ExecuteThread extends Thread {
 					}
 				} while (requestCode != REQ_CODE_INVOKE_SP && requestCode != REQ_CODE_DESTROY);
 			} catch (Throwable e) {
+				e.printStackTrace();
 				if (e instanceof IOException) {
 					setStatus(ExecuteThreadStatus.END);
 					/* 
@@ -218,6 +219,7 @@ public class ExecuteThread extends Thread {
 					Throwable throwable = e;
 					if (e instanceof InvocationTargetException) {
 						throwable = ((InvocationTargetException) e).getTargetException();
+						throwable.printStackTrace();
 					}
 					Server.log(throwable);
 					try {
