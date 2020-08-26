@@ -199,7 +199,6 @@ public class ExecuteThread extends Thread {
 					}
 				} while (requestCode != REQ_CODE_INVOKE_SP && requestCode != REQ_CODE_DESTROY);
 			} catch (Throwable e) {
-				e.printStackTrace();
 				if (e instanceof IOException) {
 					setStatus(ExecuteThreadStatus.END);
 					/* 
@@ -219,7 +218,6 @@ public class ExecuteThread extends Thread {
 					Throwable throwable = e;
 					if (e instanceof InvocationTargetException) {
 						throwable = ((InvocationTargetException) e).getTargetException();
-						throwable.printStackTrace();
 					}
 					Server.log(throwable);
 					try {
@@ -254,6 +252,7 @@ public class ExecuteThread extends Thread {
 		/* send results */
 		setStatus (ExecuteThreadStatus.RESULT);
 		Value resolvedResult = procedure.makeReturnValue(result);
+		System.out.println(resolvedResult.toString());
 		sendResult(resolvedResult, procedure);
 
 		setStatus (ExecuteThreadStatus.IDLE);
@@ -400,14 +399,17 @@ public class ExecuteThread extends Thread {
 		}
 
 		byteBuf.reset();
-
 		sendValue(resolvedResult, outBuf, procedure.getReturnType());
 		returnOutArgs(procedure, outBuf);
-		outBuf.flush();
+		
+		//outBuf.flush();
 
 		output.writeInt(REQ_CODE_RESULT);
 		output.writeInt(byteBuf.size() + 4);
+		
 		byteBuf.writeTo(output);
+		
+		
 		output.writeInt(REQ_CODE_RESULT);
 		output.flush();
 	}

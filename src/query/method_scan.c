@@ -47,6 +47,8 @@
 #include "object_representation.h"
 #include "query_list.h"
 #include "regu_var.hpp"
+#include "list_file.h"
+#include "jsp_sr.h"
 
 #if !defined(SERVER_MODE)
 extern unsigned int db_on_server;
@@ -106,11 +108,13 @@ method_open_value_array_scan (METHOD_SCAN_BUFFER * scan_buffer_p)
     }
 
 #ifdef SERVER_MODE
+/*
   scan_buffer_p->vacomm_buffer = method_initialize_vacomm_buffer ();
   if (scan_buffer_p->vacomm_buffer == NULL)
     {
       return ER_FAILED;
     }
+*/
 #endif /* SERVER_MODE */
 
   return NO_ERROR;
@@ -125,7 +129,7 @@ static int
 method_close_value_array_scan (METHOD_SCAN_BUFFER * scan_buffer_p)
 {
 #ifdef SERVER_MODE
-  method_free_vacomm_buffer (scan_buffer_p->vacomm_buffer);
+  //method_free_vacomm_buffer (scan_buffer_p->vacomm_buffer);
   scan_buffer_p->vacomm_buffer = NULL;
 #endif /* SERVER_MODE */
 
@@ -203,12 +207,14 @@ int
 method_close_scan (THREAD_ENTRY * thread_p, METHOD_SCAN_BUFFER * scan_buffer_p)
 {
 #ifdef SERVER_MODE
-  VACOMM_BUFFER *vacomm_buffer_p;
+  
+  //VACOMM_BUFFER *vacomm_buffer_p;
 
   /*
    * If the method scan is being closed before the client is done, the status could be zero (1st buffer not received)
    * or METHOD_SUCCESS (last buffer not received). */
 
+  /*
   vacomm_buffer_p = scan_buffer_p->vacomm_buffer;
 
   if ((vacomm_buffer_p) && ((vacomm_buffer_p->status == 0) || (vacomm_buffer_p->status == METHOD_SUCCESS)))
@@ -221,6 +227,12 @@ method_close_scan (THREAD_ENTRY * thread_p, METHOD_SCAN_BUFFER * scan_buffer_p)
 	}
       while (vacomm_buffer_p->status == METHOD_SUCCESS);
     }
+  */
+  (void) method_receive_results (thread_p, scan_buffer_p);
+  //error = jsp_receive_response (thread_p, args);
+
+  //jsp_close_connection_socket ();
+
 #else /* SERVER_MODE */
   method_clear_scan_buffer (scan_buffer_p);
 #endif /* SERVER_MODE */
@@ -254,11 +266,206 @@ method_scan_next (THREAD_ENTRY * thread_p, METHOD_SCAN_BUFFER * scan_buffer_p, v
 static int
 method_invoke_from_server (THREAD_ENTRY * thread_p, METHOD_SCAN_BUFFER * scan_buffer_p)
 {
+  int error = NO_ERROR;
   METHOD_INFO *method_ctl_p;
 
   method_ctl_p = &scan_buffer_p->s.method_ctl;
-  return xs_send_method_call_info_to_client (thread_p, method_ctl_p->list_id, method_ctl_p->method_sig_list);
+  qfile_list_id *list_id_p = method_ctl_p->list_id;
+  METHOD_SIG_LIST *method_sig_list_p = method_ctl_p->method_sig_list;
+
+  QFILE_LIST_SCAN_ID scan_id;
+  QFILE_TUPLE_RECORD tuple_record = { NULL, 0 };
+  SCAN_CODE scan_code;
+
+  DB_VALUE dbval;
+  char *tuple_p;
+  PR_TYPE *pr_type_p;
+  OR_BUF buf;
+
+  int value_count = 0;
+  {
+  METHOD_SIG *meth_sig_p = method_sig_list_p->method_sig;
+  for (int num_method = 0; num_method < method_sig_list_p->num_methods; num_method++)
+    {
+      value_count += meth_sig_p->num_method_args;
+      meth_sig_p = meth_sig_p->next;
+    }
+
+  if (list_id_p->type_list.type_cnt > value_count)
+    {
+      value_count = list_id_p->type_list.type_cnt;
+    }
+  //printf ("value_count : %d\n", value_count);
+
+  DB_VALUE *val_list_p = (DB_VALUE *) db_private_alloc (thread_p, sizeof (DB_VALUE) * value_count);
+  if (val_list_p == NULL)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, sizeof (DB_VALUE) * value_count);
+      return ER_FAILED;
+    }
+  
+  DB_VALUE **values_p = (DB_VALUE **) db_private_alloc (thread_p, sizeof (DB_VALUE *) * (value_count));
+  if (values_p == NULL)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, sizeof (DB_VALUE *) * (value_count + 1));
+      db_private_free_and_init (thread_p, val_list_p);
+      return ER_FAILED;
+    }
+
+  int *oid_cols = (int *) db_private_alloc (thread_p, sizeof (int) * method_sig_list_p->num_methods);
+  if (oid_cols == NULL)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1,
+	      sizeof (int) * method_sig_list_p->num_methods);
+      db_private_free_and_init (thread_p, val_list_p);
+      db_private_free_and_init (thread_p, values_p);
+      return ER_FAILED;
+    }
+
+  /* scan list file */
+  error = qfile_open_list_scan (list_id_p, &scan_id);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      qfile_close_list (thread_p, list_id_p);
+      qfile_destroy_list (thread_p, list_id_p);
+      goto exit;
+    }
+
+  meth_sig_p = method_sig_list_p->method_sig;
+  for (int num_method = 0; num_method < method_sig_list_p->num_methods; num_method++)
+    {
+      oid_cols[num_method] = meth_sig_p->method_arg_pos[0];
+      meth_sig_p = meth_sig_p->next;
+    }
+
+  pr_type_p = list_id_p->type_list.domp[0]->type;
+  while (true)
+			{
+        int idx = 0;
+        scan_code = qfile_scan_list_next (thread_p, &scan_id, &tuple_record, true);
+
+        if (scan_code == S_ERROR && er_has_error ())
+          {
+            /* Some unexpected errors (like ER_INTERRUPTED due to timeout) should be handled. */
+            ASSERT_ERROR_AND_SET (error);
+            qfile_close_scan (thread_p, &scan_id);
+            qfile_close_list (thread_p, list_id_p);
+            qfile_destroy_list (thread_p, list_id_p);
+            goto exit;
+          }
+
+        if (scan_code != S_SUCCESS)
+          {
+            break;
+          }
+
+        for (int i = 0; i < list_id_p->type_list.type_cnt; i++)
+	      {
+          int val_size;
+          DB_TYPE type = TP_DOMAIN_TYPE (list_id_p->type_list.domp[i]);
+          pr_type_p = pr_type_from_id (type);
+	        if (pr_type_p == NULL)
+          {
+            qfile_close_scan (thread_p, &scan_id);
+            return ER_FAILED;
+          }
+
+          if (qfile_locate_tuple_value (tuple_record.tpl, i, &tuple_p, &val_size) == V_BOUND)
+          {
+            or_init (&buf, tuple_p, val_size);
+
+            if (pr_type_p->data_readval (&buf, &dbval, list_id_p->type_list.domp[i], -1, true, NULL, 0) != NO_ERROR)
+        {
+          qfile_close_scan (thread_p, &scan_id);
+          return ER_FAILED;
+        }
+          }
+
+          pr_clear_value (&val_list_p[idx]);
+          pr_clone_value (&dbval, &val_list_p[idx++]);
+          //db_value_print (&dbval);
+          //printf("\n");
+        }
+
+        /*
+        tuple_p = ((char *) tuple_record.tpl + QFILE_TUPLE_LENGTH_SIZE);
+        if (QFILE_GET_TUPLE_VALUE_FLAG (tuple_p) == V_UNBOUND)
+          {
+            continue;
+          }
+
+        or_init (&buf, (char *) tuple_p + QFILE_TUPLE_VALUE_HEADER_SIZE,
+        QFILE_GET_TUPLE_VALUE_LENGTH (tuple_p));
+
+        (void) pr_clear_value (&dbval);
+        error = pr_type_p->data_readval (&buf, &dbval, list_id_p->type_list.domp[0], -1, true, NULL,
+                  0);
+        if (error != NO_ERROR)
+          {
+            ASSERT_ERROR ();
+            qfile_close_scan (thread_p, &scan_id);
+            qfile_close_list (thread_p, list_id_p);
+            qfile_destroy_list (thread_p, list_id_p);
+            goto exit;
+          }
+
+        pr_clear_value (&val_list_p[idx]);
+        pr_clone_value (&dbval, &val_list_p[idx]);
+        db_value_print (&dbval);
+        */
+      }
+
+      qfile_close_scan (thread_p, &scan_id);
+      qfile_close_list (thread_p, list_id_p);
+
+      int num_method;
+      int last_arg = 0;
+
+      for (num_method = 0, meth_sig_p = method_sig_list_p->method_sig; num_method < method_sig_list_p->num_methods;
+  ++num_method, meth_sig_p = meth_sig_p->next)
+      {
+        int arg = 0;
+        /* The first position # is for the object ID */
+        int num_args = meth_sig_p->num_method_args;
+        for (arg = 0; arg < num_args; ++arg)
+          {
+            int pos = meth_sig_p->method_arg_pos[arg];
+            //printf("method_arg_pos : %d\n", pos);
+            values_p[arg + last_arg] = &val_list_p[pos];
+          }
+        last_arg += num_args;
+
+        //values_p[num_args] = (DB_VALUE *) 0;
+
+        error = jsp_send_call_main (thread_p, values_p, meth_sig_p->method_name, meth_sig_p->num_method_args);
+        /* call from server */
+          /*
+          turn_on_auth = 0;
+          AU_ENABLE (turn_on_auth);
+          db_disable_modification ();
+          error = jsp_call_from_server (&value, values_p, meth_sig_p->method_name, meth_sig_p->num_method_args);
+          db_enable_modification ();
+          AU_DISABLE (turn_on_auth);
+          */
+
+          if (error != NO_ERROR)
+          {
+            goto exit;
+          }
+      }      
+    db_private_free_and_init (thread_p, oid_cols);
+    db_private_free_and_init (thread_p, val_list_p);
+    db_private_free_and_init (thread_p, values_p);
+  }
+
+
+  return NO_ERROR;
+
+exit:
+  return ER_FAILED;
 }
+
 #else
 static int
 method_invoke_from_stand_alone (METHOD_SCAN_BUFFER * scan_buffer_p)
@@ -367,7 +574,7 @@ method_receive_results_for_server (THREAD_ENTRY * thread_p, METHOD_SCAN_BUFFER *
   QPROC_DB_VALUE_LIST dbval_list;
   int meth_num, i;
   METHOD_SIG *meth_sig_p;
-  SCAN_CODE result;
+  SCAN_CODE result = S_SUCCESS;
   DB_VALUE *dbval_p;
   METHOD_SIG_LIST *method_sig_list_p;
 
@@ -387,7 +594,12 @@ method_receive_results_for_server (THREAD_ENTRY * thread_p, METHOD_SCAN_BUFFER *
       else
 	{
 	  db_make_null (dbval_p);
-	  result = method_receive_value (thread_p, dbval_p, scan_buffer_p->vacomm_buffer);
+    db_make_int (dbval_p, 1);
+    //int error = jsp_receive_response_main (thread_p, dbval_p);
+    //if (error != NO_ERROR) {
+      //result = S_ERROR;
+    //}
+	  //result = method_receive_value (thread_p, dbval_p, scan_buffer_p->vacomm_buffer);
 	}
 
       if (result != S_SUCCESS)
