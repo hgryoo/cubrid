@@ -107,9 +107,9 @@ public class ExecuteThread extends Thread {
 
 	private DataInputStream input;
 	private DataOutputStream output;
-	private ByteArrayOutputStream byteBuf = new ByteArrayOutputStream(1024);
-	private DataOutputStream outBuf = new DataOutputStream(byteBuf);
-
+	private ByteArrayOutputStream byteBuf;
+    private	DataOutputStream outBuf;
+	
 	private AtomicInteger status = new AtomicInteger(ExecuteThreadStatus.IDLE.getValue());
 
 	private StoredProcedure storedProcedure = null;
@@ -218,6 +218,7 @@ public class ExecuteThread extends Thread {
 					Throwable throwable = e;
 					if (e instanceof InvocationTargetException) {
 						throwable = ((InvocationTargetException) e).getTargetException();
+						throwable.printStackTrace();
 					}
 					Server.log(throwable);
 					try {
@@ -252,7 +253,7 @@ public class ExecuteThread extends Thread {
 		/* send results */
 		setStatus (ExecuteThreadStatus.RESULT);
 		Value resolvedResult = procedure.makeReturnValue(result);
-		System.out.println(resolvedResult.toString());
+		//System.out.println(resolvedResult.toString());
 		sendResult(resolvedResult, procedure);
 
 		setStatus (ExecuteThreadStatus.IDLE);
@@ -398,14 +399,16 @@ public class ExecuteThread extends Thread {
 			resolvedResult = toDbTypeValue(procedure.getReturnType(), result);
 		}
 
-		byteBuf.reset();
+	    byteBuf = new ByteArrayOutputStream(1024);
+	    outBuf = new DataOutputStream(byteBuf);
+		
 		sendValue(resolvedResult, outBuf, procedure.getReturnType());
 		returnOutArgs(procedure, outBuf);
 		
 		//outBuf.flush();
 
 		output.writeInt(REQ_CODE_RESULT);
-		output.writeInt(byteBuf.size() + 4);
+		output.writeInt(outBuf.size() + 4);
 		
 		byteBuf.writeTo(output);
 		

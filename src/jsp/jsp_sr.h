@@ -90,14 +90,14 @@ extern char *jsp_unpack_resultset (char *buffer, DB_VALUE * retval);
 extern SOCKET jsp_connect_server (void);
 extern int jsp_get_value_size (DB_VALUE * value);
 extern int jsp_get_argument_size (DB_VALUE ** argarray, const int arg_cnt);
-extern int jsp_send_call_request (THREAD_ENTRY * thread_p, DB_VALUE ** argarray, const char *name, const int arg_cnt);
-extern int jsp_send_call_main (THREAD_ENTRY * thread_p, DB_VALUE ** argarray, const char *name, const int arg_cnt);
+extern int jsp_send_call_request (THREAD_ENTRY * thread_p, SOCKET sock_fd, DB_VALUE ** argarray, const char *name, const int arg_cnt);
+extern int jsp_send_call_main (THREAD_ENTRY * thread_p, SOCKET *sock_fd, DB_VALUE ** argarray, const char *name, const int arg_cnt);
 
 extern int jsp_writen (SOCKET fd, const void *vptr, int n);
 extern int jsp_readn (SOCKET fd, void *vptr, int n);
 
-extern int jsp_alloc_response (THREAD_ENTRY * thread_p, char *&buffer);
-extern int jsp_receive_response_main (THREAD_ENTRY * thread_p, DB_VALUE *result);
-extern void jsp_close_connection_socket ();
+extern int jsp_alloc_response (THREAD_ENTRY * thread_p, SOCKET sock_fd, char *&buffer);
+extern int jsp_receive_response_main (THREAD_ENTRY * thread_p, SOCKET sock_fd, DB_VALUE *result);
+extern void jsp_close_connection_socket (SOCKET *sock_fd);
 
 #endif /* _JSP_SR_H_ */

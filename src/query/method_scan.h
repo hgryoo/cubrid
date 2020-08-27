@@ -36,6 +36,8 @@
 #ifndef SERVER_MODE
 #include "work_space.h"
 #include "cursor.h"
+#else
+#include "query_list.h"
 #endif /* SERVER_MODE */
 #include "storage_common.h"
 #include "thread_compat.hpp"
@@ -82,17 +84,18 @@ struct method_scan_buffer
   {				/* ctl info based on type */
     METHOD_INFO method_ctl;
   } s;
-#ifdef SERVER_MODE
-  VACOMM_BUFFER *vacomm_buffer;
-#else				/* SERVER_MODE */
   /* These are needed for calling */
   /* methods in standalone mode */
   DB_VALUE *vallist;		/* values from the input list file */
   DB_VALUE **valptrs;		/* ptrs to the above values */
   int *oid_cols;		/* OID columns in list file */
+#ifndef SERVER_MODE
   CURSOR_ID crs_id;		/* cursor id */
+#else
+  QFILE_LIST_SCAN_ID scan_id;
+  SOCKET sock_fd = INVALID_SOCKET;
+#endif
   int val_cnt;			/* number of values in vallist */
-#endif				/* SERVER_MODE */
 };
 
 extern int method_open_scan (THREAD_ENTRY * thread_p, METHOD_SCAN_BUFFER * scan_buf, qfile_list_id * list_id,

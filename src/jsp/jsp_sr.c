@@ -181,7 +181,6 @@ typedef jint (*CREATE_VM_FUNC) (JavaVM **, void **, void *);
 
 JavaVM *jvm = NULL;
 jint sp_port = -1;
-volatile SOCKET sock_fd = INVALID_SOCKET;
 
 #if defined(WINDOWS)
 int get_java_root_path (char *path);
@@ -1259,7 +1258,7 @@ jsp_connect_server (void)
   unsigned int inaddr;
   int b;
   char *server_host = (char *) "127.0.0.1";	/* assume as local host */
-
+  SOCKET sock_fd = INVALID_SOCKET;
   union
   {
     struct sockaddr_in in;
@@ -1424,7 +1423,7 @@ jsp_get_argument_size (DB_VALUE ** argarray, const int arg_cnt)
 }
 
 int
-jsp_send_call_request (THREAD_ENTRY * thread_p, DB_VALUE ** argarray, const char *name, const int arg_cnt)
+jsp_send_call_request (THREAD_ENTRY * thread_p, SOCKET sock_fd, DB_VALUE ** argarray, const char *name, const int arg_cnt)
 {
   int error_code = NO_ERROR;
   int req_code, arg_count, i, strlen;
@@ -1486,23 +1485,23 @@ exit:
 }
 
 int
-jsp_send_call_main (THREAD_ENTRY * thread_p, DB_VALUE ** argarray, const char *name, const int arg_cnt)
+jsp_send_call_main (THREAD_ENTRY * thread_p, SOCKET *sock_fd, DB_VALUE ** argarray, const char *name, const int arg_cnt)
 {
   int error = NO_ERROR;
   int call_cnt = 0;
 
 retry:
-  if (IS_INVALID_SOCKET (sock_fd))
+  if (IS_INVALID_SOCKET (*sock_fd) || *sock_fd == 0)
     {
-      sock_fd = jsp_connect_server ();
-      if (IS_INVALID_SOCKET (sock_fd))
+      *sock_fd = jsp_connect_server ();
+      if (IS_INVALID_SOCKET (*sock_fd))
 	{
 	  assert (er_errid () != NO_ERROR);
 	  return er_errid ();
 	}
     }
 
-  error = jsp_send_call_request (thread_p, argarray, name, arg_cnt);
+  error = jsp_send_call_request (thread_p, *sock_fd, argarray, name, arg_cnt);
 
 
   //error = jsp_receive_response (sock_fd, args);
@@ -1518,7 +1517,7 @@ end:
 }
 
 int
-jsp_alloc_response (THREAD_ENTRY * thread_p, char *&buffer)
+jsp_alloc_response (THREAD_ENTRY * thread_p, SOCKET sock_fd, char *&buffer)
 {
   int nbytes, res_size;
   nbytes = jsp_readn (sock_fd, (char *) &res_size, (int) sizeof (int));
@@ -1545,8 +1544,7 @@ jsp_alloc_response (THREAD_ENTRY * thread_p, char *&buffer)
   return NO_ERROR;
 }
 
-int 
-jsp_receive_response_main (THREAD_ENTRY * thread_p, DB_VALUE *result)
+int jsp_receive_response_main (THREAD_ENTRY * thread_p, SOCKET sock_fd,  DB_VALUE *result)
 {
   int nbytes;
   int start_code = -1, end_code = -1;
@@ -1568,6 +1566,7 @@ redo:
       //tran_begin_libcas_function ();
       //error_code = libcas_main (sockfd);	/* jdbc call */
       //tran_end_libcas_function ();
+      
       if (error_code != NO_ERROR)
 	{
 	  goto exit;
@@ -1577,7 +1576,7 @@ redo:
   else if (start_code == SP_CODE_RESULT || start_code == SP_CODE_ERROR)
     {
       /* read size of buffer to allocate and data */
-      error_code = jsp_alloc_response (thread_p, buffer);
+      error_code = jsp_alloc_response (thread_p, sock_fd, buffer);
       if (error_code != NO_ERROR)
 	{
 	  goto exit;
@@ -1693,17 +1692,17 @@ jsp_writen (SOCKET fd, const void *vptr, int n)
 }
 
 void
-jsp_close_connection_socket ()
+jsp_close_connection_socket (SOCKET *sock_fd)
 {
   struct linger linger_buffer;
 
   linger_buffer.l_onoff = 1;
   linger_buffer.l_linger = 0;
-  setsockopt (sock_fd, SOL_SOCKET, SO_LINGER, (char *) &linger_buffer, sizeof (linger_buffer));
+  setsockopt (*sock_fd, SOL_SOCKET, SO_LINGER, (char *) &linger_buffer, sizeof (linger_buffer));
 #if defined(WINDOWS)
-  closesocket (sock_fd);
+  closesocket (*sock_fd);
 #else /* not WINDOWS */
-  close (sock_fd);
+  close (*sock_fd);
 #endif /* not WINDOWS */
 }
 
