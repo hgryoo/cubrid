@@ -1,0 +1,10 @@
+<ivy-module version="2.0">
+    <info organisation="org.apache" module="cubrid-jsp"/>
+    <configurations>
+        <conf name="build" description="Libraries needed to for compilation"/>
+    </configurations>
+    <dependencies>
+        <dependency org="net.java.dev.jna" name="jna" rev="5.5.0"/>
+        <dependency org="net.java.dev.jna" name="jna-platform" rev="5.5.0"/>
+    </dependencies>
+</ivy-module>
