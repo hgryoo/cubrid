@@ -2283,11 +2283,14 @@ boot_restart_server (THREAD_ENTRY * thread_p, bool print_restart, const char *db
 #endif /* !SERVER_MODE */
 
   // Initialize java stored procedure server
-  error_code = jsp_start_server (db_name, db->pathname);
-  if (error_code != NO_ERROR)
-    {
-      goto error;
-    }
+
+  //error_code = jsp_start_server (db_name, db->pathname);
+  //if (error_code != NO_ERROR)
+  //  {
+  //    goto error;
+  //  }
+  
+
 
   /* *INDENT-OFF* */
 #if defined (SA_MODE)

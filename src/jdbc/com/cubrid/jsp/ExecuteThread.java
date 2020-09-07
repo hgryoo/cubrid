@@ -72,6 +72,9 @@ import cubrid.jdbc.jci.UConnection;
 import cubrid.jdbc.jci.UJCIUtil;
 import cubrid.sql.CUBRIDOID;
 
+import com.sun.jna.Memory;
+import com.sun.jna.Pointer;
+
 public class ExecuteThread extends Thread {
 	private String charSet = System.getProperty("file.encoding");
 
@@ -179,6 +182,17 @@ public class ExecuteThread extends Thread {
 	public void run() {
 		/* main routine handling stored procedure */
 		int requestCode = -1;
+
+		String program_name = "cub_jcas";
+		Memory prog_mem = new Memory(program_name.length() + 1); // WARNING: assumes ascii-only string
+		prog_mem.setString(0, program_name);
+
+		String db_name = "demodb";
+		Memory db_mem = new Memory(db_name.length() + 1); // WARNING: assumes ascii-only string
+		db_mem.setString(0, db_name);
+		CUBRIDESQL.INSTANCE.db_restart (prog_mem, 0, db_mem);
+		CUBRIDESQL.INSTANCE.uci_startup (prog_mem);
+
 		while (!Thread.interrupted()) {
 			try {
 				do {
@@ -238,6 +252,8 @@ public class ExecuteThread extends Thread {
 		return input.readInt();
 	}
 
+	static int cs_num = 0;
+	boolean started = false;
 	private void processStoredProcedure () throws Exception {
 		setStatus (ExecuteThreadStatus.PARSE);
 		StoredProcedure procedure = makeStoredProcedure();
@@ -246,6 +262,47 @@ public class ExecuteThread extends Thread {
 
 		setStatus (ExecuteThreadStatus.INVOKE);
 		Object result = m.invoke(null, resolved);
+
+		/* start hacky code */
+		CUBRIDESQL.INSTANCE.uci_start(null, null, 1, 1);
+		// Prepare
+		Pointer event_code = new Memory(4);
+		Integer arg1 = (Integer) resolved[0];
+		event_code.setInt(0, arg1);
+
+		CUBRIDESQL.INSTANCE.uci_put_value (null, 1, 0, 0, 101, event_code, 0);
+
+		// Execute
+		Memory mem = null;
+		String sql = "select e.name FROM event e WHERE e.code = ? ";
+		if (!started) {
+			mem = new Memory(sql.length() + 1); // WARNING: assumes ascii-only string
+			mem.setString(0, sql);
+			started = true;
+			CUBRIDESQL.INSTANCE.uci_prepare (1, mem, sql.length());
+		}
+		//CUBRIDESQL.INSTANCE.uci_execute (1, 1);
+		CUBRIDESQL.INSTANCE.uci_open_cs(cs_num, null, 0, 1, 0);
+		//CUBRIDESQL.INSTANCE.uci_end();
+
+		// Fetch
+		boolean continueFlag = true;
+		Pointer name = new Memory(100);
+		while (continueFlag) {
+			CUBRIDESQL.INSTANCE.uci_fetch_cs(cs_num, 1);
+			
+			if (CUBRIDESQL.INSTANCE.uci_get_sqlcode() != 0) {
+				CUBRIDESQL.INSTANCE.uci_close_cs(cs_num);
+				CUBRIDESQL.INSTANCE.uci_end();
+				continueFlag = false;
+				break;
+			}
+
+			CUBRIDESQL.INSTANCE.uci_get_value(cs_num, null, name, 107, 100, null);
+			String s = name.getString(0);
+			//System.out.println (s);
+		}
+		//cs_num++;
 
 		/* close server-side JDBC connection */
 		closeJdbcConnection();
@@ -426,6 +483,8 @@ public class ExecuteThread extends Thread {
 	}
 
 	private void sendError(String exception, Socket socket) throws IOException {
+		byteBuf = new ByteArrayOutputStream(1024);
+	    outBuf = new DataOutputStream(byteBuf);
 		byteBuf.reset();
 
 		try {

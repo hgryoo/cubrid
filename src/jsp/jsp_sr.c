@@ -694,7 +694,8 @@ jsp_stop_server (void)
 int
 jsp_server_port (void)
 {
-  return sp_port;
+  //return sp_port;
+  return 9898;
 }
 
 /*

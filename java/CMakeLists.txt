@@ -26,7 +26,6 @@ add_custom_target(jsp_build ALL
   )
 
 install(FILES
-  ${CMAKE_CURRENT_BINARY_DIR}/jcas.jar
   ${CMAKE_CURRENT_BINARY_DIR}/jcas.sh
   DESTINATION ${CUBRID_JAVADIR})
 

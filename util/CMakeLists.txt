@@ -29,6 +29,8 @@ set_target_properties(cubridesql PROPERTIES SOVERSION "${CUBRID_MAJOR_VERSION}.$
 set_target_properties(cubridesql PROPERTIES PUBLIC_HEADER "${EXECUTABLES_DIR}/cubrid_esql.h")
 target_include_directories(cubridesql PRIVATE ${EP_INCLUDES})
 target_compile_definitions(cubridesql PRIVATE ${COMMON_DEFS} PRODUCE_ANSI_CODE UCI_TEMPORARY)
+target_link_libraries(cubridesql LINK_PRIVATE cubridcs)
+
 if(WIN32)
   set_target_properties(cubridesql PROPERTIES OUTPUT_NAME libesql)
   target_compile_definitions(cubridesql PRIVATE YY_CHAR=char)
@@ -36,8 +38,7 @@ if(WIN32)
   target_link_libraries(cubridesql LINK_PRIVATE cubridcs)
 endif(WIN32)
 
-add_dependencies(cubridesql ${EP_TARGETS})
-add_dependencies(cubridesql cubridcs)
+add_dependencies(cubridesql ${EP_TARGETS} cubridcs)
 
 set(CSQL_SOURCES
   ${EXECUTABLES_DIR}/csql_launcher.c

@@ -77,7 +77,6 @@
         <manifestclasspath property="jar.classpath" jarfile="${jar.file}">
             <classpath>
                 <fileset dir="${dist.lib}" includes="*.jar"/>
-                <fileset dir="${cubjava}" includes="*.jar"/>
             </classpath>
         </manifestclasspath>
         <javac destdir="${build}" source="1.6" target="1.6" encoding="EUC-KR" debug="true" debuglevel="lines,source" deprecation="off" includeantruntime="no">
@@ -85,7 +84,6 @@
             <include name="**/*.java"/>
             <classpath refid="build.path" />
             <classpath>
-              <fileset dir="${cubjava}" includes="*.jar"/>
             </classpath>
         </javac>
     </target>

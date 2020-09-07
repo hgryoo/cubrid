@@ -56,6 +56,8 @@ public class Server {
 		spPath = path;
 		rootPath = rPath;
 
+		System.out.println (name + "," + path + "," + rPath + "," + port);
+
 		try {
 		  int port_number = Integer.parseInt(port);
 		  serverSocket = new ServerSocket(port_number);
@@ -109,7 +111,12 @@ public class Server {
 	}
 
 	public static void main(String[] args) {
-		Server.start(new String[] { "test" });
+		Server.start(new String[] { 
+			"demodb", 
+			"/home/hgryoo/hgryoo_cubrid/build_x86_64_release/_install/CUBRID/demo", 
+			"", 
+			"/home/hgryoo/hgryoo_cubrid/build_x86_64_release/_install/CUBRID", 
+			"9898" });
 	}
 
 	public static void log(Throwable ex) {
