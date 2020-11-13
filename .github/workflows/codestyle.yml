@@ -1,5 +1,5 @@
 name: CUBRID Code Style
-on: pull_request
+on: pull_request push
 
 ###############
 # Set the Job #
