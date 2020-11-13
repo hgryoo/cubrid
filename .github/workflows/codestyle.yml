@@ -32,8 +32,9 @@ jobs:
         run: |
           URL="https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files"
           RESPONSE=$(curl -s -X GET -G $URL)
-          C_FILES=$(RESPONSE | jq -r '.[] | .c | .h | .i)
-          CPP_FILES=$(RESPONSE | jq -r '.[] | .cpp | .hpp | .ipp)
+          C_FILES=$(RESPONSE | jq -r '.[] | .c | .h | .i')
+          CPP_FILES=$(RESPONSE | jq -r '.[] | .cpp | .hpp | .ipp')
           echo $RESPONSE
           echo $C_FILES
           echo $CPP_FILES
+          exit 0
