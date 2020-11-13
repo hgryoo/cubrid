@@ -24,7 +24,7 @@ jobs:
       # Checkout the code base #
       ##########################
       - name: Checkout Head
-      - uses: actions/checkout@v2
+        uses: actions/checkout@v2
       #################################
       # Listing files from the change #
       #################################
@@ -34,7 +34,6 @@ jobs:
           RESPONSE=$(curl -s -X GET -G $URL)
           C_FILES=$(RESPONSE | jq -r '.[] | .c | .h | .i)
           CPP_FILES=$(RESPONSE | jq -r '.[] | .cpp | .hpp | .ipp)
-          
           echo $RESPONSE
           echo $C_FILES
           echo $CPP_FILES
