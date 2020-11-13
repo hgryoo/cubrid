@@ -1,0 +1,38 @@
+name: CUBRID Code Style
+on:
+  pull_request:
+
+###############
+# Set the Job #
+###############
+jobs:
+  build:
+    runs-on: [ubuntu-latest]
+    ##################
+    # Load all steps #
+    ##################
+    steps:
+      #################
+      # Install tools #
+      #################
+      - name: Install GNU indent and Astyle
+        run: sudo apt-get install -y indent astyle
+      - name: Install Git
+        run: sudo apt-get install -y git
+
+      ##########################
+      # Checkout the code base #
+      ##########################
+      - name: Checkout Head
+      - uses: actions/checkout@v2
+
+      - name: List files
+          run: |
+            URL="https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files"
+            RESPONSE=$(curl -s -X GET -G $URL)
+            C_FILES=$(RESPONSE | jq -r '.[] | .c | .h | .i)
+            CPP_FILES=$(RESPONSE | jq -r '.[] | .cpp | .hpp | .ipp)
+            
+            echo $RESPONSE
+            echo $C_FILES
+            echo $CPP_FILES
