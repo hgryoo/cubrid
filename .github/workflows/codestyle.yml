@@ -1,13 +1,14 @@
 name: CUBRID Code Style
-on:
-  pull_request:
+on: pull_request
 
 ###############
 # Set the Job #
 ###############
 jobs:
   build:
+
     runs-on: [ubuntu-latest]
+
     ##################
     # Load all steps #
     ##################
@@ -19,13 +20,14 @@ jobs:
         run: sudo apt-get install -y indent astyle
       - name: Install Git
         run: sudo apt-get install -y git
-
       ##########################
       # Checkout the code base #
       ##########################
       - name: Checkout Head
       - uses: actions/checkout@v2
-
+      #################################
+      # Listing files from the change #
+      #################################
       - name: List files
         run: |
           URL="https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files"
