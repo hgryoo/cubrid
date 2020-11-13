@@ -5,7 +5,7 @@ on: [pull_request, push]
 # Set the Job #
 ###############
 jobs:
-  build:
+  code-style:
 
     runs-on: [ubuntu-latest]
 
@@ -28,13 +28,40 @@ jobs:
       #################################
       # Listing files from the change #
       #################################
-      - name: List files
-        run: |
-          URL="https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files"
-          RESPONSE=$(curl -s -X GET -G $URL)
-          C_FILES=$(RESPONSE | jq -r '.[] | .c | .h | .i')
-          CPP_FILES=$(RESPONSE | jq -r '.[] | .cpp | .hpp | .ipp')
-          echo $RESPONSE
-          echo $C_FILES
-          echo $CPP_FILES
-          exit 0
+      - name: List files for pull_request
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@v3
+        with:
+          github-token: ${{secrets.GITHUB_TOKEN}}
+          script: |
+            const PULL_REQUEST_FILES = github.pulls.listFiles({
+              context.repo.owner,
+              context.repo.repo,
+              context.issue.number
+            });
+
+            console.log(PULL_REQUEST_FILES)
+
+            var re = /(?:\.([^.]+))?$/;
+            var C_FILES = [];
+            var CPP_FILES = [];
+            for (const f of PULL_REQUEST_FILES) {
+              var name = PULL_REQUEST_FILES.file_name;
+              var extension = re.exec (name);
+
+              switch (extension) {
+                case 'c':
+                case 'h':
+                case 'i':
+                  C_FILES.push(name);
+                  break;
+                case 'cpp':
+                case 'hpp':
+                case 'ipp':
+                  CPP_FILES.push(name);
+                  break;
+              }
+            }
+
+            console.log(C_FILES);
+            console.log(CPP_FILES);
