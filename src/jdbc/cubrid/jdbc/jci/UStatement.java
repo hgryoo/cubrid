@@ -2268,7 +2268,12 @@ public class UStatement {
 
 		if (tuples == null) {
 			if (totalTupleNumber > 0) {
-				tuples = new UResultTuple[totalTupleNumber];
+				if (totalTupleNumber > fetchedTupleNumber) {
+					tuples = new UResultTuple[totalTupleNumber];
+				}
+				else {
+					tuples = new UResultTuple[fetchedTupleNumber]; /* for maxRow */
+				}
 			}
 		}
 
@@ -2479,4 +2484,10 @@ public class UStatement {
 		return relatedConnection.isConnectedToOracle() && isFetchCompleted
 		        && current_row >= currentFirstCursor + fetchedTupleNumber;
 	}
+
+	synchronized public void reFresh() {
+		readTupleNumber = 0;
+		reFetch();
+	}
+
 }
