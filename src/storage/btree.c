@@ -1954,6 +1954,8 @@ int
 btree_create_overflow_key_file (THREAD_ENTRY * thread_p, BTID_INT * btid)
 {
   FILE_DESCRIPTORS des;
+  int error_code = NO_ERROR;
+  TDE_ALGORITHM tde_algo = TDE_ALGORITHM_NONE;
 
   VFID_SET_NULL (&btid->ovfid);
 
@@ -1963,7 +1965,18 @@ btree_create_overflow_key_file (THREAD_ENTRY * thread_p, BTID_INT * btid)
   des.btree_key_overflow.class_oid = btid->topclass_oid;
   assert (!OID_ISNULL (&des.btree_key_overflow.class_oid));
   /* create file with at least 3 pages */
-  return file_create_with_npages (thread_p, FILE_BTREE_OVERFLOW_KEY, 3, &des, &btid->ovfid);
+  error_code = file_create_with_npages (thread_p, FILE_BTREE_OVERFLOW_KEY, 3, &des, &btid->ovfid);
+  if (error_code != NO_ERROR)
+    {
+      return error_code;
+    }
+  error_code = heap_get_class_tde_algorithm (thread_p, &btid->topclass_oid, &tde_algo);
+  if (error_code != NO_ERROR)
+    {
+      return error_code;
+    }
+  error_code = file_apply_tde_algorithm (thread_p, &btid->ovfid, tde_algo);
+  return error_code;
 }
 
 /*
@@ -11748,13 +11761,19 @@ btree_get_prefix_separator (const DB_VALUE * key1, const DB_VALUE * key2, DB_VAL
 {
   int c;
   int err = NO_ERROR;
+  static bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
+
+  /* for coerce = 2, we need to process key comparing as char-type
+   * in case that one of two arguments has varchar-type
+   * if the other argument has char-type */
+  static int coerce = (ignore_trailing_space) ? 1 : 2;
 
   assert (DB_IS_NULL (key1) || (DB_VALUE_DOMAIN_TYPE (key1) == DB_VALUE_DOMAIN_TYPE (key2)));
   assert (!DB_IS_NULL (key2));
   assert_release (key_domain != NULL);
 
 #if !defined(NDEBUG)
-  c = btree_compare_key ((DB_VALUE *) key1, (DB_VALUE *) key2, key_domain, 1, 1, NULL);
+  c = btree_compare_key ((DB_VALUE *) key1, (DB_VALUE *) key2, key_domain, coerce, 1, NULL);
   assert (c == DB_LT);
 #endif
 
@@ -11782,7 +11801,7 @@ btree_get_prefix_separator (const DB_VALUE * key1, const DB_VALUE * key2, DB_VAL
       return ER_FAILED;
     }
 
-  c = btree_compare_key ((DB_VALUE *) key1, prefix_key, key_domain, 1, 1, NULL);
+  c = btree_compare_key ((DB_VALUE *) key1, prefix_key, key_domain, coerce, 1, NULL);
 
   if (c != DB_LT)
     {
@@ -11790,7 +11809,7 @@ btree_get_prefix_separator (const DB_VALUE * key1, const DB_VALUE * key2, DB_VAL
       return ER_FAILED;
     }
 
-  c = btree_compare_key (prefix_key, (DB_VALUE *) key2, key_domain, 1, 1, NULL);
+  c = btree_compare_key (prefix_key, (DB_VALUE *) key2, key_domain, coerce, 1, NULL);
 
   if (!(c == DB_LT || c == DB_EQ))
     {
@@ -14150,9 +14169,10 @@ btree_locate_key (THREAD_ENTRY * thread_p, BTID_INT * btid_int, DB_VALUE * key, 
   assert (!BTREE_INVALID_INDEX_ID (btid_int->sys_btid));
 
   *found_p = false;
+  bool reuse_btid_int = true;
 
   /* Advance in b-tree following key until leaf node is reached. */
-  error = btree_search_key_and_apply_functions (thread_p, btid_int->sys_btid, NULL, key, NULL, NULL,
+  error = btree_search_key_and_apply_functions (thread_p, btid_int->sys_btid, btid_int, key, NULL, &reuse_btid_int,
 						btree_advance_and_find_key, slot_id, NULL, NULL, &search_key,
 						&leaf_page);
   if (error != NO_ERROR)
@@ -22683,8 +22703,11 @@ btree_get_root_with_key (THREAD_ENTRY * thread_p, BTID * btid, BTID_INT * btid_i
   assert (is_leaf != NULL);
   assert (search_key != NULL);
 
+  bool reuse_btid_int = other_args ? *((bool *) other_args) : false;
+
   /* Get root page and BTID_INT. */
-  *root_page = btree_fix_root_with_info (thread_p, btid, PGBUF_LATCH_READ, NULL, &root_header, btid_int);
+  *root_page =
+    btree_fix_root_with_info (thread_p, btid, PGBUF_LATCH_READ, NULL, &root_header, (reuse_btid_int ? NULL : btid_int));
   if (*root_page == NULL)
     {
       /* Error! */
@@ -32318,6 +32341,7 @@ btree_key_remove_delete_mvccid_non_unique (THREAD_ENTRY * thread_p, BTID_INT * b
 {
   LOG_DATA_ADDR addr;		/* Log address for record. */
   int rv_redo_data_length = 0;	/* Redo recovery data length. */
+  TDE_ALGORITHM tde_algo = TDE_ALGORITHM_NONE;
 
   LOG_LSA prev_lsa;
 
@@ -32860,6 +32884,7 @@ btree_create_file (THREAD_ENTRY * thread_p, const OID * class_oid, int attrid, B
 {
   FILE_DESCRIPTORS des;
   VPID vpid_root;
+  TDE_ALGORITHM tde_algo = TDE_ALGORITHM_NONE;
 
   int error_code = NO_ERROR;
 
@@ -32872,6 +32897,27 @@ btree_create_file (THREAD_ENTRY * thread_p, const OID * class_oid, int attrid, B
     {
       ASSERT_ERROR ();
       return error_code;
+    }
+
+  error_code = heap_get_class_tde_algorithm (thread_p, class_oid, &tde_algo);
+  if (error_code == NO_ERROR)
+    {
+      /* 
+       * It can happen to fail to get the class record.
+       * For example, a class record that is assigned but not updated poperly yet.
+       * In this case, Setting tde flag is just skipped and it is expected to be done later.
+       * see file_apply_tde_to_class_files() 
+       */
+      error_code = file_apply_tde_algorithm (thread_p, &btid->vfid, tde_algo);
+      if (error_code != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  return error_code;
+	}
+    }
+  else
+    {
+      er_clear ();
     }
 
   /* index page allocations need to be committed. they are not individually deallocated on undo; all pages are
@@ -32916,13 +32962,13 @@ btree_delete_sysop_end (THREAD_ENTRY * thread_p, BTREE_DELETE_HELPER * helper)
   switch (helper->purpose)
     {
     case BTREE_OP_DELETE_OBJECT_PHYSICAL:
-      log_sysop_end_logical_undo (thread_p, RVBT_DELETE_OBJECT_PHYSICAL, NULL, helper->rv_keyval_data_length,
-				  helper->rv_keyval_data);
+      log_sysop_end_logical_undo (thread_p, RVBT_DELETE_OBJECT_PHYSICAL, helper->leaf_addr.vfid,
+				  helper->rv_keyval_data_length, helper->rv_keyval_data);
       break;
 
     case BTREE_OP_ONLINE_INDEX_TRAN_DELETE:
-      log_sysop_end_logical_undo (thread_p, RVBT_ONLINE_INDEX_UNDO_TRAN_DELETE, NULL, helper->rv_keyval_data_length,
-				  helper->rv_keyval_data);
+      log_sysop_end_logical_undo (thread_p, RVBT_ONLINE_INDEX_UNDO_TRAN_DELETE, helper->leaf_addr.vfid,
+				  helper->rv_keyval_data_length, helper->rv_keyval_data);
       break;
 
     case BTREE_OP_DELETE_OBJECT_PHYSICAL_POSTPONED:
@@ -34849,6 +34895,7 @@ static void
 btree_rv_log_delete_object (THREAD_ENTRY * thread_p, const BTREE_DELETE_HELPER & delete_helper, LOG_DATA_ADDR & addr,
 			    int undo_length, int redo_length, const char *undo_data, const char *redo_data)
 {
+  TDE_ALGORITHM tde_algo = TDE_ALGORITHM_NONE;
   assert (btree_is_delete_object_purpose (delete_helper.purpose));
 
   if (delete_helper.is_system_op_started)
@@ -34909,6 +34956,7 @@ static void
 btree_rv_log_insert_object (THREAD_ENTRY * thread_p, const BTREE_INSERT_HELPER & insert_helper, LOG_DATA_ADDR & addr,
 			    int undo_length, int redo_length, const char *undo_data, const char *redo_data)
 {
+  TDE_ALGORITHM tde_algo = TDE_ALGORITHM_NONE;
   assert (btree_is_insert_object_purpose (insert_helper.purpose));
 
   if (insert_helper.is_system_op_started)

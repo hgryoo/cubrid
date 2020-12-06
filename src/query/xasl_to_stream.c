@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright (C) 2008 Search Solution Corporation
+ * Copyright (C) 2016 CUBRID Corporation
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -3391,22 +3392,6 @@ xts_process_buildlist_proc (char *ptr, const BUILDLIST_PROC_NODE * build_list_pr
     }
   ptr = or_pack_int (ptr, offset);
 
-  offset = xts_save_pred_expr (build_list_proc->a_instnum_pred);
-  if (offset == ER_FAILED)
-    {
-      return NULL;
-    }
-  ptr = or_pack_int (ptr, offset);
-
-  offset = xts_save_db_value (build_list_proc->a_instnum_val);
-  if (offset == ER_FAILED)
-    {
-      return NULL;
-    }
-  ptr = or_pack_int (ptr, offset);
-
-  ptr = or_pack_int (ptr, build_list_proc->a_instnum_flag);
-
   return ptr;
 }
 
@@ -4718,6 +4703,22 @@ xts_process_list_spec_type (char *ptr, const LIST_SPEC_TYPE * list_spec)
     }
   ptr = or_pack_int (ptr, offset);
 
+  offset = xts_save_regu_variable_list (list_spec->list_regu_list_build);
+  if (offset == ER_FAILED)
+    {
+      return NULL;
+    }
+  ptr = or_pack_int (ptr, offset);
+
+  offset = xts_save_regu_variable_list (list_spec->list_regu_list_probe);
+  if (offset == ER_FAILED)
+    {
+      return NULL;
+    }
+  ptr = or_pack_int (ptr, offset);
+
+  ptr = or_pack_int (ptr, list_spec->hash_list_scan_yn);
+
   return ptr;
 }
 
@@ -5969,11 +5970,7 @@ xts_sizeof_buildlist_proc (const BUILDLIST_PROC_NODE * build_list)
 	   + PTR_SIZE		/* a_outptr_list */
 	   + PTR_SIZE		/* a_outptr_list_ex */
 	   + PTR_SIZE		/* a_outptr_list_interm */
-	   + PTR_SIZE		/* a_val_list */
-	   + PTR_SIZE		/* a_instnum_pred */
-	   + PTR_SIZE		/* a_instnum_val */
-	   + OR_INT_SIZE);	/* a_instnum_flag */
-
+	   + PTR_SIZE);		/* a_val_list */
   return size;
 }
 
@@ -6664,6 +6661,9 @@ xts_sizeof_list_spec_type (const LIST_SPEC_TYPE * list_spec)
 
   size += (PTR_SIZE		/* list_regu_list_pred */
 	   + PTR_SIZE		/* list_regu_list_rest */
+	   + PTR_SIZE		/* list_regu_list_build */
+	   + PTR_SIZE		/* list_regu_list_probe */
+	   + OR_INT_SIZE	/* hash_list_scan_yn */
 	   + PTR_SIZE);		/* xasl_node */
 
   return size;

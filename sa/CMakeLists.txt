@@ -1,5 +1,6 @@
 #
-# Copyright (C) 2016 Search Solution Corporation. All rights reserved.
+# Copyright (C) 2008 Search Solution Corporation
+# Copyright (C) 2016 CUBRID Corporation
 #
 #   This program is free software; you can redistribute it and/or modify
 #   it under the terms of the GNU General Public License as published by
@@ -27,6 +28,7 @@ set(EXECUTABLE_SOURCES
   ${EXECUTABLES_DIR}/util_cs.c
   ${EXECUTABLES_DIR}/util_common.c
   ${EXECUTABLES_DIR}/compactdb.c
+  ${EXECUTABLES_DIR}/compactdb_common.c
   ${EXECUTABLES_DIR}/unloaddb.c
   ${EXECUTABLES_DIR}/unload_object.c
   ${EXECUTABLES_DIR}/unload_schema.c
@@ -76,7 +78,6 @@ set(BASE_SOURCES
   ${BASE_DIR}/databases_file.c
   ${BASE_DIR}/encryption.c
   ${BASE_DIR}/sha1.c
-  ${BASE_DIR}/md5.c
   ${BASE_DIR}/base64.c
   ${BASE_DIR}/error_context.cpp
   ${BASE_DIR}/error_manager.c
@@ -87,7 +88,7 @@ set(BASE_SOURCES
   ${BASE_DIR}/unicode_support.c
   ${BASE_DIR}/memory_hash.c
   ${BASE_DIR}/packer.cpp
-  ${BASE_DIR}/get_clockfreq.c
+  ${BASE_DIR}/get_clock_freq.c
   ${BASE_DIR}/perf.cpp
   ${BASE_DIR}/perf_monitor.c
   ${BASE_DIR}/pinnable_buffer.cpp
@@ -114,6 +115,7 @@ set(BASE_SOURCES
   ${BASE_DIR}/cubrid_getopt_long.c
   ${BASE_DIR}/binaryheap.c
   ${BASE_DIR}/tsc_timer.c
+  ${BASE_DIR}/locale_helper.cpp
   ${BASE_DIR}/lock_free.c
   ${BASE_DIR}/lockfree_bitmap.cpp
   ${BASE_DIR}/lockfree_hashmap.cpp
@@ -124,6 +126,7 @@ set(BASE_SOURCES
   ${BASE_DIR}/resource_tracker.cpp
   ${BASE_DIR}/tz_compile.c
   ${BASE_DIR}/tz_support.c
+  ${BASE_DIR}/ddl_log.c
   )
 set(BASE_HEADERS
   ${BASE_DIR}/error_code.h
@@ -131,6 +134,7 @@ set(BASE_HEADERS
   ${BASE_DIR}/error_manager.h
   ${BASE_DIR}/extensible_array.hpp
   ${BASE_DIR}/fileline_location.hpp
+  ${BASE_DIR}/locale_helper.hpp
   ${BASE_DIR}/lockfree_address_marker.hpp
   ${BASE_DIR}/lockfree_bitmap.hpp
   ${BASE_DIR}/lockfree_freelist.hpp
@@ -153,6 +157,7 @@ set(BASE_HEADERS
   ${BASE_DIR}/printer.hpp
   ${BASE_DIR}/resource_tracker.hpp
   ${BASE_DIR}/semaphore.hpp
+  ${BASE_DIR}/ddl_log.h
 )
 
 set(HEAPLAYER_SOURCES
@@ -242,6 +247,7 @@ set(QUERY_SOURCES
   ${QUERY_DIR}/numeric_opfunc.c
   ${QUERY_DIR}/partition.c
   ${QUERY_DIR}/query_aggregate.cpp
+  ${QUERY_DIR}/query_hash_scan.c
   ${QUERY_DIR}/query_analytic.cpp
   ${QUERY_DIR}/query_cl.c
   ${QUERY_DIR}/query_dump.c
@@ -258,16 +264,19 @@ set(QUERY_SOURCES
   ${QUERY_DIR}/show_scan.c
   ${QUERY_DIR}/stream_to_xasl.c
   ${QUERY_DIR}/string_opfunc.c
+  ${QUERY_DIR}/string_regex.cpp
   ${QUERY_DIR}/vacuum.c
   ${QUERY_DIR}/xasl_cache.c
   ${QUERY_DIR}/xasl_to_stream.c
   )
 set(QUERY_HEADERS
   ${QUERY_DIR}/query_aggregate.hpp
+  ${QUERY_DIR}/query_hash_scan.h
   ${QUERY_DIR}/query_analytic.hpp
   ${QUERY_DIR}/query_monitoring.hpp
   ${QUERY_DIR}/query_reevaluation.hpp
   ${QUERY_DIR}/scan_json_table.hpp
+  ${QUERY_DIR}/string_regex.hpp
   )
 
 set(OBJECT_SOURCES
@@ -302,6 +311,8 @@ set(OBJECT_HEADERS
 
 set(JSP_SOURCES
   ${JSP_DIR}/jsp_cl.c
+  ${JSP_DIR}/jsp_comm.c
+  ${JSP_DIR}/jsp_file.c
   ${JSP_DIR}/jsp_sr.c
   )
 
@@ -397,6 +408,7 @@ set(STORAGE_SOURCES
   ${STORAGE_DIR}/statistics_sr.c
   ${STORAGE_DIR}/storage_common.c
   ${STORAGE_DIR}/system_catalog.c
+  ${STORAGE_DIR}/tde.c
   )
 set(STORAGE_HEADERS
   ${STORAGE_DIR}/btree_unique.hpp
@@ -481,6 +493,7 @@ SET_SOURCE_FILES_PROPERTIES(
   ${EXECUTABLES_DIR}/util_cs.c
   ${EXECUTABLES_DIR}/util_common.c
   ${EXECUTABLES_DIR}/compactdb.c
+  ${EXECUTABLES_DIR}/compactdb_common.c
   ${EXECUTABLES_DIR}/unloaddb.c
   ${EXECUTABLES_DIR}/unload_object.c
   ${EXECUTABLES_DIR}/unload_schema.c
@@ -526,7 +539,6 @@ SET_SOURCE_FILES_PROPERTIES(
   )
 
 SET_SOURCE_FILES_PROPERTIES(
-  ${BASE_DIR}/md5.c
   ${CSQL_GRAMMAR_OUTPUT}
   ${CSQL_LEXER_OUTPUT}
   ${ESQL_GRAMMAR_OUTPUT}
@@ -605,15 +617,12 @@ endif(UNIX)
 target_external_dependencies(cubridsa
   LIBEXPAT
   LIBJANSSON
-  LIBGPG_ERROR
-  LIBGCRYPT
-  LIBLZO
   LIBEXPAT
-  LIBREGEX
   LIBEDIT
+  LIBOPENSSL
+  LZ4
   )
 target_include_directories(cubridsa PRIVATE
-  ${CMAKE_SOURCE_DIR}/src/heaplayers/util  # this looks ugly
   ${FLEX_INCLUDE_DIRS}
   ${JAVA_INC}
   )

@@ -72,6 +72,7 @@ $       52      dump_tz
 $       53      restoreslave
 $       54      delvoldb
 $       56      checksumdb
+$       57      tde
 
 $set 1 MSGCAT_UTIL_SET_GENERIC
 1 レングスが正しくないか、正しくない文字「%1$c」がデータベース名「%2$s」に入っています。\n
@@ -124,6 +125,7 @@ cubrid 管理者ユーティリティー、バージョン　%1$s\n\
     dump_tz\n\
     restoreslave\n\
     vacuumdb\n\
+    tde\n\
 \n\
 %4$sはDBMS管理道具です。\n\
 追加情報は次のサイトをご覧になってください。http://www.cubrid.org\n
@@ -148,6 +150,7 @@ cubrid 管理者ユーティリティー、バージョン　%1$s\n\
     broker\n\
     manager\n\
     heartbeat\n\
+    javasp\n\
 \n\
 正しい管理者ユーティリティー名:\n\
     addvoldb\n\
@@ -182,6 +185,7 @@ cubrid 管理者ユーティリティー、バージョン　%1$s\n\
     dump_tz\n\
     vacuumdb\n\
     checksumdb\n\
+    tde\n\
 \n\
 %4$sはDBMS道具です。\n\
 追加情報は次のサイトをご覧になってください。http://www.cubrid.org\n
@@ -248,10 +252,24 @@ cubrid 管理者ユーティリティー、バージョン　%1$s\n\
 41 CUBRID Managerサーバがインストールされていません。\n
 42 無効なパラメーターです。\n
 43 ファイル「%1$s」のオープンに失敗しました。\n
+44 cubridユーティリティー、バージョン %1$s\n\
+使い方: %2$s javasp <コマンド> [パラメーター]\n\
+\n\
+正しいコマンド:\n\
+    start       [データベース名]\n\
+    stop        [データベース名]\n\
+    restart     [データベース名]\n\
+    status      [データベース名]\n
 
 $set 2 MSGCAT_UTIL_SET_BACKUPDB
 30 警告: -tオプションは独立実行モードでは無視されます。\n
 31 エラー：ターゲットパスが存在しないか、ディレクトリではありません。\n
+32 --separate-keysオプションを使用すると、キーファイル（_keys）がバックアップボリュームから分離されます。\n\
+キーファイルを紛失した場合、バックアップボリュームがあっても復元（restoredb）が正常に動作しない場合があります。\n
+33 バックアップボリュームにはキーファイル（_keys）が含まれています。\n\
+テーブルがTDEで暗号化されている場合、そのデータのセキュリティ問題が発生する可能性があります。\n\
+キーファイルを分離して防止するには、--separate-keysオプションを使用します。\n
+34 エラー：FIFIOファイルを--separate-keyの宛先パスとして使用できません。\n
 60 \
 backupdb: データーベースをバックアップします。\n\
 使い方: %1$s backupdb [オプション] <データーベース名>\n\
@@ -270,7 +288,8 @@ backupdb: データーベースをバックアップします。\n\
       --no-check               データーベースの整合性を確認する作業を実行しません。;　デフォルト:実行\n\
   -t, --thread-count=COUNT     バックアップをするスレッド数。;　デフォルト:自動\n\
   -z, --compress               バックアップボリュームを圧縮します。;　デフォルト:圧縮しない\n\
-      --sleep-msecs            １メガバイトを読むたびにNミリセコンドを休みます。;　デフォルト: 0 \n
+      --sleep-msecs            １メガバイトを読むたびにNミリセコンドを休みます。;　デフォルト: 0 \n\
+  -k, --separate-keys          TDEのキーファイル（_keys）はバックアップボリュームに含まれていませんが、代わりにファイルに分割されています\n
 71 「%1$s」と「%2$s」は共に使えません。\n
 
 
@@ -388,7 +407,8 @@ restoredb: データベース復旧\n\
   -l, --level=LEVEL                 復旧に使うバックアップのレベル; デフォルト: 0(Full backup)\n\
   -p, --partial-recovery            アーカイブログがなければ強制にパーシャルリカバリーを実行する。\n\
   -o, --output-file=FILE            出力メッセージがセーブされるファイル; デフォルト: なし\n\
-  -u, --use-database-location-path  データベース位置ファイルに設定されたパスにデータベースボリュームとログボリュームを復旧\n
+  -u, --use-database-location-path  データベース位置ファイルに設定されたパスにデータベースボリュームとログボリュームを復旧\n\
+  -k、--keys-file-path              復元中に使用されるTDEのキーファイル（_keys）のパス\n
 
 
 $set 12 MSGCAT_UTIL_SET_LOADDB
@@ -401,7 +421,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 25 \n*** 文法チェック ***\n\n
 26 %1$d個のエラーが検出されました。\n
 27 \n*** オブジェクト挿入中 ***\n\n
-28 総%1$8d個のオブジェクトが挿入されました。\n
+28 総%1$ld個のオブジェクトが挿入されました。\n
 29 総%1$8d個のれレファレンスされたオブジェクトがデフォルトバリューで入力されました。\n
 30 \n*** トランザクションコミット中 ***\n
 31 \n*** データベースを閉まっています ***\n
@@ -421,7 +441,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 45 クラス「%2$s」のインスタンス「%1$d」はすでに正義されました。\n
 46 クラス「%2$s」のインスタンス「%1$d」はもう使用されました。\n
 47 アトリビュート「%1$s」のUNIQUE違反。NULLに変換しました。\n
-48 %1$s %2$d インスタンス\n
+48 %1$s %2$ld インスタンス\n
 49 クラス %1$s\n
 50 パスワード:
 51 \n*** クラススタティスティックス情報を更新中 ***\n
@@ -431,16 +451,16 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 55 missing
 56 in %1$s
 57 一緒に使えないパラメーター「%1$s」と「%2$s」\n
-58 %1$s %2$dインスタンスをコミットしました。\n
+58 %1$s %2$ldインスタンスをコミットしました。\n
 59 \n以前バージョンのloaddbが実行できません。\n
 60 「%1$s」を「%2$s」タイプにパーシングエラー \n
 61 Object Reference is not supported in CS mode.\n
 62 Updated statistics for class %1$s.\n
-112   %1$d個のインスタンス\r
+112   %1$ld個のインスタンス\r
 113 最後にコミットされたライン : %1$d\n
 114 エラーコントロールファイル
 115 ロードする時にエラー制御のための入力ファイル
-116 Total %1$8d object(s) inserted, %2$d object(s) failed.\n
+116 Total %1$ld object(s) inserted, %2$ld object(s) failed.\n
 117 Load failed.\n
 118 Maximum length of class name is %1$d bytes.\n
 119 Total %1$8d object(s) checked, %2$d object(s) failed.\n
@@ -473,10 +493,10 @@ loaddb: データベースにオブジェクトやスキーマロード\n\
 $set 13 MSGCAT_UTIL_SET_UNLOADDB
 41 cached-pagesが正しくありません。\n
 42 cached-page-sizeが正しくありません。\n
-43 %1$dこのオブジェクトがダンプされました。\n
+43 %1$ldこのオブジェクトがダンプされました。\n
 44 クラス %1$s
 45 , %1$dこのインスタンス。\n
-46 %1$dこのオブジェクトが(全体%2$d個)問題なくダンプされました。\n
+46 %1$ldこのオブジェクトが(全体%2$ld個)問題なくダンプされました。\n
 47 出力ディレクトリー名が長過ぎます。\n
 48 LSA : %1$d %2$d \n
 49 パスワード:
@@ -552,16 +572,17 @@ compactdb: データベースで使用しない領域を解除。\n\
   -i, --input-class-file=FILE       テーブル名が入っているファイルを入力\n\
                                     class_nameリストは必ず空いている必要があります。\n\
                                     デフォルト: すべてのクラスをコンパクト\n\
-                                    クライアントーサーバモードでしか作動しない。\n\
   -p, --pages-commited-once=NUMBER  一回にコミットする最大ページ数\n\
                                     デフォルト: 10\n\
                                     クライアントーサーバモードでしか作動しない。\n\
   -S, --SA-mode                     スタンドアロンモードで実行\n\
   -C, --CS-mode                     クライアントーサーバモードで実行\n\
   -d, --delete-old-repr             カタログから古いクラス情報を削除; デフォルト: 削除しない\n\
-  class_name_list                   クライアントーサーバモードでしか作動しない。\n\
   -I, --Instance-lock-timeout       インスタンスロックのタイムアウト\n\
-  -c, --class-lock-timeout          クラスロックのタイムアウト\n
+                                    クライアントーサーバモードでしか作動しない。\n\
+  -c, --class-lock-timeout          クラスロックのタイムアウト\n\
+                                    クライアントーサーバモードでしか作動しない。\n\
+  class_name_list                   圧縮するクラス名のリスト\n
 
 $set 15 MSGCAT_UTIL_SET_COMMDB
 21 CUBRIDマスターがホスト%1$sで実行中です。%2$sに始まって
@@ -807,6 +828,7 @@ killtran: データベーストランザクションを管理\n\
       --kill-program-name=NAME       NAMEに対するトランザクションを全部終了\n\
       --kill-sql-id=SQL_ID           SQL_IDに対するすべてのトランザクションを中止する。\n\
   -p, --dba-password=PASS            DBAパスワード; 指定されてない場合は入力プロンプトが表示される。\n\
+                                     (-iまたは--killオプションでのみ機能します。そうでない場合、エラーが発生します)\n\
   -d, --display-information          現在アクティブトランザクションの情報を表示\n\
   -q, --query-exec-info              アクティブトランザクションのクエリ実行情報を表示する。\n\
   -f, --force                        強制に確認なしでトランザクションを終了\n
@@ -1060,8 +1082,6 @@ tranlist: アクティブトランザクション情報をダンプします。\
 使い方: %1$s tranlist [オプション] データベース名\n\
 \n\
 オプション:\n\
-  -u, --user=ID                データベースに接続するユーザーID; デフォルト: DBAユーザー\n\
-  -p, --password=PASS          ユーザーパスワード; デフォルト: なし\n\
   -s, --summary                トランザクション情報を要約して出力する。\n\
       --sort-key=COLUMN_NUMBER ソートされるカラム番号\n\
       --reverse                ソート結果を逆にする。\n
@@ -1131,7 +1151,8 @@ restoreslave: スレーブデータベースを復元します。\n\
       --list                        復元せずにバックアップボリュームのリストを表示\n\
   -B, --backup-file-path=PATH       PATHには、バックアップボリュームのディレクトリを復元することを意味します\n\
   -o, --output-file=FILE            FILEに出力メッセージをリダイレクトします; デフォルト: none\n\
-  -u, --use-database-location-path  データベース・ロケーション・ファイルで指定したパスにデータベースとログボリュームを復元します\n
+  -u, --use-database-location-path  データベース・ロケーション・ファイルで指定したパスにデータベースとログボリュームを復元します\n\
+  -k、--keys-file-path               復元中に使用されるTDEのキーファイル（_keys）のパス\n
 
 $set 54 MSGCAT_UTIL_SET_DELVOLDB
 21 次のボリュームを削除する準備ができました:\n\n
@@ -1184,3 +1205,23 @@ checksumdb: レプリケーションの整合性を確認します。\n\
       --resume                  チェックサムの計算を再開\n\
       --schema-only             スキーマ整合性のみをチェックします。\n\
       --cont-on-error           計算エラーが発生したときに継続\n
+
+$set 57 MSGCAT_UTIL_SET_TDE
+21 DBAパスワードを入力します。
+25 データベースに設定されているキー情報を取得できませんでした\n
+26 キーをキー（インデックス：%1$d）からキー（インデックス：%2$d）に変更しようとしています。。\n
+27 キーがキー（インデックス：%1$d）からキー（インデックス：%2$d）に変更されました\n
+28 データベースに設定されているキーは削除できません\n
+29 キー（インデックス：%1$d）が削除されました\n
+30 新しいキーが生成されました-キーインデックス：%2$sに%1$dが作成されました
+60 \
+tde：透過的データ暗号化（TDE）管理\n\
+使用法：%1$s tde OPERATION（-s|-n|-d|-c）[オプション]データベース名\n\
+\n\
+有効なオプション：\n\
+    -p, --dba-password=PASS       DBAユーザーのパスワード。指定しない場合はプロンプトが表示されます\n\
+操作：操作の1つを指定する必要があり、それらは排他的です\n\
+    -s, --show-keys               は、データベースとキーファイル（_keys）に設定されたキー情報を出力します\n\
+    -n, --generate-new-key        キーファイル（_keys）に新しいキーを生成します。最大数：128\n\
+    -d, --delete-key=KEY_INDEX    キーファイル（_keys）のキーを削除します\n\
+    -c, --change-key=KEY_INDEX    データベースに設定されているキーを、キーファイル（_keys）内の別のキーに変更します\n

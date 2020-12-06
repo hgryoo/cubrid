@@ -444,6 +444,7 @@ typedef enum
 #define CUBRID_MAGIC_LOG_INFO                   "CUBRID/LogInfo"
 #define CUBRID_MAGIC_DATABASE_BACKUP            "CUBRID/Backup_v2"
 #define CUBRID_MAGIC_DATABASE_BACKUP_OLD        "CUBRID/Backup"
+#define CUBRID_MAGIC_KEYS                       "CUBRID/Keys"
 
 /*
  * Typedefs related to the scan data structures
@@ -800,6 +801,7 @@ typedef enum
   T_NEXT_VALUE,
   T_CAST,
   T_CAST_NOFAIL,
+  T_CAST_WRAP,
   T_CASE,
   T_EXTRACT,
   T_LOCAL_TRANSACTION_ID,
@@ -926,6 +928,8 @@ typedef enum
   F_JSON_ARRAY_INSERT, F_JSON_SEARCH, F_JSON_CONTAINS_PATH, F_JSON_EXTRACT, F_JSON_CONTAINS, F_JSON_DEPTH,
   F_JSON_LENGTH, F_JSON_PRETTY, F_JSON_QUOTE, F_JSON_TYPE, F_JSON_UNQUOTE, F_JSON_VALID,
 
+  F_REGEXP_COUNT, F_REGEXP_INSTR, F_REGEXP_LIKE, F_REGEXP_REPLACE, F_REGEXP_SUBSTR,
+
   F_BENCHMARK,
 
   /* only for FIRST_VALUE. LAST_VALUE, NTH_VALUE analytic functions */
@@ -1050,6 +1054,7 @@ typedef enum
   SHOWSTMT_FULL_TIMEZONES,
   SHOWSTMT_TRAN_TABLES,
   SHOWSTMT_THREADS,
+  SHOWSTMT_PAGE_BUFFER_STATUS,
 
   /* append the new show statement types in here */
 

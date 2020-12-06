@@ -184,7 +184,7 @@ $set 5 MSGCAT_SET_ERROR
 116 Base de données "%1$s" est inconnu, ou le fichier "databases.txt" n'est pas accessible.
 117 Nom de chemin absolu pour la base de données est trop long. La longueur totale de le chemin "%1$s" et le nom "%2$s" est %3$d; la longueur combinée doit être inférieur à %4$d.
 118 Impossible de localiser le répertoire de travail courant.
-119 Impossible de trouver hôte local.
+119 Impossible de trouver ("%1$s") dans /etc/hosts. Veuillez vérifier les autorisations du fichier ou s'il existe le nom d'hôte.
 120 Le nombre maximal de volumes (%1$d) a été dépassé.
 121 Tentative de supprimer "%1$s" un volume permanente de la base de données.
 122 Impossible d'accéder au catalogue de messages du système.
@@ -415,7 +415,7 @@ $set 5 MSGCAT_SET_ERROR
 347 Impossible de créer un pipe vers le serveur maître.
 348 Doit spécifier un service ou un identificateur de port.
 349 Service inconnu pour TCP: %1$s.
-350 Erreur de récupération de l'hôte local par le nom pour l'hôte "%1$s". Hôte introuvable.
+350 Impossible de trouver ("%1$s") dans /etc/hosts. Veuillez vérifier les autorisations du fichier ou s'il existe le nom d'hôte.
 351 Impossible de créer un socket TCP.
 352 tcp_open: ne peut pas obtenir un port TCP réservé.
 353 Impossible d'établir la connexion au serveur maître sur l'hôte "%1$s".
@@ -1312,9 +1312,27 @@ $ LOADDB
 1243 Le chargement de l'index a été abandonné après une erreur
 1244 Le chargement de mises à jour d'attributs partagés à partir de fichiers objet n'est pas pris en charge en mode CS.
 1245 Le chargement de mises à jour d'attributs de classe à partir de fichiers objets n'est pas pris en charge en mode CS.
-1246 Erreur lors de l'obtention de l'adresse et du nom. Code : %1$d, message : %2$s.
+1246 Impossible d'obtenir l'adresse et le nom canonique de ("%1$s") dans /etc/hosts. Veuillez vérifier l'autorisation du fichier ou s'il existe le nom d'hôte.
+1247 Le temps (%1$s) spécifié doit être postérieure à l'heure (%2$s) de la sauvegarde spécifiée.
+1248 Fichier de clé non valide: %1$s
+1249 Impossible de trouver la clé (index: %1$d).
+1250 La clé principale définie dans la base de données et ce qui est donné ne correspondent pas. L'index de clé défini sur la base de données: %1$d
+1251 Erreur lors du cryptage TDE.
+1252 Erreur lors du décryptage TDE.
+1253 Le module TDE n'est pas chargé.
+1254 Impossible de créer une clé.
+1255 Impossible de charger le module TDE. Vous ne pouvez pas utiliser la fonction TDE.\n\
+Vérifiez le chemin du fichier de clé (_keys) et assurez-vous qu'il inclut la clé appropriée.
+1256 Impossible de copier le fichier de clé (_keys). Vous ne pouvez pas utiliser la fonction TDE sur la base de données copiée.
+1257 Impossible de sauvegarder le fichier de clé (_keys). Vous ne pouvez pas utiliser la fonction TDE sur la base de données restaurée en fonction de ce volume de sauvegarde.
+1258 Impossible de trouver le jeu de clés sur la base de données à partir de%1$s. Le fichier clé du volume de sauvegarde va être utilisé.
+1259 Renommez le fichier de clé de «%1$s» en «%2$s».
+1260 Copiez le fichier de clé "%1$s" dans "%2$s".
+1261 Impossible de trouver la clé au moment de la restauration (index de clé: %1$d, heure de création: %2$s). Définissez la clé (index de clé: %3$d) pour la base de données.
+1262 Le fichier clé est plein.
+1263 Le chiffrement TDE de la page de journal échoue (pageid: %1$lld). Il ne sera plus essayé de crypter cette page.
 
-1247 Dernière erreur
+1264 Dernière erreur
 
 $set 6 MSGCAT_SET_INTERNAL
 1 Erreur dans le sous-système d'erreur (ligne %1$d):

@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright (C) 2008 Search Solution Corporation
+ * Copyright (C) 2016 CUBRID Corporation
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -179,6 +180,8 @@ static int do_prepare_insert_internal (PARSER_CONTEXT * parser, PT_NODE * statem
 static int do_insert_template (PARSER_CONTEXT * parser, DB_OTMPL ** otemplate, PT_NODE * statement,
 			       const char **savepoint_name, int *row_count_ptr);
 static void init_compile_context (PARSER_CONTEXT * parser);
+
+static int do_select_internal (PARSER_CONTEXT * parser, PT_NODE * statement, bool for_ins_upd);
 
 /*
  * initialize_serial_invariant() - initialize a serial invariant
@@ -6910,7 +6913,7 @@ get_select_list_to_update (PARSER_CONTEXT * parser, PT_NODE * from, PT_NODE * co
 	  AU_ENABLE (parser->au_save);
 
 	  assert (parser->query_id == NULL_QUERY_ID);
-	  if (do_select (parser, statement) < NO_ERROR)
+	  if (do_select_for_ins_upd (parser, statement) < NO_ERROR)
 	    {
 	      /* query failed, an error has already been set */
 	      statement = NULL;
@@ -8855,7 +8858,7 @@ do_prepare_update (PARSER_CONTEXT * parser, PT_NODE * statement)
 	  lhs = lhs->info.expr.arg1;
 	}
       statement->info.update.server_update = server_update;
-      if (server_update && !has_any_update_trigger)
+      if (server_update && !has_any_update_trigger && !(statement->info.update.hint & PT_HINT_USE_SBR))
 	{
 	  statement->info.update.execute_with_commit_allowed = 1;
 	}
@@ -10215,7 +10218,7 @@ do_prepare_delete (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * paren
       server_delete = (!has_trigger && !has_virt_obj);
 
       statement->info.delete_.server_delete = server_delete;
-      if (server_delete && !has_any_delete_trigger)
+      if (server_delete && !has_any_delete_trigger && !(statement->info.delete_.hint & PT_HINT_USE_SBR))
 	{
 	  statement->info.delete_.execute_with_commit_allowed = 1;
 	}
@@ -13432,16 +13435,6 @@ do_prepare_insert (PARSER_CONTEXT * parser, PT_NODE * statement)
       goto cleanup;
     }
 
-  /* prevent blob, clob plan cache */
-  for (attr_list = statement->info.insert.attr_list; attr_list != NULL; attr_list = attr_list->next)
-    {
-      if (attr_list->type_enum == PT_TYPE_BLOB || attr_list->type_enum == PT_TYPE_CLOB)
-	{
-	  goto cleanup;
-	}
-    }
-  /* Checks above are required before any early outs. */
-
   error = do_prepare_insert_internal (parser, statement);
 
 cleanup:
@@ -13865,7 +13858,6 @@ dbmeth_print (DB_OBJECT * self, DB_VALUE * result, DB_VALUE * msg)
  *
  */
 
-
 /*
  * do_select() -
  *   return: Error code
@@ -13874,8 +13866,38 @@ dbmeth_print (DB_OBJECT * self, DB_VALUE * result, DB_VALUE * msg)
  *
  * Note: Side effects can exist at returned result through application extern
  */
+
 int
 do_select (PARSER_CONTEXT * parser, PT_NODE * statement)
+{
+  return do_select_internal (parser, statement, false);
+}
+
+/*
+ * do_select_for_ins_upd() -
+ *   return: Error code
+ *   parser(in/out): Parser context
+ *   statement(in/out): A statement to do
+ *
+ * Note: Side effects can exist at returned result through application extern
+ */
+int
+do_select_for_ins_upd (PARSER_CONTEXT * parser, PT_NODE * statement)
+{
+  return do_select_internal (parser, statement, true);
+}
+
+/*
+ * do_select_internal() - do_insert internal routine
+ *   return: Error code
+ *   parser(in/out): Parser context
+ *   statement(in/out): A statement to do
+ *   for_inst_upd: check insert/update statement
+ *
+ * Note: Side effects can exist at returned result through application extern
+ */
+static int
+do_select_internal (PARSER_CONTEXT * parser, PT_NODE * statement, bool for_ins_upd)
 {
   int error;
   XASL_NODE *xasl = NULL;
@@ -13934,6 +13956,18 @@ do_select (PARSER_CONTEXT * parser, PT_NODE * statement)
 
   if (xasl && !pt_has_error (parser))
     {
+      if (for_ins_upd)
+	{
+	  if (xasl->outptr_list)
+	    {
+	      for (REGU_VARIABLE_LIST regu_var_list = xasl->outptr_list->valptrp; regu_var_list;
+		   regu_var_list = regu_var_list->next)
+		{
+		  regu_var_list->value.flags |= REGU_VARIABLE_UPD_INS_LIST;
+		}
+	    }
+	}
+
       if (pt_false_where (parser, statement))
 	{
 	  /* there is no results, this is a compile time false where clause */
@@ -14150,6 +14184,10 @@ do_prepare_select (PARSER_CONTEXT * parser, PT_NODE * statement)
       AU_SAVE_AND_DISABLE (au_save);	/* this prevents authorization checking during generating XASL */
       /* parser_generate_xasl() will build XASL tree from parse tree */
       contextp->xasl = parser_generate_xasl (parser, statement);
+      if (statement->info.query.oids_included)
+	{
+	  contextp->xasl->header.xasl_flag |= RESULT_CACHE_INHIBITED;
+	}
       AU_RESTORE (au_save);
 
       if (contextp->xasl && (err == NO_ERROR) && !pt_has_error (parser))
@@ -14445,7 +14483,7 @@ do_execute_select (PARSER_CONTEXT * parser, PT_NODE * statement)
       query_flag |= RESULT_CACHE_REQUIRED;
     }
 
-  if (statement->info.query.do_not_cache == 1)
+  if (statement->info.query.do_not_cache == 1 || statement->info.query.oids_included)
     {
       query_flag |= RESULT_CACHE_INHIBITED;
     }
@@ -15488,7 +15526,7 @@ do_merge (PARSER_CONTEXT * parser, PT_NODE * statement)
 
 	  query_id_self = parser->query_id;
 	  parser->query_id = NULL_QUERY_ID;
-	  err = do_select (parser, ins_select_stmt);
+	  err = do_select_for_ins_upd (parser, ins_select_stmt);
 	  ins_query_id = parser->query_id;
 	  parser->query_id = query_id_self;
 
@@ -15544,7 +15582,7 @@ do_merge (PARSER_CONTEXT * parser, PT_NODE * statement)
 
 	  query_id_self = parser->query_id;
 	  parser->query_id = NULL_QUERY_ID;
-	  err = do_select (parser, upd_select_stmt);
+	  err = do_select_for_ins_upd (parser, upd_select_stmt);
 	  upd_query_id = parser->query_id;
 	  parser->query_id = query_id_self;
 
@@ -15926,6 +15964,7 @@ do_prepare_merge (PARSER_CONTEXT * parser, PT_NODE * statement)
       if (parser->long_string_skipped || parser->print_type_ambiguity)
 	{
 	  statement->cannot_prepare = 1;
+	  statement->info.merge.flags &= ~PT_MERGE_INFO_SERVER_OP;
 	  goto cleanup;
 	}
 
@@ -17528,7 +17567,7 @@ do_insert_checks (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE ** class
 	  goto exit;
 	}
 
-      if (!trigger_involved)
+      if (!trigger_involved && !(statement->info.insert.hint & PT_HINT_USE_SBR))
 	{
 	  statement->info.insert.execute_with_commit_allowed = 1;
 	}

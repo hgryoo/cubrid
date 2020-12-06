@@ -1,5 +1,6 @@
 #
-# Copyright (C) 2016 Search Solution Corporation. All rights reserved.
+# Copyright (C) 2008 Search Solution Corporation
+# Copyright (C) 2016 CUBRID Corporation
 #
 #   This program is free software; you can redistribute it and/or modify
 #   it under the terms of the GNU General Public License as published by
@@ -91,6 +92,7 @@ set(BASE_SOURCES
   ${BASE_DIR}/ini_parser.c
   ${BASE_DIR}/intl_support.c
   ${BASE_DIR}/language_support.c
+  ${BASE_DIR}/locale_helper.cpp
   ${BASE_DIR}/locale_support.c
   ${BASE_DIR}/lock_free.c
   ${BASE_DIR}/lockfree_bitmap.cpp
@@ -98,7 +100,6 @@ set(BASE_SOURCES
   ${BASE_DIR}/lockfree_transaction_descriptor.cpp
   ${BASE_DIR}/lockfree_transaction_table.cpp
   ${BASE_DIR}/lockfree_transaction_system.cpp
-  ${BASE_DIR}/md5.c
   ${BASE_DIR}/mem_block.cpp
   ${BASE_DIR}/memory_alloc.c
   ${BASE_DIR}/memory_hash.c
@@ -108,7 +109,7 @@ set(BASE_SOURCES
   ${BASE_DIR}/mprec.c
   ${BASE_DIR}/object_representation_sr.c
   ${BASE_DIR}/packer.cpp
-  ${BASE_DIR}/get_clockfreq.c
+  ${BASE_DIR}/get_clock_freq.c
   ${BASE_DIR}/perf.cpp
   ${BASE_DIR}/pinnable_buffer.cpp
   ${BASE_DIR}/pinning.cpp
@@ -135,6 +136,7 @@ set (BASE_HEADERS
   ${BASE_DIR}/error_manager.h
   ${BASE_DIR}/extensible_array.hpp
   ${BASE_DIR}/fileline_location.hpp
+  ${BASE_DIR}/locale_helper.hpp
   ${BASE_DIR}/lockfree_address_marker.hpp
   ${BASE_DIR}/lockfree_bitmap.hpp
   ${BASE_DIR}/lockfree_freelist.hpp
@@ -208,6 +210,7 @@ set(QUERY_SOURCES
   ${QUERY_DIR}/numeric_opfunc.c
   ${QUERY_DIR}/partition.c
   ${QUERY_DIR}/query_aggregate.cpp
+  ${QUERY_DIR}/query_hash_scan.c
   ${QUERY_DIR}/query_analytic.cpp
   ${QUERY_DIR}/query_dump.c
   ${QUERY_DIR}/query_evaluator.c
@@ -223,15 +226,18 @@ set(QUERY_SOURCES
   ${QUERY_DIR}/show_scan.c
   ${QUERY_DIR}/stream_to_xasl.c
   ${QUERY_DIR}/string_opfunc.c
+  ${QUERY_DIR}/string_regex.cpp
   ${QUERY_DIR}/vacuum.c
   ${QUERY_DIR}/xasl_cache.c
   )
 set(QUERY_HEADERS
   ${QUERY_DIR}/query_aggregate.hpp
+  ${QUERY_DIR}/query_hash_scan.h
   ${QUERY_DIR}/query_analytic.hpp
   ${QUERY_DIR}/query_monitoring.hpp
   ${QUERY_DIR}/query_reevaluation.hpp
   ${QUERY_DIR}/scan_json_table.hpp
+  ${QUERY_DIR}/string_regex.hpp
   )
 
 set(OBJECT_SOURCES
@@ -248,6 +254,8 @@ set(OBJECT_HEADERS
 )
 
 set(JSP_SOURCES
+  ${JSP_DIR}/jsp_comm.c
+  ${JSP_DIR}/jsp_file.c
   ${JSP_DIR}/jsp_sr.c
   )
 
@@ -323,6 +331,7 @@ set(STORAGE_SOURCES
   ${STORAGE_DIR}/statistics_sr.c
   ${STORAGE_DIR}/storage_common.c
   ${STORAGE_DIR}/system_catalog.c
+  ${STORAGE_DIR}/tde.c
   )
 set(STORAGE_HEADERS
   ${STORAGE_DIR}/btree_unique.hpp
@@ -426,11 +435,6 @@ SET_SOURCE_FILES_PROPERTIES(
   PROPERTIES LANGUAGE CXX
   )
 
-SET_SOURCE_FILES_PROPERTIES(
-  ${BASE_DIR}/md5.c
-  PROPERTIES LANGUAGE C
-  )
-
 set (CUBRID_LIB_SOURCES
   ${BASE_SOURCES}
   ${COMMUNICATION_SOURCES}
@@ -493,7 +497,7 @@ if(WIN32)
   target_link_libraries(cubrid LINK_PRIVATE ws2_32 ${JVM_LIBS})
   set_target_properties(cubrid PROPERTIES LINK_FLAGS "/DEF:\"${CMAKE_SOURCE_DIR}/win/libcubrid/libcubrid.def\"" LINK_FLAGS_RELEASE "/NODEFAULTLIB:libcmt.lib" LINK_FLAGS_DEBUG "/NODEFAULTLIB:msvcrt.lib")
 endif(WIN32)
-target_include_directories(cubrid PRIVATE ${CMAKE_SOURCE_DIR}/src/heaplayers/util ${JAVA_INC} ${EP_INCLUDES} ${FLEX_INCLUDE_DIRS})
+target_include_directories(cubrid PRIVATE ${JAVA_INC} ${EP_INCLUDES} ${FLEX_INCLUDE_DIRS})
 if(UNIX)
   target_link_libraries(cubrid LINK_PRIVATE -Wl,-whole-archive ${EP_LIBS} -Wl,-no-whole-archive)
   target_link_libraries(cubrid LINK_PUBLIC ${CURSES_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
@@ -525,7 +529,6 @@ if(AT_LEAST_ONE_UNIT_TEST)
     )
 
   target_include_directories(cubrid-win-lib PRIVATE
-    ${CMAKE_SOURCE_DIR}/src/heaplayers/util
     ${JAVA_INC}
     ${EP_INCLUDES}
     ${FLEX_INCLUDE_DIRS}

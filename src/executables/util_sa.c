@@ -915,6 +915,7 @@ restoredb (UTIL_FUNCTION_ARG * arg)
   char *up_to_date;
   char *database_name;
   bool partial_recovery;
+  const char *mk_path;
   BO_RESTART_ARG restart_arg;
 
   database_name = utility_get_option_string_value (arg_map, OPTION_STRING_TABLE, 0);
@@ -926,9 +927,20 @@ restoredb (UTIL_FUNCTION_ARG * arg)
   restart_arg.level = utility_get_option_int_value (arg_map, RESTORE_LEVEL_S);
   restart_arg.verbose_file = utility_get_option_string_value (arg_map, RESTORE_OUTPUT_FILE_S, 0);
   restart_arg.newvolpath = utility_get_option_bool_value (arg_map, RESTORE_USE_DATABASE_LOCATION_PATH_S);
+  mk_path = utility_get_option_string_value (arg_map, RESTORE_KEYS_FILE_PATH_S, 0);
   restart_arg.restore_upto_bktime = false;
   restart_arg.restore_slave = false;
   restart_arg.is_restore_from_backup = true;
+
+  if (mk_path != NULL)
+    {
+      memcpy (restart_arg.keys_file_path, mk_path, PATH_MAX);
+    }
+  else
+    {
+      /* prepare the buffer to contain mk path from the backup volume */
+      restart_arg.keys_file_path[0] = '\0';
+    }
 
   if (utility_get_option_string_table_size (arg_map) != 1)
     {
@@ -1919,7 +1931,7 @@ alterdbhost (UTIL_FUNCTION_ARG * arg)
 #if 0				/* use Unix-domain socket for localhost */
       if (GETHOSTNAME (host_name_buf, CUB_MAXHOSTNAMELEN) != 0)
 	{
-	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_BO_UNABLE_TO_FIND_HOSTNAME, 0);
+	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_BO_UNABLE_TO_FIND_HOSTNAME, 1, host_name_buf);
 	  goto error;
 	}
 #else
@@ -3328,7 +3340,7 @@ synccoll_check (const char *db_name, int *db_obs_coll_cnt, int *new_sys_coll_cnt
 	    }
 
 	  lc = lang_get_collation (i);
-	  if (lc->coll.coll_id == LANG_COLL_ISO_BINARY)
+	  if (lc->coll.coll_id == LANG_COLL_DEFAULT)
 	    {
 	      assert (i != 0);
 	      continue;
@@ -3733,6 +3745,7 @@ restoreslave (UTIL_FUNCTION_ARG * arg)
   char *database_name;
   char *source_state;
   char *master_host_name;
+  const char *mk_path;
   BO_RESTART_ARG restart_arg;
 
   if (sysprm_load_and_init (NULL, NULL, SYSPRM_LOAD_ALL) != NO_ERROR)
@@ -3772,9 +3785,19 @@ restoreslave (UTIL_FUNCTION_ARG * arg)
   restart_arg.level = 0;
   restart_arg.verbose_file = utility_get_option_string_value (arg_map, RESTORESLAVE_OUTPUT_FILE_S, 0);
   restart_arg.newvolpath = utility_get_option_bool_value (arg_map, RESTORESLAVE_USE_DATABASE_LOCATION_PATH_S);
+  mk_path = utility_get_option_string_value (arg_map, RESTORE_KEYS_FILE_PATH_S, 0);
   restart_arg.restore_upto_bktime = false;
   restart_arg.stopat = time (NULL);
   restart_arg.is_restore_from_backup = false;
+
+  if (mk_path != NULL)
+    {
+      memcpy (restart_arg.keys_file_path, mk_path, PATH_MAX);
+    }
+  else
+    {
+      restart_arg.keys_file_path[0] = '\0';
+    }
 
   if (utility_get_option_string_table_size (arg_map) != 1)
     {
@@ -3903,6 +3926,7 @@ gen_tz (UTIL_FUNCTION_ARG * arg)
 {
   UTIL_ARG_MAP *arg_map = NULL;
   char *input_path = NULL;
+  char inputpath_local[PATH_MAX] = { 0 };
   char *tz_gen_mode = NULL;
   TZ_GEN_TYPE tz_gen_type = TZ_GEN_TYPE_NEW;
   int exit_status = EXIT_SUCCESS;
@@ -3970,8 +3994,6 @@ gen_tz (UTIL_FUNCTION_ARG * arg)
 
   if (input_path == NULL || strlen (input_path) == 0)
     {
-      char inputpath_local[PATH_MAX] = { 0 };
-
       envvar_tzdata_dir_file (inputpath_local, sizeof (inputpath_local), "");
       input_path = inputpath_local;
     }

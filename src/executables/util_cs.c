@@ -58,6 +58,8 @@
 #include "dynamic_array.h"
 #include "util_func.h"
 #include "xasl.h"
+#include "log_volids.hpp"
+#include "tde.h"
 #if !defined(WINDOWS)
 #include "heartbeat.h"
 #endif
@@ -108,7 +110,7 @@ static void intr_handler (int sig_no);
 static void backupdb_sig_interrupt_handler (int sig_no);
 STATIC_INLINE char *spacedb_get_size_str (char *buf, UINT64 num_pages, T_SPACEDB_SIZE_UNIT size_unit);
 static void print_timestamp (FILE * outfp);
-static int print_tran_entry (const ONE_TRAN_INFO * tran_info, TRANDUMP_LEVEL dump_level);
+static int print_tran_entry (const ONE_TRAN_INFO * tran_info, TRANDUMP_LEVEL dump_level, bool full_sqltext);
 static int tranlist_cmp_f (const void *p1, const void *p2);
 static OID *util_get_class_oids_and_index_btid (dynamic_array * darray, const char *index_name, BTID * index_btid);
 
@@ -131,6 +133,7 @@ backupdb (UTIL_FUNCTION_ARG * arg)
   int backup_num_threads;
   bool compress_flag;
   bool sa_mode;
+  bool separate_keys;
   FILEIO_ZIP_METHOD backup_zip_method = FILEIO_ZIP_NONE_METHOD;
   FILEIO_ZIP_LEVEL backup_zip_level = FILEIO_ZIP_NONE_LEVEL;
   bool skip_activelog = false;
@@ -164,6 +167,7 @@ backupdb (UTIL_FUNCTION_ARG * arg)
 
   sleep_msecs = utility_get_option_int_value (arg_map, BACKUP_SLEEP_MSECS_S);
   sa_mode = utility_get_option_bool_value (arg_map, BACKUP_SA_MODE_S);
+  separate_keys = utility_get_option_bool_value (arg_map, BACKUP_SEPARATE_KEYS_S);
 
   /* Range checking of input */
   if (backup_level < 0 || backup_level >= FILEIO_BACKUP_UNDEFINED_LEVEL)
@@ -189,8 +193,8 @@ backupdb (UTIL_FUNCTION_ARG * arg)
 
   if (compress_flag)
     {
-      backup_zip_method = FILEIO_ZIP_LZO1X_METHOD;
-      backup_zip_level = FILEIO_ZIP_LZO1X_DEFAULT_LEVEL;
+      backup_zip_method = FILEIO_ZIP_LZ4_METHOD;
+      backup_zip_level = FILEIO_ZIP_LZ4_DEFAULT_LEVEL;
     }
 
   /* extra validation */
@@ -225,7 +229,27 @@ backupdb (UTIL_FUNCTION_ARG * arg)
 						     BACKUPDB_INVALID_PATH));
 	      goto error_exit;
 	    }
+#if !defined (WINDOWS)
+	  else if (separate_keys)	/* FIFO file and --separate_keys is exclusive */
+	    {
+	      PRINT_AND_LOG_ERR_MSG (msgcat_message
+				     (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_BACKUPDB,
+				      BACKUPDB_FIFO_KEYS_NOT_SUPPORTED));
+	      goto error_exit;
+	    }
+#endif /* !WINDOWS */
 	}
+    }
+
+  if (separate_keys)
+    {
+      util_log_write_warnstr (msgcat_message
+			      (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_BACKUPDB, BACKUPDB_USING_SEPARATE_KEYS));
+    }
+  else
+    {
+      util_log_write_warnstr (msgcat_message
+			      (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_BACKUPDB, BACKUPDB_NOT_USING_SEPARATE_KEYS));
     }
 
   /* error message log file */
@@ -298,7 +322,8 @@ backupdb (UTIL_FUNCTION_ARG * arg)
     }
 
   if (boot_backup (backup_path, (FILEIO_BACKUP_LEVEL) backup_level, remove_log_archives, backup_verbose_file,
-		   backup_num_threads, backup_zip_method, backup_zip_level, skip_activelog, sleep_msecs) != NO_ERROR)
+		   backup_num_threads, backup_zip_method, backup_zip_level, skip_activelog, sleep_msecs,
+		   separate_keys) != NO_ERROR)
     {
       PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
       db_shutdown ();
@@ -1325,7 +1350,7 @@ doesmatch_transaction (const ONE_TRAN_INFO * tran, int *tran_index_list, int ind
  *   dump_level(in) :
  */
 static void
-dump_trantb (TRANS_INFO * info, TRANDUMP_LEVEL dump_level)
+dump_trantb (TRANS_INFO * info, TRANDUMP_LEVEL dump_level, bool full_sqltext)
 {
   int i;
   int num_valid = 0;
@@ -1364,7 +1389,7 @@ dump_trantb (TRANS_INFO * info, TRANDUMP_LEVEL dump_level)
 		}
 
 	      num_valid++;
-	      print_tran_entry (&info->tran[i], dump_level);
+	      print_tran_entry (&info->tran[i], dump_level, full_sqltext);
 	    }
 	}
     }
@@ -1500,7 +1525,7 @@ kill_transactions (TRANS_INFO * info, int *tran_index_list, int list_size, const
 	      if (doesmatch_transaction (&info->tran[i], tran_index_list, list_size, username, hostname, progname,
 					 sql_id))
 		{
-		  print_tran_entry (&info->tran[i], dump_level);
+		  print_tran_entry (&info->tran[i], dump_level, false);
 		}
 	    }
 	  fprintf (stdout, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_TRANLIST, underscore));
@@ -1544,7 +1569,7 @@ kill_transactions (TRANS_INFO * info, int *tran_index_list, int list_size, const
 			  fprintf (stdout, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_TRANLIST, underscore));
 			}
 
-		      print_tran_entry (&info->tran[i], dump_level);
+		      print_tran_entry (&info->tran[i], dump_level, false);
 
 		      if (er_errid () != NO_ERROR)
 			{
@@ -1577,10 +1602,11 @@ kill_transactions (TRANS_INFO * info, int *tran_index_list, int list_size, const
  *   include_query_info(in) :
  */
 static int
-print_tran_entry (const ONE_TRAN_INFO * tran_info, TRANDUMP_LEVEL dump_level)
+print_tran_entry (const ONE_TRAN_INFO * tran_info, TRANDUMP_LEVEL dump_level, bool full_sqltext)
 {
   char *buf = NULL;
-  char query_buf[32];
+  char *query_buf;
+  char tmp_query_buf[32];
 
   if (tran_info == NULL)
     {
@@ -1597,8 +1623,16 @@ print_tran_entry (const ONE_TRAN_INFO * tran_info, TRANDUMP_LEVEL dump_level)
       if (tran_info->query_exec_info.query_stmt != NULL)
 	{
 	  /* print 31 string */
-	  strncpy (query_buf, tran_info->query_exec_info.query_stmt, 32);
-	  query_buf[31] = '\0';
+	  if (full_sqltext == true)
+	    {
+	      query_buf = tran_info->query_exec_info.query_stmt;
+	    }
+	  else
+	    {
+	      strncpy (tmp_query_buf, tran_info->query_exec_info.query_stmt, 32);
+	      tmp_query_buf[31] = '\0';
+	      query_buf = tmp_query_buf;
+	    }
 	}
     }
 
@@ -1642,12 +1676,14 @@ tranlist (UTIL_FUNCTION_ARG * arg)
   UTIL_ARG_MAP *arg_map = arg->arg_map;
   char er_msg_file[PATH_MAX];
   const char *database_name;
+#if defined(NEED_PRIVILEGE_PASSWORD)
   const char *username;
   const char *password;
+#endif
   char *passbuf = NULL;
   TRANS_INFO *info = NULL;
   int error;
-  bool is_summary, include_query_info;
+  bool is_summary, include_query_info, full_sqltext = false;
   TRANDUMP_LEVEL dump_level = TRANDUMP_FULL_INFO;
 
   if (utility_get_option_string_table_size (arg_map) != 1)
@@ -1661,17 +1697,22 @@ tranlist (UTIL_FUNCTION_ARG * arg)
       goto print_tranlist_usage;
     }
 
+#if defined(NEED_PRIVILEGE_PASSWORD)
   username = utility_get_option_string_value (arg_map, TRANLIST_USER_S, 0);
   password = utility_get_option_string_value (arg_map, TRANLIST_PASSWORD_S, 0);
+#endif
   is_summary = utility_get_option_bool_value (arg_map, TRANLIST_SUMMARY_S);
   tranlist_Sort_column = utility_get_option_int_value (arg_map, TRANLIST_SORT_KEY_S);
   tranlist_Sort_desc = utility_get_option_bool_value (arg_map, TRANLIST_REVERSE_S);
+  full_sqltext = utility_get_option_bool_value (arg_map, TRANLIST_FULL_SQL_S);
 
+#if defined(NEED_PRIVILEGE_PASSWORD)
   if (username == NULL)
     {
       /* default : DBA user */
       username = "DBA";
     }
+#endif
 
   if (check_database_name (database_name) != NO_ERROR)
     {
@@ -1689,6 +1730,7 @@ tranlist (UTIL_FUNCTION_ARG * arg)
   snprintf (er_msg_file, sizeof (er_msg_file) - 1, "%s_%s.err", database_name, arg->command_name);
   er_init (er_msg_file, ER_NEVER_EXIT);
 
+#if defined(NEED_PRIVILEGE_PASSWORD)
   error = db_restart_ex (arg->command_name, database_name, username, password, NULL, DB_CLIENT_TYPE_ADMIN_UTILITY);
   if (error != NO_ERROR)
     {
@@ -1731,6 +1773,15 @@ tranlist (UTIL_FUNCTION_ARG * arg)
       db_shutdown ();
       goto error_exit;
     }
+#else
+  AU_DISABLE_PASSWORDS ();
+  db_set_client_type (DB_CLIENT_TYPE_ADMIN_UTILITY);
+  if (db_login ("DBA", NULL) || db_restart (arg->command_name, TRUE, database_name))
+    {
+      PRINT_AND_LOG_ERR_MSG ("%s: %s. \n\n", arg->command_name, db_error_string (3));
+      goto error_exit;
+    }
+#endif
 
   /*
    * Get the current state of transaction table information. All the
@@ -1760,7 +1811,7 @@ tranlist (UTIL_FUNCTION_ARG * arg)
       qsort ((void *) info->tran, info->num_trans, sizeof (ONE_TRAN_INFO), tranlist_cmp_f);
     }
 
-  (void) dump_trantb (info, dump_level);
+  (void) dump_trantb (info, dump_level, full_sqltext);
 
   if (info)
     {
@@ -1875,7 +1926,18 @@ killtran (UTIL_FUNCTION_ARG * arg)
   snprintf (er_msg_file, sizeof (er_msg_file) - 1, "%s_%s.err", database_name, arg->command_name);
   er_init (er_msg_file, ER_NEVER_EXIT);
 
+  /* disable password, if don't use kill option */
+  if (isbatch == 0)
+    {
+      if (dba_password != NULL)
+	{
+	  goto print_killtran_usage;
+	}
+      AU_DISABLE_PASSWORDS ();
+    }
+
   db_set_client_type (DB_CLIENT_TYPE_ADMIN_UTILITY);
+
   if (db_login ("DBA", dba_password) != NO_ERROR)
     {
       PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
@@ -1945,7 +2007,7 @@ killtran (UTIL_FUNCTION_ARG * arg)
       TRANDUMP_LEVEL dump_level;
 
       dump_level = (include_query_exec_info) ? TRANDUMP_QUERY_INFO : TRANDUMP_SUMMARY;
-      dump_trantb (info, dump_level);
+      dump_trantb (info, dump_level, false);
     }
   else
     {
@@ -2736,13 +2798,6 @@ retry:
   /* PRM_LOG_BACKGROUND_ARCHIVING is always true in CUBRID HA */
   sysprm_set_to_default (prm_get_name (PRM_ID_LOG_BACKGROUND_ARCHIVING), true);
 
-  if (HA_DISABLED ())
-    {
-      fprintf (stderr, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_COPYLOGDB, COPYLOGDB_MSG_NOT_HA_MODE));
-      (void) db_shutdown ();
-      goto error_exit;
-    }
-
   error = logwr_copy_log_file (database_name, log_path, mode, start_pageid);
   if (error != NO_ERROR)
     {
@@ -2771,7 +2826,7 @@ error_exit:
 
   if (logwr_force_shutdown () == false
       && (error == ER_NET_SERVER_CRASHED || error == ER_NET_CANT_CONNECT_SERVER || error == ER_BO_CONNECT_FAILED
-	  || error == ERR_CSS_TCP_CANNOT_CONNECT_TO_MASTER))
+	  || error == ERR_CSS_TCP_CANNOT_CONNECT_TO_MASTER || error == ERR_CSS_TCP_CONNECT_TIMEDOUT))
     {
       (void) sleep (sleep_nsecs);
       /* sleep 1, 2, 4, 8, etc; don't wait for more than 1/2 min */
@@ -2853,10 +2908,6 @@ applylogdb (UTIL_FUNCTION_ARG * arg)
       log_path = realpath (log_path, log_path_buf);
     }
   if (log_path == NULL)
-    {
-      goto print_applylog_usage;
-    }
-  if (max_mem_size > 500)
     {
       goto print_applylog_usage;
     }
@@ -3583,5 +3634,291 @@ print_check_usage:
 
 error_exit:
 
+  return EXIT_FAILURE;
+}
+
+/*
+ * tde() - tde main routine
+ *   return: EXIT_SUCCESS/EXIT_FAILURE
+ */
+int
+tde (UTIL_FUNCTION_ARG * arg)
+{
+  UTIL_ARG_MAP *arg_map = arg->arg_map;
+  char er_msg_file[PATH_MAX];
+  char mk_path[PATH_MAX] = { 0, };
+  const char *database_name;
+  const char *dba_password;
+  char *passbuf;
+  int error = NO_ERROR;
+  int vdes = NULL_VOLDES;
+  bool gen_op;
+  bool show_op;
+  bool print_val;
+  int change_op_idx;
+  int delete_op_idx;
+  int op_cnt = 0;
+
+  if (utility_get_option_string_table_size (arg_map) != 1)
+    {
+      goto print_tde_usage;
+    }
+
+  database_name = utility_get_option_string_value (arg_map, OPTION_STRING_TABLE, 0);
+  if (database_name == NULL)
+    {
+      goto print_tde_usage;
+    }
+
+  gen_op = utility_get_option_bool_value (arg_map, TDE_GENERATE_KEY_S);
+  show_op = utility_get_option_bool_value (arg_map, TDE_SHOW_KEYS_S);
+  change_op_idx = utility_get_option_int_value (arg_map, TDE_CHANGE_KEY_S);
+  delete_op_idx = utility_get_option_int_value (arg_map, TDE_DELETE_KEY_S);
+
+  print_val = utility_get_option_bool_value (arg_map, TDE_PRINT_KEY_VALUE_S);
+  dba_password = utility_get_option_string_value (arg_map, KILLTRAN_DBA_PASSWORD_S, 0);
+
+  if (gen_op)
+    {
+      op_cnt++;
+    }
+  if (show_op)
+    {
+      op_cnt++;
+    }
+  if (change_op_idx != -1)
+    {
+      op_cnt++;
+    }
+  if (delete_op_idx != -1)
+    {
+      op_cnt++;
+    }
+
+  if (op_cnt != 1)
+    {
+      /* Only one and at least one operation has to be given */
+      /* -c -1 -d -1 -n is now allowed, but it's trivial */
+      goto print_tde_usage;
+    }
+
+  /* Checking input range, -1 means not the operation case */
+  if (change_op_idx < -1)
+    {
+      goto print_tde_usage;
+    }
+  if (delete_op_idx < -1)
+    {
+      goto print_tde_usage;
+    }
+
+  /* extra validation */
+  if (check_database_name (database_name))
+    {
+      goto error_exit;
+    }
+
+  /* error message log file */
+  snprintf (er_msg_file, sizeof (er_msg_file) - 1, "%s_%s.err", database_name, arg->command_name);
+  er_init (er_msg_file, ER_NEVER_EXIT);
+
+  db_set_client_type (DB_CLIENT_TYPE_ADMIN_UTILITY);
+  if (db_login ("DBA", dba_password) != NO_ERROR)
+    {
+      PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
+      goto error_exit;
+    }
+
+  /* first try to restart with the password given (possibly none) */
+  error = db_restart (arg->command_name, TRUE, database_name);
+  if (error)
+    {
+      if (error == ER_AU_INVALID_PASSWORD && (dba_password == NULL || strlen (dba_password) == 0))
+	{
+	  /*
+	   * prompt for a valid password and try again, need a reusable
+	   * password prompter so we can use getpass() on platforms that
+	   * support it.
+	   */
+
+	  /* get password interactively if interactive mode */
+	  passbuf = getpass (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_TDE, TDE_MSG_DBA_PASSWORD));
+	  if (passbuf[0] == '\0')	/* to fit into db_login protocol */
+	    {
+	      passbuf = (char *) NULL;
+	    }
+	  dba_password = passbuf;
+	  if (db_login ("DBA", dba_password) != NO_ERROR)
+	    {
+	      PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
+	      goto error_exit;
+	    }
+	  else
+	    {
+	      error = db_restart (arg->command_name, TRUE, database_name);
+	    }
+	}
+
+      if (error)
+	{
+	  PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
+	  goto error_exit;
+	}
+    }
+
+  if (tde_get_mk_file_path (mk_path) != NO_ERROR)
+    {
+      PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
+      db_shutdown ();
+      goto error_exit;
+    }
+
+  printf ("Key File: %s\n", mk_path);
+
+  /* 
+   * In Window, --change-keys operation is not supported because of this fileio_mount(). In Window, if a process mount a file with file_lock > 0, no other process can mount even with file_lock = 0, but the file lock here is necessary to procide exclusivness with backupdb in current design. 
+   */
+  vdes = fileio_mount (NULL, database_name, mk_path, LOG_DBTDE_KEYS_VOLID, 1, false);
+  if (vdes == NULL_VOLDES)
+    {
+      PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
+      db_shutdown ();
+      goto error_exit;
+    }
+  /* 
+   * There is no need to call fileio_dismount() for 'vdes' later in this function
+   * because it is dismounted in db_shutdown() 
+   * */
+
+  printf ("\n");
+  if (gen_op)
+    {
+      unsigned char master_key[TDE_MASTER_KEY_LENGTH];
+      int mk_index = -1;
+      time_t created_time;
+      char ctime_buf[CTIME_MAX];
+
+      if (tde_create_mk (master_key, &created_time) != NO_ERROR)
+	{
+	  PRINT_AND_LOG_ERR_MSG ("FAILURE: %s\n", db_error_string (3));
+	  db_shutdown ();
+	  goto error_exit;
+	}
+      if (tde_add_mk (vdes, master_key, created_time, &mk_index) != NO_ERROR)
+	{
+	  PRINT_AND_LOG_ERR_MSG ("FAILURE: %s\n", db_error_string (3));
+	  db_shutdown ();
+	  goto error_exit;
+	}
+      ctime_r (&created_time, ctime_buf);
+      printf ("SUCCESS: ");
+      printf (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_TDE, TDE_MSG_MK_GENERATED), mk_index, ctime_buf);
+      if (print_val)
+	{
+	  printf ("Key: ");
+	  tde_print_mk (master_key);
+	  printf ("\n");
+	}
+    }
+  else if (show_op)
+    {
+      int mk_index;
+      time_t created_time, set_time;
+      char ctime_buf1[CTIME_MAX];
+      char ctime_buf2[CTIME_MAX];
+
+      printf ("The current key set on %s:\n", database_name);
+      if (tde_get_mk_info (&mk_index, &created_time, &set_time) == NO_ERROR)
+	{
+	  ctime_r (&created_time, ctime_buf1);
+	  ctime_r (&set_time, ctime_buf2);
+
+	  printf ("Key Index: %d\n", mk_index);
+	  printf ("Created on %s", ctime_buf1);
+	  printf ("Set     on %s", ctime_buf2);
+	}
+      else
+	{
+	  PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
+	  PRINT_AND_LOG_ERR_MSG (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_TDE, TDE_MSG_NO_SET_MK_INFO));
+	}
+      printf ("\n");
+      if (tde_dump_mks (vdes, print_val) != NO_ERROR)
+	{
+	  PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
+	  db_shutdown ();
+	  goto error_exit;
+	}
+    }
+  else if (change_op_idx != -1)
+    {
+      int prev_mk_idx;
+      time_t created_time, set_time;
+
+      if (tde_get_mk_info (&prev_mk_idx, &created_time, &set_time) != NO_ERROR)
+	{
+	  PRINT_AND_LOG_ERR_MSG ("FAILURE: %s\n", db_error_string (3));
+	  db_shutdown ();
+	  goto error_exit;
+	}
+
+      printf (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_TDE, TDE_MSG_MK_CHANGING), prev_mk_idx,
+	      change_op_idx);
+      /* no need to check if the previous key exists or not. It is going to be checked on changing on server */
+      if (tde_change_mk_on_server (change_op_idx) != NO_ERROR)
+	{
+	  PRINT_AND_LOG_ERR_MSG ("FAILURE: %s\n", db_error_string (3));
+	  db_shutdown ();
+	  goto error_exit;
+	}
+
+      if (db_commit_transaction () != NO_ERROR)
+	{
+	  PRINT_AND_LOG_ERR_MSG ("FAILURE: %s\n", db_error_string (3));
+	  db_shutdown ();
+	  goto error_exit;
+	}
+
+      printf ("SUCCESS: ");
+      printf (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_TDE, TDE_MSG_MK_CHANGED), prev_mk_idx,
+	      change_op_idx);
+    }
+  else if (delete_op_idx != -1)
+    {
+      int mk_index;
+      time_t created_time, set_time;
+
+      if (tde_get_mk_info (&mk_index, &created_time, &set_time) != NO_ERROR)
+	{
+	  PRINT_AND_LOG_ERR_MSG ("FAILURE: %s\n", db_error_string (3));
+	  db_shutdown ();
+	  goto error_exit;
+	}
+      if (mk_index == delete_op_idx)
+	{
+	  PRINT_AND_LOG_ERR_MSG ("FAILURE: %s",
+				 msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_TDE,
+						 TDE_MSG_MK_SET_ON_DATABASE_DELETE));
+	  db_shutdown ();
+	  goto error_exit;
+	}
+      if (tde_delete_mk (vdes, delete_op_idx) != NO_ERROR)
+	{
+	  PRINT_AND_LOG_ERR_MSG ("FAILURE: %s\n", db_error_string (3));
+	  db_shutdown ();
+	  goto error_exit;
+	}
+      printf ("SUCCESS: ");
+      printf (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_TDE, TDE_MSG_MK_DELETED), delete_op_idx);
+    }
+
+  db_shutdown ();
+
+  return EXIT_SUCCESS;
+
+print_tde_usage:
+  fprintf (stderr, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_TDE, TDE_MSG_USAGE), basename (arg->argv0));
+  util_log_write_errid (MSGCAT_UTIL_GENERIC_INVALID_ARGUMENT);
+error_exit:
   return EXIT_FAILURE;
 }

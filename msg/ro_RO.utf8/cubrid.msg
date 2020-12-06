@@ -184,7 +184,7 @@ $set 5 MSGCAT_SET_ERROR
 116 Baza de date "%1$s" nu este cunoscută sau fişierul "databases.txt" nu poate fi accesat.
 117 Calea absolută la baza de date este prea lungă. Lungimea combinată a căii "%1$s" plus numele "%2$s" este %3$d; lungimea combinată trebuie să fie mai mică decât %4$d.
 118 Nu s-a putut localiza directorul de lucru curent.
-119 Nu s-a putut găsi numele local de gazdă.
+119 Nu se poate găsi ("%1$s") în /etc/hosts. Vă rugăm să verificați permisiunile fișierului sau dacă există numele gazdei.
 120 Numărul maxim de volume (%1$d) a fost depăşit.
 121 Tentativă de ştergere "%1$s" a unui volum permanent al bazei de date.
 122 Nu se poate accesa catalogul de mesaje de sistem.
@@ -415,7 +415,7 @@ $set 5 MSGCAT_SET_ERROR
 347 Nu s-a putut crea un pipe către serverul principal (master).
 348 Trebuie specificat un serviciu sau un identificator de port.
 349 Serviciu de TCP necunoscut: %1$s.
-350 Eroare la preluarea adresei pe baza numelui pentru "%1$s". Numele de gazdă nu a fost găsit.
+350 Nu se poate găsi ("%1$s") în /etc/hosts. Vă rugăm să verificați permisiunile fișierului sau dacă există numele gazdei.
 351 Nu s-a putut crea un socket TCP.
 352 tcp_open: nu se poate obţine un port TCP rezervat.
 353 Nu s-a putut stabili conexiunea către serverul principal (master) pe maşina "%1$s".
@@ -1312,9 +1312,27 @@ $ LOADDB
 1243 Încărcarea indexului a fost oprită din cauza unei erori.
 1244 Încărcarea atributelor de tip "shared" nu este suportată in modul client-server.
 1245 Încărcarea atributelor de tip "class" nu este suportată in modul client-server.
-1246 Eroare la obţinerea informaţiilor de adresă și nume. Cod : %1$d, mesaj : %2$s.
+1246 Nu se poate obține adresa și numele canonic pentru ("%1$s") în /etc/hosts. Vă rugăm să verificați permisiunea fișierului sau dacă există numele gazdei.
+1247 Momentul specificat (%1$s) trebuie să îl succeadă pe cel al copiei de rezervă specificate(%2$s).
+1248 Fișier cheie nevalid: %1$s
+1249 Nu se poate găsi cheia (index: %1$d).
+1250 Cheia master setată în baza de date și ceea ce este dat nu se potrivesc. Indicele cheie setat în baza de date: %1$d
+1251 Eroare la criptarea TDE.
+1252 Eroare la decriptarea TDE.
+1253 Modulul TDE nu este încărcat.
+1254 Nu se poate crea o cheie.
+1255 Nu se poate încărca modulul TDE. Nu puteți utiliza funcția TDE.\n\
+Verificați calea fișierului cheie (_keys) și asigurați-vă că acesta include cheia corectă.
+1256 Nu se poate copia fișierul cheie (_keys). Nu puteți utiliza caracteristica TDE pe baza de date copiată.
+1257 Nu se poate copia fișierul cheii de rezervă (_keys). Nu puteți utiliza caracteristica TDE pe baza de date restaurată pe baza acestui volum de rezervă.
+1258 Nu se poate găsi setul de chei în baza de date de la%1$s. Fișierul cheie din volumul de rezervă va fi utilizat.
+1259 Redenumiți fișierul cheie din „%1$s” în „%2$s”.
+1260 Copiați fișierul cheie „%1$s” în „%2$s”.
+1261 Nu se poate găsi cheia în momentul restaurării (index cheie: %1$d, timp creat: %2$s). Setați cheia (index cheie: %3$d) pentru baza de date.
+1262 Fișierul cheie este plin.
+1263 Nu criptează TDE pagina jurnalului (pageid: %1$lld). Nu va mai fi încercat să criptați această pagină.
 
-1247 Ultima eroare
+1264 Ultima eroare
 
 $set 6 MSGCAT_SET_INTERNAL
 1 Eroare în subsistemul de erori (linia %1$d):

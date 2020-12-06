@@ -72,6 +72,7 @@ $       52      dump_tz
 $       53      restoreslave
 $       54      delvoldb
 $       56      checksumdb
+$       57      tde
 
 $set 1 MSGCAT_UTIL_SET_GENERIC
 1 크기가 잘못되었거나, 잘못된 문자 '%1$c'이(가) 데이터베이스 이름 '%2$s'에 포함되어 있습니다\n
@@ -124,6 +125,7 @@ cubrid 관리자 유틸리티, 버전 %1$s\n\
     dump_tz\n\
     restoreslave\n\
     vacuumdb\n\
+    tde\n\
 \n\
 %4$s (은)는 DBMS 관리 도구입니다.\n\
 추가적인 정보는 다음 사이트를 참조하세요. http://www.cubrid.org\n
@@ -148,6 +150,7 @@ cubrid 관리자 유틸리티, 버전 %1$s\n\
     broker\n\
     manager\n\
     heartbeat\n\
+    javasp\n\
 \n\
 가용한 관리자 유틸리티 이름:\n\
     addvoldb\n\
@@ -182,6 +185,7 @@ cubrid 관리자 유틸리티, 버전 %1$s\n\
     dump_tz\n\
     vacuumdb\n\
     checksumdb\n\
+    tde\n\
 \n\
 %4$s (은)는 DBMS  도구입니다.\n\
 추가적인 정보는 다음 사이트를 참조하세요. http://www.cubrid.org\n
@@ -248,10 +252,24 @@ cubrid 관리자 유틸리티, 버전 %1$s\n\
 41 CUBRID 메니저가 설치되지 않았습니다.\n
 42 인자가 잘못되었습니다.\n
 43 파일(%1$s)을 열지 못했습니다.\n
+44 cubrid 유틸리티, 버전 %1$s\n\
+사용법: %2$s javasp <명령어> [인자]\n\
+\n\
+가용한 명령어:\n\
+    start       [데이터베이스 이름]\n\
+    stop        [데이터베이스 이름]\n\
+    restart     [데이터베이스 이름]\n\
+    status      [데이터베이스 이름]\n
 
 $set 2 MSGCAT_UTIL_SET_BACKUPDB
 30 경고: -t 옵션은 독립 실행 모드에서는 무시 됩니다.\n
 31 에러: 대상 경로가 존재하지 않거나 디렉토리가 아닙니다.\n
+32 --separate-keys 옵션으로 키 파일 (_keys)을 백업볼륨과 분리합니다.\n\
+해당 키 파일을 분실할 경우백업파일이 있더라도 복구 (restoredb)가 올바르게 진행되지 않을 수 있습니다.\n
+33 키 파일 (_keys)를 백업 볼륨에 포함합니다.\n\
+만약 TDE 기능으로 암호화된 테이블이 볼륨내에 존재할 경우, 보안상의 문제가 생길 수 있습니다.\n\
+키 파일이 분리를 위해선 --serperate-keys 옵션을 사용하세요.\n
+34 에러: --separate-key 옵션 사용시 FIFO 파일을 대상 경로로 설정할 수 없습니다.\n
 60 \
 backupdb: 데이터베이스를 백업합니다.\n\
 사용법: %1$s backupdb [옵션] <데이터베이스 이름>\n\
@@ -270,7 +288,8 @@ backupdb: 데이터베이스를 백업합니다.\n\
       --no-check               데이터베이스의 정합성 확인 작업을 수행하지 않습니다; 기본값: 수행\n\
   -t, --thread-count=COUNT     백업을 수행하는 스레드 개수; 기본값: 자동\n\
   -z, --compress               백업 볼륨을 압축합니다; 기본값: 압축하지 않음\n\
-      --sleep-msecs=N          매 1M 읽기 마다 N 밀리초를 쉽니다; 기본값: 0\n
+      --sleep-msecs=N          매 1M 읽기 마다 N 밀리초를 쉽니다; 기본값: 0\n\
+  -k, --separate-keys          TDE에 사용되는 Key File (_keys)을 백업볼륨에 포함하지 않고 별개의 파일로 분리합니다. \n
 71 \"%1$s\" 와 \"%2$s\" (은)는 함께 사용할 수 없습니다.\n
 
 
@@ -388,7 +407,8 @@ restoredb: 데이터베이스 복구\n\
   -l, --level=LEVEL                 복구에 사용될 백업의 레벨; 기본값: 0(Full backup)\n\
   -p, --partial-recovery            archive 로그가 존재하지 않으면 강제로 partial recovery 수행함\n\
   -o, --output-file=FILE            출력 메시지가 저장될 파일; 기본값: 없음\n\
-  -u, --use-database-location-path  데이터베이스 위치 파일에 설정된 경로에 데이터베이스 볼륨과 로그 볼륨을 복구\n
+  -u, --use-database-location-path  데이터베이스 위치 파일에 설정된 경로에 데이터베이스 볼륨과 로그 볼륨을 복구\n\
+  -k, --keys-file-path              복구에 사용될 키 파일 (_keys)의 경로 \n
 
 
 $set 12 MSGCAT_UTIL_SET_LOADDB
@@ -401,7 +421,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 25 \n*** 문법 검사 ***\n\n
 26 %1$d 개의 에러가 검출되었습니다.\n
 27 \n*** 객체 삽입 중 ***\n\n
-28 총 %1$8d 개의 객체가 삽입되었습니다.\n
+28 총 %1$ld 개의 객체가 삽입되었습니다.\n
 29 총 %1$8d 개의 참조된 객체가 기본 내용 값으로 입력되었습니다.\n
 30 \n*** 트랜잭션 커밋 중 ***\n
 31 \n*** 데이터베이스 닫는 중 ***\n
@@ -421,7 +441,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 45 클래스 %2$s의 인스턴스 %1$d은(는) 이미 정의되었습니다.\n
 46 클래스 %2$s의 인스턴스 %1$d은(는) 이미 사용되었습니다.\n
 47 속성 '%1$s'상의 UNIQUE 위반, NULL로 변환 되었습니다.\n
-48 %1$s %2$d 인스턴스\n
+48 %1$s %2$ld 인스턴스\n
 49 클래스 %1$s\n
 50 패스워드:
 51 \n*** 클래스 통계 정보 갱신 중 ***\n
@@ -431,16 +451,16 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 55 missing
 56 in %1$s
 57 함께 사용할 수 없는 인자 \"%1$s\", 와 \"%2$s\"\n
-58 %1$s %2$d 인스턴스가 커밋 되었습니다\n
+58 %1$s %2$ld 인스턴스가 커밋 되었습니다\n
 59 \n이전 버전의 loaddb를 수행할 수 없습니다.\n
 60 에러 parsing \"%1$s\", as %2$s type.\n
 61 오브젝트 참조는 CS 모드에서 지원되지 않습니다.\n
 62 테이블 %1$s의 통계정보 업데이트.\n
-112   %1$d 개의 인스턴스\r
+112   %1$ld 개의 인스턴스\r
 113 마지막으로 커밋된 라인 : %1$d\n
 114 에러 제어 파일
 115 로드 시에 에러 제어를 위한 입력 파일
-116 총 %1$8d 개의 객체가 삽입되었으며, %2$d 개의 객체가 실패하였습니다.\n
+116 총 %1$ld 개의 객체가 삽입되었으며, %2$ld 개의 객체가 실패하였습니다.\n
 117 로드 실패.\n
 118 클래스 이름의 최대 길이는 %1$d 바이트 입니다.\n
 119 전체 %1$8d 오브젝트 검사, %2$d 오브젝트 실패.\n
@@ -474,10 +494,10 @@ loaddb: 데이터베이스에 객체 및 스키마 적재\n\
 $set 13 MSGCAT_UTIL_SET_UNLOADDB
 41 cached-pages 값이 유효하지 않습니다.\n
 42 cached-page-size 값이 유효하지 않습니다.\n
-43 %1$d 개의 객체가 덤프 되었습니다.\n
+43 %1$ld 개의 객체가 덤프 되었습니다.\n
 44 클래스 %1$s
 45 , %1$d 개의 인스턴스.\n
-46 %1$d 개의 객체가 (전체 %2$d 객체) 성공적으로 덤프 되었습니다.\n
+46 %1$ld 개의 객체가 (전체 %2$ld 객체) 성공적으로 덤프 되었습니다.\n
 47 출력 디렉터리 이름이 너무 깁니다.\n
 48 LSA : %1$d %2$d \n
 49 패스워드:
@@ -553,16 +573,17 @@ compactdb: 데이터베이스에서 사용되지 않는 영역을 해제.\n\
   -i, --input-class-file=FILE       테이블 이름을 포함하는 FILE 이름\n\
                                     해당 옵션 사용 시 [테이블1 테이블2 ...]이 생략되어야 함\n\
                                     기본값: 모든 테이블들의 공간을 정리함\n\
-                                    클라이언트 서버 모드에서만 가능\n\
   -p, --pages-commited-once=NUMBER  한 번에 커밋할 수 있는 최대 페이지 개수\n\
                                     기본값: 10\n\
                                     클라이언트 서버 실행 모드에서만 가능\n\
   -S, --SA-mode                     독립 모드 실행\n\
   -C, --CS-mode                     클라이언트 서버 모드 실행\n\
   -d, --delete-old-repr             카탈로그에서 과거 테이블 표현을 삭제; 기본값: 사용 안 함\n\
-  [테이블1 테이블2 ...]             클라이언트 서버 모드에서만 가능\n\
   -I, --Instance-lock-timeout       인스턴스 잠금에 대한 타임아웃\n\
-  -c, --class-lock-timeout          클래스 잠금에 대한 타임아웃\n
+                                    클라이언트 서버 모드에서만 가능\n\
+  -c, --class-lock-timeout          클래스 잠금에 대한 타임아웃\n\
+                                    클라이언트 서버 모드에서만 가능\n\
+  [테이블1 테이블2 ...]             정리할 테이블 리스트\n
 
 $set 15 MSGCAT_UTIL_SET_COMMDB
 21 CUBRID master가 호스트 %1$s 에서 수행 중입니다. %2$s 에 시작되어
@@ -808,6 +829,7 @@ killtran: 데이터베이스 transaction 제거 관리\n\
       --kill-program-name=NAME       NAME으로 지정되는 모든 트랜잭션 종료\n\
       --kill-sql-id=SQL_ID           SQL_ID에 해당하는 질의를 실행중인 모든 트랜잭션 종료\n\
   -p, --dba-password=PASS            DBA 패스워드; 지정되지 않은 경우 프롬프트\n\
+                                     (-i 또는 --kill 옵션과 사용 가능, 그외는 오류 발생)\n\
   -d, --display-information          현재 활성화된 트랜잭션에 대한 정보 보여줌\n\
   -q, --query-exec-info              현재 활성화된 트랜잭션에 대한 질의 수행정보를 보여줌\n\
   -f, --force                        사용자 확인 없이 지정된 트랜잭션 종료\n
@@ -1058,8 +1080,6 @@ tranlist: 활성화된 트랜잭션 정보 출력.\n\
 사용법: %1$s tranlist [옵션] database-name\n\
 \n\
 valid options:\n\
-  -u, --user=ID                데이터베이스 접근에 관한 사용자 이름; 기본값: DBA\n\
-  -p, --password=PASS          사용자 패스워드; 기본값: 없음\n\
   -s, --summary                질의정보 및 락 정보 생략\n\
       --sort-key=COLUMN_NUMBER 정렬할 컬럼번호; 기본값 : 1\n\
       --reverse                내림차순 정렬수행; 기본값 : 오름차순 정렬\n
@@ -1118,7 +1138,8 @@ valid options:\n\
       --list                        실제 복원하지 않고 백업 볼륨의 리스트만 출력\n\
   -B, --backup-file-path=PATH       복원할 백업 볼륨의 디렉터리 경로\n\
   -o, --output-file=FILE            출력 메시지를 FILE로 변경; 기본값: 없음\n\
-  -u, --use-database-location-path  데이터베이스와 로그 볼륨을 데이터베이스 경로 파일에 명시된 경로로 복원\n
+  -u, --use-database-location-path  데이터베이스와 로그 볼륨을 데이터베이스 경로 파일에 명시된 경로로 복원\n\
+  -k, --keys-file-path              복구에 사용될 키 파일 (_keys)의 경로 \n
 
 $set 54 MSGCAT_UTIL_SET_DELVOLDB
 21 Ready to remove the following volumes:\n\n
@@ -1171,3 +1192,23 @@ valid options:\n\
       --resume                  체크섬 계산 복귀\n\
       --schema-only             스키마 일관성만 검사\n\
       --cont-on-error           계산 오류 발생해도 계속 진행\n
+
+$set 57 MSGCAT_UTIL_SET_TDE
+21 DBA 비밀 번호:
+25 데이터베이스에 등록된 키 정보를 가져올 수 없습니다.\n
+26 키 (인덱스: %1$d)에서 키 (인덱스: %2$d)로 변경을 시도합니다..\n
+27 키 (인덱스: %1$d)에서 키 (인덱스: %2$d)로 변경되었습니다.\n
+28 데이터베이스에 등록된 키는 제거할 수 없습니다.\n
+29 인덱스: %1$d 키를 제거하였습니다.\n
+30 새로운 키가 생성되었습니다. 키 인덱스: %1$d, 생성 시간: %2$s
+60 \
+tde: Transparent Data Encryption (TDE) 관리\n\
+usage: %1$s tde <operation> [옵션] <데이터베이스-이름>\n\
+\n\
+valid options:\n\
+    -p, --dba-password=PASS       DBA 패스워드; 지정되지 않은 경우 프롬프트\n\
+operations:\n\
+    -s, --show-keys               데이터베이스에 등록된 키, 키 파일 (_keys)내의 키들에 대한 정보를 출력 \n\
+    -n, --generate-new-key        키 파일 (_keys)에 새로운 키를 추가; 최대 갯수: 128\n\
+    -d, --delete-key=KEY_INDEX    키 파일 (_keys)의 한 키를 제거\n\
+    -c, --change-key=KEY_INDEX    데이터베이스에 등록된 키를 키 파일 (_keys)에 존재하는 다른 키로 변경\n

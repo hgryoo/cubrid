@@ -24,7 +24,6 @@
 #include "log_impl.h"
 #include "log_manager.h"
 #include "log_record.hpp"
-#include "lzo/lzoconf.h"
 #include "page_buffer.h"
 #include "perf_monitor.h"
 #include "thread_entry.hpp"
@@ -89,6 +88,7 @@ log_append_info::log_append_info ()
   , nxio_lsa (NULL_LSA)
   , prev_lsa (NULL_LSA)
   , log_pgptr (NULL)
+  , appending_page_tde_encrypted (false)
 {
 
 }
@@ -98,6 +98,7 @@ log_append_info::log_append_info (const log_append_info &other)
   , nxio_lsa {other.nxio_lsa.load ()}
   , prev_lsa (other.prev_lsa)
   , log_pgptr (other.log_pgptr)
+  , appending_page_tde_encrypted (other.appending_page_tde_encrypted)
 {
 
 }
@@ -184,12 +185,6 @@ log_prior_has_worker_log_records (THREAD_ENTRY *thread_p)
 void
 log_append_init_zip ()
 {
-  if (lzo_init () != LZO_E_OK)
-    {
-      log_Zip_support = false;
-      return;
-    }
-
   if (!prm_get_bool_value (PRM_ID_LOG_COMPRESS))
     {
       log_Zip_support = false;
@@ -199,8 +194,8 @@ log_append_init_zip ()
 #if defined(SERVER_MODE)
   log_Zip_support = true;
 #else
-  log_zip_undo = log_zip_alloc (IO_PAGESIZE, true);
-  log_zip_redo = log_zip_alloc (IO_PAGESIZE, true);
+  log_zip_undo = log_zip_alloc (IO_PAGESIZE);
+  log_zip_redo = log_zip_alloc (IO_PAGESIZE);
   log_data_length = IO_PAGESIZE * 2;
   log_data_ptr = (char *) malloc (log_data_length);
   if (log_data_ptr == NULL)
@@ -290,6 +285,8 @@ prior_lsa_alloc_and_copy_data (THREAD_ENTRY *thread_p, LOG_RECTYPE rec_type, LOG
     }
 
   node->log_header.type = rec_type;
+
+  node->tde_encrypted = false;
 
   node->data_header = NULL;
   node->ulength = 0;
@@ -423,6 +420,8 @@ prior_lsa_alloc_and_copy_crumbs (THREAD_ENTRY *thread_p, LOG_RECTYPE rec_type, L
     }
 
   node->log_header.type = rec_type;
+
+  node->tde_encrypted = false;
 
   node->data_header_length = 0;
   node->data_header = NULL;
@@ -1547,6 +1546,30 @@ prior_lsa_next_record_with_lock (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, l
   return prior_lsa_next_record_internal (thread_p, node, tdes, LOG_PRIOR_LSA_WITH_LOCK);
 }
 
+int
+prior_set_tde_encrypted (log_prior_node *node, LOG_RCVINDEX recvindex)
+{
+  if (!tde_Cipher.is_loaded)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_TDE_CIPHER_IS_NOT_LOADED, 0);
+      return ER_TDE_CIPHER_IS_NOT_LOADED;
+    }
+
+#if !defined(NDEBUG)
+  er_log_debug (ARG_FILE_LINE, "TDE: prior_set_tde_encrypted(): rcvindex = %s\n", rv_rcvindex_string (recvindex));
+#endif /* !NDEBUG */
+
+  node->tde_encrypted = true;
+
+  return NO_ERROR;
+}
+
+bool
+prior_is_tde_encrypted (const log_prior_node *node)
+{
+  return node->tde_encrypted;
+}
+
 /*
  * prior_lsa_start_append:
  *
@@ -1702,7 +1725,7 @@ log_append_get_zip_undo (THREAD_ENTRY *thread_p)
     {
       if (thread_p->log_zip_undo == NULL)
 	{
-	  thread_p->log_zip_undo = log_zip_alloc (IO_PAGESIZE, true);
+	  thread_p->log_zip_undo = log_zip_alloc (IO_PAGESIZE);
 	}
       return (LOG_ZIP *) thread_p->log_zip_undo;
     }
@@ -1728,7 +1751,7 @@ log_append_get_zip_redo (THREAD_ENTRY *thread_p)
     {
       if (thread_p->log_zip_redo == NULL)
 	{
-	  thread_p->log_zip_redo = log_zip_alloc (IO_PAGESIZE, true);
+	  thread_p->log_zip_redo = log_zip_alloc (IO_PAGESIZE);
 	}
       return (LOG_ZIP *) thread_p->log_zip_redo;
     }

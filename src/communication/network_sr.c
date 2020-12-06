@@ -434,6 +434,29 @@ net_server_init (void)
   req_p->processing_function = shf_heap_reclaim_addresses;
   req_p->name = "NET_SERVER_HEAP_RECLAIM_ADDRESSES";
 
+  /* file */
+  req_p = &net_Requests[NET_SERVER_FILE_APPLY_TDE_TO_CLASS_FILES];
+  req_p->action_attribute = (CHECK_DB_MODIFICATION | IN_TRANSACTION);
+  req_p->processing_function = sfile_apply_tde_to_class_files;
+  req_p->name = "NET_SERVER_FILE_APPLY_TDE_TO_CLASS_FILES";
+
+  /* tde */
+  req_p = &net_Requests[NET_SERVER_TDE_GET_DATA_KEYS];
+  req_p->processing_function = stde_get_data_keys;
+  req_p->name = "NET_SERVER_TDE_GET_DATA_KEYS";
+
+  req_p = &net_Requests[NET_SERVER_TDE_GET_MK_FILE_PATH];
+  req_p->processing_function = stde_get_mk_file_path;
+  req_p->name = "NET_SERVER_TDE_GET_MK_FILE_PATH";
+
+  req_p = &net_Requests[NET_SERVER_TDE_GET_MK_INFO];
+  req_p->processing_function = stde_get_mk_info;
+  req_p->name = "NET_SERVER_TDE_GET_MK_INFO";
+
+  req_p = &net_Requests[NET_SERVER_TDE_CHANGE_MK_ON_SERVER];
+  req_p->processing_function = stde_change_mk_on_server;
+  req_p->name = "NET_SERVER_TDE_CHANGE_MK_ON_SERVER";
+
   /* log */
   req_p = &net_Requests[NET_SERVER_LOG_RESET_WAIT_MSECS];
   req_p->processing_function = slogtb_reset_wait_msecs;
@@ -1336,7 +1359,7 @@ net_server_start (const char *server_name)
   net_server_init ();
   css_initialize_server_interfaces (net_server_request, net_server_conn_down);
 
-  if (boot_restart_server (thread_p, true, server_name, false, &check_coll_and_timezone, NULL) != NO_ERROR)
+  if (boot_restart_server (thread_p, true, server_name, false, &check_coll_and_timezone, NULL, false) != NO_ERROR)
     {
       assert (er_errid () != NO_ERROR);
       error = er_errid ();

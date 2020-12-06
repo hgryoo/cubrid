@@ -72,6 +72,7 @@ $       52      dump_tz
 $       53      restoreslave
 $       54      delvoldb
 $       56      checksumdb
+$       57      tde
 
 $set 1 MSGCAT_UTIL_SET_GENERIC
 1 Invalid length or character '%1$c' in database name '%2$s'\n
@@ -124,6 +125,7 @@ Available admin utility-name:\n\
     dump_tz\n\
     restoreslave\n\
     vacuumdb\n\
+    tde\n\
 \n\
 %4$s is a tool for DBMS.\n\
 For additional information, see http://www.cubrid.org\n
@@ -148,6 +150,7 @@ Available service's utilities:\n\
     broker\n\
     manager\n\
     heartbeat\n\
+    javasp\n\
 \n\
 Available administrator's utilities:\n\
     addvoldb\n\
@@ -182,6 +185,7 @@ Available administrator's utilities:\n\
     dump_tz\n\
     vacuumdb\n\
     checksumdb\n\
+    tde\n\
 \n\
 %4$s is a tool for DBMS.\n\
 For additional information, see http://www.cubrid.org\n
@@ -248,10 +252,24 @@ Available command:\n\
 41 cubrid manager server is not installed.\n
 42 Invalid argument.\n
 43 File(%1$s) open error.\n
+44 cubrid utility, version %1$s\n\
+usage: %2$s javasp <command> [args]\n\
+\n\
+Available command:\n\
+    start       [database-name]\n\
+    stop        [database-name]\n\
+    restart     [database-name]\n\
+    status      [database-name]\n
 
 $set 2 MSGCAT_UTIL_SET_BACKUPDB
 30 WARNING: -t option is ignored in stand-alone mode execution.\n
 31 ERROR: Destination-path does not exist or is not a directory.\n
+32 By using --separate-keys option, it separates the key file (_keys) from the backup volume.\n\
+If the key file is lost, restoring (restoredb) may not work properly even if there is the backup volume.\n
+33 The backup volume includes the key file (_keys).\n\
+If a table is TDE-encrypted, it can cause a security problem for that data.\n\
+To separate the key file to prevent it, use --separate-keys option.\n
+34 ERROR: Cannot use FIFIO file as the destination-path with separate-key.\n
 60 \
 backupdb: Backup a database.\n\
 usage: %1$s backupdb [OPTION] database-name\n\
@@ -270,7 +288,8 @@ valid options:\n\
       --no-check               don't check a consistency of the database; default: check\n\
   -t, --thread-count=COUNT     number of threads; default: 0(auto)\n\
   -z, --compress               compress backup volumes; default: uncompress\n\
-      --sleep-msecs=N          sleep N millisecond per 1M read; default: 0\n
+      --sleep-msecs=N          sleep N millisecond per 1M read; default: 0\n\
+  -k, --separate-keys          keys file (_keys) for TDE is not included in the backup volume, but is separated into a file instead\n
 71 Incompatible arguments, \"%1$s\", and \"%2$s\"\n
 
 
@@ -389,7 +408,8 @@ valid options:\n\
   -l, --level=LEVEL                 LEVEL of backup to be restored; see backup usage; default: 0(full backup)\n\
   -p, --partial-recovery            perform partial recovery if any log archive is absent\n\
   -o, --output-file=FILE            redirect output messages to FILE; default: none\n\
-  -u, --use-database-location-path  restore the database and log volumes to the path specified in the database location file\n
+  -u, --use-database-location-path  restore the database and log volumes to the path specified in the database location file\n\
+  -k, --keys-file-path              Path of key file (_keys) for TDE to be used during restoring\n
 
 
 $set 12 MSGCAT_UTIL_SET_LOADDB
@@ -402,7 +422,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 25 \n*** Checking syntax ***\n\n
 26 %1$d errors detected.\n
 27 \n*** Inserting objects ***\n\n
-28 Total %1$8d objects inserted.\n
+28 Total %1$ld objects inserted.\n
 29 Total %1$8d referenced objects inserted with default contents.\n
 30 \n*** Committing the transaction ***\n
 31 \n*** Closing the database ***\n
@@ -422,7 +442,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 45 Instance %1$d of class %2$s has already been defined\n
 46 Instance %1$d of class %2$s has already been reserved\n
 47 UNIQUE violation on attribute '%1$s', converted to NULL\n
-48 %1$s %2$d instances\n
+48 %1$s %2$ld instances\n
 49 Class %1$s\n
 50 Password:
 51 \n*** Updating class statistics ***\n
@@ -432,16 +452,16 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 55 missing
 56 in %1$s
 57 Incompatible arguments, \"%1$s\", and \"%2$s\"\n
-58 %1$s %2$d instances committed\n
+58 %1$s %2$ld instances committed\n
 59 \nCannot invoke non-optimized version of loaddb.\n
 60 Error parsing \"%1$s\", as %2$s type.\n
 61 Object Reference is not supported in CS mode.\n
 62 Updated statistics for class %1$s.\n
-112   %1$d instances\r
+112   %1$ld instances\r
 113 Last committed line : %1$d\n
 114 error-control-file
 115 input file to control error(s) during loading
-116 Total %1$8d object(s) inserted, %2$d object(s) failed.\n
+116 Total %1$ld object(s) inserted, %2$ld object(s) failed.\n
 117 Load failed.\n
 118 Maximum length of class name is %1$d bytes.\n
 119 Total %1$8d object(s) checked, %2$d object(s) failed.\n
@@ -475,10 +495,10 @@ valid options:\n\
 $set 13 MSGCAT_UTIL_SET_UNLOADDB
 41 cached-pages value is invalid.\n
 42 cached-page-size value is invalid.\n
-43 %1$d objects dumped.\n
+43 %1$ld objects dumped.\n
 44 Class %1$s
 45 , %1$d instances.\n
-46 Only %1$d out of %2$d objects dumped successfully.\n
+46 Only %1$ld out of %2$ld objects dumped successfully.\n
 47 output directory is too long.\n
 48 LSA : %1$d %2$d \n
 49 Password:
@@ -554,16 +574,17 @@ valid options:\n\
   -i, --input-class-file=FILE       input FILE of table names\n\
                                     class_name list must be empty\n\
                                     default: compact all classes\n\
-                                    enabled in CS-mode only\n\
   -p, --pages-commited-once=NUMBER  maximum number of pages to commit once\n\
                                     default: 10\n\
                                     enabled in CS-mode only\n\
   -S, --SA-mode                     stand-alone mode execution\n\
   -C, --CS-mode                     client-server mode execution\n\
   -d, --delete-old-repr             delete old class representations from catalog; default: disabled\n\
-  class_name_list                   enabled in CS-mode only\n\
   -I, --Instance-lock-timeout       timeout for instance lock\n\
-  -c, --class-lock-timeout          timeout for class lock\n
+                                    enabled in CS-mode only\n\
+  -c, --class-lock-timeout          timeout for class lock\n\
+                                    enabled in CS-mode only\n\
+  class_name_list                   list of class name be compacted\n
 
 $set 15 MSGCAT_UTIL_SET_COMMDB
 21 The CUBRID master running on host %1$s \nwas started at %2$s
@@ -810,6 +831,7 @@ valid options:\n\
       --kill-program-name=NAME       kill all transactions with client program NAME\n\
       --kill-sql-id=SQL_ID           kill all transactions with SQL_ID\n\
   -p, --dba-password=PASS            password of the DBA user; will prompt if don't specify\n\
+                                     (only work with -i or --kill options. Otherwise, gets error)\n\
   -d, --display-information          display information about active transactions\n\
   -q, --query-exec-info              display information about query execution information of active transactions\n\
   -f, --force                        kill the transaction without a prompt for verification\n
@@ -1063,8 +1085,6 @@ tranlist: Dump active transaction information.\n\
 usage: %1$s tranlist [OPTION] database-name\n\
 \n\
 valid options:\n\
-  -u, --user=ID                user ID for database access; default: DBA user\n\
-  -p, --password=PASS          user password; default: none\n\
   -s, --summary                print summarized information of transaction\n\
       --sort-key=COLUMN_NUMBER column number to be sorted\n\
       --reverse                reverse the sort result\n
@@ -1131,7 +1151,8 @@ valid options:\n\
       --list                        display a list of backup volumes without restoring\n\
   -B, --backup-file-path=PATH       PATH is a directory of backup volumes to be restored\n\
   -o, --output-file=FILE            redirect output messages to FILE; default: none\n\
-  -u, --use-database-location-path  restore the database and log volumes to the path specified in the database location file\n
+  -u, --use-database-location-path  restore the database and log volumes to the path specified in the database location file\n\
+  -k, --keys-file-path              Path of key file (_keys) for TDE to be used during restoring\n
 
 $set 54 MSGCAT_UTIL_SET_DELVOLDB
 21 Ready to remove the following volumes:\n\n
@@ -1184,3 +1205,23 @@ valid options:\n\
       --resume                  resume calculating checksum\n\
       --schema-only             check only schema consistency\n\
       --cont-on-error           continue on calculation error\n
+
+$set 57 MSGCAT_UTIL_SET_TDE
+21 Enter DBA password:
+25 It has failed to get the key information set on the database\n
+26 Trying to change the key from the key (index: %1$d) to the key (index: %2$d)..\n
+27 The key has been changed from the key (index: %1$d) to the key (index: %2$d)\n
+28 The key set on the database cannot be deleted\n
+29 The key (index: %1$d) has been deleted\n
+30 A new key has been generated - key index: %1$d created on %2$s
+60 \
+tde: Transparent Data Encryption (TDE) management\n\
+usage: %1$s tde OPERATION(-s|-n|-d|-c) [OPTION] database-name\n\
+\n\
+valid options:\n\
+    -p, --dba-password=PASS       password of the DBA user; will prompt if don't specify\n\
+OPERATIONs: one of the operations must be given, and they are exclusive \n\
+    -s, --show-keys               print key information set on the database and the key file (_keys)\n\
+    -n, --generate-new-key        generate a new key in the key file (_keys); max count: 128\n\
+    -d, --delete-key=KEY_INDEX    delete a key in the key file (_keys)\n\
+    -c, --change-key=KEY_INDEX    change the key set on the database for another key in the key file (_keys)\n

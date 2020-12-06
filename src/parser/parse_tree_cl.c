@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright (C) 2008 Search Solution Corporation
+ * Copyright (C) 2016 CUBRID Corporation
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -54,6 +55,7 @@
 #include "string_buffer.hpp"
 #include "dbtype.h"
 #include "parser_allocator.hpp"
+#include "tde.h"
 
 #include <malloc.h>
 
@@ -638,7 +640,7 @@ pt_lambda_node (PARSER_CONTEXT * parser, PT_NODE * tree_or_name, void *void_arg,
 	      if (lambda_arg->type == 1)
 		{
 		  /* at here, do clear. later is updated in pt_semantic_type */
-		  tree_or_name->type_enum = PT_TYPE_NONE;
+		  tree_or_name->info.function.is_type_checked = false;
 		}
 
 	      lambda_arg->replace_num = 0;
@@ -4723,6 +4725,7 @@ pt_rewrite_set_eq_set (PARSER_CONTEXT * parser, PT_NODE * exp)
 	  p->info.expr.op = PT_EQ;
 	  p->info.expr.arg1 = e1;
 	  p->info.expr.arg2 = e2;
+	  p->type_enum = PT_TYPE_LOGICAL;
 	}
     }
   else
@@ -4788,6 +4791,7 @@ pt_rewrite_set_eq_set (PARSER_CONTEXT * parser, PT_NODE * exp)
 	      rhs->info.expr.op = PT_EQ;
 	      rhs->info.expr.arg1 = e1;
 	      rhs->info.expr.arg2 = e2;
+	      rhs->type_enum = PT_TYPE_LOGICAL;
 	    }
 	}
       else
@@ -4810,6 +4814,7 @@ pt_rewrite_set_eq_set (PARSER_CONTEXT * parser, PT_NODE * exp)
       p->info.expr.arg1 = lhs;
       p->info.expr.arg2 = rhs;
       p->info.expr.arg3 = NULL;
+      p->type_enum = PT_TYPE_LOGICAL;
 
       pt_push (parser, p);
     }
@@ -7736,11 +7741,15 @@ static PARSER_VARCHAR *
 pt_print_table_option (PARSER_CONTEXT * parser, PT_NODE * p)
 {
   PARSER_VARCHAR *q = NULL, *r1 = NULL;
+  const char *tde_algo_name;
 
   switch (p->info.table_option.option)
     {
     case PT_TABLE_OPTION_REUSE_OID:
       q = pt_append_nulstring (parser, q, "reuse_oid");
+      break;
+    case PT_TABLE_OPTION_DONT_REUSE_OID:
+      q = pt_append_nulstring (parser, q, "dont_reuse_oid");
       break;
     case PT_TABLE_OPTION_AUTO_INCREMENT:
       q = pt_append_nulstring (parser, q, "auto_increment = ");
@@ -7753,6 +7762,9 @@ pt_print_table_option (PARSER_CONTEXT * parser, PT_NODE * p)
       break;
     case PT_TABLE_OPTION_COMMENT:
       q = pt_append_nulstring (parser, q, "comment = ");
+      break;
+    case PT_TABLE_OPTION_ENCRYPT:
+      q = pt_append_nulstring (parser, q, "encrypt = ");
       break;
     default:
       break;
@@ -7769,6 +7781,17 @@ pt_print_table_option (PARSER_CONTEXT * parser, PT_NODE * p)
 	  assert (PT_IS_SIMPLE_CHAR_STRING_TYPE (p->info.table_option.val->type_enum));
 	  r1 = p->info.table_option.val->info.value.data_value.str;
 	  assert (r1 != NULL);
+	}
+      else if (p->info.table_option.option == PT_TABLE_OPTION_ENCRYPT)
+	{
+	  assert (p->info.table_option.val != NULL);
+	  assert (p->info.table_option.val->node_type == PT_VALUE);
+	  assert (p->info.table_option.val->type_enum == PT_TYPE_INTEGER);
+	  tde_algo_name = tde_get_algorithm_name ((TDE_ALGORITHM) p->info.table_option.val->info.value.data_value.i);
+	  if (tde_algo_name != NULL)
+	    {
+	      r1 = pt_append_bytes (parser, r1, tde_algo_name, strlen (tde_algo_name));
+	    }
 	}
       else
 	{
@@ -8562,6 +8585,21 @@ pt_print_datatype (PARSER_CONTEXT * parser, PT_NODE * p)
       q = pt_append_varchar (parser, q, r1);
       q = pt_append_nulstring (parser, q, ")");
       show_collation = true;
+      break;
+
+    case PT_TYPE_SET:
+    case PT_TYPE_MULTISET:
+    case PT_TYPE_SEQUENCE:
+      q = pt_append_nulstring (parser, q, pt_show_type_enum (p->type_enum));
+
+      /* not to print data_type node for SET data types with empty domain */
+      if (p->data_type && p->data_type->info.data_type.precision != TP_FLOATING_PRECISION_VALUE)
+	{
+	  r1 = pt_print_bytes_l (parser, p->data_type);
+	  q = pt_append_nulstring (parser, q, "(");
+	  q = pt_append_varchar (parser, q, r1);
+	  q = pt_append_nulstring (parser, q, ")");
+	}
       break;
 
     default:
@@ -9484,9 +9522,33 @@ pt_print_spec (PARSER_CONTEXT * parser, PT_NODE * p)
       if (p->info.spec.range_var && p->info.spec.range_var->info.name.original
 	  && p->info.spec.range_var->info.name.original[0])
 	{
-	  r1 = pt_print_bytes (parser, p->info.spec.range_var);
-	  q = pt_append_nulstring (parser, q, " ");
-	  q = pt_append_varchar (parser, q, r1);
+	  bool insert_with_use_sbr = false;
+
+	  if (parser->custom_print & PT_PRINT_ORIGINAL_BEFORE_CONST_FOLDING)
+	    {
+	      PT_NODE *cur_stmt = NULL;
+
+	      for (int i = 0; i < parser->statement_number; i++)
+		{
+		  if (parser->statements[i] != NULL)
+		    {
+		      cur_stmt = parser->statements[i];
+		      break;
+		    }
+		}
+
+	      if (cur_stmt->info.insert.hint & PT_HINT_USE_SBR)
+		{
+		  insert_with_use_sbr = true;
+		}
+	    }
+
+	  if (!insert_with_use_sbr)
+	    {
+	      r1 = pt_print_bytes (parser, p->info.spec.range_var);
+	      q = pt_append_nulstring (parser, q, " ");
+	      q = pt_append_varchar (parser, q, r1);
+	    }
 	}
       parser->custom_print = save_custom;
     }
@@ -12900,7 +12962,33 @@ pt_print_insert (PARSER_CONTEXT * parser, PT_NODE * p)
   if (r2)
     {
       b = pt_append_nulstring (parser, b, " (");
-      b = pt_append_varchar (parser, b, r2);
+
+      if ((p->info.insert.hint & PT_HINT_USE_SBR) && (parser->custom_print & PT_PRINT_ORIGINAL_BEFORE_CONST_FOLDING))
+	{
+	  PARSER_VARCHAR *column_list = NULL;
+	  PT_NODE *attr = NULL;
+
+	  attr = p->info.insert.attr_list;
+
+	  while (attr)
+	    {
+	      column_list = pt_append_name (parser, column_list, attr->info.name.original);
+
+	      attr = attr->next;
+
+	      if (attr)
+		{
+		  column_list = pt_append_nulstring (parser, column_list, ", ");
+		}
+	    }
+
+	  b = pt_append_varchar (parser, b, column_list);
+	}
+      else
+	{
+	  b = pt_append_varchar (parser, b, r2);
+	}
+
       b = pt_append_nulstring (parser, b, ") ");
     }
   else
@@ -14465,6 +14553,11 @@ pt_print_select (PARSER_CONTEXT * parser, PT_NODE * p)
 	  if (p->info.query.q.select.hint & PT_HINT_NO_HASH_AGGREGATE)
 	    {
 	      q = pt_append_nulstring (parser, q, "NO_HASH_AGGREGATE ");
+	    }
+
+	  if (p->info.query.q.select.hint & PT_HINT_NO_HASH_LIST_SCAN)
+	    {
+	      q = pt_append_nulstring (parser, q, "NO_HASH_LIST_SCAN ");
 	    }
 
 	  if (p->info.query.q.select.hint & PT_HINT_NO_INDEX_LS)
@@ -18343,6 +18436,7 @@ pt_expr_is_allowed_as_function_index (const PT_NODE * expr)
 {
   assert (expr != NULL && expr->node_type == PT_EXPR);
 
+  /* if add it here, add it to validate_regu_key_function_index () as well */
   switch (expr->info.expr.op)
     {
     case PT_CAST:

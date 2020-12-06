@@ -35,8 +35,8 @@
 #include "language_support.h"
 #include "numeric_opfunc.h"
 #include "object_domain.h"
-#include "libregex38a/regex38a.h"
 #include "thread_compat.hpp"
+#include "string_regex.hpp"
 
 #define QSTR_IS_CHAR(s)          (((s)==DB_TYPE_CHAR) || \
                                  ((s)==DB_TYPE_VARCHAR))
@@ -58,28 +58,28 @@
 
 #define QSTR_NUM_BYTES(a)            (((a) + 7) / 8)
 
-#define QSTR_CHAR_COMPARE(id, string1, size1, string2, size2) \
-	QSTR_COMPARE(id, string1, size1, string2, size2)
+#define QSTR_CHAR_COMPARE(id, string1, size1, string2, size2, ti) \
+	QSTR_COMPARE(id, string1, size1, string2, size2, ti)
 
-#define QSTR_NCHAR_COMPARE(id, string1, size1, string2, size2, codeset) \
-        QSTR_COMPARE(id, string1, size1, string2, size2)
+#define QSTR_NCHAR_COMPARE(id, string1, size1, string2, size2, codeset, ti) \
+        QSTR_COMPARE(id, string1, size1, string2, size2, ti)
 
-#define QSTR_COMPARE(id, string1, size1, string2, size2) \
+#define QSTR_COMPARE(id, string1, size1, string2, size2, ti) \
   (lang_get_collation (id))->fastcmp ((lang_get_collation (id)), (string1), \
-				      (size1), (string2), (size2))
+				      (size1), (string2), (size2), ti)
 #define QSTR_MATCH(id, string1, size1, string2, size2, esc, has_last_escape, \
 		   match_size) \
   (lang_get_collation (id))->strmatch ((lang_get_collation (id)), true, \
 				       (string1), (size1), \
 				       (string2), (size2), (esc), \
-				       (has_last_escape), (match_size))
+				       (has_last_escape), (match_size), false)
 #define QSTR_NEXT_ALPHA_CHAR(id, cur_chr, size, next_chr, len) \
   (lang_get_collation (id))->next_coll_seq ((lang_get_collation (id)), \
-					(cur_chr), (size), (next_chr), (len))
-#define QSTR_SPLIT_KEY(id, is_desc, str1, size1, str2, size2, k, s) \
+					(cur_chr), (size), (next_chr), (len), false)
+#define QSTR_SPLIT_KEY(id, is_desc, str1, size1, str2, size2, k, s, ti) \
   (lang_get_collation (id))->split_key ((lang_get_collation (id)), is_desc, \
 					(str1), (size1), (str2), (size2), \
-					(k), (s))
+					(k), (s), ti)
 
 
 /*
@@ -172,7 +172,6 @@ extern int nchar_compare (const unsigned char *string1, int size1, const unsigne
 			  INTL_CODESET codeset);
 extern int bit_compare (const unsigned char *string1, int size1, const unsigned char *string2, int size2);
 extern int varbit_compare (const unsigned char *string1, int size1, const unsigned char *string2, int size2);
-extern int regex_matches (const char *pattern, const char *str, int reg_flags, bool * match);
 extern int get_last_day (int month, int year);
 extern int get_day (int month, int day, int year);
 
@@ -217,8 +216,23 @@ extern int db_string_pad (const MISC_OPERAND pad_operand, const DB_VALUE * src_s
 			  const DB_VALUE * pad_charset, DB_VALUE * padded_string);
 extern int db_string_like (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * esc_char,
 			   int *result);
+
+#ifdef __cplusplus
 extern int db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * case_sensitive,
-			    cub_regex_t ** comp_regex, char **comp_pattern, int *result);
+			    cub_regex_object ** comp_regex, char **comp_pattern, int *result);
+
+extern int db_string_regexp_count (DB_VALUE * result, DB_VALUE * args[], const int num_args,
+				   cub_regex_object ** comp_regex, char **comp_pattern);
+extern int db_string_regexp_instr (DB_VALUE * result, DB_VALUE * args[], const int num_args,
+				   cub_regex_object ** comp_regex, char **comp_pattern);
+extern int db_string_regexp_like (DB_VALUE * result, DB_VALUE * args[], const int num_args,
+				  cub_regex_object ** comp_regex, char **comp_pattern);
+extern int db_string_regexp_replace (DB_VALUE * result, DB_VALUE * args[], const int num_args,
+				     cub_regex_object ** comp_regex, char **comp_pattern);
+extern int db_string_regexp_substr (DB_VALUE * result, DB_VALUE * args[], const int num_args,
+				    cub_regex_object ** comp_regex, char **comp_pattern);
+#endif
+
 extern int db_string_limit_size_string (DB_VALUE * src_string, DB_VALUE * result, const int new_size, int *spare_bytes);
 extern int db_string_fix_string_size (DB_VALUE * src_string);
 extern int db_string_replace (const DB_VALUE * src_string, const DB_VALUE * srch_string, const DB_VALUE * repl_string,

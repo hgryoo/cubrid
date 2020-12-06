@@ -71,6 +71,7 @@
 #include "db_value_printer.hpp"
 #include "log_append.hpp"
 #include "string_buffer.hpp"
+#include "tde.h"
 
 #include <set>
 
@@ -750,7 +751,6 @@ static int heap_class_get_partition_info (THREAD_ENTRY * thread_p, const OID * c
 static int heap_get_partition_attributes (THREAD_ENTRY * thread_p, const OID * cls_oid, ATTR_ID * type_id,
 					  ATTR_ID * values_id);
 static int heap_get_class_subclasses (THREAD_ENTRY * thread_p, const OID * class_oid, int *count, OID ** subclasses);
-
 static unsigned int heap_hash_vpid (const void *key_vpid, unsigned int htsize);
 static int heap_compare_vpid (const void *key_vpid1, const void *key_vpid2);
 static unsigned int heap_hash_hfid (const void *key_hfid, unsigned int htsize);
@@ -5172,6 +5172,7 @@ heap_create_internal (THREAD_ENTRY * thread_p, HFID * hfid, const OID * class_oi
   const FILE_TYPE file_type = reuse_oid ? FILE_HEAP_REUSE_SLOTS : FILE_HEAP;
   PAGE_TYPE ptype = PAGE_HEAP;
   OID null_oid = OID_INITIALIZER;
+  TDE_ALGORITHM tde_algo = TDE_ALGORITHM_NONE;
 
   int error_code = NO_ERROR;
 
@@ -5208,6 +5209,7 @@ heap_create_internal (THREAD_ENTRY * thread_p, HFID * hfid, const OID * class_oi
 	      ASSERT_ERROR_AND_SET (error_code);
 	      goto error;
 	    }
+
 	  error_code = heap_cache_class_info (thread_p, class_oid, hfid, file_type, NULL);
 	  if (error_code != NO_ERROR)
 	    {
@@ -5235,6 +5237,7 @@ heap_create_internal (THREAD_ENTRY * thread_p, HFID * hfid, const OID * class_oi
       ASSERT_ERROR ();
       goto error;
     }
+
   error_code = file_alloc_sticky_first_page (thread_p, &hfid->vfid, file_init_page_type, &ptype, &vpid,
 					     &addr_hdr.pgptr);
   if (error_code != NO_ERROR)
@@ -5359,6 +5362,18 @@ heap_create_internal (THREAD_ENTRY * thread_p, HFID * hfid, const OID * class_oi
     }
 
 end:
+  /* apply TDE to created heap file if needed */
+  if (heap_get_class_tde_algorithm (thread_p, class_oid, &tde_algo) == NO_ERROR)
+    {
+      error_code = file_apply_tde_algorithm (thread_p, &hfid->vfid, tde_algo);
+      if (error_code != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  goto error;
+	}
+    }
+  /* if heap_get_class_tde_algorithm() fails, just skip to apply with expectation that a higher layer do this later */
+
   assert (error_code == NO_ERROR);
 
   log_sysop_attach_to_outer (thread_p);
@@ -6376,6 +6391,7 @@ heap_ovf_find_vfid (THREAD_ENTRY * thread_p, const HFID * hfid, VFID * ovf_vfid,
       if (docreate == true)
 	{
 	  FILE_DESCRIPTORS des;
+	  TDE_ALGORITHM tde_algo = TDE_ALGORITHM_NONE;
 	  /* Create the overflow file. Try to create the overflow file in the same volume where the heap was defined */
 
 	  /* START A TOP SYSTEM OPERATION */
@@ -6385,21 +6401,34 @@ heap_ovf_find_vfid (THREAD_ENTRY * thread_p, const HFID * hfid, VFID * ovf_vfid,
 	  memset (&des, 0, sizeof (des));
 	  HFID_COPY (&des.heap_overflow.hfid, hfid);
 	  des.heap_overflow.class_oid = heap_hdr->class_oid;
-	  if (file_create_with_npages (thread_p, FILE_MULTIPAGE_OBJECT_HEAP, 1, &des, ovf_vfid) == NO_ERROR)
-	    {
-	      /* Log undo, then redo */
-	      log_append_undo_data (thread_p, RVHF_STATS, &addr_hdr, sizeof (*heap_hdr), heap_hdr);
-	      VFID_COPY (&heap_hdr->ovf_vfid, ovf_vfid);
-	      log_append_redo_data (thread_p, RVHF_STATS, &addr_hdr, sizeof (*heap_hdr), heap_hdr);
-	      pgbuf_set_dirty (thread_p, addr_hdr.pgptr, DONT_FREE);
-
-	      log_sysop_commit (thread_p);
-	    }
-	  else
+	  if (file_create_with_npages (thread_p, FILE_MULTIPAGE_OBJECT_HEAP, 1, &des, ovf_vfid) != NO_ERROR)
 	    {
 	      log_sysop_abort (thread_p);
 	      ovf_vfid = NULL;
+	      goto exit;
 	    }
+
+	  if (heap_get_class_tde_algorithm (thread_p, &heap_hdr->class_oid, &tde_algo) != NO_ERROR)
+	    {
+	      log_sysop_abort (thread_p);
+	      ovf_vfid = NULL;
+	      goto exit;
+	    }
+
+	  if (file_apply_tde_algorithm (thread_p, ovf_vfid, tde_algo) != NO_ERROR)
+	    {
+	      log_sysop_abort (thread_p);
+	      ovf_vfid = NULL;
+	      goto exit;
+	    }
+
+	  /* Log undo, then redo */
+	  log_append_undo_data (thread_p, RVHF_STATS, &addr_hdr, sizeof (*heap_hdr), heap_hdr);
+	  VFID_COPY (&heap_hdr->ovf_vfid, ovf_vfid);
+	  log_append_redo_data (thread_p, RVHF_STATS, &addr_hdr, sizeof (*heap_hdr), heap_hdr);
+	  pgbuf_set_dirty (thread_p, addr_hdr.pgptr, DONT_FREE);
+
+	  log_sysop_commit (thread_p);
 	}
       else
 	{
@@ -6411,6 +6440,7 @@ heap_ovf_find_vfid (THREAD_ENTRY * thread_p, const HFID * hfid, VFID * ovf_vfid,
       VFID_COPY (ovf_vfid, &heap_hdr->ovf_vfid);
     }
 
+exit:
   pgbuf_unfix_and_init (thread_p, addr_hdr.pgptr);
 
   return ovf_vfid;
@@ -10689,6 +10719,51 @@ heap_get_class_subclasses (THREAD_ENTRY * thread_p, const OID * class_oid, int *
     }
 
   error = orc_subclasses_from_record (&recdes, count, subclasses);
+
+  heap_scancache_end (thread_p, &scan_cache);
+
+  return error;
+}
+
+/*
+ * heap_get_class_tde_algorithm () - get TDE_ALGORITHM of a given class based on the class flags
+ * return : error code or NO_ERROR
+ * thread_p (in)  :
+ * class_oid (in) : OID of the class
+ * tde_algo (out)	: TDE_ALGORITHM_NONE, TDE_ALGORITHM_AES,TDE_ALGORITHM_ARIA
+ *
+ * NOTE: this function extracts tde encryption information from class record
+ */
+int
+heap_get_class_tde_algorithm (THREAD_ENTRY * thread_p, const OID * class_oid, TDE_ALGORITHM * tde_algo)
+{
+  HEAP_SCANCACHE scan_cache;
+  RECDES recdes;
+  int error = NO_ERROR;
+
+  assert (class_oid != NULL);
+  assert (tde_algo != NULL);
+
+  /* boot parameter heap file */
+  if (OID_ISNULL (class_oid))
+    {
+      *tde_algo = TDE_ALGORITHM_NONE;
+      return error;
+    }
+
+  error = heap_scancache_quick_start_root_hfid (thread_p, &scan_cache);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  if (heap_get_class_record (thread_p, class_oid, &recdes, &scan_cache, PEEK) != S_SUCCESS)
+    {
+      heap_scancache_end (thread_p, &scan_cache);
+      return ER_FAILED;
+    }
+
+  or_class_tde_algorithm (&recdes, tde_algo);
 
   heap_scancache_end (thread_p, &scan_cache);
 
@@ -15595,7 +15670,14 @@ heap_mvcc_log_insert (THREAD_ENTRY * thread_p, RECDES * p_recdes, LOG_DATA_ADDR 
 
   /* Append redo crumbs; undo crumbs not necessary as the spage_delete physical operation uses the offset field of the
    * address */
-  log_append_undoredo_crumbs (thread_p, RVHF_MVCC_INSERT, p_addr, 0, n_redo_crumbs, NULL, redo_crumbs);
+  if (thread_p->no_logging)
+    {
+      log_append_undo_crumbs (thread_p, RVHF_MVCC_INSERT, p_addr, 0, NULL);
+    }
+  else
+    {
+      log_append_undoredo_crumbs (thread_p, RVHF_MVCC_INSERT, p_addr, 0, n_redo_crumbs, NULL, redo_crumbs);
+    }
 }
 
 /*
@@ -15781,7 +15863,14 @@ heap_mvcc_log_delete (THREAD_ENTRY * thread_p, LOG_DATA_ADDR * p_addr, LOG_RCVIN
   assert ((ptr - redo_data_buffer) <= (int) sizeof (redo_data_buffer));
 
   /* Log append undo/redo crumbs */
-  log_append_undoredo_data (thread_p, rcvindex, p_addr, 0, redo_data_size, NULL, redo_data_p);
+  if (thread_p->no_logging)
+    {
+      log_append_undo_data (thread_p, rcvindex, p_addr, 0, NULL);
+    }
+  else
+    {
+      log_append_undoredo_data (thread_p, rcvindex, p_addr, 0, redo_data_size, NULL, redo_data_p);
+    }
 }
 
 /*
@@ -16928,6 +17017,7 @@ heap_object_upgrade_domain (THREAD_ENTRY * thread_p, HEAP_SCANCACHE * upd_scanca
   int force_count = 0, updated_n_attrs_id = 0;
   ATTR_ID atts_id[1] = { 0 };
   DB_VALUE orig_value;
+  TP_DOMAIN_STATUS status;
 
   db_make_null (&orig_value);
 
@@ -16980,11 +17070,8 @@ heap_object_upgrade_domain (THREAD_ENTRY * thread_p, HEAP_SCANCACHE * upd_scanca
       if (QSTR_IS_ANY_CHAR_OR_BIT (src_type) && QSTR_IS_ANY_CHAR_OR_BIT (dest_type))
 	{
 	  /* check phase of ALTER TABLE .. CHANGE should not allow changing the domains from one flavour to another : */
-	  assert ((QSTR_IS_CHAR (src_type) && QSTR_IS_CHAR (dest_type))
-		  || (!QSTR_IS_CHAR (src_type) && !QSTR_IS_CHAR (dest_type)));
-
-	  assert ((QSTR_IS_NATIONAL_CHAR (src_type) && QSTR_IS_NATIONAL_CHAR (dest_type))
-		  || (!QSTR_IS_NATIONAL_CHAR (src_type) && !QSTR_IS_NATIONAL_CHAR (dest_type)));
+	  assert ((QSTR_IS_ANY_CHAR (src_type) && QSTR_IS_ANY_CHAR (dest_type))
+		  || (!QSTR_IS_ANY_CHAR (src_type) && !QSTR_IS_ANY_CHAR (dest_type)));
 
 	  assert ((QSTR_IS_BIT (src_type) && QSTR_IS_BIT (dest_type))
 		  || (!QSTR_IS_BIT (src_type) && !QSTR_IS_BIT (dest_type)));
@@ -16992,7 +17079,8 @@ heap_object_upgrade_domain (THREAD_ENTRY * thread_p, HEAP_SCANCACHE * upd_scanca
 	  /* check string truncation */
 	  if (dest_prec < curr_prec)
 	    {
-	      if (prm_get_bool_value (PRM_ID_ALTER_TABLE_CHANGE_TYPE_STRICT) == true)
+	      if (prm_get_bool_value (PRM_ID_ALTER_TABLE_CHANGE_TYPE_STRICT) == true
+		  || prm_get_bool_value (PRM_ID_ALLOW_TRUNCATED_STRING) == false)
 		{
 		  error = ER_ALTER_CHANGE_TRUNC_OVERFLOW_NOT_ALLOWED;
 		  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 0);
@@ -17015,7 +17103,8 @@ heap_object_upgrade_domain (THREAD_ENTRY * thread_p, HEAP_SCANCACHE * upd_scanca
 
       if (TP_IS_CHAR_TYPE (TP_DOMAIN_TYPE (dest_dom))
 	  && !(TP_IS_CHAR_TYPE (src_type) || src_type == DB_TYPE_ENUMERATION)
-	  && prm_get_bool_value (PRM_ID_ALTER_TABLE_CHANGE_TYPE_STRICT) == false)
+	  && prm_get_bool_value (PRM_ID_ALTER_TABLE_CHANGE_TYPE_STRICT) == false
+	  && prm_get_bool_value (PRM_ID_ALLOW_TRUNCATED_STRING) == true)
 	{
 	  /* If destination is char/varchar, we need to first cast the value to a string with no precision, then to
 	   * destination type with the desired precision. */
@@ -17028,12 +17117,18 @@ heap_object_upgrade_domain (THREAD_ENTRY * thread_p, HEAP_SCANCACHE * upd_scanca
 	    {
 	      string_dom = tp_domain_resolve_default (DB_TYPE_VARCHAR);
 	    }
-	  error = db_value_coerce (&(value->dbvalue), &(value->dbvalue), string_dom);
+	  if ((status = tp_value_cast (&(value->dbvalue), &(value->dbvalue), string_dom, false)) != DOMAIN_COMPATIBLE)
+	    {
+	      error = tp_domain_status_er_set (status, ARG_FILE_LINE, &(value->dbvalue), string_dom);
+	    }
 	}
 
       if (error == NO_ERROR)
 	{
-	  error = db_value_coerce (&(value->dbvalue), &(value->dbvalue), dest_dom);
+	  if ((status = tp_value_cast (&(value->dbvalue), &(value->dbvalue), dest_dom, false)) != DOMAIN_COMPATIBLE)
+	    {
+	      error = tp_domain_status_er_set (status, ARG_FILE_LINE, &(value->dbvalue), dest_dom);
+	    }
 	}
       if (error != NO_ERROR)
 	{
@@ -17041,7 +17136,9 @@ heap_object_upgrade_domain (THREAD_ENTRY * thread_p, HEAP_SCANCACHE * upd_scanca
 	  bool set_min_value = false;
 	  bool set_max_value = false;
 
-	  if (prm_get_bool_value (PRM_ID_ALTER_TABLE_CHANGE_TYPE_STRICT) == true)
+	  if (prm_get_bool_value (PRM_ID_ALTER_TABLE_CHANGE_TYPE_STRICT) == true
+	      || (TP_IS_CHAR_TYPE (TP_DOMAIN_TYPE (dest_dom))
+		  && prm_get_bool_value (PRM_ID_ALLOW_TRUNCATED_STRING) == false))
 	    {
 	      error = ER_ALTER_CHANGE_TRUNC_OVERFLOW_NOT_ALLOWED;
 	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 0);
@@ -18779,7 +18876,14 @@ heap_mvcc_log_home_change_on_delete (THREAD_ENTRY * thread_p, RECDES * old_recde
       p_addr->offset |= HEAP_RV_FLAG_VACUUM_STATUS_CHANGE;
     }
 
-  log_append_undoredo_recdes (thread_p, RVHF_MVCC_DELETE_MODIFY_HOME, p_addr, old_recdes, new_recdes);
+  if (thread_p->no_logging)
+    {
+      log_append_undo_recdes (thread_p, RVHF_MVCC_DELETE_MODIFY_HOME, p_addr, old_recdes);
+    }
+  else
+    {
+      log_append_undoredo_recdes (thread_p, RVHF_MVCC_DELETE_MODIFY_HOME, p_addr, old_recdes, new_recdes);
+    }
 }
 
 /*
@@ -21467,6 +21571,7 @@ heap_update_bigone (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, b
   int error_code = NO_ERROR;
   bool is_old_home_updated;
   RECDES new_home_recdes;
+  VFID ovf_vfid;
 
   assert (context != NULL);
   assert (context->type == HEAP_OPERATION_UPDATE);
@@ -21512,8 +21617,14 @@ heap_update_bigone (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, b
 	  goto exit;
 	}
 
+      if (heap_ovf_find_vfid (thread_p, &context->hfid, &ovf_vfid, false, PGBUF_UNCONDITIONAL_LATCH) == NULL)
+	{
+	  error_code = ER_FAILED;
+	  goto exit;
+	}
+
       /* actual logging */
-      log_append_undo_recdes2 (thread_p, RVHF_MVCC_UPDATE_OVERFLOW, NULL, first_pgptr, -1, &ovf_recdes);
+      log_append_undo_recdes2 (thread_p, RVHF_MVCC_UPDATE_OVERFLOW, &ovf_vfid, first_pgptr, -1, &ovf_recdes);
       HEAP_PERF_TRACK_LOGGING (thread_p, context);
 
       pgbuf_set_dirty (thread_p, first_pgptr, FREE);
@@ -22192,7 +22303,14 @@ heap_log_update_physical (THREAD_ENTRY * thread_p, PAGE_PTR page_p, VFID * vfid_
 	}
     }
 
-  log_append_undoredo_recdes (thread_p, rcvindex, &address, old_recdes_p, new_recdes_p);
+  if (thread_p->no_logging && LOG_IS_MVCC_HEAP_OPERATION (rcvindex))
+    {
+      log_append_undo_recdes (thread_p, rcvindex, &address, old_recdes_p);
+    }
+  else
+    {
+      log_append_undoredo_recdes (thread_p, rcvindex, &address, old_recdes_p, new_recdes_p);
+    }
 }
 
 /*
@@ -24332,7 +24450,7 @@ heap_update_set_prev_version (THREAD_ENTRY * thread_p, const OID * oid, PGBUF_WA
   PGBUF_WATCHER overflow_pg_watcher;
 
   assert (oid != NULL && !OID_ISNULL (oid) && prev_version_lsa != NULL && !LSA_ISNULL (prev_version_lsa));
-  assert (prev_version_lsa->pageid > 0 && prev_version_lsa->offset >= 0);
+  assert (prev_version_lsa->pageid >= 0 && prev_version_lsa->offset >= 0);
 
   /* the home page should be already fixed */
   assert (home_pg_watcher != NULL && home_pg_watcher->pgptr != NULL);

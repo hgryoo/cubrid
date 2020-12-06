@@ -2527,7 +2527,17 @@ log_recovery_analysis (THREAD_ENTRY * thread_p, LOG_LSA * start_lsa, LOG_LSA * s
 	    }
 	  else
 	    {
-	      logpb_fatal_error (thread_p, true, ARG_FILE_LINE, "log_recovery_analysis");
+	      if (er_errid () == ER_TDE_CIPHER_IS_NOT_LOADED)
+		{
+		  /* TDE Moudle has to be loaded because there are some TDE-encrypted log pages */
+		  logpb_fatal_error (thread_p, true, ARG_FILE_LINE,
+				     "log_recovery_analysis: log page %lld has been encrypted (TDE) and cannot be decrypted",
+				     log_page_p->hdr.logical_pageid);
+		}
+	      else
+		{
+		  logpb_fatal_error (thread_p, true, ARG_FILE_LINE, "log_recovery_analysis");
+		}
 	      return;
 	    }
 	}
@@ -3096,8 +3106,8 @@ log_recovery_redo (THREAD_ENTRY * thread_p, const LOG_LSA * start_redolsa, const
 
   log_pgptr = (LOG_PAGE *) aligned_log_pgbuf;
 
-  undo_unzip_ptr = log_zip_alloc (LOGAREA_SIZE, false);
-  redo_unzip_ptr = log_zip_alloc (LOGAREA_SIZE, false);
+  undo_unzip_ptr = log_zip_alloc (LOGAREA_SIZE);
+  redo_unzip_ptr = log_zip_alloc (LOGAREA_SIZE);
 
   if (undo_unzip_ptr == NULL || redo_unzip_ptr == NULL)
     {
@@ -4581,7 +4591,7 @@ log_recovery_undo (THREAD_ENTRY * thread_p)
 
   log_pgptr = (LOG_PAGE *) aligned_log_pgbuf;
 
-  undo_unzip_ptr = log_zip_alloc (LOGAREA_SIZE, false);
+  undo_unzip_ptr = log_zip_alloc (LOGAREA_SIZE);
   if (undo_unzip_ptr == NULL)
     {
       logpb_fatal_error (thread_p, true, ARG_FILE_LINE, "log_recovery_undo");

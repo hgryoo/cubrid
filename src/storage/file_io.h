@@ -31,8 +31,7 @@
 #include "config.h"
 #include "dbtype_def.h"
 #include "log_lsa.hpp"
-#include "lzo/lzoconf.h"
-#include "lzo/lzo1x.h"
+#include "lz4.h"
 #include "memory_hash.h"
 #include "porting.h"
 #include "porting_inline.hpp"
@@ -46,6 +45,7 @@
 #define NULL_VOLDES   (-1)	/* Value of a null (invalid) vol descriptor */
 
 #define FILEIO_INITIAL_BACKUP_UNITS    0
+#define FILEIO_NO_BACKUP_UNITS         -1
 
 /* Note: this value must be at least as large as PATH_MAX */
 #define FILEIO_MAX_USER_RESPONSE_SIZE 2000
@@ -59,6 +59,12 @@
 #define FILEIO_SECOND_BACKUP_VOL_INFO     1
 #define FILEIO_BACKUP_NUM_THREADS_AUTO    0
 #define FILEIO_BACKUP_SLEEP_MSECS_AUTO    0
+
+/* FILEIO_PAGE_FLAG (pflag in FILEIO_PAGE_RESERVED) */
+#define FILEIO_PAGE_FLAG_ENCRYPTED_AES 0x1
+#define FILEIO_PAGE_FLAG_ENCRYPTED_ARIA 0x2
+
+#define FILEIO_PAGE_FLAG_ENCRYPTED_MASK 0x3
 
 #if defined(WINDOWS)
 #define STR_PATH_SEPARATOR "\\"
@@ -85,6 +91,7 @@
 #define FILEIO_VOLINFO_SUFFIX        "_vinf"
 #define FILEIO_VOLLOCK_SUFFIX        "__lock"
 #define FILEIO_SUFFIX_DWB            "_dwb"
+#define FILEIO_SUFFIX_KEYS           "_keys"
 #define FILEIO_MAX_SUFFIX_LENGTH     7
 
 typedef enum
@@ -98,27 +105,18 @@ typedef enum
 typedef enum
 {
   FILEIO_ZIP_NONE_METHOD,	/* None */
-  FILEIO_ZIP_LZO1X_METHOD,	/* LZO1X */
+  FILEIO_ZIP_LZO1X_METHOD,	/* LZO1X - Unsupported */
   FILEIO_ZIP_ZLIB_METHOD,	/* ZLIB */
+  FILEIO_ZIP_LZ4_METHOD,	/* LZ4X */
   FILEIO_ZIP_UNDEFINED_METHOD	/* Undefined (must be highest ordinal value) */
 } FILEIO_ZIP_METHOD;
 
 typedef enum
 {
   FILEIO_ZIP_NONE_LEVEL,	/* None */
-  FILEIO_ZIP_1_LEVEL,		/* best speed */
-  FILEIO_ZIP_2_LEVEL,
-  FILEIO_ZIP_3_LEVEL,
-  FILEIO_ZIP_4_LEVEL,
-  FILEIO_ZIP_5_LEVEL,
-  FILEIO_ZIP_6_LEVEL,
-  FILEIO_ZIP_7_LEVEL,
-  FILEIO_ZIP_8_LEVEL,
-  FILEIO_ZIP_9_LEVEL,		/* best compression */
+  FILEIO_ZIP_1_LEVEL,
   FILEIO_ZIP_UNDEFINED_LEVEL,	/* Undefined (must be highest ordinal value) */
-  FILEIO_ZIP_LZO1X_999_LEVEL = FILEIO_ZIP_9_LEVEL,
-  FILEIO_ZIP_LZO1X_DEFAULT_LEVEL = FILEIO_ZIP_1_LEVEL,
-  FILEIO_ZIP_ZLIB_DEFAULT_LEVEL = FILEIO_ZIP_6_LEVEL
+  FILEIO_ZIP_LZ4_DEFAULT_LEVEL = FILEIO_ZIP_1_LEVEL
 } FILEIO_ZIP_LEVEL;
 
 typedef enum
@@ -178,10 +176,10 @@ struct fileio_page_reserved
   INT32 pageid;			/* Page identifier */
   INT16 volid;			/* Volume identifier where the page reside */
   unsigned char ptype;		/* Page type */
-  unsigned char pflag_reserve_1;	/* unused - Reserved field */
+  unsigned char pflag;
   INT32 p_reserve_1;
   INT32 p_reserve_2;		/* unused - Reserved field */
-  INT64 p_reserve_3;		/* unused - Reserved field */
+  INT64 tde_nonce;		/* tde nonce. atomic counter for temp pages, lsa for perm pages */
 };
 
 typedef struct fileio_page_watermark FILEIO_PAGE_WATERMARK;
@@ -336,8 +334,8 @@ struct fileio_backup_buffer
   char current_path[PATH_MAX];
 
   int dtype;			/* Set to the type (dir, file, dev) */
-  int iosize;			/* Optimal I/O pagesize for backup device */
-  int count;			/* Number of current buffered bytes */
+  INT64 iosize;			/* Optimal I/O pagesize for backup device */
+  INT64 count;			/* Number of current buffered bytes */
   INT64 voltotalio;		/* Total number of bytes that have been either read or written (current volume) */
   INT64 alltotalio;		/* total for all volumes */
   char *buffer;			/* Pointer to the buffer */
@@ -366,8 +364,15 @@ struct fileio_backup_db_buffer
 typedef struct file_zip_page FILEIO_ZIP_PAGE;
 struct file_zip_page
 {
-  lzo_uint buf_len;		/* compressed block size */
-  lzo_byte buf[1];		/* data block */
+  int buf_len;			/* compressed block size */
+  char buf[1];			/* data block */
+};
+
+typedef struct file_zip_info FILEIO_ZIP_INFO;
+struct file_zip_info
+{
+  int buf_size;			/* allocated block size */
+  FILEIO_ZIP_PAGE zip_page;	/* zip page */
 };
 
 typedef struct fileio_node FILEIO_NODE;
@@ -379,8 +384,7 @@ struct fileio_node
   bool writeable;
   ssize_t nread;
   FILEIO_BACKUP_PAGE *area;	/* Area to read/write the page */
-  FILEIO_ZIP_PAGE *zip_page;	/* Area to compress/decompress the page */
-  lzo_bytep wrkmem;
+  FILEIO_ZIP_INFO *zip_info;	/* Zip info containing area to compress/decompress the page */
 };
 
 typedef struct fileio_queue FILEIO_QUEUE;
@@ -538,6 +542,11 @@ extern void fileio_make_backup_volume_info_name (char *backup_volinfo_name, cons
 extern void fileio_make_backup_name (char *backup_name, const char *nopath_volname, const char *backup_path,
 				     FILEIO_BACKUP_LEVEL level, int unit_num);
 extern void fileio_make_dwb_name (char *dwb_name_p, const char *dwb_path_p, const char *db_name_p);
+extern void fileio_make_keys_name (char *keys_name_p, const char *db_name_p);
+extern void fileio_make_keys_name_given_path (char *keys_name_p, const char *keys_path_p, const char *db_name_p);
+#ifdef UNSTABLE_TDE_FOR_REPLICATION_LOG
+extern void fileio_make_ha_sock_name (char *sock_path_p, const char *base_path_p, const char *sock_name_p);
+#endif /* UNSTABLE_TDE_FOR_REPLICATION_LOG */
 extern void fileio_remove_all_backup (THREAD_ENTRY * thread_p, int level);
 extern FILEIO_BACKUP_SESSION *fileio_initialize_backup (const char *db_fullname, const char *backup_destination,
 							FILEIO_BACKUP_SESSION * session, FILEIO_BACKUP_LEVEL level,

@@ -146,6 +146,7 @@ static UTIL_ARG_MAP ua_Backup_Option_Map[] = {
   {BACKUP_COMPRESS_S, {ARG_BOOLEAN}, {0}},
   {BACKUP_EXCEPT_ACTIVE_LOG_S, {ARG_BOOLEAN}, {0}},
   {BACKUP_SLEEP_MSECS_S, {ARG_INTEGER}, {FILEIO_BACKUP_SLEEP_MSECS_AUTO}},
+  {BACKUP_SEPARATE_KEYS_S, {ARG_BOOLEAN}, {0}},
   {0, {0}, {0}}
 };
 
@@ -161,6 +162,7 @@ static GETOPT_LONG ua_Backup_Option[] = {
   {BACKUP_COMPRESS_L, 0, 0, BACKUP_COMPRESS_S},
   {BACKUP_EXCEPT_ACTIVE_LOG_L, 0, 0, BACKUP_EXCEPT_ACTIVE_LOG_S},
   {BACKUP_SLEEP_MSECS_L, 1, 0, BACKUP_SLEEP_MSECS_S},
+  {BACKUP_SEPARATE_KEYS_L, 0, 0, BACKUP_SEPARATE_KEYS_S},
   {0, 0, 0, 0}
 };
 
@@ -173,6 +175,7 @@ static UTIL_ARG_MAP ua_Restore_Option_Map[] = {
   {RESTORE_PARTIAL_RECOVERY_S, {ARG_BOOLEAN}, {0}},
   {RESTORE_OUTPUT_FILE_S, {ARG_STRING}, {0}},
   {RESTORE_USE_DATABASE_LOCATION_PATH_S, {ARG_BOOLEAN}, {0}},
+  {RESTORE_KEYS_FILE_PATH_S, {ARG_STRING}, {0}},
   {0, {0}, {0}}
 };
 
@@ -185,6 +188,7 @@ static GETOPT_LONG ua_Restore_Option[] = {
   {RESTORE_OUTPUT_FILE_L, 1, 0, RESTORE_OUTPUT_FILE_S},
   {RESTORE_USE_DATABASE_LOCATION_PATH_L, 0, 0,
    RESTORE_USE_DATABASE_LOCATION_PATH_S},
+  {RESTORE_KEYS_FILE_PATH_L, 1, 0, RESTORE_KEYS_FILE_PATH_S},
   {0, 0, 0, 0}
 };
 
@@ -403,7 +407,7 @@ static UTIL_ARG_MAP ua_Killtran_Option_Map[] = {
   {KILLTRAN_KILL_HOST_NAME_S, {ARG_STRING}, {(void *) ""}},
   {KILLTRAN_KILL_PROGRAM_NAME_S, {ARG_STRING}, {(void *) ""}},
   {KILLTRAN_KILL_SQL_ID_S, {ARG_STRING}, {0}},
-  {KILLTRAN_DBA_PASSWORD_S, {ARG_STRING}, {(void *) ""}},
+  {KILLTRAN_DBA_PASSWORD_S, {ARG_STRING}, {0}},
   {KILLTRAN_DISPLAY_INFORMATION_S, {ARG_BOOLEAN}, {0}},
   {KILLTRAN_DISPLAY_QUERY_INFO_S, {ARG_BOOLEAN}, {0}},
   {KILLTRAN_FORCE_S, {ARG_BOOLEAN}, {0}},
@@ -426,20 +430,26 @@ static GETOPT_LONG ua_Killtran_Option[] = {
 
 static UTIL_ARG_MAP ua_Tranlist_Option_Map[] = {
   {OPTION_STRING_TABLE, {0}, {0}},
+#if defined(NEED_PRIVILEGE_PASSWORD)
   {TRANLIST_USER_S, {ARG_STRING}, {0}},
   {TRANLIST_PASSWORD_S, {ARG_STRING}, {0}},
+#endif
   {TRANLIST_SUMMARY_S, {ARG_BOOLEAN}, {0}},
   {TRANLIST_SORT_KEY_S, {ARG_INTEGER}, {0}},
   {TRANLIST_REVERSE_S, {ARG_BOOLEAN}, {0}},
+  {TRANLIST_FULL_SQL_S, {ARG_BOOLEAN}, {0}},
   {0, {0}, {0}}
 };
 
 static GETOPT_LONG ua_Tranlist_Option[] = {
+#if defined(NEED_PRIVILEGE_PASSWORD)
   {TRANLIST_USER_L, 1, 0, TRANLIST_USER_S},
   {TRANLIST_PASSWORD_L, 1, 0, TRANLIST_PASSWORD_S},
+#endif
   {TRANLIST_SUMMARY_L, 0, 0, TRANLIST_SUMMARY_S},
   {TRANLIST_SORT_KEY_L, 1, 0, TRANLIST_SORT_KEY_S},
   {TRANLIST_REVERSE_L, 0, 0, TRANLIST_REVERSE_S},
+  {TRANLIST_FULL_SQL_L, 0, 0, TRANLIST_FULL_SQL_S},
   {0, 0, 0, 0}
 };
 
@@ -549,6 +559,7 @@ static UTIL_ARG_MAP ua_Compact_Option_Map[] = {
   {COMPACT_DELETE_OLD_REPR_S, {ARG_BOOLEAN}, {0}},
   {COMPACT_INSTANCE_LOCK_TIMEOUT_S, {ARG_INTEGER}, {(void *) 2}},
   {COMPACT_CLASS_LOCK_TIMEOUT_S, {ARG_INTEGER}, {(void *) 10}},
+  {COMPACT_STANDBY_CS_MODE_S, {ARG_BOOLEAN}, {0}},
   {0, {0}, {0}}
 };
 
@@ -561,6 +572,7 @@ static GETOPT_LONG ua_Compact_Option[] = {
   {COMPACT_DELETE_OLD_REPR_L, 0, 0, COMPACT_DELETE_OLD_REPR_S},
   {COMPACT_INSTANCE_LOCK_TIMEOUT_L, 1, 0, COMPACT_INSTANCE_LOCK_TIMEOUT_S},
   {COMPACT_CLASS_LOCK_TIMEOUT_L, 1, 0, COMPACT_CLASS_LOCK_TIMEOUT_S},
+  {COMPACT_STANDBY_CS_MODE_L, 0, 0, COMPACT_STANDBY_CS_MODE_S},
   {0, 0, 0, 0}
 };
 
@@ -759,6 +771,7 @@ static UTIL_ARG_MAP ua_RestoreSlave_Option_Map[] = {
   {RESTORESLAVE_BACKUP_FILE_PATH_S, {ARG_STRING}, {0}},
   {RESTORESLAVE_OUTPUT_FILE_S, {ARG_STRING}, {0}},
   {RESTORESLAVE_USE_DATABASE_LOCATION_PATH_S, {ARG_BOOLEAN}, {0}},
+  {RESTORESLAVE_KEYS_FILE_PATH_S, {ARG_STRING}, {0}},
   {0, {0}, {0}}
 };
 
@@ -770,6 +783,7 @@ static GETOPT_LONG ua_RestoreSlave_Option[] = {
   {RESTORESLAVE_OUTPUT_FILE_L, 1, 0, RESTORESLAVE_OUTPUT_FILE_S},
   {RESTORESLAVE_USE_DATABASE_LOCATION_PATH_L, 0, 0,
    RESTORESLAVE_USE_DATABASE_LOCATION_PATH_S},
+  {RESTORESLAVE_KEYS_FILE_PATH_L, 1, 0, RESTORESLAVE_KEYS_FILE_PATH_S},
   {0, 0, 0, 0}
 };
 
@@ -815,6 +829,31 @@ static GETOPT_LONG ua_Checksum_Option[] = {
   {0, 0, 0, 0}
 };
 
+static UTIL_ARG_MAP ua_Tde_Option_Map[] = {
+  {OPTION_STRING_TABLE, {0}, {0}},
+  {TDE_GENERATE_KEY_S, {ARG_BOOLEAN}, {0}},
+  {TDE_SHOW_KEYS_S, {ARG_BOOLEAN}, {0}},
+  {TDE_PRINT_KEY_VALUE_S, {ARG_BOOLEAN}, {0}},
+  {TDE_SA_MODE_S, {ARG_BOOLEAN}, {0}},
+  {TDE_CS_MODE_S, {ARG_BOOLEAN}, {0}},
+  {TDE_CHANGE_KEY_S, {ARG_INTEGER}, {(void *) -1}},
+  {TDE_DELETE_KEY_S, {ARG_INTEGER}, {(void *) -1}},
+  {TDE_DBA_PASSWORD_S, {ARG_STRING}, {(void *) ""}},
+  {0, {0}, {0}}
+};
+
+static GETOPT_LONG ua_Tde_Option[] = {
+  {TDE_GENERATE_KEY_L, 0, 0, TDE_GENERATE_KEY_S},
+  {TDE_SHOW_KEYS_L, 0, 0, TDE_SHOW_KEYS_S},
+  {TDE_PRINT_KEY_VALUE_L, 0, 0, TDE_PRINT_KEY_VALUE_S},
+  {TDE_SA_MODE_L, 0, 0, TDE_SA_MODE_S},
+  {TDE_CS_MODE_L, 0, 0, TDE_CS_MODE_S},
+  {TDE_CHANGE_KEY_L, 1, 0, TDE_CHANGE_KEY_S},
+  {TDE_DELETE_KEY_L, 1, 0, TDE_DELETE_KEY_S},
+  {TDE_DBA_PASSWORD_L, 1, 0, TDE_DBA_PASSWORD_S},
+  {0, 0, 0, 0}
+};
+
 static UTIL_MAP ua_Utility_Map[] = {
   {CREATEDB, SA_ONLY, 2, UTIL_OPTION_CREATEDB, "createdb", ua_Create_Option, ua_Create_Option_Map},
   {RENAMEDB, SA_ONLY, 2, UTIL_OPTION_RENAMEDB, "renamedb", ua_Rename_Option, ua_Rename_Option_Map},
@@ -855,6 +894,7 @@ static UTIL_MAP ua_Utility_Map[] = {
    ua_RestoreSlave_Option_Map},
   {VACUUMDB, SA_CS, 1, UTIL_OPTION_VACUUMDB, "vacuumdb", ua_Vacuum_Option, ua_Vacuum_Option_Map},
   {CHECKSUMDB, CS_ONLY, 1, UTIL_OPTION_CHECKSUMDB, "checksumdb", ua_Checksum_Option, ua_Checksum_Option_Map},
+  {TDE, SA_CS, 1, UTIL_OPTION_TDE, "tde", ua_Tde_Option, ua_Tde_Option_Map},
   {-1, -1, 0, 0, 0, 0, 0}
 };
 
@@ -1034,6 +1074,10 @@ util_get_library_name (int utility_index)
 	      {
 		return LIB_UTIL_CS_NAME;
 	      }
+	    if (key == HIDDEN_CS_MODE_S && arg_map[i].arg_value.p != NULL)
+	      {
+		return LIB_UTIL_CS_NAME;
+	      }
 	    if (key == 'S' && arg_map[i].arg_value.p != NULL)
 	      {
 		return LIB_UTIL_SA_NAME;
@@ -1041,7 +1085,7 @@ util_get_library_name (int utility_index)
 	  }
       }
     }
-  if (utility_index == VACUUMDB)
+  if (utility_index == VACUUMDB || utility_index == TDE)
     {
       return LIB_UTIL_SA_NAME;
     }

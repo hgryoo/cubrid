@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright (C) 2008 Search Solution Corporation
+ * Copyright (C) 2016 CUBRID Corporation
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -176,7 +177,7 @@ static bool qo_check_new_best_plan_on_info (QO_INFO *, QO_PLAN *);
 static int qo_check_plan_on_info (QO_INFO *, QO_PLAN *);
 static int qo_examine_idx_join (QO_INFO *, JOIN_TYPE, QO_INFO *, QO_INFO *, BITSET *, BITSET *, BITSET *);
 static int qo_examine_nl_join (QO_INFO *, JOIN_TYPE, QO_INFO *, QO_INFO *, BITSET *, BITSET *, BITSET *, BITSET *,
-			       BITSET *, int);
+			       BITSET *, int, BITSET *);
 static int qo_examine_merge_join (QO_INFO *, JOIN_TYPE, QO_INFO *, QO_INFO *, BITSET *, BITSET *, BITSET *, BITSET *,
 				  BITSET *);
 static int qo_examine_correlated_index (QO_INFO *, JOIN_TYPE, QO_INFO *, QO_INFO *, BITSET *, BITSET *, BITSET *);
@@ -220,7 +221,7 @@ static QO_PLAN *qo_worst_new (QO_ENV *);
 static QO_PLAN *qo_cp_new (QO_INFO *, QO_PLAN *, QO_PLAN *, BITSET *, BITSET *);
 static QO_PLAN *qo_follow_new (QO_INFO *, QO_PLAN *, QO_TERM *, BITSET *, BITSET *);
 static QO_PLAN *qo_join_new (QO_INFO *, JOIN_TYPE, QO_JOINMETHOD, QO_PLAN *, QO_PLAN *, BITSET *, BITSET *, BITSET *,
-			     BITSET *, BITSET *);
+			     BITSET *, BITSET *, BITSET *);
 static QO_PLAN *qo_sort_new (QO_PLAN *, QO_EQCLASS *, SORT_TYPE);
 static QO_PLAN *qo_seq_scan_new (QO_INFO *, QO_NODE *);
 static QO_PLAN *qo_index_scan_new (QO_INFO *, QO_NODE *, QO_NODE_INDEX_ENTRY *, QO_SCANMETHOD, BITSET *, BITSET *);
@@ -387,7 +388,8 @@ typedef enum PRED_CLASS
   PC_HOST_VAR,
   PC_SUBQUERY,
   PC_SET,
-  PC_OTHER
+  PC_OTHER,
+  PC_MULTI_ATTR
 } PRED_CLASS;
 
 static double qo_or_selectivity (QO_ENV * env, double lhs_sel, double rhs_sel);
@@ -1400,6 +1402,7 @@ qo_scan_new (QO_INFO * info, QO_NODE * node, QO_SCANMETHOD scan_method)
   bitset_assign (&(plan->subqueries), &(QO_NODE_SUBQUERIES (node)));
   bitset_init (&(plan->plan_un.scan.terms), info->env);
   bitset_init (&(plan->plan_un.scan.kf_terms), info->env);
+  bitset_init (&(plan->plan_un.scan.hash_terms), info->env);
   plan->plan_un.scan.index_equi = false;
   plan->plan_un.scan.index_cover = false;
   plan->plan_un.scan.index_iss = false;
@@ -1407,6 +1410,7 @@ qo_scan_new (QO_INFO * info, QO_NODE * node, QO_SCANMETHOD scan_method)
   plan->plan_un.scan.index = NULL;
 
   plan->multi_range_opt_use = PLAN_MULTI_RANGE_OPT_NO;
+  bitset_init (&(plan->plan_un.scan.multi_col_range_segs), info->env);
 
   return plan;
 }
@@ -1422,6 +1426,8 @@ qo_scan_free (QO_PLAN * plan)
 {
   bitset_delset (&(plan->plan_un.scan.terms));
   bitset_delset (&(plan->plan_un.scan.kf_terms));
+  bitset_delset (&(plan->plan_un.scan.hash_terms));
+  bitset_delset (&(plan->plan_un.scan.multi_col_range_segs));
 }
 
 
@@ -1583,6 +1589,7 @@ qo_index_scan_new (QO_INFO * info, QO_NODE * node, QO_NODE_INDEX_ENTRY * ni_entr
     {
       /* set key-range terms */
       bitset_assign (&(plan->plan_un.scan.terms), range_terms);
+      bitset_assign (&(plan->plan_un.scan.multi_col_range_segs), &(index_entryp->multi_col_range_segs));
       for (t = bitset_iterate (range_terms, &iter); t != -1; t = bitset_next_member (&iter))
 	{
 	  term = QO_ENV_TERM (env, t);
@@ -1922,62 +1929,51 @@ qo_iscan_cost (QO_PLAN * planp)
   if (!is_null_sel)
     {
       assert (QO_NODE_NCARD (nodep) > 0);
-
       i = 0;
 
       for (t = bitset_iterate (&(planp->plan_un.scan.terms), &iter); t != -1; t = bitset_next_member (&iter))
 	{
 	  termp = QO_ENV_TERM (QO_NODE_ENV (nodep), t);
+	  sel *= QO_TERM_SELECTIVITY (termp);
 
-	  if (i == 0)
-	    {			/* the first key-range term of the index scan */
-	      sel *= QO_TERM_SELECTIVITY (termp);
-	    }
-	  else
-	    {			/* apply heuristic factor */
-	      if (QO_TERM_SELECTIVITY (termp) < 0.1)
-		{
-		  sel *= QO_TERM_SELECTIVITY (termp) * pow ((double) n, 2);
-		}
-	      else
-		{
-		  sel *= QO_TERM_SELECTIVITY (termp);
-		}
-	    }
-
-	  /* check upper bound */
-	  sel = MIN (sel, 1.0);
-
-	  sel_limit = 0.0;	/* init */
-
-	  /* set selectivity limit */
-	  if (i < pkeys_num && cum_statsp->pkeys[i] > 1)
+	  /* each term can have multi index column. e.g.) (a,b) in .. */
+	  for (int j = 0; j < index_entryp->col_num; j++)
 	    {
-	      sel_limit = 1.0 / (double) cum_statsp->pkeys[i];
+	      if (BITSET_MEMBER (QO_TERM_SEGS (termp), index_entryp->seg_idxs[j]))
+		{
+		  i++;
+		}
+	    }
+	}
+      /* check upper bound */
+      sel = MIN (sel, 1.0);
+
+      sel_limit = 0.0;		/* init */
+
+      /* set selectivity limit */
+      if (i < pkeys_num && cum_statsp->pkeys[i] > 1)
+	{
+	  sel_limit = 1.0 / (double) cum_statsp->pkeys[i];
+	}
+      else
+	{			/* can not use btree partial-key statistics */
+	  if (cum_statsp->keys > 1)
+	    {
+	      sel_limit = 1.0 / (double) cum_statsp->keys;
 	    }
 	  else
-	    {			/* can not use btree partial-key statistics */
-	      if (cum_statsp->keys > 1)
+	    {
+	      if (QO_NODE_NCARD (nodep) > 1)
 		{
-		  sel_limit = 1.0 / (double) cum_statsp->keys;
-		}
-	      else
-		{
-		  if (QO_NODE_NCARD (nodep) > 1)
-		    {
-		      sel_limit = 1.0 / (double) QO_NODE_NCARD (nodep);
-		    }
+		  sel_limit = 1.0 / (double) QO_NODE_NCARD (nodep);
 		}
 	    }
-
-	  assert (sel_limit < 1.0);
-
-	  /* check lower bound */
-	  sel = MAX (sel, sel_limit);
-
-	  i++;
-	  n--;
 	}
+
+      assert (sel_limit < 1.0);
+
+      /* check lower bound */
+      sel = MAX (sel, sel_limit);
     }
 
   assert ((is_null_sel == false) || (is_null_sel == true && sel == 0.0));
@@ -2610,7 +2606,7 @@ qo_sort_cost (QO_PLAN * planp)
 static QO_PLAN *
 qo_join_new (QO_INFO * info, JOIN_TYPE join_type, QO_JOINMETHOD join_method, QO_PLAN * outer, QO_PLAN * inner,
 	     BITSET * join_terms, BITSET * duj_terms, BITSET * afj_terms, BITSET * sarged_terms,
-	     BITSET * pinned_subqueries)
+	     BITSET * pinned_subqueries, BITSET * hash_terms)
 {
   QO_PLAN *plan = NULL;
   QO_NODE *node = NULL;
@@ -2754,9 +2750,12 @@ qo_join_new (QO_INFO * info, JOIN_TYPE join_type, QO_JOINMETHOD join_method, QO_
   bitset_init (&(plan->plan_un.join.join_terms), info->env);
   bitset_init (&(plan->plan_un.join.during_join_terms), info->env);
   bitset_init (&(plan->plan_un.join.after_join_terms), info->env);
+  bitset_init (&(plan->plan_un.join.hash_terms), info->env);
 
   /* set join terms */
   bitset_assign (&(plan->plan_un.join.join_terms), join_terms);
+  /* set hash terms */
+  bitset_assign (&(plan->plan_un.join.hash_terms), hash_terms);
   /* add to out terms */
   bitset_union (&sarg_out_terms, &(plan->plan_un.join.join_terms));
 
@@ -3392,7 +3391,7 @@ qo_cp_new (QO_INFO * info, QO_PLAN * outer, QO_PLAN * inner, BITSET * sarged_ter
 		      QO_JOINMETHOD_NL_JOIN, outer, inner, &empty_terms /* join_terms */ ,
 		      &empty_terms /* duj_terms */ ,
 		      &empty_terms /* afj_terms */ ,
-		      sarged_terms, pinned_subqueries);
+		      sarged_terms, pinned_subqueries, &empty_terms /* hash_terms */ );
 
   bitset_delset (&empty_terms);
 
@@ -5675,7 +5674,7 @@ exit:
 static int
 qo_examine_nl_join (QO_INFO * info, JOIN_TYPE join_type, QO_INFO * outer, QO_INFO * inner, BITSET * nl_join_terms,
 		    BITSET * duj_terms, BITSET * afj_terms, BITSET * sarged_terms, BITSET * pinned_subqueries,
-		    int idx_join_plan_n)
+		    int idx_join_plan_n, BITSET * hash_terms)
 {
   int n = 0;
   QO_PLAN *outer_plan, *inner_plan;
@@ -5804,7 +5803,7 @@ qo_examine_nl_join (QO_INFO * info, JOIN_TYPE join_type, QO_INFO * outer, QO_INF
   n =
     qo_check_plan_on_info (info,
 			   qo_join_new (info, join_type, QO_JOINMETHOD_NL_JOIN, outer_plan, inner_plan, nl_join_terms,
-					duj_terms, afj_terms, sarged_terms, pinned_subqueries));
+					duj_terms, afj_terms, sarged_terms, pinned_subqueries, hash_terms));
 
 exit:
 
@@ -5835,6 +5834,8 @@ qo_examine_merge_join (QO_INFO * info, JOIN_TYPE join_type, QO_INFO * outer, QO_
   int t;
   BITSET_ITERATOR iter;
   QO_TERM *term;
+  BITSET empty_terms;
+  bitset_init (&empty_terms, info->env);
 
   /* If any of the sarged terms are fake terms, we can't implement this join as a merge join, because the timing
    * assumptions required by the fake terms won't be satisfied.  Nested loops are the only joins that will work.
@@ -5947,7 +5948,8 @@ qo_examine_merge_join (QO_INFO * info, JOIN_TYPE join_type, QO_INFO * outer, QO_
   n =
     qo_check_plan_on_info (info,
 			   qo_join_new (info, join_type, QO_JOINMETHOD_MERGE_JOIN, outer_plan, inner_plan,
-					sm_join_terms, duj_terms, afj_terms, sarged_terms, pinned_subqueries));
+					sm_join_terms, duj_terms, afj_terms, sarged_terms, pinned_subqueries,
+					&empty_terms));
 
 exit:
 
@@ -7063,9 +7065,13 @@ planner_visit_node (QO_PLANNER * planner, QO_PARTITION * partition, PT_HINT_ENUM
 #endif /* CORRELATED_INDEX */
 
 	/* STEP 5-3: examine nl-join */
+	/* sm_join_terms is a mergeable term for SM join. In hash list scan, mergeable term is used as hash term. */
+	/* The mergeable term and the hash term have the same characteristics. */
+	/* If the characteristics for mergeable terms are changed, the logic for hash terms should be separated. */
+	/* mergeable term : equi-term, symmetrical term, e.g. TBL1.a = TBL2.a, function(TAB1.a) = function(TAB2.a) */
 	kept +=
 	  qo_examine_nl_join (new_info, join_type, head_info, tail_info, &nl_join_terms, &duj_terms, &afj_terms,
-			      &sarged_terms, &pinned_subqueries, idx_join_plan_n);
+			      &sarged_terms, &pinned_subqueries, idx_join_plan_n, &sm_join_terms);
 
 #if 1				/* MERGE_JOINS */
 	/* STEP 5-4: examine merge-join */
@@ -7483,7 +7489,7 @@ qo_generate_join_index_scan (QO_INFO * infop, JOIN_TYPE join_type, QO_PLAN * out
   BITSET_ITERATOR iter;
   QO_TERM *termp;
   QO_PLAN *inner_plan;
-  int i, t, last_t, j, n, seg;
+  int i, t, last_t, j, n, seg, rangelist_term_idx;
   bool found_rangelist;
   BITSET range_terms;
   BITSET empty_terms;
@@ -7520,6 +7526,7 @@ qo_generate_join_index_scan (QO_INFO * infop, JOIN_TYPE join_type, QO_PLAN * out
     }
 
   found_rangelist = false;
+  rangelist_term_idx = -1;
   for (i = 0; i < index_entryp->nsegs; i++)
     {
       seg = index_entryp->seg_idxs[i];
@@ -7541,33 +7548,67 @@ qo_generate_join_index_scan (QO_INFO * infop, JOIN_TYPE join_type, QO_PLAN * out
 	      continue;		/* do not add to range_terms */
 	    }
 
-	  for (j = 0; j < termp->can_use_index; j++)
+	  if (QO_TERM_IS_FLAGED (termp, QO_TERM_MULTI_COLL_PRED))
 	    {
-	      /* found term */
-	      if (QO_SEG_IDX (termp->index_seg[j]) == seg)
+	      /* case of multi column term ex) (a,b) in ... */
+	      if (found_rangelist == true && QO_TERM_IDX (termp) != rangelist_term_idx)
 		{
-		  /* save last found term */
-		  last_t = t;
-
-		  /* found EQ term */
-		  if (QO_TERM_IS_FLAGED (termp, QO_TERM_EQUAL_OP))
+		  break;	/* already found. give up */
+		}
+	      for (j = 0; j < termp->multi_col_cnt; j++)
+		{
+		  if (QO_TERM_IS_FLAGED (termp, QO_TERM_RANGELIST))
 		    {
-		      if (QO_TERM_IS_FLAGED (termp, QO_TERM_RANGELIST))
+		      found_rangelist = true;
+		      rangelist_term_idx = QO_TERM_IDX (termp);
+		    }
+		  /* found term */
+		  if (termp->multi_col_segs[j] == seg && BITSET_MEMBER (index_entryp->seg_equal_terms[i], t))
+		    /* multi col term is only indexable when term's class is TC_SARG. so can use seg_equal_terms */
+		    {
+		      /* save last found term */
+		      last_t = t;
+		      /* found EQ term */
+		      if (QO_TERM_IS_FLAGED (termp, QO_TERM_EQUAL_OP))
 			{
-			  if (found_rangelist == true)
+			  bitset_add (&range_terms, t);
+			  bitset_add (&(index_entryp->multi_col_range_segs), seg);
+			  n++;
+			}
+		    }
+		}
+	    }
+	  else
+	    {
+	      for (j = 0; j < termp->can_use_index; j++)
+		{
+		  /* found term */
+		  if (QO_SEG_IDX (termp->index_seg[j]) == seg)
+		    {
+		      /* save last found term */
+		      last_t = t;
+
+		      /* found EQ term */
+		      if (QO_TERM_IS_FLAGED (termp, QO_TERM_EQUAL_OP))
+			{
+			  if (QO_TERM_IS_FLAGED (termp, QO_TERM_RANGELIST))
 			    {
-			      break;	/* already found. give up */
+			      if (found_rangelist == true)
+				{
+				  break;	/* already found. give up */
+				}
+
+			      /* is the first time */
+			      found_rangelist = true;
+			      rangelist_term_idx = QO_TERM_IDX (termp);
 			    }
 
-			  /* is the first time */
-			  found_rangelist = true;
+			  bitset_add (&range_terms, t);
+			  n++;
 			}
 
-		      bitset_add (&range_terms, t);
-		      n++;
+		      break;
 		    }
-
-		  break;
 		}
 	    }
 
@@ -7613,7 +7654,7 @@ qo_generate_join_index_scan (QO_INFO * infop, JOIN_TYPE join_type, QO_PLAN * out
 	    qo_check_plan_on_info (infop,
 				   qo_join_new (infop, join_type, QO_JOINMETHOD_IDX_JOIN, outer_plan, inner_plan,
 						&empty_terms, &empty_terms, afj_terms, &remaining_terms,
-						pinned_subqueries));
+						pinned_subqueries, &empty_terms));
 	}
     }
 
@@ -7724,10 +7765,16 @@ qo_generate_index_scan (QO_INFO * infop, QO_NODE * nodep, QO_NODE_INDEX_ENTRY * 
 
   start_column = index_entryp->is_iss_candidate ? 1 : 0;
 
-
   for (i = start_column; i < nsegs - 1; i++)
     {
-      bitset_add (&range_terms, bitset_first_member (&(index_entryp->seg_equal_terms[i])));
+      t = bitset_first_member (&(index_entryp->seg_equal_terms[i]));
+      bitset_add (&range_terms, t);
+
+      /* add multi_col_range_segs */
+      if (QO_TERM_IS_FLAGED (QO_ENV_TERM (infop->env, t), QO_TERM_MULTI_COLL_PRED))
+	{
+	  bitset_add (&(index_entryp->multi_col_range_segs), index_entryp->seg_idxs[i]);
+	}
     }
 
   /* for each terms associated with the last segment */
@@ -7735,6 +7782,11 @@ qo_generate_index_scan (QO_INFO * infop, QO_NODE * nodep, QO_NODE_INDEX_ENTRY * 
   for (; t != -1; t = bitset_next_member (&iter))
     {
       bitset_add (&range_terms, t);
+      /* add multi_col_range_segs */
+      if (QO_TERM_IS_FLAGED (QO_ENV_TERM (infop->env, t), QO_TERM_MULTI_COLL_PRED))
+	{
+	  bitset_add (&(index_entryp->multi_col_range_segs), index_entryp->seg_idxs[nsegs - 1]);
+	}
 
       /* generate index scan plan */
       planp = qo_index_scan_new (infop, nodep, ni_entryp, QO_SCANMETHOD_INDEX_SCAN, &range_terms, NULL);
@@ -7747,6 +7799,10 @@ qo_generate_index_scan (QO_INFO * infop, QO_NODE * nodep, QO_NODE_INDEX_ENTRY * 
 
       /* is it safe to ignore the result of qo_check_plan_on_info()? */
       bitset_remove (&range_terms, t);
+      if (QO_TERM_IS_FLAGED (QO_ENV_TERM (infop->env, t), QO_TERM_MULTI_COLL_PRED))
+	{
+	  bitset_remove (&(index_entryp->multi_col_range_segs), index_entryp->seg_idxs[nsegs - 1]);
+	}
     }
 
   bitset_assign (&seg_other_terms, &(index_entryp->seg_other_terms[nsegs - 1]));
@@ -9183,7 +9239,7 @@ qo_not_selectivity (QO_ENV * env, double sel)
 static double
 qo_equal_selectivity (QO_ENV * env, PT_NODE * pt_expr)
 {
-  PT_NODE *lhs, *rhs;
+  PT_NODE *lhs, *rhs, *multi_attr;
   PRED_CLASS pc_lhs, pc_rhs;
   int lhs_icard, rhs_icard, icard;
   double selectivity;
@@ -9241,6 +9297,11 @@ qo_equal_selectivity (QO_ENV * env, PT_NODE * pt_expr)
 	    }
 
 	  break;
+
+	case PC_MULTI_ATTR:
+	  /* attr = (attr,attr) syntactic impossible case */
+	  selectivity = DEFAULT_EQUAL_SELECTIVITY;
+	  break;
 	}
 
       break;
@@ -9278,8 +9339,147 @@ qo_equal_selectivity (QO_ENV * env, PT_NODE * pt_expr)
 
 	  selectivity = DEFAULT_EQUAL_SELECTIVITY;
 	  break;
+
+	case PC_MULTI_ATTR:
+	  /* const = (attr,attr) */
+	  multi_attr = rhs->info.function.arg_list;
+	  rhs_icard = 0;
+	  for ( /* none */ ; multi_attr; multi_attr = multi_attr->next)
+	    {
+	      /* get index cardinality */
+	      icard = qo_index_cardinality (env, multi_attr);
+	      if (icard <= 0)
+		{
+		  /* the only interesting case is PT_BETWEEN_EQ_NA */
+		  icard = 1 / DEFAULT_EQUAL_SELECTIVITY;
+		}
+	      if (rhs_icard == 0)
+		{
+		  /* first time */
+		  rhs_icard = icard;
+		}
+	      else
+		{
+		  rhs_icard *= icard;
+		}
+	    }
+	  if (rhs_icard != 0)
+	    {
+	      selectivity = (1.0 / rhs_icard);
+	    }
+	  else
+	    {
+	      selectivity = DEFAULT_EQUAL_SELECTIVITY;
+	    }
+	  break;
+	}
+      break;
+
+    case PC_MULTI_ATTR:
+      switch (pc_rhs)
+	{
+	case PC_ATTR:
+	  /* (attr,attr) = attr  syntactic impossible case */
+	  selectivity = DEFAULT_EQUAL_SELECTIVITY;
+	  break;
+
+	case PC_CONST:
+	case PC_HOST_VAR:
+	case PC_SUBQUERY:
+	case PC_SET:
+	case PC_OTHER:
+	  /* (attr,attr) = const */
+
+	  multi_attr = lhs->info.function.arg_list;
+	  lhs_icard = 0;
+	  for ( /* none */ ; multi_attr; multi_attr = multi_attr->next)
+	    {
+	      /* get index cardinality */
+	      icard = qo_index_cardinality (env, multi_attr);
+	      if (icard <= 0)
+		{
+		  /* the only interesting case is PT_BETWEEN_EQ_NA */
+		  icard = 1 / DEFAULT_EQUAL_SELECTIVITY;
+		}
+	      if (lhs_icard == 0)
+		{
+		  /* first time */
+		  lhs_icard = icard;
+		}
+	      else
+		{
+		  lhs_icard *= icard;
+		}
+	    }
+	  if (lhs_icard != 0)
+	    {
+	      selectivity = (1.0 / lhs_icard);
+	    }
+	  else
+	    {
+	      selectivity = DEFAULT_EQUAL_SELECTIVITY;
+	    }
+	  break;
+
+	case PC_MULTI_ATTR:
+	  /* (attr,attr) = (attr,attr) */
+	  multi_attr = lhs->info.function.arg_list;
+	  lhs_icard = 0;
+	  for ( /* none */ ; multi_attr; multi_attr = multi_attr->next)
+	    {
+	      /* get index cardinality */
+	      icard = qo_index_cardinality (env, multi_attr);
+	      if (icard <= 0)
+		{
+		  /* the only interesting case is PT_BETWEEN_EQ_NA */
+		  icard = 1 / DEFAULT_EQUAL_SELECTIVITY;
+		}
+	      if (lhs_icard == 0)
+		{
+		  /* first time */
+		  lhs_icard = icard;
+		}
+	      else
+		{
+		  lhs_icard *= icard;
+		}
+	    }
+
+	  multi_attr = rhs->info.function.arg_list;
+	  rhs_icard = 0;
+	  for ( /* none */ ; multi_attr; multi_attr = multi_attr->next)
+	    {
+	      /* get index cardinality */
+	      icard = qo_index_cardinality (env, multi_attr);
+	      if (icard <= 0)
+		{
+		  /* the only interesting case is PT_BETWEEN_EQ_NA */
+		  icard = 1 / DEFAULT_EQUAL_SELECTIVITY;
+		}
+	      if (rhs_icard == 0)
+		{
+		  /* first time */
+		  rhs_icard = icard;
+		}
+	      else
+		{
+		  rhs_icard *= icard;
+		}
+	    }
+
+	  icard = MAX (lhs_icard, rhs_icard);
+	  if (icard != 0)
+	    {
+	      selectivity = (1.0 / icard);
+	    }
+	  else
+	    {
+	      selectivity = DEFAULT_EQUIJOIN_SELECTIVITY;
+	    }
+	  break;
 	}
 
+      break;
       break;
     }
 
@@ -9331,26 +9531,53 @@ static double
 qo_range_selectivity (QO_ENV * env, PT_NODE * pt_expr)
 {
   PT_NODE *lhs, *arg1, *arg2;
-  PRED_CLASS pc1;
+  PRED_CLASS pc1, pc2;
   double total_selectivity, selectivity;
-  int lhs_icard, rhs_icard, icard;
+  int lhs_icard = 0, rhs_icard = 0, icard = 0;
   PT_NODE *range_node;
   PT_OP_TYPE op_type;
 
   lhs = pt_expr->info.expr.arg1;
 
-  /* the only interesting case is 'attr RANGE {...}' */
-  if (qo_classify (lhs) != PC_ATTR)
+  pc2 = qo_classify (lhs);
+
+  /* the only interesting case is 'attr RANGE {=1,=2}' or '(attr,attr) RANGE {={..},..}' */
+  if (pc2 == PC_MULTI_ATTR)
+    {
+      lhs = lhs->info.function.arg_list;
+      lhs_icard = 0;
+      for ( /* none */ ; lhs; lhs = lhs->next)
+	{
+	  /* get index cardinality */
+	  icard = qo_index_cardinality (env, lhs);
+	  if (icard <= 0)
+	    {
+	      /* the only interesting case is PT_BETWEEN_EQ_NA */
+	      icard = 1 / DEFAULT_EQUAL_SELECTIVITY;
+	    }
+	  if (lhs_icard == 0)
+	    {
+	      /* first time */
+	      lhs_icard = icard;
+	    }
+	  else
+	    {
+	      lhs_icard *= icard;
+	    }
+	}
+    }
+  else if (pc2 == PC_ATTR)
+    {
+      /* get index cardinality */
+      lhs_icard = qo_index_cardinality (env, lhs);
+    }
+  else
     {
       return DEFAULT_RANGE_SELECTIVITY;
     }
-
 #if 1				/* unused anymore - DO NOT DELETE ME */
   QO_ASSERT (env, !PT_EXPR_INFO_IS_FLAGED (pt_expr, PT_EXPR_INFO_FULL_RANGE));
 #endif
-
-  /* get index cardinality */
-  lhs_icard = qo_index_cardinality (env, lhs);
 
   total_selectivity = 0.0;
 
@@ -9435,44 +9662,73 @@ static double
 qo_all_some_in_selectivity (QO_ENV * env, PT_NODE * pt_expr)
 {
   PRED_CLASS pc_lhs, pc_rhs;
-  int list_card = 0, icard;
-  double equal_selectivity, in_selectivity;
+  double list_card = 0, icard;
+  PT_NODE *lhs;
+  double equal_selectivity, in_selectivity, selectivity;
 
   /* determine the class of each side of the range */
   pc_lhs = qo_classify (pt_expr->info.expr.arg1);
   pc_rhs = qo_classify (pt_expr->info.expr.arg2);
 
-  /* The only interesting cases are: attr IN set or attr IN subquery */
-  if (pc_lhs == PC_ATTR && (pc_rhs == PC_SET || pc_rhs == PC_SUBQUERY))
+  /* The only interesting cases are: attr IN set or (attr,attr) IN set or attr IN subquery */
+  if ((pc_lhs == PC_MULTI_ATTR || pc_lhs == PC_ATTR) && (pc_rhs == PC_SET || pc_rhs == PC_SUBQUERY))
     {
-      /* check for index on the attribute.  */
-      icard = qo_index_cardinality (env, pt_expr->info.expr.arg1);
-
-      if (icard != 0)
+      if (pc_lhs == PC_MULTI_ATTR)
 	{
-	  equal_selectivity = (1.0 / icard);
+	  lhs = pt_expr->info.expr.arg1->info.function.arg_list;
+	  equal_selectivity = 1;
+	  for ( /* none */ ; lhs; lhs = lhs->next)
+	    {
+	      /* get index cardinality */
+	      icard = qo_index_cardinality (env, lhs);
+	      if (icard != 0)
+		{
+		  selectivity = (1.0 / icard);
+		}
+	      else
+		{
+		  selectivity = DEFAULT_EQUAL_SELECTIVITY;
+		}
+	      equal_selectivity *= selectivity;
+	    }
 	}
-      else
+      else if (pc_lhs == PC_ATTR)
 	{
-	  equal_selectivity = DEFAULT_EQUAL_SELECTIVITY;
-	}
+	  /* check for index on the attribute.  */
+	  icard = qo_index_cardinality (env, pt_expr->info.expr.arg1);
 
+	  if (icard != 0)
+	    {
+	      equal_selectivity = (1.0 / icard);
+	    }
+	  else
+	    {
+	      equal_selectivity = DEFAULT_EQUAL_SELECTIVITY;
+	    }
+	}
       /* determine cardinality of set or subquery */
       if (pc_rhs == PC_SET)
 	{
-	  list_card = pt_length_of_list (pt_expr->info.expr.arg2->info.value.data_value.set);
+	  if (pt_is_function (pt_expr->info.expr.arg2))
+	    {
+	      list_card = pt_length_of_list (pt_expr->info.expr.arg2->info.function.arg_list);
+	    }
+	  else
+	    {
+	      list_card = pt_length_of_list (pt_expr->info.expr.arg2->info.value.data_value.set);
+	    }
 	}
-      if (pc_rhs == PC_SUBQUERY)
+      else if (pc_rhs == PC_SUBQUERY)
 	{
-#if 0
-/*right now we don't have the hook for the cardinality of subqueries, just use
- * a large number so that the selectivity will end up being capped at 0.5
- */
-	  list_card = pt_expr->info.select.est_card;
-#else
-	  list_card = 1000;
-#endif /* 0 */
-
+	  if (pt_expr->info.expr.arg2->info.query.xasl)
+	    {
+	      list_card = ((XASL_NODE *) pt_expr->info.expr.arg2->info.query.xasl)->cardinality;
+	    }
+	  else
+	    {
+	      /* legacy default list_card is 1000. Maybe it won't come in here */
+	      list_card = 1000;
+	    }
 	}
 
       /* compute selectivity--cap at 0.5 */
@@ -9519,6 +9775,34 @@ qo_classify (PT_NODE * attr)
     case PT_INTERSECTION:
     case PT_DIFFERENCE:
       return PC_SUBQUERY;
+
+    case PT_FUNCTION:
+      /* (attr,attr) or (?,?) */
+      if (PT_IS_SET_TYPE (attr))
+	{
+	  PT_NODE *func_arg;
+	  func_arg = attr->info.function.arg_list;
+	  for ( /* none */ ; func_arg; func_arg = func_arg->next)
+	    {
+	      if (func_arg->node_type == PT_NAME)
+		{
+		  /* none */
+		}
+	      else if (func_arg->node_type == PT_HOST_VAR)
+		{
+		  return PC_SET;
+		}
+	      else
+		{
+		  return PC_OTHER;
+		}
+	    }
+	  return PC_MULTI_ATTR;
+	}
+      else
+	{
+	  return PC_OTHER;
+	}
 
     default:
       return PC_OTHER;

@@ -190,6 +190,7 @@ static int boot_define_ha_apply_info (MOP class_mop);
 static int boot_define_collations (MOP class_mop);
 static int boot_add_charsets (MOP class_mop);
 static int boot_define_charsets (MOP class_mop);
+static int boot_define_dual (MOP class_mop);
 static int boot_define_view_class (void);
 static int boot_define_view_super_class (void);
 static int boot_define_view_vclass (void);
@@ -440,7 +441,7 @@ boot_initialize_client (BOOT_CLIENT_CREDENTIAL * client_credential, BOOT_DB_PATH
 #if 0				/* use Unix-domain socket for localhost */
       if (GETHOSTNAME (db_host_buf, CUB_MAXHOSTNAMELEN) != 0)
 	{
-	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_BO_UNABLE_TO_FIND_HOSTNAME, 0);
+	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_BO_UNABLE_TO_FIND_HOSTNAME, 1, db_host_buf);
 	  error_code = ER_BO_UNABLE_TO_FIND_HOSTNAME;
 	  goto error_exit;
 	}
@@ -1307,15 +1308,6 @@ boot_restart_client (BOOT_CLIENT_CREDENTIAL * client_credential)
     }
   json_set_alloc_funcs (malloc, free);
 
-#if defined(CS_MODE)
-  /* Initialize of the lzo library. */
-  error_code = lzo_init ();
-  if (error_code != LZO_E_OK)
-    {
-      goto error;
-    }
-#endif
-
   return error_code;
 
 error:
@@ -1875,6 +1867,12 @@ boot_define_class (MOP class_mop)
     }
 
   error_code = smt_add_attribute (def, "collation_id", "integer", NULL);
+  if (error_code != NO_ERROR)
+    {
+      return error_code;
+    }
+
+  error_code = smt_add_attribute (def, "tde_algorithm", "integer", NULL);
   if (error_code != NO_ERROR)
     {
       return error_code;
@@ -2532,7 +2530,7 @@ boot_define_query_spec (MOP class_mop)
       return error_code;
     }
 
-  error_code = smt_add_attribute (def, "spec", "varchar(4096)", NULL);
+  error_code = smt_add_attribute (def, "spec", "varchar(1073741823)", NULL);
   if (error_code != NO_ERROR)
     {
       return error_code;
@@ -3677,7 +3675,7 @@ boot_add_collations (MOP class_mop)
 
       assert (lang_coll != NULL);
 
-      if (i != 0 && lang_coll->coll.coll_id == LANG_COLL_ISO_BINARY)
+      if (i != 0 && lang_coll->coll.coll_id == LANG_COLL_DEFAULT)
 	{
 	  /* iso88591 binary collation added only once */
 	  continue;
@@ -3939,6 +3937,83 @@ boot_define_charsets (MOP class_mop)
   return NO_ERROR;
 }
 
+#define CT_DUAL_DUMMY   "dummy"
+
+  /*
+   * boot_define_dual :
+   *
+   * returns : NO_ERROR if all OK, ER_ status otherwise
+   *
+   *   class(IN) :
+   */
+
+static int
+boot_define_dual (MOP class_mop)
+{
+  SM_TEMPLATE *def;
+  int error_code = NO_ERROR;
+  DB_OBJECT *obj;
+  DB_VALUE val;
+  char *dummy = "X";
+
+  def = smt_edit_class_mop (class_mop, AU_ALTER);
+  if (def == NULL)
+    {
+      assert (er_errid () != NO_ERROR);
+      return er_errid ();
+    }
+
+  error_code = smt_add_attribute (def, CT_DUAL_DUMMY, "varchar(1)", NULL);
+  if (error_code != NO_ERROR)
+    {
+      return error_code;
+    }
+
+  error_code = sm_update_class (def, NULL);
+  if (error_code != NO_ERROR)
+    {
+      return error_code;
+    }
+
+  if (locator_has_heap (class_mop) == NULL)
+    {
+      assert (er_errid () != NO_ERROR);
+      return er_errid ();
+    }
+
+  error_code = au_change_owner (class_mop, Au_dba_user);
+  if (error_code != NO_ERROR)
+    {
+      return error_code;
+    }
+
+  error_code = au_grant (Au_public_user, class_mop, AU_SELECT, false);
+  if (error_code != NO_ERROR)
+    {
+      return error_code;
+    }
+
+  obj = db_create_internal (class_mop);
+  if (obj == NULL)
+    {
+      assert (er_errid () != NO_ERROR);
+      return er_errid ();
+    }
+  error_code = db_make_varchar (&val, 1, dummy, strlen (dummy), LANG_SYS_CODESET, LANG_SYS_COLLATION);
+  if (error_code != NO_ERROR)
+    {
+      return error_code;
+    }
+
+  error_code = db_put_internal (obj, CT_DUAL_DUMMY, &val);
+  if (error_code != NO_ERROR)
+    {
+      return error_code;
+    }
+
+  return NO_ERROR;
+}
+
 /*
  * catcls_class_install :
  *
@@ -3973,7 +4048,8 @@ catcls_class_install (void)
     {CT_SERIAL_NAME, boot_define_serial},
     {CT_HA_APPLY_INFO_NAME, boot_define_ha_apply_info},
     {CT_COLLATION_NAME, boot_define_collations},
-    {CT_CHARSET_NAME, boot_define_charsets}
+    {CT_CHARSET_NAME, boot_define_charsets},
+    {CT_DUAL_NAME, boot_define_dual}
   };
   // *INDENT-ON*
 
@@ -4028,6 +4104,7 @@ boot_define_view_class (void)
     {"owner_name", "varchar(255)"},
     {"class_type", "varchar(6)"},
     {"is_system_class", "varchar(3)"},
+    {"tde_algorithm", "varchar(32)"},
     {"partitioned", "varchar(3)"},
     {"is_reuse_oid_class", "varchar(3)"},
     {"collation", "varchar(32)"},
@@ -4059,6 +4136,7 @@ boot_define_view_class (void)
 	   "SELECT [c].[class_name], CAST([c].[owner].[name] AS VARCHAR(255)),"
 	   " CASE [c].[class_type] WHEN 0 THEN 'CLASS' WHEN 1 THEN 'VCLASS' ELSE 'UNKNOW' END,"
 	   " CASE WHEN MOD([c].[is_system_class], 2) = 1 THEN 'YES' ELSE 'NO' END,"
+	   " CASE [c].[tde_algorithm] WHEN 0 THEN 'NONE' WHEN 1 THEN 'AES' WHEN 2 THEN 'ARIA' END,"
 	   " CASE WHEN [c].[sub_classes] IS NULL THEN 'NO' ELSE NVL((SELECT 'YES'"
 	   " FROM [%s] [p] WHERE [p].[class_of] = [c] and [p].[pname] IS NULL), 'NO') END,"
 	   " CASE WHEN MOD([c].[is_system_class] / 8, 2) = 1 THEN 'YES' ELSE 'NO' END,"

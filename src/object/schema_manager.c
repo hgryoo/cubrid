@@ -70,7 +70,7 @@
 #include "execute_schema.h"
 #include "release_string.h"
 #include "execute_statement.h"
-#include "md5.h"
+#include "crypt_opfunc.h"
 
 #include "db.h"
 #include "object_accessor.h"
@@ -2873,6 +2873,57 @@ sm_set_class_flag (MOP classop, SM_CLASS_FLAG flag, int on_or_off)
 	      class_->flags &= ~flag;
 	    }
 	}
+    }
+
+  return error;
+}
+
+/*
+ * sm_set_class_tde_algorithm() - This sets the tde encryption algorithm.
+ *   return: NO_ERROR on success, non-zero for ERROR
+ *   classop (in): class pointer
+ *   tde_algo in): encryption algorithm for the class
+ */
+
+int
+sm_set_class_tde_algorithm (MOP classop, TDE_ALGORITHM tde_algo)
+{
+  SM_CLASS *class_;
+  int error = NO_ERROR;
+
+  assert (tde_algo == TDE_ALGORITHM_NONE || tde_algo == TDE_ALGORITHM_AES || tde_algo == TDE_ALGORITHM_ARIA);
+
+  if (classop != NULL)
+    {
+      error = au_fetch_class_force (classop, &class_, AU_FETCH_UPDATE);
+      if (error == NO_ERROR)
+	{
+	  class_->tde_algorithm = (int) tde_algo;
+	}
+    }
+
+  return error;
+}
+
+/*
+ * sm_get_class_tde_algorithm() - Get the tde algorithm of a class.
+ *   return: NO_ERROR on success, negative for ERROR
+ *   classop (in): class pointer
+ *   tde_algo (out): tde algorithm
+ */
+int
+sm_get_class_tde_algorithm (MOP classop, TDE_ALGORITHM * tde_algo)
+{
+  SM_CLASS *class_;
+  int error = NO_ERROR;
+
+  assert (classop != NULL);
+  *tde_algo = TDE_ALGORITHM_NONE;
+
+  error = au_fetch_class_force (classop, &class_, AU_FETCH_READ);
+  if (error == NO_ERROR)
+    {
+      *tde_algo = (TDE_ALGORITHM) class_->tde_algorithm;
     }
 
   return error;
@@ -14128,6 +14179,7 @@ sm_default_constraint_name (const char *class_name, DB_CONSTRAINT_TYPE type, con
 	   * names */
 	  char *name_all = NULL;
 	  int size_class_and_attrs = DB_MAX_IDENTIFIER_LENGTH - 1 - strlen (prefix) - 32 - 1;
+	  int ec = NO_ERROR;
 
 	  name_all = (char *) malloc (name_length + 1);
 	  if (name_all == NULL)
@@ -14145,10 +14197,12 @@ sm_default_constraint_name (const char *class_name, DB_CONSTRAINT_TYPE type, con
 		}
 	    }
 
-	  md5_buffer (name_all, strlen (name_all), md5_str);
-	  md5_hash_to_hex (md5_str, md5_str);
-
+	  ec = crypt_md5_buffer_hex (name_all, strlen (name_all), md5_str);
 	  free_and_init (name_all);
+	  if (ec != NO_ERROR)
+	    {
+	      goto exit;
+	    }
 
 	  if (n_attrs > MAX_ATTR_IN_AUTO_GEN_NAME)
 	    {
@@ -14782,7 +14836,6 @@ sm_add_constraint (MOP classop, DB_CONSTRAINT_TYPE constraint_type, const char *
 	      goto error_exit;
 	    }
 	}
-
       break;
 
     case DB_CONSTRAINT_NOT_NULL:

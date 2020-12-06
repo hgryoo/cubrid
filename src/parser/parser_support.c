@@ -707,7 +707,9 @@ pt_is_expr_wrapped_function (PARSER_CONTEXT * parser, const PT_NODE * node)
 	  || function_type == F_JSON_REPLACE
 	  || function_type == F_JSON_SEARCH
 	  || function_type == F_JSON_SET
-	  || function_type == F_JSON_TYPE || function_type == F_JSON_UNQUOTE || function_type == F_JSON_VALID)
+	  || function_type == F_JSON_TYPE || function_type == F_JSON_UNQUOTE || function_type == F_JSON_VALID
+	  || function_type == F_REGEXP_COUNT || function_type == F_REGEXP_INSTR || function_type == F_REGEXP_LIKE
+	  || function_type == F_REGEXP_REPLACE || function_type == F_REGEXP_SUBSTR)
 	{
 	  return true;
 	}
@@ -1106,6 +1108,10 @@ pt_is_analytic_node (PARSER_CONTEXT * parser, PT_NODE * tree, void *arg, int *co
   else if (PT_IS_QUERY_NODE_TYPE (tree->node_type))
     {
       *continue_walk = PT_LIST_WALK;
+    }
+  else
+    {
+      *continue_walk = PT_CONTINUE_WALK;
     }
 
   return tree;
@@ -2501,7 +2507,7 @@ pt_split_join_preds (PARSER_CONTEXT * parser, PT_NODE * predicates, PT_NODE ** j
     {
       bool has_filter_pred = false;
 
-      assert (PT_IS_EXPR_NODE (current_conj));
+      assert (PT_IS_EXPR_NODE (current_conj) || PT_IS_VALUE_NODE (current_conj));
       /* It is either fully CNF or not at all. */
       assert (!(current_conj->next != NULL
 		&& (PT_IS_EXPR_NODE_WITH_OPERATOR (current_conj, PT_AND)
@@ -2511,7 +2517,7 @@ pt_split_join_preds (PARSER_CONTEXT * parser, PT_NODE * predicates, PT_NODE ** j
 
       for (current_pred = current_conj; current_pred != NULL; current_pred = current_pred->or_next)
 	{
-	  assert (PT_IS_EXPR_NODE (current_pred));
+	  assert (PT_IS_EXPR_NODE (current_pred) || PT_IS_VALUE_NODE (current_pred));
 	  /* It is either fully CNF or not at all. */
 	  assert (!(current_pred->or_next != NULL
 		    && (PT_IS_EXPR_NODE_WITH_OPERATOR (current_pred, PT_AND)
@@ -6735,7 +6741,7 @@ pt_make_query_show_create_table (PARSER_CONTEXT * parser, PT_NODE * table_name)
    */
   pt_add_string_col_to_sel_list (parser, select, table_name->info.name.original, "TABLE");
   pt_add_string_col_to_sel_list (parser, select, strbuf.get_buffer (), "CREATE TABLE");
-  pt_add_table_name_to_from_list (parser, select, "db_root", NULL, DB_AUTH_SELECT);
+  pt_add_table_name_to_from_list (parser, select, "dual", NULL, DB_AUTH_SELECT);
   return select;
 }
 
@@ -8517,7 +8523,7 @@ pt_check_grammar_charset_collation (PARSER_CONTEXT * parser, PT_NODE * charset_n
 	default:
 	  assert (*charset == INTL_CODESET_BINARY);
 	  *coll_id = LANG_COLL_BINARY;
-	  break;
+	  return NO_ERROR;
 	}
     }
 
@@ -9358,6 +9364,9 @@ pt_check_enum_data_type (PARSER_CONTEXT * parser, PT_NODE * dt)
   int char_count = 0;
   unsigned char pad[2];
 
+  static bool ti = true;
+  static bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
+
   if (dt == NULL || dt->node_type != PT_DATA_TYPE || dt->type_enum != PT_TYPE_ENUMERATION)
     {
       return NO_ERROR;
@@ -9424,9 +9433,14 @@ pt_check_enum_data_type (PARSER_CONTEXT * parser, PT_NODE * dt)
       temp = node->next;
       while (temp != NULL)
 	{
+	  if (!ignore_trailing_space)
+	    {
+	      ti = (domain->type->id == DB_TYPE_CHAR || domain->type->id == DB_TYPE_NCHAR);
+	    }
+
 	  if (QSTR_COMPARE (domain->collation_id, node->info.value.data_value.str->bytes,
 			    node->info.value.data_value.str->length, temp->info.value.data_value.str->bytes,
-			    temp->info.value.data_value.str->length) == 0)
+			    temp->info.value.data_value.str->length, ti) == 0)
 	    {
 	      PT_ERRORm (parser, temp, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_ENUM_TYPE_DUPLICATE_VALUES);
 

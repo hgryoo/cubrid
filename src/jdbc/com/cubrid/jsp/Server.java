@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution. 
+ * Copyright (C) 2008 Search Solution Corporation
+ * Copyright (C) 2016 CUBRID Corporation
  *
  * Redistribution and use in source and binary forms, with or without modification, 
  * are permitted provided that the following conditions are met: 
@@ -34,39 +35,51 @@ import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.List;
 import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.lang.management.ManagementFactory;
+import java.lang.management.RuntimeMXBean;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Server {
-	private static String serverName;
-
-	private static String spPath;
-
-	private static String rootPath;
-
-	private ServerSocket serverSocket;
-
-	private static Logger logger = Logger.getLogger("com.cubrid.jsp");
-
+	private static final Logger logger = Logger.getLogger("com.cubrid.jsp");
 	private static final String LOG_DIR = "log";
+	
+	private static String serverName;
+	private static String spPath;
+	private static String rootPath;
+	
+	private static List<String> jvmArguments = null;
+	
+	private ServerSocket serverSocket;
+	private Thread socketListener;
+	private AtomicBoolean shutdown;
 
-	public Server(String name, String path, String version, String rPath)
+	private static Server serverInstance = null;
+	private Server(String name, String path, String version, String rPath, String port)
 			throws IOException {
 		serverName = name;
 		spPath = path;
 		rootPath = rPath;
-		serverSocket = new ServerSocket(0);
+		shutdown = new AtomicBoolean(false);
 
 		try {
-			Class.forName("cubrid.jdbc.driver.CUBRIDDriver");
-		} catch (ClassNotFoundException e1) {
-			e1.printStackTrace();
-		}
-		System.setSecurityManager(new SpSecurityManager());
-		System.setProperty("cubrid.server.version", version);
+		  int port_number = Integer.parseInt(port);
+		  serverSocket = new ServerSocket(port_number);
 
-		new Thread(new Runnable() {
+		  Class.forName("cubrid.jdbc.driver.CUBRIDDriver");
+		  System.setSecurityManager(new SpSecurityManager());
+		  System.setProperty("cubrid.server.version", version);
+
+		  getJVMArguments (); /* store jvm options */
+		} catch (Exception e) {
+			log(e);
+			e.printStackTrace();
+		}
+
+		socketListener = new Thread (new Runnable() {
 			public void run() {
 				Socket client = null;
 				while (true) {
@@ -76,28 +89,64 @@ public class Server {
 						new ExecuteThread(client).start();
 					} catch (IOException e) {
 						log(e);
+						break;
 					}
 				}
 			}
-		}).start();
+		});
 	}
 
-	private int getServerPort() {
-		return serverSocket.getLocalPort();
+	private void startSocketListener() {
+		socketListener.setDaemon(true);
+		socketListener.start();
+	}
+
+	private void stopSocketListener() {
+		try {
+			serverSocket.close();
+			serverSocket = null;
+		} catch (IOException e) {
+			log(e);
+		}
+	}
+
+	public ServerSocket getServerSocket() {
+		return serverSocket;
+	}
+
+	public static Server getServer() {
+		return serverInstance;
 	}
 
 	public static String getServerName() {
 		return serverName;
 	}
 
+	public static int getServerPort() {
+		try {
+		  return getServer().getServerSocket().getLocalPort();
+		} catch (Exception e) {
+		  return -1;
+		}
+	}
+
 	public static String getSpPath() {
 		return spPath;
+	}
+	
+	public static List<String> getJVMArguments() {
+		if (jvmArguments == null) {
+			RuntimeMXBean runtimeMxBean = ManagementFactory.getRuntimeMXBean();
+			jvmArguments = runtimeMxBean.getInputArguments();
+		}
+		return jvmArguments;
 	}
 
 	public static int start(String[] args) {
 		try {
-			Server server = new Server(args[0], args[1], args[2], args[3]);
-			return server.getServerPort();
+			serverInstance = new Server(args[0], args[1], args[2], args[3], args[4]);
+			serverInstance.startSocketListener();
+			return serverInstance.getServerSocket().getLocalPort();
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -105,13 +154,19 @@ public class Server {
 		return -1;
 	}
 
-	public static void main(String[] args) {
-		Server.start(new String[] { "test" });
+	public static void stop(int status) {
+		getServer().setShutdown();
+		getServer().stopSocketListener();
+		System.exit (status);
+	}
+
+	public static void main (String[] args) {
+		Server.start(args);
 	}
 
 	public static void log(Throwable ex) {
 		FileHandler logHandler = null;
-
+		
 		try {
 			logHandler = new FileHandler(rootPath + File.separatorChar
 					+ LOG_DIR + File.separatorChar + serverName + "_java.log",
@@ -128,5 +183,13 @@ public class Server {
 				}
 			}
 		}
+	}
+
+	public void setShutdown() {
+		shutdown.set(true);
+	}
+
+	public boolean getShutdown() {
+		return shutdown.get();
 	}
 }

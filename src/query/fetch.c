@@ -465,6 +465,7 @@ fetch_peek_arith (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
     case T_BIN:
     case T_CAST:
     case T_CAST_NOFAIL:
+    case T_CAST_WRAP:
     case T_EXTRACT:
     case T_FLOOR:
     case T_CEIL:
@@ -2318,6 +2319,7 @@ fetch_peek_arith (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
       break;
 
     case T_CAST:
+    case T_CAST_WRAP:
       if (REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_APPLY_COLLATION))
 	{
 	  pr_clone_value (peek_right, arithptr->value);
@@ -2347,7 +2349,15 @@ fetch_peek_arith (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 	}
       else
 	{
-	  dom_status = tp_value_cast (peek_right, arithptr->value, arithptr->domain, false);
+	  if (REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_STRICT_TYPE_CAST) && arithptr->opcode == T_CAST_WRAP)
+	    {
+	      dom_status = tp_value_cast (peek_right, arithptr->value, arithptr->domain, false);
+	    }
+	  else
+	    {
+	      dom_status = tp_value_cast_force (peek_right, arithptr->value, arithptr->domain, false);
+	    }
+
 	  if (dom_status != DOMAIN_COMPATIBLE)
 	    {
 	      (void) tp_domain_status_er_set (dom_status, ARG_FILE_LINE, peek_right, arithptr->domain);
@@ -3973,6 +3983,11 @@ fetch_peek_dbval (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 	    case F_JSON_TYPE:
 	    case F_JSON_UNQUOTE:
 	    case F_JSON_VALID:
+	    case F_REGEXP_COUNT:
+	    case F_REGEXP_INSTR:
+	    case F_REGEXP_LIKE:
+	    case F_REGEXP_REPLACE:
+	    case F_REGEXP_SUBSTR:
 	      {
 		regu_variable_list_node *operand;
 
@@ -4179,6 +4194,11 @@ fetch_peek_dbval (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 	case F_JSON_TYPE:
 	case F_JSON_UNQUOTE:
 	case F_JSON_VALID:
+	case F_REGEXP_COUNT:
+	case F_REGEXP_INSTR:
+	case F_REGEXP_LIKE:
+	case F_REGEXP_REPLACE:
+	case F_REGEXP_SUBSTR:
 	  break;
 
 	default:
@@ -4615,7 +4635,7 @@ is_argument_wrapped_with_cast_op (const REGU_VARIABLE * regu_var)
 
   if (regu_var->type == TYPE_INARITH || regu_var->type == TYPE_OUTARITH)
     {
-      return (regu_var->value.arithptr->opcode == T_CAST);
+      return (regu_var->value.arithptr->opcode == T_CAST || regu_var->value.arithptr->opcode == T_CAST_WRAP);
     }
 
   return false;

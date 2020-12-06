@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright (C) 2008 Search Solution Corporation
+ * Copyright (C) 2016 CUBRID Corporation
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -262,6 +263,7 @@ struct json_t;
 #define pt_is_dot_node(n) PT_IS_DOT_NODE(n)
 #define pt_is_expr_node(n) PT_IS_EXPR_NODE(n)
 #define pt_is_function(n) PT_IS_FUNCTION(n)
+#define pt_is_multi_col_term(n) PT_IS_MULTI_COL_TERM(n)
 #define pt_is_name_node(n) PT_IS_NAME_NODE(n)
 #define pt_is_oid_name(n) PT_IS_OID_NAME(n)
 #define pt_is_value_node(n) PT_IS_VALUE_NODE(n)
@@ -314,6 +316,12 @@ struct json_t;
 
 #define PT_IS_FUNCTION(n) \
         ( (n) ? ((n)->node_type == PT_FUNCTION) : false )
+
+#define PT_IS_MULTI_COL_TERM(n) \
+	( ((n) && \
+	   PT_IS_FUNCTION((n)) && \
+	   PT_IS_SET_TYPE ((n)) && \
+	   (n)->info.function.function_type == F_SEQUENCE) ? true : false )
 
 #define PT_IS_NAME_NODE(n) \
         ( (n) ? ((n)->node_type == PT_NAME) : false )
@@ -1178,7 +1186,7 @@ typedef enum
   PT_HINT_RECOMPILE = 0x0100,	/* 0000 0001 0000 0000 *//* recompile */
   PT_HINT_LK_TIMEOUT = 0x0200,	/* 0000 0010 0000 0000 *//* lock_timeout */
   PT_HINT_NO_LOGGING = 0x0400,	/* 0000 0100 0000 0000 *//* no_logging */
-  PT_HINT_UNUSED1 = 0x0800,	/* 0000 1000 0000 0000 *//* not used */
+  PT_HINT_NO_HASH_LIST_SCAN = 0x0800,	/* 0000 1000 0000 0000 *//* no hash list scan */
   PT_HINT_QUERY_CACHE = 0x1000,	/* 0001 0000 0000 0000 *//* query_cache */
   PT_HINT_REEXECUTE = 0x2000,	/* 0010 0000 0000 0000 *//* reexecute */
   PT_HINT_JDBC_CACHE = 0x4000,	/* 0100 0000 0000 0000 *//* jdbc_cache */
@@ -1267,6 +1275,7 @@ typedef enum
   PT_REBUILD_INDEX,
   PT_ADD_INDEX_CLAUSE,
   PT_CHANGE_TABLE_COMMENT,
+  PT_CHANGE_COLUMN_COMMENT,
   PT_CHANGE_INDEX_COMMENT,
   PT_CHANGE_INDEX_STATUS
 } PT_ALTER_CODE;
@@ -1316,7 +1325,9 @@ typedef enum
   PT_TABLE_OPTION_AUTO_INCREMENT,
   PT_TABLE_OPTION_CHARSET,
   PT_TABLE_OPTION_COLLATION,
-  PT_TABLE_OPTION_COMMENT
+  PT_TABLE_OPTION_COMMENT,
+  PT_TABLE_OPTION_ENCRYPT,
+  PT_TABLE_OPTION_DONT_REUSE_OID
 } PT_TABLE_OPTION_TYPE;
 
 typedef enum
@@ -2245,6 +2256,8 @@ struct pt_expr_info
 
 #define PT_EXPR_INFO_GROUPBYNUM_LIMIT 32768	/* flag that marks if the expression resulted from a GROUP BY ... LIMIT
 						 * statement */
+#define PT_EXPR_INFO_DO_NOT_AUTOPARAM 65536	/* don't auto parameterize expr at qo_do_auto_parameterize() */
+#define PT_EXPR_INFO_CAST_WRAP 	131072	/* 0x20000, CAST is wrapped by compiling */
   int flag;			/* flags */
 #define PT_EXPR_INFO_IS_FLAGED(e, f)    ((e)->info.expr.flag & (int) (f))
 #define PT_EXPR_INFO_SET_FLAG(e, f)     (e)->info.expr.flag |= (int) (f)

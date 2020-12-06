@@ -72,6 +72,7 @@ $       52      dump_tz
 $       53      restoreslave
 $       54      delvoldb
 $       56      checksumdb
+$       57      tde
 
 $set 1 MSGCAT_UTIL_SET_GENERIC
 1 Longueur ou caractère non valide '%1$c' dans le nom de la base de données '%2$s'\n
@@ -124,6 +125,7 @@ Nom d'utilitaires d'administration disponible:\n\
     dump_tz\n\
     restoreslave\n\
     vacuumdb\n\
+    tde\n\
 \n\
 %4$s est un outil de SGBD.\n\
 Pour plus d'informations, reportez-vous à http://www.cubrid.org\n
@@ -148,6 +150,7 @@ Utilitaires de service disponibles\n\
     broker\n\
     manager\n\
     heartbeat\n\
+    javasp\n\
 \n\
 Utilitaires d'administrateur disponibles:\n\
     addvoldb\n\
@@ -182,6 +185,7 @@ Utilitaires d'administrateur disponibles:\n\
     dump_tz\n\
     vacuumdb\n\
     checksumdb\n\
+    tde\n\
 \n\
 %4$s is a tool for DBMS.\n\
 Pour plus d'informations, reportez-vous à http://www.cubrid.org\n
@@ -248,10 +252,24 @@ Commandes disponibles:\n\
 41 Serveur de gestion CUBRID n'est pas installé.\n
 42 Argument invalide.\n
 43 Erreur d'ouverture du fichier(%1$s).\n
+44 utilitaire CUBRID, version %1$s\n\
+usage: %2$s javasp <command> [args]\n\
+\n\
+Commandes disponibles:\n\
+    start       [database-name]\n\
+    stop        [database-name]\n\
+    restart     [database-name]\n\
+    status      [database-name]\n
 
 $set 2 MSGCAT_UTIL_SET_BACKUPDB
 30 AVERTISSEMENT: l'option -t est ignoré dans le mode d'exécution autonome.\n
 31 ERREUR: Le chemin de destination n'existe pas ou n'est pas un répertoire.\n
+32 En utilisant l'option --separate-keys, il sépare le fichier de clé (_keys) du volume de sauvegarde.\n\
+Si le fichier de clé est perdu, la restauration (restauréeb) peut ne pas fonctionner correctement même s'il existe un volume de sauvegarde.\n
+33 Le volume de sauvegarde comprend le fichier de clé (_keys).\n\
+Si une table est chiffrée par TDE, cela peut entraîner un problème de sécurité pour ces données.\n\
+Pour séparer le fichier de clé afin de l'empêcher, utilisez l'option --separate-keys.\n
+34 ERREUR: impossible d'utiliser le fichier FIFIO comme chemin de destination avec une clé séparée.\n
 60 \
 backupdb: Sauvegarde une base de données.\n\
 usage: %1$s backupdb [OPTION] database-name\n\
@@ -270,7 +288,8 @@ options valides:\n\
       --no-check               ne vérifie pas la cohérence de la base de données; par défaut: vérifier\n\
   -t, --thread-count=NOMBRE    NOMBRE de fils d'exécution; par défaut: 0 (auto)\n\
   -z, --compress               comprimer les volumes de sauvegarde; par défaut: décompresser\n\
-      --sleep-msecs=N          veille N millisecondes par 1M lit; par défaut: 0\n
+      --sleep-msecs=N          veille N millisecondes par 1M lit; par défaut: 0\n\
+  -k, --separate-keys          fichier de clés (_keys) pour TDE n'est pas inclus dans le volume de sauvegarde, mais est séparé dans un fichier à la place\n
 71 Arguments incompatibles, \"%1$s\", et \"%2$s\"\n
 
 
@@ -390,7 +409,8 @@ options valids:\n\
   -l, --level=NIVEAU                NIVEAU de sauvegarde à restaurer, consultez l'usage de sauvegarde; par défaut: 0 (sauvegarde complète)\n\
   -p, --partial-recovery            effectue une récupération partielle si une archive de journal est manquante\n\
   -o, --output-file=FICHIER         redirige les messages de sortie à FICHIER; par défaut: aucun\n\
-  -u, --use-database-location-path  restaure les volumes de base de données et du journal dans le chemin spécifié dans le fichier d'emplacement de base de données\n
+  -u, --use-database-location-path  restaure les volumes de base de données et du journal dans le chemin spécifié dans le fichier d'emplacement de base de données\n\
+  -k, --keys-file-path              Chemin du fichier de clé (_keys) pour TDE à utiliser lors de la restauration\n
 
 
 $set 12 MSGCAT_UTIL_SET_LOADDB
@@ -403,7 +423,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 25 \n*** Vérification de la syntaxe ***\n\n
 26 %1$d erreurs détectées.\n
 27 \n***  Insertion d'objets ***\n\n
-28 Un total de %1$8d objets insérés.\n
+28 Un total de %1$ld objets insérés.\n
 29 Un total de %1$8d objets référencés inséré avec le contenu par défaut.\n
 30 \n*** Validation de la transaction ***\n
 31 \n*** Fermeture de la de base de données ***\n
@@ -423,7 +443,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 45 Instance %1$d de la classe %2$s a été déjà  définie\n
 46 Instance %1$d de la classe %2$s a été déjà réservée\n
 47 Violation d'UNIQUE sur l'attribut '%1$s', converti en NULL\n
-48 %1$s %2$d instances\n
+48 %1$s %2$ld instances\n
 49 Classe %1$s\n
 50 Mot de passe:
 51 \n*** Mise à jour des statistiques de classe ***\n
@@ -433,16 +453,16 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 55 manquant
 56 dans %1$s
 57 arguments incompatible, \"%1$s\", et \"%2$s\"\n
-58 %1$s %2$d instances validées\n
+58 %1$s %2$ld instances validées\n
 59 \nImpossible d'invoquer la non-optimisé version de loaddb.\n
 60 Erreur d'analyse du \"%1$s\", comme type %2$s.\n
 61 La référence d'objet n'est pas prise en charge en mode CS.\n
 62 Statistiques mises à jour pour la classe %1$s.\n
-112   %1$d instances\r
+112   %1$ld instances\r
 113 Dernière ligne validée: %1$d\n
 114 error-control-file
 115 fichier d'entrée pour le contrôle d'erreur(s) pendant le chargement
-116 Total %8d objets inséré, %d objets a échoué.\n
+116 Total %1$ld objets inséré, %2$ld objets a échoué.\n
 117 Chargement échoué.\n
 118 La longueur maximale du nom de classe est %1$d bytes.\n
 119 Total des objets %1$8d vérifiés, %2$d objets d échoué.\n
@@ -477,10 +497,10 @@ options valids:\n\
 $set 13 MSGCAT_UTIL_SET_UNLOADDB
 41 Valeur de cached-pages n'est pas valide.\n
 42 Valeur de cached-page-size n'est pas valide.\n
-43 %1$d objects sauvegardées.\n
+43 %1$ld objects sauvegardées.\n
 44 Classe %1$s
 45 , %1$d instances.\n
-46 Seulement %1$d de  %2$d objets sauvegardées avec succès.\n
+46 Seulement %1$ld de  %2$ld objets sauvegardées avec succès.\n
 47 répertoire de sortie est trop long.\n
 48 LSA : %1$d %2$d \n
 49 Mot de passe:
@@ -556,16 +576,17 @@ options valids:\n\
   -i, --input-class-file=FICHIER    FICHIER d'entrée des noms de tables\n\
                                     liste class_name doit être vide\n\
                                     par défaut: compactage de toutes les classes\n\
-                                    activé seulement en mode client-serveur\n\
   -p, --pages-commited-once=NOMBRE  NOMBRE maximum de pages d'enregistrer une fois\n\
                                     par défaut: 10\n\
                                     activé seulement en mode client-serveur\n\
   -S, --SA-mode                     exécution en mode autonome\n\
   -C, --CS-mode                     exécution en mode client-serveur\n\
   -d, --delete-old-repr             supprime des représentations anciennes des classes à partir du catalogue; par défaut: désactivé\n\
-  class_name_list                   activé seulement en mode client-serveur\n\
   -I, --Instance-lock-timeout       délai d'attente de verrouillage d'instance\n\
-  -c, --class-lock-timeout          délai d'attente de verrouillage de classes\n
+                                    activé seulement en mode client-serveur\n\
+  -c, --class-lock-timeout          délai d'attente de verrouillage de classes\n\
+                                    activé seulement en mode client-serveur\n\
+  class_name_list                   liste de noms de classe être compactés\n
 
 $set 15 MSGCAT_UTIL_SET_COMMDB
 21 Le maître CUBRID en cours d'exécution sur l'hôte %1$s \na été lancé à %2$s
@@ -811,6 +832,7 @@ options valids:\n\
       --kill-program-name=NOM        arrête tous les transactions avec cet NOM du programme du client\n\
       --kill-sql-id=SQL_ID           arrêter toutes les transactions avec SQL_ID\n\
   -p, --dba-password=MOT-DE-PASSE    MOT DE PASSE de l'utilisateur DBA; demandé si ne pas spécifier\n\
+                                     (ne fonctionne qu'avec les options -i ou --kill. Sinon, obtient une erreur)\n\
   -d, --display-information          affiche des informations sur les transactions actives\n\
   -q, --query-exec-info              afficher des informations sur l'exécution de requêtes au sein des transactions actives\n\
   -f, --force                        arrête la transaction sans demande de vérification\n
@@ -1071,8 +1093,6 @@ tranlist: Affiche les informations de transaction active.\n\
 usage: %1$s tranlist [OPTION] database-name\n\
 \n\
 options valides:\n\
-  -u, --user=ID                ID d'utilisateur pour l'accès à la base de données; par défaut: utilisateur DBA\n\
-  -p, --password=PASS          mot de passe d'utilisateur; par défaut: aucun\n\
   -s, --summary                affichage des informations résumées de(s) transaction(s)\n\
       --sort-key=COLUMN_NUMBER numéro de colonne à trier\n\
       --reverse                inverser le résultat du tri\n
@@ -1140,7 +1160,8 @@ options valides:\n\
       --list                       afiche la liste des volumes de sauvegarde sans restauration\n\
   -B, --backup-file-path=VOIE      VOIE est un répertoire de volumes de sauvegarde a restaurer\n\
   -o, --output-file=FICHIER        rediriger les messages de sortie vers le FICHIER; par défaut: aucun\n\
-  -u, --use-database-location-path restaurer la base de données et loguer les volumes au chemin spécifié dans le ficher d'emplacement de la base de données\n
+  -u, --use-database-location-path restaurer la base de données et loguer les volumes au chemin spécifié dans le ficher d'emplacement de la base de données\n\
+  -k, --keys-file-path             Chemin du fichier de clé (_keys) pour TDE à utiliser lors de la restauration\n
 
 $set 54 MSGCAT_UTIL_SET_DELVOLDB
 21 Prêt à éliminer les volumes suivantes:\n\n
@@ -1193,3 +1214,23 @@ options valides:\n\
       --resume                     reprendre la calculation des sommes de contrôle\n\
       --schema-only                vérifier seulement la cohérence du schéma\n\
       --cont-on-error              continuer en cas d'erreur de calcul\n
+
+$set 57 MSGCAT_UTIL_SET_TDE
+21 Entrez le mot de passe DBA:
+25 Impossible d'obtenir les informations clés définies dans la base de données\n
+26 Tentative de modification de la clé de la clé (index: %1$d) à la clé (index: %2$d) ..\n
+27 La clé est passée de la clé (index: %1$d) à la clé (index: %2$d)\n
+28 La clé définie sur la base de données ne peut pas être supprimée\n
+29 La clé (index: %1$d) a été supprimée\n
+30 Une nouvelle clé a été générée - index de clé: %1$d créé sur%2$s
+60 \
+tde: gestion du chiffrement transparent des données (TDE)\n\
+utilisation: %1$s tde OPERATION (-s|-n|-d|-c) [OPTION] nom-base de données\n\
+\n\
+options valides:\n\
+    -p, --dba-password=PASS 	mot de passe de l'utilisateur DBA; demandera si ne spécifiez pas\n\
+OPÉRATIONS: l'une des opérations doit être donnée, et elles sont exclusives\n\
+    -s, --show-keys             imprime les informations de clé définies sur la base de données et le fichier de clé (_keys)\n\
+    -n, --generate-new-key      génère une nouvelle clé dans le fichier de clé (_keys); nombre maximum: 128\n\
+    -d, --delete-key=KEY_INDEX  supprime une clé dans le fichier de clés (_keys)\n\
+    -c, --change-key=KEY_INDEX  modifier le jeu de clés de la base de données pour une autre clé dans le fichier de clés (_keys)\n

@@ -25,9 +25,7 @@
 #define _XASL_PREDICATE_HPP_
 
 #include "dbtype_def.h"             // DB_TYPE
-
-#include "system.h"     // for regex38a.h
-#include "libregex38a/regex38a.h"
+#include "string_regex.hpp"
 
 // forward definitions
 class regu_variable_node;
@@ -135,7 +133,7 @@ namespace cubxasl
     regu_variable_node *src;
     regu_variable_node *pattern;
     regu_variable_node *case_sensitive;
-    mutable cub_regex_t *compiled_regex;
+    mutable cub_regex_object *compiled_regex;
     mutable char *compiled_pattern;
   };
 

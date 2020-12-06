@@ -72,6 +72,7 @@ $       52      dump_tz
 $       53      restoreslave
 $       54      delvoldb
 $       56      checksumdb
+$       57      tde
 
 $set 1 MSGCAT_UTIL_SET_GENERIC
 1 Longitud o caracter '%1$c' en el nombre de la base de datos '%2$s'\n no valida.
@@ -124,6 +125,7 @@ Nombre de utilidad admin disponible:\n\
     dump_tz\n\
     restoreslave\n\
     vacuumdb\n\
+    tde\n\
 \n\
 %4$s es una hieramenta para DBMS.\n\
 Para informacion adicional, vea http://www.cubrid.org\n
@@ -148,6 +150,7 @@ Utilidades de servicio disponible:\n\
     broker\n\
     manager\n\
     heartbeat\n\
+    javasp\n\
 \n\
 Utilidades de administrador disponible:\n\
     addvoldb\n\
@@ -182,6 +185,7 @@ Utilidades de administrador disponible:\n\
     dump_tz\n\
     vacuumdb\n\
     checksumdb\n\
+    tde\n\
 \n\
 %4$s es una hieramenta para DBMS.\n\
 Para informacion adicional, vea http://www.cubrid.org\n
@@ -248,10 +252,24 @@ Comando disponible: \n\
 41 El servidor CUBRID manager no es instalado.\n
 42 Argumento invalido.\n
 43 Error al abrir archivo (%1$s).\n
+44 utilidad de cubrid, version %1$s\n\
+uso: %2$s javasp <command> [args]\n\
+\n\
+Comando disponible:\n\
+    start       [database-name]\n\
+    stop        [database-name]\n\
+    restart     [database-name]\n\
+    status      [database-name]\n
 
 $set 2 MSGCAT_UTIL_SET_BACKUPDB
 30 ADVERTENCIA: -t opcion es ignorada en modo de ejecucion independiente.\n
 31 ERROR: Calle de destino no existe o no es un directorio.\n
+32 Al usar la opción --separate-keys, separa el archivo de claves (_keys) del volumen de respaldo.\n\
+Si se pierde el archivo de claves, es posible que la restauración (restoredb) no funcione correctamente incluso si existe el volumen de copia de seguridad.\n
+33 El volumen de respaldo incluye el archivo de claves (_keys).\n\
+Si una tabla está encriptada con TDE, puede causar un problema de seguridad para esos datos.\n\
+Para separar el archivo de claves para evitarlo, use la opción --separate-keys.\n
+34 ERROR: No se puede usar el archivo FIFIO como ruta de destino con una clave separada.\n
 60 \
 backupdb: Respaldar una base de datos.\n\
 uso: %1$s backupdb [OPTION] database-name\n\
@@ -270,7 +288,8 @@ opciones validas:\n\
       --no-check               no verificar una consistencia de la base de datos; estandar: verificar\n\
   -t, --thread-count=COUNT     numero de hilos; estandar: 0(auto)\n\
   -z, --compress               comprimir volumenes de respaldo; estandar: descomprimir\n\
-      --sleep-msecs=N          dormir N milisecondas para cada 1M leido estandar: 0\n
+      --sleep-msecs=N          dormir N milisecondas para cada 1M leido estandar: 0\n\
+  -k, --separate-keys          el archivo de claves (_keys) para TDE no se incluye en el volumen de respaldo, sino que se divide en un archivo\n
 71 Argumentos incompatibles, \"%1$s\", y \"%2$s\"\n
 
 
@@ -388,7 +407,8 @@ opciones validas:\n\
   -l, --level=LEVEL                 NIVEL de respaldo a restablecer; vea uso de respaldo; estandar: 0(respaldo completo)\n\
   -p, --partial-recovery            realizar recuperacion parcial si alguna carpeta de registro falta\n\
   -o, --output-file=FILE            redireccionar mensajes de salida al ARCHIVO; estandar: ninguno\n\
-  -u, --use-database-location-path  restablecer la base de datos y volumenes de registro a la ruta especificada en el archivo de ubicacion de la base de datos\n
+  -u, --use-database-location-path  restablecer la base de datos y volumenes de registro a la ruta especificada en el archivo de ubicacion de la base de datos\n\
+  -k, --keys-file-path              Ruta del archivo de claves (_keys) para que TDE se utilice durante la restauración\n
 
 
 $set 12 MSGCAT_UTIL_SET_LOADDB
@@ -401,7 +421,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 25 \n*** Verificar sintaxis ***\n\n
 26 %1$d errores detectados.\n
 27 \n*** Insertando objetos ***\n\n
-28 Total %1$8d objetos insertados. \n
+28 Total %1$ld objetos insertados. \n
 29 Total %1$8d objetos referenciados insertados con contenidos estandar.\n
 30 \n*** Cometiendo la transaccion ***\n
 31 \n*** Cerrando la base de datos ***\n
@@ -421,7 +441,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 45 Instancia %1$d de la clase %2$s ha sido ya definida\n
 46 Instancia %1$d de la clase %2$s ha sido ya reservada\n
 47 Violacion UNIQUE en atributo '%1$s', convertida en NULL\n
-48 %1$s %2$d instancias\n
+48 %1$s %2$ld instancias\n
 49 Clase %1$s\n
 50 Contrasena:
 51 \n*** Actualizando estadisticas de clase ***\n
@@ -431,16 +451,16 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 55 faltando
 56 en %1$s
 57 Argumentos incompatibles, \"%1$s\", y \"%2$s\"\n
-58 %1$s %2$d instancias cometidas\n
+58 %1$s %2$ld instancias cometidas\n
 59 No se pueden apelar versiones no-optimizadas de loaddb.\n
 60 Error al analizar \"%1$s\", como tipo %2$s.\n
 61 La referencia de objeto no es compatible con el modo CS.\n
 62 Estadísticas actualizadas para la clase %1$s.\n
-112 %1$d instancias\r
+112 %1$ld instancias\r
 113 Ultima linea cometida: %1$d\n
 114 error-control-file
 115 archivo de entrada para controlar error(es) al cargar
-116 Total %8d object(s) inserted, %d object(s) failed.\n
+116 Total %ld object(s) inserted, %2$ld object(s) failed.\n
 117 Carga fallida.\n
 118 La longitud máxima del nombre de la clase es %1$d bytes.\n
 119 Total de %1$8d objeto(s) verificado, %2$d objeto(s) falló. \n
@@ -474,10 +494,10 @@ opciones validas:\n\
 $set 13 MSGCAT_UTIL_SET_UNLOADDB
 41 valor de cached-pages no es valido.\n
 42 valor de cached-page-size no es valido.\n
-43 %1$d objetos botados.\n
+43 %1$ld objetos botados.\n
 44 Clase %1$s
 45 , %1$d instancias.\n
-46 Solo %1$d de %2$d objetos botados con exito.\n
+46 Solo %1$ld de %2$ld objetos botados con exito.\n
 47 directorio de salida es demasiado largo.\n
 48 LSA : %1$d %2$d \n
 49 Contrasena:
@@ -553,16 +573,17 @@ opciones validas:\n\
   -i, --input-class-file=FILE       ARCHIVO de entrada de nombres de tabla\n\
                                     lista class_name debe ser vacia\n\
                                     estandar: compactar todas clases\n\
-                                    habilitado solo en modo CS\n\
   -p, --pages-commited-once=NUMBER  numero maximo de paginas para cometer a la vez\n\
                                     estandar: 10\n\
                                     habilitado solo en modo CS\n\
   -S, --SA-mode                     modo de ejecucion independiente\n\
   -C, --CS-mode                     modo de ejecucion cliente-servidor\n\
   -d, --delete-old-repr             eliminar representaciones viejas de clase del catalogo; estandar: inhabilitado\n\
-  class_name_list                   habilitado solo en modo CS\n\
   -I, --Instance-lock-timeout       tiempo de expirar para bloqueo de instancia\n\
-  -c, --class-lock-timeout          tiempo de expirar para bloqueo de clase\n
+                                    habilitado solo en modo CS\n\
+  -c, --class-lock-timeout          tiempo de expirar para bloqueo de clase\n\
+                                    habilitado solo en modo CS\n\
+  class_name_list                   Nombres de clase compresivos\n
 
 $set 15 MSGCAT_UTIL_SET_COMMDB
 21 CUBRID master ejecutado en host %1$s \nha sido reinicializado a %2$s
@@ -808,6 +829,7 @@ opciones validas:\n\
       --kill-program-name=NAME       matar todas transacciones con NOMBRE de programa de cliente\n\
       --kill-sql-id=SQL_ID           matar todas transacciones con SQL_ID\n\
   -p, --dba-password=PASS            contrasena del utilizador DBA; va a ser pedida si no es especificado\n\
+                                     (solo funciona con las opciones -i o --kill. De lo contrario, obtiene un error)\n\
   -d, --display-information          mostrar informacion relacionada a las transacciones activas\n\
   -q, --query-exec-info              mostrar informacion sobre informacion de ejecucion de transacciones activas de la consulta\n\
   -f, --force                        matar la transaccion sin un aviso para verificar\n
@@ -1061,8 +1083,6 @@ tranlist: Imprimir informacion de transaccion activa.\n\
 uso: %1$s tranlist [OPTION] database-name\n\
 \n\
 opciones validas:\n\
-  -u, --user=ID                ID de utilizador para acceso a la base de datos; estandar: utilizador DBA\n\
-  -p, --password=PASS          clave del utilizador; estandar: ninguna\n\
   -s, --summary                imprimir resume de informacion de la transaccion\n\
       --sort-key=COLUMN_NUMBER numero de la columna de ordenacion \n\
       --reverse                invierte el resultado de la clasificacion\n
@@ -1130,7 +1150,8 @@ opciones validas:\n\
       --list                        mostrar una lista de volumenes de backup sin restaurar\n\
   -B, --backup-file-path=PATH       PATH es una carpeta de volumenes de backup a ser restaurados\n\
   -o, --output-file=FILE            redirigir los mensajes de salida hacia FILE; default: none\n\
-  -u, --use-database-location-path  restaurar la base de datos y los volumenes de registro (log) en el camino especificado dentro del archivo de localizacion de la base de datos\n
+  -u, --use-database-location-path  restaurar la base de datos y los volumenes de registro (log) en el camino especificado dentro del archivo de localizacion de la base de datos\n\
+  -k, --keys-file-path              Ruta del archivo de claves (_keys) para que TDE se utilice durante la restauración\n
 
 $set 54 MSGCAT_UTIL_SET_DELVOLDB
 21 Listo para eliminar los siguentes volumenes:\n\n
@@ -1183,3 +1204,23 @@ opciones validas:\n\
       --resume                  reanudar calculo de checksum\n\
       --schema-only             verificar solo la consistencia de la esquema\n\
       --cont-on-error           continuar en error de calculo\n
+
+$set 57 MSGCAT_UTIL_SET_TDE
+21 Ingrese la contraseña de DBA:
+25 No se pudo obtener la información clave establecida en la base de datos\n
+26 Intentando cambiar la clave de la clave (índice: %1$d) a la clave (índice: %2$d) ..\n
+27 La clave se ha cambiado de la clave (índice: %1$d) a la clave (índice: %2$d)\n
+28 El conjunto de claves en la base de datos no se puede eliminar\n
+29 La clave (índice: %1$d) ha sido eliminada\n
+30 Se ha generado una nueva clave: índice de clave: %1$d creado en%2$s
+60 \
+tde: Gestión de cifrado transparente de datos (TDE)\n\
+uso: %1$s tde OPERACIÓN (-s|-n|-d|-c) [OPCIÓN] database-name\n\
+\n\
+opciones válidas:\n\
+    -p, --dba-password=PASS     contraseña del usuario DBA; le preguntará si no especifica\n\
+OPERACIONES: se debe dar una de las operaciones, y son exclusivas\n\
+    -s, --show-keys             imprime la información de la clave establecida en la base de datos y el archivo de clave (_keys)\n\
+    -n, --generate-new-key      genera una nueva clave en el archivo de claves (_keys); recuento máximo: 128\n\
+    -d, --delete-key=KEY_INDEX  eliminar una clave en el archivo de claves (_keys)\n\
+    -c, --change-key=KEY_INDEX  cambia el conjunto de claves en la base de datos por otra clave en el archivo de claves (_keys)\n

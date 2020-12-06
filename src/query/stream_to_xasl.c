@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright (C) 2008 Search Solution Corporation
+ * Copyright (C) 2016 CUBRID Corporation
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -2860,37 +2861,6 @@ stx_build_buildlist_proc (THREAD_ENTRY * thread_p, char *ptr, BUILDLIST_PROC_NOD
 	}
     }
 
-  ptr = or_unpack_int (ptr, &offset);
-  if (offset == 0)
-    {
-      stx_build_list_proc->a_instnum_pred = NULL;
-    }
-  else
-    {
-      stx_build_list_proc->a_instnum_pred = stx_restore_pred_expr (thread_p, &xasl_unpack_info->packed_xasl[offset]);
-      if (stx_build_list_proc->a_instnum_pred == NULL)
-	{
-	  goto error;
-	}
-    }
-
-  ptr = or_unpack_int (ptr, &offset);
-  if (offset == 0)
-    {
-      stx_build_list_proc->a_instnum_val = NULL;
-    }
-  else
-    {
-      stx_build_list_proc->a_instnum_val = stx_restore_db_value (thread_p, &xasl_unpack_info->packed_xasl[offset]);
-      if (stx_build_list_proc->a_instnum_val == NULL)
-	{
-	  goto error;
-	}
-      assert (stx_build_list_proc->a_instnum_val->need_clear == false);
-    }
-
-  ptr = or_unpack_int (ptr, (int *) &stx_build_list_proc->a_instnum_flag);
-
   return ptr;
 
 error:
@@ -4878,6 +4848,38 @@ stx_build_list_spec_type (THREAD_ENTRY * thread_p, char *ptr, LIST_SPEC_TYPE * l
 	}
     }
 
+  ptr = or_unpack_int (ptr, &offset);
+  if (offset == 0)
+    {
+      list_spec_type->list_regu_list_build = NULL;
+    }
+  else
+    {
+      list_spec_type->list_regu_list_build =
+	stx_restore_regu_variable_list (thread_p, &xasl_unpack_info->packed_xasl[offset]);
+      if (list_spec_type->list_regu_list_build == NULL)
+	{
+	  goto error;
+	}
+    }
+
+  ptr = or_unpack_int (ptr, &offset);
+  if (offset == 0)
+    {
+      list_spec_type->list_regu_list_probe = NULL;
+    }
+  else
+    {
+      list_spec_type->list_regu_list_probe =
+	stx_restore_regu_variable_list (thread_p, &xasl_unpack_info->packed_xasl[offset]);
+      if (list_spec_type->list_regu_list_probe == NULL)
+	{
+	  goto error;
+	}
+    }
+
+  ptr = or_unpack_int (ptr, (int *) &list_spec_type->hash_list_scan_yn);
+
   return ptr;
 
 error:
@@ -5671,6 +5673,8 @@ stx_build_function_type (THREAD_ENTRY * thread_p, char *ptr, FUNCTION_TYPE * fun
 	  return NULL;
 	}
     }
+
+  function->tmp_obj = NULL;
 
   return ptr;
 }

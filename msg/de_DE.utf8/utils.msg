@@ -72,6 +72,7 @@ $       52      dump_tz
 $       53      restoreslave
 $       54      delvoldb
 $       56      checksumdb
+$       57      tde
 
 $set 1 MSGCAT_UTIL_SET_GENERIC
 1 Ungültige Länge oder Zeichen '%1$c' in Datenbank '%2$s'\n
@@ -124,6 +125,7 @@ Vorhandene Admin-Utilitynamen:\n\
     dump_tz\n\
     restoreslave\n\
     vacuumdb\n\
+    tde\n\
 \n\
 %4$s ist ein Werkzeug für DBMS.\n\
 Für zusätzliche Informationen, http://www.cubrid.org besuchen\n
@@ -148,6 +150,7 @@ Vorhandene Serviceutilities:\n\
     broker\n\
     manager\n\
     heartbeat\n\
+    javasp\n\
 \n\
 Vorhandene Administratorutilities:\n\
     addvoldb\n\
@@ -182,6 +185,7 @@ Vorhandene Administratorutilities:\n\
     dump_tz\n\
     vacuumdb\n\
     checksumdb\n\
+    tde\n\
 \n\
 %4$s ist ein Werkzeug für DBMS.\n\
 Für zusätzliche Informationen, http://www.cubrid.org, besuchen\n
@@ -248,10 +252,24 @@ Vorhandene Befehle:\n\
 41 cubrid manager server nicht installiert ist.\n
 42 Parameter ist Ungültig.\n
 43 Datei(%1$s) offene Fehler.\n
+44 Cubrid Utility, Version %1$s\n\
+Anwendung: %2$s javasp <Befehl> [args]\n\
+\n\
+Vorhandene Befehle:\n\
+    start       [database-name]\n\
+    stop        [database-name]\n\
+    restart     [database-name]\n\
+    status      [database-name]\n
 
 $set 2 MSGCAT_UTIL_SET_BACKUPDB
 30 WARNUNG: -t Option wird in Stand-Alone-Ausführung ignoriert.\n
 31 FEHLER: Destination-Pfad existiert nicht oder ist kein Verzeichnis.\n
+32 Mit der Option --separate-keys wird die Schlüsseldatei (_keys) vom Sicherungsdatenträger getrennt.\n\
+Wenn die Schlüsseldatei verloren geht, funktioniert die Wiederherstellung (restoredb) möglicherweise nicht ordnungsgemäß, selbst wenn das Sicherungsvolume vorhanden ist.\n
+33 Das Sicherungsvolume enthält die Schlüsseldatei (_keys).\n\
+Wenn eine Tabelle TDE-verschlüsselt ist, kann dies zu einem Sicherheitsproblem für diese Daten führen.\n\
+Verwenden Sie die Option --separate-keys, um die Schlüsseldatei zu trennen, um dies zu verhindern.\n
+34 FEHLER: FIFIO-Datei kann nicht als Zielpfad mit separatem Schlüssel verwendet werden.\n
 60 \
 backupdb: Datenbank sichern.\n\
 Anwendung: %1$s backupdb [OPTION] Datenbanknamen\n\
@@ -270,7 +288,8 @@ gültige Optionen:\n\
       --no-check               Konsistenz der Datenbank nicht überprüfen; Standard: prüfen\n\
   -t, --thread-count=ANZAHL     Anzahl der Threads; Standard: 0(auto)\n\
   -z, --compress               Backupdatenträger komprimieren; Standard: nicht komprimiert\n\
-      --sleep-msecs=N          N Millisekunden per gelesenen 1M schlafen; Standard: 0\n
+      --sleep-msecs=N          N Millisekunden per gelesenen 1M schlafen; Standard: 0\n\
+  -k, --separate-keys          Schlüsseldatei (_keys) für TDE ist nicht im Sicherungsvolume enthalten, sondern wird stattdessen in eine Datei aufgeteilt\n
 71 Nicht kompatible Argumente, \"%1$s\", und \"%2$s\"\n
 
 
@@ -388,7 +407,8 @@ gültige Optionen:\n\
   -l, --level=LEVEL                 Backup-LEVEL zu wiederherstellen; siehe Backupanwendung; Standard: 0(volles Backup)\n\
   -p, --partial-recovery            partielle Wiederherstellung ausführen, wenn jene Logarchiven fehlen \n\
   -o, --output-file=DATEI            Umleiten der Ausgabemeldungen in DATEI; Standard: keine\n\
-  -u, --use-database-location-path  Datenbank und Logdatenträger in dem Ort wiederherstellen, wie in der Datenbankortdatei spezifiziert ist\n
+  -u, --use-database-location-path  Datenbank und Logdatenträger in dem Ort wiederherstellen, wie in der Datenbankortdatei spezifiziert ist\n\
+  -k, --keys-file-path              Pfad der Schlüsseldatei (_keys) für TDE, die beim Wiederherstellen verwendet werden soll\n
 
 
 $set 12 MSGCAT_UTIL_SET_LOADDB
@@ -401,7 +421,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 25 \n*** Syntaxprüfung ***\n\n
 26 %1$d Fehler erkannt.\n
 27 \n*** Einfügen von Objekten ***\n\n
-28 %1$8d Objekte eingefügt ins gesamt.\n
+28 %1$ld Objekte eingefügt ins gesamt.\n
 29 %1$8d referenzierte Objekte mit Standardinhalt ins gesamt eingefügt.\n
 30 \n*** Transaktion wird festgeschrieben ***\n
 31 \n*** Datenbank wird geschlossen ***\n
@@ -421,7 +441,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 45 Instanz %1$d der Klasse %2$s wurde schon definiert\n
 46 Instanz %1$d der Klasse %2$s wurde schon reserviert\n
 47 UNIQUE Verletzung auf Attribut '%1$s', konvertiert zu NULL\n
-48 %1$s %2$d Instanzen\n
+48 %1$s %2$ld Instanzen\n
 49 Klasse %1$s\n
 50 Passwort:
 51 \n*** Klassenstatistiken werden aktualisiert ***\n
@@ -431,16 +451,16 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 55 fehlt
 56 in %1$s
 57 Inkompatible Argumente, \"%1$s\", und \"%2$s\"\n
-58 %1$s %2$d Instanzen festgeschrieben\n
+58 %1$s %2$ld Instanzen festgeschrieben\n
 59 \nNicht optimierte Version von loaddb kann nicht aufgerufen werden.\n
 60 Parse-Fehler \"%1$s\", wie %2$s Typ.\n
 61 Objektreferenz wird im CS-Modus nicht unterstützt.\n
 62 Aktualisierte Statistiken für die Klasse %1$s.\n
-112   %1$d Instanzen\r
+112   %1$ld Instanzen\r
 113 Letzte festgeschriebene Zeile: %1$d\n
 114 Fehler-Kontroll-Datei
 115 Eingangsdatei für Fehlerkontrolle während Ladung
-116 Insgesamt %8d Objekt(e) eingefügt, %d Objekt(e) fehlgeschlagen.\n
+116 Insgesamt %ld Objekt(e) eingefügt, %2$ld Objekt(e) fehlgeschlagen.\n
 117 Laden fehlgeschlagen.\n
 118 Maximale Länge des Klassennamens ist %1$d Bytes.\n
 119 Insgesamt %1$8d Objekt(e) überprüft, %2$d Objekt(e) fehlgeschlagen.\n
@@ -473,10 +493,10 @@ gültige Optionen:\n\
 $set 13 MSGCAT_UTIL_SET_UNLOADDB
 41 Cached-Seiten-Anzahl ungültig.\n
 42 Cached-Seitengröße ungültig.\n
-43 %1$d Objekte exportiert.\n
+43 %1$ld Objekte exportiert.\n
 44 Klasse %1$s
 45 , %1$d Instanzen.\n
-46 Nur %1$d von %2$d Objekten erfolgreich exportiert.\n
+46 Nur %1$ld von %2$ld Objekten erfolgreich exportiert.\n
 47 Ausgabeverzeichnis zu lang.\n
 48 LSA : %1$d %2$d \n
 49 Passwort:
@@ -552,16 +572,17 @@ gültige Optionen:\n\
   -i, --input-class-file=DATEI      Eingabedatei mit Tabellennamen \n\
                                     Klassenname Liste muss leer sein \n\
                                     Standard: alle Klassen komprimieren\n\
-                                    Nur in CS-Modus aktiviert\n\
   -p, --pages-commited-once=ANZAHL  maximale Anzahl der Seiten, die einmal festgeschrieben werden dürfen \n\
                                     Standard: 10\n\
                                     Nur in CS-Modus aktiviert\n\
   -S, --SA-mode                     Stand-Alone-Ausführung\n\
   -C, --CS-mode                     Client-Server-Ausführung\n\
   -d, --delete-old-repr             alte Klasserepräsentierungen aus dem Katalog löschen; Standard: inaktiv\n\
-  class_name_list                   Nur in CS-Modus aktiviert\n\
   -I, --Instance-lock-timeout       Timeout für Instanz-Lock\n\
-  -c, --class-lock-timeout          Timeout für Klassen-Lock \n
+                                    Nur in CS-Modus aktiviert\n\
+  -c, --class-lock-timeout          Timeout für Klassen-Lock \n\
+                                    Nur in CS-Modus aktiviert\n\
+  class_name_list                   Liste der zu komprimierenden Klassennamen\n
 
 $set 15 MSGCAT_UTIL_SET_COMMDB
 21 Der CUBRID Master auf Host %1$s \nwurde am %2$s gestartet
@@ -807,6 +828,7 @@ gültige Optionen:\n\
       --kill-program-name=NAME       alle Transaktionen mit Client-Programm NAME abbrechen\n\
       --kill-sql-id=SQL_ID           alle Transaktionen mit SQL_ID schließen\n\
   -p, --dba-password=PASSWORT        Passwort des DBA-Benutzers; es wird angefordert, wenn nicht angegeben\n\
+                                     (Arbeiten Sie nur mit den Optionen -i oder --kill. Andernfalls wird ein Fehler angezeigt)\n\
   -d, --display-information          Information über aktive Transaktionen anzeigen \n\
   -q, --query-exec-info              Informationen zur Abfrageausführung anzeigen; Informationen zur aktiven Transaktionen\n\
   -f, --force                        Transaktion ohne Bestätigung abbrechen \n
@@ -1060,8 +1082,6 @@ tranlist: Informationen der aktiven Transaktion wegwerfen.\n\
 usage: %1$s tranlist [OPTION] Datenbankname\n\
 \n\
 gültige Optionen:\n\
-  -u, --user=ID                Benutzer ID für Datenbankzugang; Standardwert: DBA Benutzer\n\
-  -p, --password=PASS          Benutzerpasswort; Standardwert: Keinen\n\
   -s, --summary                zusammengefasste Transaktionsinformationen anzeigen\n\
       --sort-key=SPALTENNUMMER Spalte zu sortieren\n\
       --reverse                Ergebnisse umgekehrt sortieren\n
@@ -1128,7 +1148,8 @@ gültigen Optionen:\n\
       --list                        eine Liste der Sicherungsdatenträger angezeigt werden, ohne die Wiederherstellung\n\
   -B, --backup-file-path=PATH       PATH ein Verzeichnis der Sicherungsdatenträger wiederhergestellt werden\n\
   -o, --output-file=FILE            umleiten Ausgabemeldungen in FILE; Standard: Keine\n\
-  -u, --use-database-location-path  Stellen Sie die Datenbank und Log-Volumes auf die in der Datenbank-Datei Speicherort angegebenen Pfad\n
+  -u, --use-database-location-path  Stellen Sie die Datenbank und Log-Volumes auf die in der Datenbank-Datei Speicherort angegebenen Pfad\n\
+  -k, --keys-file-path              Pfad der Schlüsseldatei (_keys) für TDE, die beim Wiederherstellen verwendet werden soll\n
 
 $set 54 MSGCAT_UTIL_SET_DELVOLDB
 21 Bereit, die folgenden Mengen zu entfernen:\n\n
@@ -1182,3 +1203,23 @@ gültigen Optionen:\n\
       --resume                  Wiederaufnahme der Berechnung Prüfsumme\n\
       --schema-only             überprüfen nur Schemakonsistenz\n\
       --cont-on-error           weiter auf Berechnungsfehler\n
+
+$set 57 MSGCAT_UTIL_SET_TDE
+21 Geben Sie das DBA-Passwort ein:
+25 Die in der Datenbank festgelegten Schlüsselinformationen konnten nicht abgerufen werden\n
+26 Versuch, den Schlüssel vom Schlüssel (Index: %1$d) zum Schlüssel (Index: %2$d) zu ändern ..\n
+27 Der Schlüssel wurde vom Schlüssel (index: %1$d) zum Schlüssel (index: %2$d) geändert\n
+28 Der in der Datenbank festgelegte Schlüssel kann nicht gelöscht werden\n
+29 Der Schlüssel (index: %1$d) wurde gelöscht\n
+30 Ein neuer Schlüssel wurde generiert - Schlüsselindex: %1$d erstellt auf%2$s
+60 \
+tde: Verwaltung der transparenten Datenverschlüsselung (TDE)\n\
+Verwendung: %1$s tde OPERATION (-s|-n|-d|-c) [OPTION] Datenbankname\n\
+\n\
+gültige Optionen:\n\
+    -p, --dba-password=PASS-Passwort    des DBA-Benutzers; wird gefragt, wenn nicht angegeben wird\n\
+OPERATIONEN: Eine der Operationen muss angegeben werden und sie sind exklusiv\n\
+    -s, --show-keys                     druckt Schlüsselinformationen, die in der Datenbank und in der Schlüsseldatei (_keys) festgelegt sind\n\
+    -n, --generate-new-key              generiert einen neuen Schlüssel in der Schlüsseldatei (_keys); maximale Anzahl: 128\n\
+    -d, --delete-key=KEY_INDEX          löscht einen Schlüssel in der Schlüsseldatei (_keys)\n\
+    -c, --change-key=KEY_INDEX          Ändern Sie den in der Datenbank festgelegten Schlüssel für einen anderen Schlüssel in der Schlüsseldatei (_keys)\n

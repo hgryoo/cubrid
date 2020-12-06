@@ -184,7 +184,7 @@ $set 5 MSGCAT_SET_ERROR
 116 Datenbank "%1$s" ist unbekannt, oder die Datei "databases.txt" kann nicht zugegriffen werden.
 117 Der absolute Pfad für die Datenbank ist zu lang. Die kombinierte Länge des Pfads "%1$s" plus der Name "%2$s" ist %3$d; die kombinierte Länge muss kleiner als %4$d sein.
 118 Aktuelles Verzeichnis konnte nicht gefunden werden.
-119 Der lokale Hostname konnte nicht gefunden werden.
+119 Kann ("%1$s") in /etc/hosts nicht finden. Bitte überprüfen Sie die Berechtigungen der Datei oder ob der Hostname vorhanden ist.
 120 Der maximale Zahl (%1$d) der Datenträger wurde überschritten.
 121 Es wird versucht, einen permanenten Datenträger "%1$s" von der Datenbank zu entfernen.
 122 Kann auf den Katalog der Systemmeldungen nicht zugreifen.
@@ -415,7 +415,7 @@ $set 5 MSGCAT_SET_ERROR
 347 Es konnte keine Leitung zum Master-Server erstellt werden.
 348 Entweder Dienst- oder Port-ID angegeben werden.
 349 Unbekannter Dienst für TCP: %1$s.
-350 Fehler beim Abrufen der lokalen Host durch Namen für Host "%1$s". Host nicht gefunden.
+350 Kann ("%1$s") in /etc/hosts nicht finden. Bitte überprüfen Sie die Berechtigungen der Datei oder ob der Hostname vorhanden ist.
 351 TCP-Socket konnte nicht erstellt werden.
 352 tcp_open: konnte keine reservierte TCP-Port erhalten.
 353 Verbindung zum Master-Server auf Host "%1$s" kann nicht erstellt werden.
@@ -1312,9 +1312,27 @@ $ LOADDB
 1243 Das Laden des Index wurde nach einem Fehler abgebrochen.
 1244 Das Laden von Aktualisierungen gemeinsam genutzter Attribute aus Objektdateien wird im CS-Modus nicht unterstützt.
 1245 Das Laden von Aktualisierungen von Klassenattributen aus Objektdateien wird im CS-Modus nicht unterstützt.
-1246 Fehler beim Abrufen der Adress- und Namensinformationen. Fehlerkode : %1$d, Meldung : %2$s.
+1246 Adresse und kanonischer Name für ("%1$s") in /etc/hosts können nicht abgerufen werden. Bitte überprüfen Sie die Berechtigung der Datei oder ob der Hostname vorhanden ist.
+1247 Die angegebene Zeit (%1$s) muss später als (%2$s), die Zeit der angegebenen Sicherung.
+1248 Ungültige Schlüsseldatei : %1$s
+1249 Der Schlüssel kann nicht gefunden werden (index: %1$d).
+1250 Der in der Datenbank festgelegte Hauptschlüssel und die angegebenen Schlüssel stimmen nicht überein. Der in der Datenbank festgelegte Schlüsselindex: %1$d
+1251 Fehler beim TDE-Verschlüsselung.
+1252 Fehler beim TDE-Entschlüsseln.
+1253 TDE-Modul ist nicht geladen.
+1254 Es kann kein Schlüssel erstellt werden.
+1255 TDE-Modul kann nicht geladen werden. Sie können die TDE-Funktion nicht verwenden.\n\
+Überprüfen Sie den Pfad der Schlüsseldatei (_keys) und stellen Sie sicher, dass sie den richtigen Schlüssel enthält.
+1256 Schlüsseldatei (_keys) kann nicht kopiert werden. Sie können die TDE-Funktion in der kopierten Datenbank nicht verwenden.
+1257 Schlüsseldatei (_keys) kann nicht gesichert werden. Sie können die TDE-Funktion für die wiederhergestellte Datenbank basierend auf diesem Sicherungsvolume nicht verwenden.
+1258 Der in der Datenbank festgelegte Schlüssel von %1$s kann nicht gefunden werden. Die Schlüsseldatei vom Sicherungsvolume wird verwendet.
+1259 Benennen Sie die Schlüsseldatei von "%1$s" in "%2$s" um.
+1260 Kopieren Sie die Schlüsseldatei "%1$s" nach "%2$s".
+1261 Der Schlüssel kann zum Zeitpunkt der Wiederherstellung nicht gefunden werden (Schlüsselindex: %1$d, Erstellungszeit: %2$s). Legen Sie den Schlüssel (Schlüsselindex: %3$d) für die Datenbank fest.
+1262 Die Schlüsseldatei ist voll.
+1263 Die Protokollseite kann nicht mit TDE verschlüsselt werden (Seiten-ID: %1$lld). Es wird nicht mehr versucht, diese Seite zu verschlüsseln.
 
-1247 Letzter Fehler
+1264 Letzter Fehler
 
 $set 6 MSGCAT_SET_INTERNAL
 1 Fehler in Fehler-Subsystem (Zeile %1$d):

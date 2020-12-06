@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright (C) 2008 Search Solution Corporation
+ * Copyright (C) 2016 CUBRID Corporation
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -413,6 +414,14 @@ broker_config_read_internal (const char *conf_file, T_BROKER_INFO * br_info, int
       br_info[num_brs].service_flag =
 	conf_get_value_table_on_off (ini_getstr (ini, sec_name, "SERVICE", "ON", &lineno));
       if (br_info[num_brs].service_flag < 0)
+	{
+	  errcode = PARAM_BAD_VALUE;
+	  goto conf_error;
+	}
+
+      br_info[num_brs].use_SSL =
+	conf_get_value_table_on_off (ini_getstr (ini, sec_name, "SSL", DEFAULT_SSL_MODE, &lineno));
+      if (br_info[num_brs].use_SSL < 0)
 	{
 	  errcode = PARAM_BAD_VALUE;
 	  goto conf_error;
@@ -1200,6 +1209,7 @@ broker_config_dump (FILE * fp, const T_BROKER_INFO * br_info, int num_broker, in
       fprintf (fp, "APPL_SERVER_PORT\t=%d\n", br_info[i].appl_server_port);
 #endif
       fprintf (fp, "APPL_SERVER_SHM_ID\t=%x\n", br_info[i].appl_server_shm_id);
+      fprintf (fp, "SSL\t\t\t=%s\n", br_info[i].use_SSL ? "ON" : "OFF");
       fprintf (fp, "APPL_SERVER_MAX_SIZE\t=%d\n", br_info[i].appl_server_max_size / ONE_K);
       fprintf (fp, "SESSION_TIMEOUT\t\t=%d\n", br_info[i].session_timeout);
       fprintf (fp, "LOG_DIR\t\t\t=%s\n", br_info[i].log_dir);

@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright (C) 2008 Search Solution Corporation
+ * Copyright (C) 2016 CUBRID Corporation
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -60,11 +61,10 @@ static XASL_NODE *add_subqueries (QO_ENV * env, XASL_NODE * xasl, BITSET *);
 static XASL_NODE *add_sort_spec (QO_ENV *, XASL_NODE *, QO_PLAN *, DB_VALUE *, bool);
 static XASL_NODE *add_if_predicate (QO_ENV *, XASL_NODE *, PT_NODE *);
 static XASL_NODE *add_after_join_predicate (QO_ENV *, XASL_NODE *, PT_NODE *);
-static XASL_NODE *add_instnum_predicate (QO_ENV *, XASL_NODE *, PT_NODE *);
 
 static PT_NODE *make_pred_from_bitset (QO_ENV * env, BITSET * predset, ELIGIBILITY_FN safe);
 static void make_pred_from_plan (QO_ENV * env, QO_PLAN * plan, PT_NODE ** key_access_pred, PT_NODE ** access_pred,
-				 QO_XASL_INDEX_INFO * qo_index_infop);
+				 QO_XASL_INDEX_INFO * qo_index_infop, PT_NODE ** hash_pred);
 static PT_NODE *make_if_pred_from_plan (QO_ENV * env, QO_PLAN * plan);
 static PT_NODE *make_instnum_pred_from_plan (QO_ENV * env, QO_PLAN * plan);
 static PT_NODE *make_namelist_from_projected_segs (QO_ENV * env, QO_PLAN * plan);
@@ -107,6 +107,8 @@ static bool qo_check_parent_eq_class_for_multi_range_opt (QO_PLAN * parent, QO_P
 static XASL_NODE *make_sort_limit_proc (QO_ENV * env, QO_PLAN * plan, PT_NODE * namelist, XASL_NODE * xasl);
 static PT_NODE *qo_get_orderby_num_upper_bound_node (PARSER_CONTEXT * parser, PT_NODE * orderby_for,
 						     bool * is_new_node);
+static int qo_get_multi_col_range_segs (QO_ENV * env, QO_PLAN * plan, QO_INDEX_ENTRY * index_entryp,
+					BITSET * multi_col_segs, BITSET * multi_col_range_segs, BITSET * index_segs);
 
 /*
  * make_scan_proc () -
@@ -116,7 +118,7 @@ static PT_NODE *qo_get_orderby_num_upper_bound_node (PARSER_CONTEXT * parser, PT
 static XASL_NODE *
 make_scan_proc (QO_ENV * env)
 {
-  return ptqo_to_scan_proc (QO_ENV_PARSER (env), NULL, NULL, NULL, NULL, NULL, NULL);
+  return ptqo_to_scan_proc (QO_ENV_PARSER (env), NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 }
 
 
@@ -133,7 +135,7 @@ make_fetch_proc (QO_ENV * env, QO_PLAN * plan)
   PT_NODE *access_pred;
   PT_NODE *if_pred;
 
-  make_pred_from_plan (env, plan, NULL, &access_pred, NULL);
+  make_pred_from_plan (env, plan, NULL, &access_pred, NULL, NULL);
   if_pred = make_if_pred_from_plan (env, plan);
 
   xasl =
@@ -599,7 +601,7 @@ init_class_scan_proc (QO_ENV * env, XASL_NODE * xasl, QO_PLAN * plan)
   PARSER_CONTEXT *parser;
   PT_NODE *spec;
   PT_NODE *key_pred;
-  PT_NODE *access_pred;
+  PT_NODE *access_pred, *hash_pred;
   PT_NODE *if_pred;
   PT_NODE *after_join_pred;
   QO_XASL_INDEX_INFO *info;
@@ -609,8 +611,8 @@ init_class_scan_proc (QO_ENV * env, XASL_NODE * xasl, QO_PLAN * plan)
   spec = QO_NODE_ENTITY_SPEC (plan->plan_un.scan.node);
 
   info = qo_get_xasl_index_info (env, plan);
-  make_pred_from_plan (env, plan, &key_pred, &access_pred, info);
-  xasl = ptqo_to_scan_proc (parser, plan, xasl, spec, key_pred, access_pred, info);
+  make_pred_from_plan (env, plan, &key_pred, &access_pred, info, &hash_pred);
+  xasl = ptqo_to_scan_proc (parser, plan, xasl, spec, key_pred, access_pred, info, hash_pred);
 
   /* free pointer node list */
   parser_free_tree (parser, key_pred);
@@ -678,7 +680,7 @@ init_list_scan_proc (QO_ENV * env, XASL_NODE * xasl, XASL_NODE * listfile, PT_NO
 
       xasl = add_if_predicate (env, xasl, if_pred);
       xasl = add_after_join_predicate (env, xasl, after_join_pred);
-      xasl = add_instnum_predicate (env, xasl, instnum_pred);
+      xasl = pt_to_instnum_pred (QO_ENV_PARSER (env), xasl, instnum_pred);
 
       /* free pointer node list */
       parser_free_tree (QO_ENV_PARSER (env), access_pred);
@@ -726,9 +728,9 @@ add_access_spec (QO_ENV * env, XASL_NODE * xasl, QO_PLAN * plan)
     }
 
   info = qo_get_xasl_index_info (env, plan);
-  make_pred_from_plan (env, plan, &key_pred, &access_pred, info);
+  make_pred_from_plan (env, plan, &key_pred, &access_pred, info, NULL);
 
-  xasl->spec_list = pt_to_spec_list (parser, class_spec, key_pred, access_pred, plan, info, NULL);
+  xasl->spec_list = pt_to_spec_list (parser, class_spec, key_pred, access_pred, plan, info, NULL, NULL);
   if (xasl->spec_list == NULL)
     {
       goto exit_on_error;
@@ -753,7 +755,7 @@ add_access_spec (QO_ENV * env, XASL_NODE * xasl, QO_PLAN * plan)
     }
 
   xasl = add_if_predicate (env, xasl, if_pred);
-  xasl = add_instnum_predicate (env, xasl, instnum_pred);
+  xasl = pt_to_instnum_pred (QO_ENV_PARSER (env), xasl, instnum_pred);
 
 success:
 
@@ -926,7 +928,7 @@ add_sort_spec (QO_ENV * env, XASL_NODE * xasl, QO_PLAN * plan, DB_VALUE * ordby_
 	  PT_NODE *instnum_pred;
 
 	  instnum_pred = make_instnum_pred_from_plan (env, plan);
-	  xasl = add_instnum_predicate (env, xasl, instnum_pred);
+	  xasl = pt_to_instnum_pred (QO_ENV_PARSER (env), xasl, instnum_pred);
 	  /* free pointer node list */
 	  parser_free_tree (QO_ENV_PARSER (env), instnum_pred);
 	}
@@ -1019,27 +1021,6 @@ add_after_join_predicate (QO_ENV * env, XASL_NODE * xasl, PT_NODE * pred)
     {
       parser = QO_ENV_PARSER (env);
       xasl->after_join_pred = pt_to_pred_expr (parser, pred);
-    }
-
-  return xasl;
-}
-
-static XASL_NODE *
-add_instnum_predicate (QO_ENV * env, XASL_NODE * xasl, PT_NODE * pred)
-{
-  PARSER_CONTEXT *parser;
-  int flag;
-
-  if (xasl && pred)
-    {
-      parser = QO_ENV_PARSER (env);
-
-      flag = 0;
-      xasl->instnum_pred = pt_to_pred_expr_with_arg (parser, pred, &flag);
-      if (flag & PT_PRED_ARG_INSTNUM_CONTINUE)
-	{
-	  xasl->instnum_flag = XASL_INSTNUM_FLAG_SCAN_CONTINUE;
-	}
     }
 
   return xasl;
@@ -1306,17 +1287,22 @@ exit_on_error:
  */
 static void
 make_pred_from_plan (QO_ENV * env, QO_PLAN * plan, PT_NODE ** key_predp, PT_NODE ** predp,
-		     QO_XASL_INDEX_INFO * qo_index_infop)
+		     QO_XASL_INDEX_INFO * qo_index_infop, PT_NODE ** hash_predp)
 {
+  QO_INDEX_ENTRY *index_entryp = NULL;
+
   /* initialize output parameter */
   if (key_predp != NULL)
     {
       *key_predp = NULL;
     }
-
   if (predp != NULL)
     {
       *predp = NULL;
+    }
+  if (hash_predp != NULL)
+    {
+      *hash_predp = NULL;
     }
 
   if (plan->plan_type == QO_PLANTYPE_FOLLOW)
@@ -1341,6 +1327,11 @@ make_pred_from_plan (QO_ENV * env, QO_PLAN * plan, PT_NODE ** key_predp, PT_NODE
     }
   while (0);
 
+  /* make predicate list for hash key */
+  if (hash_predp != NULL)
+    {
+      *hash_predp = make_pred_from_bitset (env, &(plan->plan_un.scan.hash_terms), is_always_true);
+    }
   /* if key filter(predicates) is not required */
   if (predp != NULL && (key_predp == NULL || qo_index_infop == NULL))
     {
@@ -1352,6 +1343,25 @@ make_pred_from_plan (QO_ENV * env, QO_PLAN * plan, PT_NODE ** key_predp, PT_NODE
   /* make predicate list for key filter */
   if (key_predp != NULL)
     {
+      if (qo_index_infop && qo_index_infop->need_copy_multi_range_term != -1 && qo_index_infop->need_copy_to_sarg_term)
+	{
+	  bitset_add (&(plan->sarged_terms), qo_index_infop->need_copy_multi_range_term);
+	}
+      else if (qo_index_infop->need_copy_multi_range_term != -1)
+	{
+	  index_entryp = qo_index_infop->ni_entry->head;
+	  if (index_entryp && index_entryp->constraints && index_entryp->constraints->func_index_info
+	      && index_entryp->cover_segments == false)
+	    {
+	      /* if predicate has function index column then do not permit key-filter. so force-copy to sarg */
+	      bitset_add (&(plan->sarged_terms), qo_index_infop->need_copy_multi_range_term);
+	    }
+	  else
+	    {
+	      /*force-copy multi col range pred to key filter */
+	      bitset_add (&(plan->plan_un.scan.kf_terms), qo_index_infop->need_copy_multi_range_term);
+	    }
+	}
       *key_predp = make_pred_from_bitset (env, &(plan->plan_un.scan.kf_terms), is_always_true);
     }
 
@@ -1785,6 +1795,12 @@ gen_outer (QO_ENV * env, QO_PLAN * plan, BITSET * subqueries, XASL_NODE * inner_
 	    }
 	  /* exclude totally after join term and push into inner */
 	  bitset_difference (&predset, &taj_terms);
+
+	  /* copy hash join term to inner for hash list scan */
+	  if (qo_is_seq_scan (inner) && !bitset_is_empty (&(plan->plan_un.join.hash_terms)))
+	    {
+	      bitset_assign (&(inner->plan_un.scan.hash_terms), &(plan->plan_un.join.hash_terms));
+	    }
 
 	  /*
 	   * In case of outer join, we should not use sarg terms as key filter terms.
@@ -2622,13 +2638,14 @@ qo_plan_multi_range_opt (QO_PLAN * plan)
 static QO_XASL_INDEX_INFO *
 qo_get_xasl_index_info (QO_ENV * env, QO_PLAN * plan)
 {
-  int nterms, nsegs, nkfterms;
+  int nterms, nsegs, nkfterms, multi_term_num;;
   QO_NODE_INDEX_ENTRY *ni_entryp;
   QO_INDEX_ENTRY *index_entryp;
   QO_XASL_INDEX_INFO *index_infop;
   int t, i, j, pos;
   BITSET_ITERATOR iter;
   QO_TERM *termp;
+  BITSET multi_col_segs, multi_col_range_segs, index_segs;
 
   if (!qo_is_interesting_order_scan (plan))
     {
@@ -2636,6 +2653,10 @@ qo_get_xasl_index_info (QO_ENV * env, QO_PLAN * plan)
     }
 
   assert (plan->plan_un.scan.index != NULL);
+
+  bitset_init (&multi_col_segs, env);
+  bitset_init (&multi_col_range_segs, env);
+  bitset_init (&index_segs, env);
 
   /* if no index scan terms, no index scan */
   nterms = bitset_cardinality (&(plan->plan_un.scan.terms));
@@ -2682,16 +2703,53 @@ qo_get_xasl_index_info (QO_ENV * env, QO_PLAN * plan)
       nterms++;
     }
 
+  /* check multi column index term */
+  multi_term_num =
+    qo_get_multi_col_range_segs (env, plan, index_entryp, &multi_col_segs, &multi_col_range_segs, &index_segs);
+  if (multi_term_num != -1)
+    {
+      /* case of term having multiple columns */
+      termp = QO_ENV_TERM (env, multi_term_num);
+      if (!bitset_subset (&index_segs, &multi_col_segs))
+	{
+	  /* need to add sarg term (data filter) */
+	  index_infop->need_copy_multi_range_term = multi_term_num;
+	  index_infop->need_copy_to_sarg_term = true;
+	}
+      else if (!bitset_subset (&multi_col_range_segs, &multi_col_segs)
+	       || QO_TERM_IS_FLAGED (termp, QO_TERM_MULTI_COLL_CONST))
+	{
+	  /* need to add key filter term (index key filter) */
+	  index_infop->need_copy_multi_range_term = multi_term_num;
+	  index_infop->need_copy_to_sarg_term = false;
+	}
+      else
+	{
+	  /* don't need to force-copy any filter */
+	  index_infop->need_copy_multi_range_term = -1;
+	  index_infop->need_copy_to_sarg_term = false;
+	}
+      /* add multi column term's segs ex) index(a,b,c), (a,b) in .. and c = 1 : nterms = 2 + 2 -1 */
+      nterms = nterms + bitset_cardinality (&multi_col_range_segs) - 1;
+    }
+  else
+    {
+      index_infop->need_copy_multi_range_term = -1;
+      index_infop->need_copy_to_sarg_term = false;
+    }
+
   if (nterms == 0)
     {
       index_infop->nterms = 0;
       index_infop->term_exprs = NULL;
+      index_infop->multi_col_pos = NULL;
       index_infop->ni_entry = ni_entryp;
       return index_infop;
     }
 
   index_infop->nterms = nterms;
   index_infop->term_exprs = (PT_NODE **) malloc (nterms * sizeof (PT_NODE *));
+  index_infop->multi_col_pos = (int *) malloc (nterms * sizeof (int));
   if (index_infop->term_exprs == NULL)
     {
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, nterms * sizeof (PT_NODE *));
@@ -2703,6 +2761,7 @@ qo_get_xasl_index_info (QO_ENV * env, QO_PLAN * plan)
       assert (index_entryp->is_iss_candidate);
 
       index_infop->term_exprs[0] = NULL;
+      index_infop->multi_col_pos[0] = -1;
     }
 
   index_infop->ni_entry = ni_entryp;
@@ -2715,40 +2774,81 @@ qo_get_xasl_index_info (QO_ENV * env, QO_PLAN * plan)
       /* pointer to QO_TERM denoted by number 't' */
       termp = QO_ENV_TERM (env, t);
 
-      /* Find the matching segment in the segment index array to determine the array position to store the expression.
-       * We're using the 'index_seg[]' array of the term to find its segment index */
-      pos = -1;
-      for (i = 0; i < termp->can_use_index && pos == -1; i++)
+      if (!QO_TERM_IS_FLAGED (termp, QO_TERM_MULTI_COLL_PRED))
 	{
-	  for (j = 0; j < nsegs; j++)
+	  /* Find the matching segment in the segment index array to determine the array position to store the expression.
+	   * We're using the 'index_seg[]' array of the term to find its segment index */
+	  pos = -1;
+	  for (i = 0; i < termp->can_use_index && pos == -1; i++)
 	    {
-	      if (i >= (int) (sizeof (termp->index_seg) / sizeof (termp->index_seg[0])))
+	      for (j = 0; j < nsegs; j++)
 		{
-		  er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ER_FAILED_ASSERTION, 1, "false");
-		  goto error;
-		}
+		  if (i >= (int) (sizeof (termp->index_seg) / sizeof (termp->index_seg[0])))
+		    {
+		      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ER_FAILED_ASSERTION, 1, "false");
+		      goto error;
+		    }
 
-	      if ((index_entryp->seg_idxs[j]) == QO_SEG_IDX (termp->index_seg[i]))
+		  if ((index_entryp->seg_idxs[j]) == QO_SEG_IDX (termp->index_seg[i]))
+		    {
+		      pos = j;
+		      break;
+		    }
+		}
+	    }
+
+	  /* always, pos != -1 and 0 <= pos < nterms */
+	  assert (pos >= 0 && pos < nterms);
+	  if (pos < 0 || pos >= nterms)
+	    {
+	      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ER_FAILED_ASSERTION, 1, "pos >= 0 and pos < nterms");
+	      goto error;
+	    }
+
+	  /* if the index is Index Skip Scan, the first column should have never been found in a term */
+	  assert (!qo_is_index_iss_scan (plan) || pos != 0);
+	  index_infop->term_exprs[pos] = QO_TERM_PT_EXPR (termp);
+	  index_infop->multi_col_pos[pos] = -1;
+	}
+      else
+	{
+	  /* case of multi column term */
+	  /* not need can_use_index's iteration because multi col term having other node's segments isn't indexable */
+	  /* ex) (a.col1,a.col2) in ((a.col1,b.col2)) is not indexable */
+	  for (i = 0; i < termp->multi_col_cnt; i++)
+	    {
+	      pos = -1;
+	      for (j = 0; j < nsegs; j++)
 		{
-		  pos = j;
-		  break;
+		  if ((index_entryp->seg_idxs[j]) == (termp->multi_col_segs[i]))
+		    {
+		      pos = j;
+		      break;
+		    }
+		}
+	      /* if the index is Index Skip Scan, the first column should have never been found in a term */
+	      assert (!qo_is_index_iss_scan (plan) || pos != 0);
+
+	      if (pos != -1 && BITSET_MEMBER (multi_col_range_segs, index_entryp->seg_idxs[pos]))
+		{
+		  /* always, pos != -1 and 0 <= pos < nterms */
+		  assert (pos >= 0 && pos < nterms);
+		  if (pos < 0 || pos >= nterms)
+		    {
+		      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ER_FAILED_ASSERTION, 1, "pos >= 0 and pos < nterms");
+		      goto error;
+		    }
+
+		  index_infop->term_exprs[pos] = QO_TERM_PT_EXPR (termp);
+		  index_infop->multi_col_pos[pos] = i;
 		}
 	    }
 	}
-
-      /* always, pos != -1 and 0 <= pos < nsegs */
-      if (pos < 0)
-	{
-	  er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ER_FAILED_ASSERTION, 1, "pos >= 0");
-	  goto error;
-	}
-
-      /* if the index is Index Skip Scan, the first column should have never been found in a term */
-      assert (!qo_is_index_iss_scan (plan) || pos != 0);
-
-      index_infop->term_exprs[pos] = QO_TERM_PT_EXPR (termp);
     }
 
+  bitset_delset (&multi_col_segs);
+  bitset_delset (&multi_col_range_segs);
+  bitset_delset (&index_segs);
   /* return QO_XASL_INDEX_INFO */
   return index_infop;
 
@@ -2776,7 +2876,11 @@ qo_free_xasl_index_info (QO_ENV * env, QO_XASL_INDEX_INFO * info)
 	  free_and_init (info->term_exprs);
 	}
       /* DEALLOCATE (env, info->term_exprs); */
-
+      if (info->multi_col_pos)
+	{
+	  free_and_init (info->multi_col_pos);
+	}
+      /* DEALLOCATE (env, info->multi_col_pos); */
       free_and_init (info);
       /* DEALLOCATE(env, info); */
     }
@@ -2855,9 +2959,9 @@ qo_add_hq_iterations_access_spec (QO_PLAN * plan, xasl_node * xasl)
   parser = QO_ENV_PARSER (env);
 
   index_info = qo_get_xasl_index_info (env, plan);
-  make_pred_from_plan (env, plan, &key_pred, &access_pred, index_info);
+  make_pred_from_plan (env, plan, &key_pred, &access_pred, index_info, NULL);
 
-  xasl->spec_list = pt_to_spec_list (parser, class_spec, key_pred, access_pred, plan, index_info, NULL);
+  xasl->spec_list = pt_to_spec_list (parser, class_spec, key_pred, access_pred, plan, index_info, NULL, NULL);
 
   if_pred = make_if_pred_from_plan (env, plan);
   if (if_pred)
@@ -4765,4 +4869,45 @@ qo_get_orderby_num_upper_bound_node (PARSER_CONTEXT * parser, PT_NODE * orderby_
 
   /* Any other comparison operator is unusable */
   return NULL;
+}
+
+/*
+ * qo_get_multi_col_range_segs () -
+ *   return:
+ *   env(in): The optimizer environment
+ *   plan(in): Query plan
+ *   qo_index_infop(in):
+ *   multi_col_segs(out): (a,b) in ... a,b's segment number bit
+ *   multi_col_range_segs(out): range segments in multiple column term
+ *
+ * Note: return multiple column term's number
+ *       output are multi column term's segments and range key filter segments and index col segments
+ */
+static int
+qo_get_multi_col_range_segs (QO_ENV * env, QO_PLAN * plan, QO_INDEX_ENTRY * index_entryp,
+			     BITSET * multi_col_segs, BITSET * multi_col_range_segs, BITSET * index_segs)
+{
+  BITSET_ITERATOR iter;
+  QO_TERM *termp = NULL;
+  int multi_term = -1;
+
+  /* find term having multiple columns ex) (col1,col2) in ... */
+  for (multi_term = bitset_iterate (&(plan->plan_un.scan.terms), &iter); multi_term != -1;
+       multi_term = bitset_next_member (&iter))
+    {
+      termp = QO_ENV_TERM (env, multi_term);
+      if (QO_TERM_IS_FLAGED (termp, QO_TERM_MULTI_COLL_PRED))
+	{
+	  bitset_assign (multi_col_segs, &(QO_TERM_SEGS (termp)));
+	  break;
+	}
+    }
+
+  if (index_entryp)
+    {
+      bitset_assign (index_segs, &(index_entryp->index_segs));
+    }
+  bitset_assign (multi_col_range_segs, &(plan->plan_un.scan.multi_col_range_segs));
+
+  return multi_term;
 }

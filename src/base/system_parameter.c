@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright (C) 2008 Search Solution Corporation
+ * Copyright (C) 2016 CUBRID Corporation
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -85,6 +86,7 @@
 #include "tz_support.h"
 #include "perf_monitor.h"
 #include "fault_injection.h"
+#include "tde.h"
 #if defined (SERVER_MODE)
 #include "thread_manager.hpp"	// for thread_get_thread_entry_info
 #endif // SERVER_MODE
@@ -405,6 +407,16 @@ static const char sysprm_ha_conf_file_name[] = "cubrid_ha.conf";
 
 #define PRM_NAME_JAVA_STORED_PROCEDURE "java_stored_procedure"
 
+#define PRM_NAME_JAVA_STORED_PROCEDURE_PORT "java_stored_procedure_port"
+
+#define PRM_NAME_JAVA_STORED_PROCEDURE_JVM_OPTIONS "java_stored_procedure_jvm_options"
+
+#define PRM_NAME_JAVA_STORED_PROCEDURE_DEBUG "java_stored_procedure_debug"
+
+#define PRM_NAME_JAVA_STORED_PROCEDURE_RESERVE_01 "java_stored_procedure_reserve_01"
+
+#define PRM_NAME_ALLOW_TRUNCATED_STRING "allow_truncated_string"
+
 #define PRM_NAME_COMPAT_PRIMARY_KEY "compat_primary_key"
 
 #define PRM_NAME_INTL_MBS_SUPPORT "intl_mbs_support"
@@ -464,6 +476,8 @@ static const char sysprm_ha_conf_file_name[] = "cubrid_ha.conf";
 #define PRM_NAME_LOADDB_FLUSH_INTERVAL "load_flush_interval"
 
 #define PRM_NAME_IO_TEMP_VOLUME_PATH "temp_volume_path"
+
+#define PRM_NAME_TDE_KEYS_FILE_PATH "tde_keys_file_path"
 
 #define PRM_NAME_IO_VOLUME_EXT_PATH "volume_extension_path"
 
@@ -541,7 +555,7 @@ static const char sysprm_ha_conf_file_name[] = "cubrid_ha.conf";
 #define PRM_NAME_USE_BTREE_FENCE_KEY "use_btree_fence_key"
 
 #define PRM_NAME_OPTIMIZER_ENABLE_MERGE_JOIN "optimizer_enable_merge_join"
-#define PRM_NAME_OPTIMIZER_RESERVE_01 "optimizer_reserve_01"
+#define PRM_NAME_MAX_HASH_LIST_SCAN_SIZE "max_hash_list_scan_size"
 #define PRM_NAME_OPTIMIZER_RESERVE_02 "optimizer_reserve_02"
 #define PRM_NAME_OPTIMIZER_RESERVE_03 "optimizer_reserve_03"
 #define PRM_NAME_OPTIMIZER_RESERVE_04 "optimizer_reserve_04"
@@ -668,6 +682,17 @@ static const char sysprm_ha_conf_file_name[] = "cubrid_ha.conf";
 #define PRM_NAME_REPR_CACHE_LOG "er_log_repr_cache"
 #define PRM_NAME_ENABLE_NEW_LFHASH "new_lfhash"
 #define PRM_NAME_HEAP_INFO_CACHE_LOGGING "heap_info_cache_logging"
+#define PRM_NAME_TDE_DEFAULT_ALGORITHM "tde_default_algorithm"
+
+#define PRM_NAME_GENERAL_RESERVE_01 "general_reserve_01"
+
+#define PRM_NAME_TB_DEFAULT_REUSE_OID "create_table_reuseoid"
+
+#define PRM_NAME_USE_STAT_ESTIMATION "use_stat_estimation"
+#define PRM_NAME_IGNORE_TRAILING_SPACE "ignore_trailing_space"
+
+#define PRM_NAME_DDL_AUDIT_LOG "ddl_audit_log"
+#define PRM_NAME_DDL_AUDIT_LOG_SIZE "ddl_audit_log_size"
 
 #define PRM_VALUE_DEFAULT "DEFAULT"
 #define PRM_VALUE_MAX "MAX"
@@ -1098,7 +1123,7 @@ static bool prm_qo_dump_default = false;
 static unsigned int prm_qo_dump_flag = 0;
 
 #if !defined (SERVER_MODE) && !defined (SA_MODE)
-#define CSS_MAX_CLIENT_COUNT 2000
+#define CSS_MAX_CLIENT_COUNT 4000
 #endif /* !defined (SERVER_MODE) && !defined (SA_MODE) */
 int PRM_CSS_MAX_CLIENTS = 100;
 static int prm_css_max_clients_default = 100;
@@ -1128,7 +1153,7 @@ static unsigned int prm_io_backup_nbuffers_flag = 0;
 UINT64 PRM_IO_BACKUP_MAX_VOLUME_SIZE = 0;
 static UINT64 prm_io_backup_max_volume_size_default = 0;
 static UINT64 prm_io_backup_max_volume_size_lower = 1024 * 32;
-static UINT64 prm_io_backup_max_volume_size_upper = INT_MAX;
+static UINT64 prm_io_backup_max_volume_size_upper = DB_BIGINT_MAX;
 static unsigned int prm_io_backup_max_volume_size_flag = 0;
 
 int PRM_IO_BACKUP_SLEEP_MSECS = 0;
@@ -1297,9 +1322,9 @@ bool PRM_RETURN_NULL_ON_FUNCTION_ERRORS = false;
 static bool prm_return_null_on_function_errors_default = false;
 static unsigned int prm_return_null_on_function_errors_flag = 0;
 
-bool PRM_ALTER_TABLE_CHANGE_TYPE_STRICT = false;
-static bool prm_alter_table_change_type_strict_default = false;
-static unsigned int prm_alter_table_change_type_strict_flag = 0;
+bool PRM_ALTER_TABLE_CHANGE_TYPE_STRICT = true;
+static bool prm_alter_table_change_type_strict_default = true;
+static unsigned int prm_alter_table_change_type_strict_flag = 1;
 
 bool PRM_PLUS_AS_CONCAT = true;
 static bool prm_plus_as_concat_default = true;
@@ -1380,18 +1405,22 @@ int PRM_FILTER_PRED_MAX_CACHE_CLONES = 10;
 static int prm_filter_pred_max_cache_clones_default = 10;
 static unsigned int prm_filter_pred_max_cache_clones_flag = 0;
 
-int PRM_LIST_QUERY_CACHE_MODE = 0;
-static int prm_list_query_cache_mode_default = 0;	/* disabled */
+int PRM_LIST_QUERY_CACHE_MODE = 2;
+static int prm_list_query_cache_mode_default = 2;
 static int prm_list_query_cache_mode_upper = 2;
-static int prm_list_query_cache_mode_lower = 0;
+static int prm_list_query_cache_mode_lower = 2;
 static unsigned int prm_list_query_cache_mode_flag = 0;
 
-int PRM_LIST_MAX_QUERY_CACHE_ENTRIES = -1;
-static int prm_list_max_query_cache_entries_default = -1;	/* disabled */
+int PRM_LIST_MAX_QUERY_CACHE_ENTRIES = 200;
+static int prm_list_max_query_cache_entries_default = 200;
+static int prm_list_max_query_cache_entries_upper = INT_MAX;
+static int prm_list_max_query_cache_entries_lower = 0;
 static unsigned int prm_list_max_query_cache_entries_flag = 0;
 
-int PRM_LIST_MAX_QUERY_CACHE_PAGES = -1;
-static int prm_list_max_query_cache_pages_default = -1;	/* infinity */
+int PRM_LIST_MAX_QUERY_CACHE_PAGES = 1000;
+static int prm_list_max_query_cache_pages_default = 1000;
+static int prm_list_max_query_cache_pages_upper = INT_MAX;
+static int prm_list_max_query_cache_pages_lower = 0;
 static unsigned int prm_list_max_query_cache_pages_flag = 0;
 
 bool PRM_USE_ORDERBY_SORT_LIMIT = true;
@@ -1441,6 +1470,8 @@ static unsigned int prm_ha_copy_sync_mode_flag = 0;
 
 int PRM_HA_APPLY_MAX_MEM_SIZE = HB_DEFAULT_APPLY_MAX_MEM_SIZE;
 static int prm_ha_apply_max_mem_size_default = HB_DEFAULT_APPLY_MAX_MEM_SIZE;
+static int prm_ha_apply_max_mem_size_upper = INT_MAX;
+static int prm_ha_apply_max_mem_size_lower = 0;
 static unsigned int prm_ha_apply_max_mem_size_flag = 0;
 
 int PRM_HA_PORT_ID = HB_DEFAULT_HA_PORT_ID;
@@ -1566,9 +1597,9 @@ static int prm_ha_check_disk_failure_interval_in_secs_upper = INT_MAX;
 static int prm_ha_check_disk_failure_interval_in_secs_lower = 0;
 static unsigned int prm_ha_check_disk_failure_interval_in_secs_flag = 0;
 
-bool PRM_JAVA_STORED_PROCEDURE = false;
-static bool prm_java_stored_procedure_default = false;
-static unsigned int prm_java_stored_procedure_flag = 0;
+bool PRM_GENERAL_RESERVE_01 = false;
+static bool prm_general_reserve_01_default = false;
+static unsigned int prm_general_reserve_01_flag = 0;
 
 bool PRM_COMPAT_PRIMARY_KEY = false;
 static bool prm_compat_primary_key_default = false;
@@ -1693,6 +1724,10 @@ static unsigned int prm_loaddb_flush_interval_flag = 0;
 const char *PRM_IO_TEMP_VOLUME_PATH = "";
 static char *prm_io_temp_volume_path_default = NULL;
 static unsigned int prm_io_temp_volume_path_flag = 0;
+
+const char *PRM_TDE_KEYS_FILE_PATH = "";
+static char *prm_tde_keys_file_path_default = NULL;
+static unsigned int prm_tde_keys_file_path_flag = 0;
 
 const char *PRM_IO_VOLUME_EXT_PATH = "";
 static char *prm_io_volume_ext_path_default = NULL;
@@ -1861,9 +1896,11 @@ bool PRM_OPTIMIZER_ENABLE_MERGE_JOIN = false;
 static bool prm_optimizer_enable_merge_join_default = false;
 static unsigned int prm_optimizer_enable_merge_join_flag = 0;
 
-bool PRM_OPTIMIZER_RESERVE_01 = false;
-static bool prm_optimizer_reserve_01_default = false;
-static unsigned int prm_optimizer_reserve_01_flag = 0;
+UINT64 PRM_MAX_HASH_LIST_SCAN_SIZE = 4 * 1024 * 1024;	/* 4 MB */
+static UINT64 prm_max_hash_list_scan_size_default = 4 * 1024 * 1024;	/* 4 MB */
+static UINT64 prm_max_hash_list_scan_size_lower = 0;	/* 0 */
+static UINT64 prm_max_hash_list_scan_size_upper = 128 * 1024 * 1024;	/* 128 MB */
+static unsigned int prm_max_hash_list_scan_size_flag = 0;
 
 bool PRM_OPTIMIZER_RESERVE_02 = false;
 static bool prm_optimizer_reserve_02_default = false;
@@ -2254,6 +2291,60 @@ static unsigned int prm_new_lfhash_flag = 0;
 bool PRM_HEAP_INFO_CACHE_LOGGING = false;
 static bool prm_heap_info_cache_logging_default = false;
 static unsigned int prm_heap_info_cache_logging_flag = 0;
+
+int PRM_TDE_DEFAULT_ALGORITHM = TDE_ALGORITHM_AES;
+static int prm_tde_default_algorithm = TDE_ALGORITHM_AES;
+static unsigned int prm_tde_default_algorithm_flag = 0;
+
+bool PRM_JAVA_STORED_PROCEDURE = false;
+static bool prm_java_stored_procedure_default = false;
+static unsigned int prm_java_stored_procedure_flag = 0;
+
+int PRM_JAVA_STORED_PROCEDURE_PORT = 0;
+static int prm_java_stored_procedure_port_default = 0;
+static int prm_java_stored_procedure_port_upper = 65535;
+static int prm_java_stored_procedure_port_lower = 0;
+static unsigned int prm_java_stored_procedure_port_flag = 0;
+
+const char *PRM_JAVA_STORED_PROCEDURE_JVM_OPTIONS = "";
+static const char *prm_java_stored_procedure_jvm_options_default = "";
+static unsigned int prm_java_stored_procedure_jvm_options_flag = 0;
+
+int PRM_JAVA_STORED_PROCEDURE_DEBUG = -1;
+static int prm_java_stored_procedure_debug_default = -1;
+static int prm_java_stored_procedure_debug_upper = 65535;
+static int prm_java_stored_procedure_debug_lower = -1;
+static unsigned int prm_java_stored_procedure_debug_flag = 0;
+
+bool PRM_JAVA_STORED_PROCEDURE_RESERVE_01 = false;
+static bool prm_java_stored_procedure_reserve_01_default = false;
+static unsigned int prm_java_stored_procedure_reserve_01_flag = 0;
+
+bool PRM_ALLOW_TRUNCATED_STRING = false;
+static bool prm_allow_truncated_string_default = false;
+static unsigned int prm_allow_truncated_string_flag = 0;
+
+bool PRM_TB_REUSE_OID = true;
+static bool prm_create_table_reuseoid_default = true;
+static unsigned int prm_create_table_reuseoid = 0;
+
+bool PRM_USE_STAT_ESTIMATION = false;
+static bool prm_use_stat_estimation_default = false;
+static unsigned int prm_use_stat_estimation_flag = 0;
+
+bool PRM_IGNORE_TRAILING_SPACE = false;
+static bool prm_ignore_trailing_space_default = false;
+static unsigned int prm_ignore_trailing_space_flag = 0;
+
+bool PRM_DDL_AUDIT_LOG = false;
+static bool prm_ddl_audit_log_default = false;
+static unsigned int prm_ddl_audit_log_flag = 0;
+
+UINT64 PRM_DDL_AUDIT_LOG_SIZE = 10485760ULL;
+static UINT64 prm_ddl_audit_log_size_default = 10485760ULL;	/* 10M */
+static UINT64 prm_ddl_audit_log_size_lower = 10485760ULL;	/* 10M */
+static UINT64 prm_ddl_audit_log_size_upper = 2147483648ULL;	/* 2G */
+static unsigned int prm_ddl_audit_log_size_flag = 0;
 
 typedef int (*DUP_PRM_FUNC) (void *, SYSPRM_DATATYPE, void *, SYSPRM_DATATYPE);
 
@@ -2842,7 +2933,8 @@ static SYSPRM_PARAM prm_Def[] = {
    &prm_css_max_clients_flag,
    (void *) &prm_css_max_clients_default,
    (void *) &PRM_CSS_MAX_CLIENTS,
-   (void *) NULL, (void *) &prm_css_max_clients_lower,
+   (void *) &prm_css_max_clients_upper,
+   (void *) &prm_css_max_clients_lower,
    (char *) NULL,
    (DUP_PRM_FUNC) NULL,
    (DUP_PRM_FUNC) NULL},
@@ -3519,7 +3611,7 @@ static SYSPRM_PARAM prm_Def[] = {
    (DUP_PRM_FUNC) NULL},
   {PRM_ID_LIST_QUERY_CACHE_MODE,
    PRM_NAME_LIST_QUERY_CACHE_MODE,
-   (PRM_FOR_SERVER),
+   (PRM_FOR_SERVER | PRM_HIDDEN),
    PRM_INTEGER,
    &prm_list_query_cache_mode_flag,
    (void *) &prm_list_query_cache_mode_default,
@@ -3536,7 +3628,8 @@ static SYSPRM_PARAM prm_Def[] = {
    &prm_list_max_query_cache_entries_flag,
    (void *) &prm_list_max_query_cache_entries_default,
    (void *) &PRM_LIST_MAX_QUERY_CACHE_ENTRIES,
-   (void *) NULL, (void *) NULL,
+   (void *) &prm_list_max_query_cache_entries_upper,
+   (void *) &prm_list_max_query_cache_entries_lower,
    (char *) NULL,
    (DUP_PRM_FUNC) NULL,
    (DUP_PRM_FUNC) NULL},
@@ -3547,7 +3640,8 @@ static SYSPRM_PARAM prm_Def[] = {
    &prm_list_max_query_cache_pages_flag,
    (void *) &prm_list_max_query_cache_pages_default,
    (void *) &PRM_LIST_MAX_QUERY_CACHE_PAGES,
-   (void *) NULL, (void *) NULL,
+   (void *) &prm_list_max_query_cache_pages_upper,
+   (void *) &prm_list_max_query_cache_pages_lower,
    (char *) NULL,
    (DUP_PRM_FUNC) NULL,
    (DUP_PRM_FUNC) NULL},
@@ -3684,7 +3778,7 @@ static SYSPRM_PARAM prm_Def[] = {
    &prm_ha_apply_max_mem_size_flag,
    (void *) &prm_ha_apply_max_mem_size_default,
    (void *) &PRM_HA_APPLY_MAX_MEM_SIZE,
-   (void *) NULL, (void *) NULL,
+   (void *) &prm_ha_apply_max_mem_size_upper, (void *) &prm_ha_apply_max_mem_size_lower,
    (char *) NULL,
    (DUP_PRM_FUNC) NULL,
    (DUP_PRM_FUNC) NULL},
@@ -3994,13 +4088,13 @@ static SYSPRM_PARAM prm_Def[] = {
    (char *) NULL,
    (DUP_PRM_FUNC) prm_msec_to_sec,
    (DUP_PRM_FUNC) prm_sec_to_msec},
-  {PRM_ID_JAVA_STORED_PROCEDURE,
-   PRM_NAME_JAVA_STORED_PROCEDURE,
-   (PRM_FOR_SERVER),
+  {PRM_ID_GENERAL_RESERVE_01,
+   PRM_NAME_GENERAL_RESERVE_01,
+   (PRM_FOR_SERVER | PRM_HIDDEN),
    PRM_BOOLEAN,
-   &prm_java_stored_procedure_flag,
-   (void *) &prm_java_stored_procedure_default,
-   (void *) &PRM_JAVA_STORED_PROCEDURE,
+   &prm_general_reserve_01_flag,
+   (void *) &prm_general_reserve_01_default,
+   (void *) &PRM_GENERAL_RESERVE_01,
    (void *) NULL, (void *) NULL,
    (char *) NULL,
    (DUP_PRM_FUNC) NULL,
@@ -4780,14 +4874,15 @@ static SYSPRM_PARAM prm_Def[] = {
    (char *) NULL,
    (DUP_PRM_FUNC) NULL,
    (DUP_PRM_FUNC) NULL},
-  {PRM_ID_OPTIMIZER_RESERVE_01,
-   PRM_NAME_OPTIMIZER_RESERVE_01,
-   (PRM_FOR_CLIENT | PRM_USER_CHANGE | PRM_HIDDEN),
-   PRM_BOOLEAN,
-   &prm_optimizer_reserve_01_flag,
-   (void *) &prm_optimizer_reserve_01_default,
-   (void *) &PRM_OPTIMIZER_RESERVE_01,
-   (void *) NULL, (void *) NULL,
+  {PRM_ID_MAX_HASH_LIST_SCAN_SIZE,
+   PRM_NAME_MAX_HASH_LIST_SCAN_SIZE,
+   (PRM_FOR_SERVER | PRM_USER_CHANGE | PRM_SIZE_UNIT),
+   PRM_BIGINT,
+   &prm_max_hash_list_scan_size_flag,
+   (void *) &prm_max_hash_list_scan_size_default,
+   (void *) &PRM_MAX_HASH_LIST_SCAN_SIZE,
+   (void *) &prm_max_hash_list_scan_size_upper,
+   (void *) &prm_max_hash_list_scan_size_lower,
    (char *) NULL,
    (DUP_PRM_FUNC) NULL,
    (DUP_PRM_FUNC) NULL},
@@ -5800,6 +5895,150 @@ static SYSPRM_PARAM prm_Def[] = {
    (char *) NULL,
    (DUP_PRM_FUNC) NULL,
    (DUP_PRM_FUNC) NULL},
+  {PRM_ID_TDE_KEYS_FILE_PATH,
+   PRM_NAME_TDE_KEYS_FILE_PATH,
+   (PRM_FOR_SERVER | PRM_FOR_CLIENT),
+   PRM_STRING,
+   &prm_tde_keys_file_path_flag,
+   (void *) &prm_tde_keys_file_path_default,
+   (void *) &PRM_TDE_KEYS_FILE_PATH,
+   (void *) NULL, (void *) NULL,
+   (char *) NULL,
+   (DUP_PRM_FUNC) NULL,
+   (DUP_PRM_FUNC) NULL},
+  {PRM_ID_TDE_DEFAULT_ALGORITHM,
+   PRM_NAME_TDE_DEFAULT_ALGORITHM,
+   (PRM_FOR_CLIENT | PRM_FOR_SERVER),
+   PRM_KEYWORD,
+   &prm_tde_default_algorithm_flag,
+   (void *) &prm_tde_default_algorithm,
+   (void *) &PRM_TDE_DEFAULT_ALGORITHM,
+   (void *) NULL, (void *) NULL,
+   (char *) NULL,
+   (DUP_PRM_FUNC) NULL,
+   (DUP_PRM_FUNC) NULL},
+  {PRM_ID_JAVA_STORED_PROCEDURE,
+   PRM_NAME_JAVA_STORED_PROCEDURE,
+   (PRM_FOR_SERVER),
+   PRM_BOOLEAN,
+   &prm_java_stored_procedure_flag,
+   (void *) &prm_java_stored_procedure_default,
+   (void *) &PRM_JAVA_STORED_PROCEDURE,
+   (void *) NULL, (void *) NULL,
+   (char *) NULL,
+   (DUP_PRM_FUNC) NULL,
+   (DUP_PRM_FUNC) NULL},
+  {PRM_ID_JAVA_STORED_PROCEDURE_PORT,
+   PRM_NAME_JAVA_STORED_PROCEDURE_PORT,
+   (PRM_FOR_SERVER),
+   PRM_INTEGER,
+   &prm_java_stored_procedure_port_flag,
+   (void *) &prm_java_stored_procedure_port_default,
+   (void *) &PRM_JAVA_STORED_PROCEDURE_PORT,
+   (void *) &prm_java_stored_procedure_port_upper, (void *) &prm_java_stored_procedure_port_lower,
+   (char *) NULL,
+   (DUP_PRM_FUNC) NULL,
+   (DUP_PRM_FUNC) NULL},
+  {PRM_ID_JAVA_STORED_PROCEDURE_JVM_OPTIONS,
+   PRM_NAME_JAVA_STORED_PROCEDURE_JVM_OPTIONS,
+   (PRM_FOR_SERVER),
+   PRM_STRING,
+   &prm_java_stored_procedure_jvm_options_flag,
+   (void *) &prm_java_stored_procedure_jvm_options_default,
+   (void *) &PRM_JAVA_STORED_PROCEDURE_JVM_OPTIONS,
+   (void *) NULL, (void *) NULL,
+   (char *) NULL,
+   (DUP_PRM_FUNC) NULL,
+   (DUP_PRM_FUNC) NULL},
+  {PRM_ID_JAVA_STORED_PROCEDURE_DEBUG,
+   PRM_NAME_JAVA_STORED_PROCEDURE_DEBUG,
+   (PRM_FOR_SERVER | PRM_HIDDEN),
+   PRM_INTEGER,
+   &prm_java_stored_procedure_debug_flag,
+   (void *) &prm_java_stored_procedure_debug_default,
+   (void *) &PRM_JAVA_STORED_PROCEDURE_DEBUG,
+   (void *) NULL, (void *) NULL,
+   (char *) NULL,
+   (DUP_PRM_FUNC) NULL,
+   (DUP_PRM_FUNC) NULL},
+  {PRM_ID_JAVA_STORED_PROCEDURE_RESERVE_01,
+   PRM_NAME_JAVA_STORED_PROCEDURE_RESERVE_01,
+   (PRM_FOR_SERVER | PRM_HIDDEN),
+   PRM_BOOLEAN,
+   &prm_java_stored_procedure_reserve_01_flag,
+   (void *) &prm_java_stored_procedure_reserve_01_default,
+   (void *) &PRM_JAVA_STORED_PROCEDURE_RESERVE_01,
+   (void *) NULL, (void *) NULL,
+   (char *) NULL,
+   (DUP_PRM_FUNC) NULL,
+   (DUP_PRM_FUNC) NULL},
+  {PRM_ID_ALLOW_TRUNCATED_STRING,
+   PRM_NAME_ALLOW_TRUNCATED_STRING,
+   (PRM_USER_CHANGE | PRM_FOR_CLIENT | PRM_FOR_SERVER | PRM_FOR_SESSION | PRM_FOR_HA_CONTEXT),
+   PRM_BOOLEAN,
+   &prm_allow_truncated_string_flag,
+   (void *) &prm_allow_truncated_string_default,
+   (void *) &PRM_ALLOW_TRUNCATED_STRING,
+   (void *) NULL, (void *) NULL,
+   (char *) NULL,
+   (DUP_PRM_FUNC) NULL,
+   (DUP_PRM_FUNC) NULL},
+  {PRM_ID_TB_DEFAULT_REUSE_OID,
+   PRM_NAME_TB_DEFAULT_REUSE_OID,
+   (PRM_USER_CHANGE | PRM_FOR_CLIENT | PRM_FOR_SESSION | PRM_FOR_HA_CONTEXT),
+   PRM_BOOLEAN,
+   &prm_create_table_reuseoid,
+   (void *) &prm_create_table_reuseoid_default,
+   (void *) &PRM_TB_REUSE_OID,
+   (void *) NULL, (void *) NULL,
+   (char *) NULL,
+   (DUP_PRM_FUNC) NULL,
+   (DUP_PRM_FUNC) NULL},
+  {PRM_ID_USE_STAT_ESTIMATION,
+   PRM_NAME_USE_STAT_ESTIMATION,
+   (PRM_FOR_SERVER | PRM_USER_CHANGE),
+   PRM_BOOLEAN,
+   &prm_use_stat_estimation_flag,
+   (void *) &prm_use_stat_estimation_default,
+   (void *) &PRM_USE_STAT_ESTIMATION,
+   (void *) NULL, (void *) NULL,
+   (char *) NULL,
+   (DUP_PRM_FUNC) NULL,
+   (DUP_PRM_FUNC) NULL},
+  {PRM_ID_IGNORE_TRAILING_SPACE,
+   PRM_NAME_IGNORE_TRAILING_SPACE,
+   (PRM_FOR_SERVER | PRM_FOR_CLIENT | PRM_FORCE_SERVER | PRM_HIDDEN),
+   PRM_BOOLEAN,
+   &prm_ignore_trailing_space_flag,
+   (void *) &prm_ignore_trailing_space_default,
+   (void *) &PRM_IGNORE_TRAILING_SPACE,
+   (void *) NULL, (void *) NULL,
+   (char *) NULL,
+   (DUP_PRM_FUNC) NULL,
+   (DUP_PRM_FUNC) NULL},
+  {PRM_ID_DDL_AUDIT_LOG,
+   PRM_NAME_DDL_AUDIT_LOG,
+   (PRM_FOR_CLIENT),
+   PRM_BOOLEAN,
+   &prm_ddl_audit_log_flag,
+   (void *) &prm_ddl_audit_log_default,
+   (void *) &PRM_DDL_AUDIT_LOG,
+   (void *) NULL, (void *) NULL,
+   (char *) NULL,
+   (DUP_PRM_FUNC) NULL,
+   (DUP_PRM_FUNC) NULL},
+  {PRM_ID_DDL_AUDIT_LOG_SIZE,
+   PRM_NAME_DDL_AUDIT_LOG_SIZE,
+   (PRM_SIZE_UNIT),
+   PRM_BIGINT,
+   &prm_ddl_audit_log_size_flag,
+   (void *) &prm_ddl_audit_log_size_default,
+   (void *) &PRM_DDL_AUDIT_LOG_SIZE,
+   (void *) &prm_ddl_audit_log_size_upper,
+   (void *) &prm_ddl_audit_log_size_lower,
+   (char *) NULL,
+   (DUP_PRM_FUNC) NULL,
+   (DUP_PRM_FUNC) NULL}
 };
 
 #define NUM_PRM ((int)(sizeof(prm_Def)/sizeof(prm_Def[0])))
@@ -5965,6 +6204,12 @@ static KEYVAL ha_repl_filter_type_words[] = {
   {"none", REPL_FILTER_NONE},
   {"include_table", REPL_FILTER_INCLUDE_TBL},
   {"exclude_table", REPL_FILTER_EXCLUDE_TBL}
+};
+
+static KEYVAL tde_algorithm_words[] = {
+  /* {"none", TDE_ALGORITHM_NONE}, */
+  {"aes", TDE_ALGORITHM_AES},
+  {"aria", TDE_ALGORITHM_ARIA}
 };
 
 static const char *compat_mode_values_PRM_ANSI_QUOTES[COMPAT_ORACLE + 2] = {
@@ -6771,6 +7016,13 @@ prm_load_by_section (INI_TABLE * ini, const char *section, bool ignore_section, 
 		  return error;
 		}
 	    }
+	}
+
+      if (strcmp (section, "common") == 0 && strcmp (prm->name, PRM_NAME_JAVA_STORED_PROCEDURE_PORT) == 0)
+	{
+	  error = PRM_ERR_CANNOT_CHANGE;
+	  prm_report_bad_entry (key + sec_len, ini->lineno[i], error, file);
+	  return error;
 	}
 
       error = prm_set (prm, value, true);
@@ -7902,6 +8154,10 @@ prm_print (const SYSPRM_PARAM * prm, char *buf, size_t len, PRM_PRINT_MODE print
 	  keyvalp =
 	    prm_keyword (PRM_GET_INT (prm->value), NULL, ha_repl_filter_type_words, DIM (ha_repl_filter_type_words));
 	}
+      else if (intl_mbs_casecmp (prm->name, PRM_NAME_TDE_DEFAULT_ALGORITHM) == 0)
+	{
+	  keyvalp = prm_keyword (PRM_GET_INT (prm->value), NULL, tde_algorithm_words, DIM (tde_algorithm_words));
+	}
       else
 	{
 	  assert (false);
@@ -8197,6 +8453,10 @@ sysprm_print_sysprm_value (PARAM_ID prm_id, SYSPRM_VALUE value, char *buf, size_
       else if (intl_mbs_casecmp (prm->name, PRM_NAME_HA_REPL_FILTER_TYPE) == 0)
 	{
 	  keyvalp = prm_keyword (value.i, NULL, ha_repl_filter_type_words, DIM (ha_repl_filter_type_words));
+	}
+      else if (intl_mbs_casecmp (prm->name, PRM_NAME_TDE_DEFAULT_ALGORITHM) == 0)
+	{
+	  keyvalp = prm_keyword (value.i, NULL, tde_algorithm_words, DIM (tde_algorithm_words));
 	}
       else
 	{
@@ -9401,6 +9661,10 @@ sysprm_generate_new_value (SYSPRM_PARAM * prm, const char *value, bool check, SY
 	  {
 	    keyvalp = prm_keyword (-1, value, ha_repl_filter_type_words, DIM (ha_repl_filter_type_words));
 	  }
+	else if (intl_mbs_casecmp (prm->name, PRM_NAME_TDE_DEFAULT_ALGORITHM) == 0)
+	  {
+	    keyvalp = prm_keyword (-1, value, tde_algorithm_words, DIM (tde_algorithm_words));
+	  }
 	else
 	  {
 	    assert (false);
@@ -10147,12 +10411,7 @@ prm_tune_parameters (void)
       prm_set (pb_aout_ratio_prm, "0", false);
     }
 
-  /* temporarily modifies the query result cache feature to be disabled in RB-8.2.2. because it is not verified on 64
-   * bit environment. */
-  if (query_cache_mode_prm != NULL)
-    {
-      prm_set (query_cache_mode_prm, "0", false);
-    }
+
 
   ha_mode_prm = prm_find (PRM_NAME_HA_MODE, NULL);
   ha_server_state_prm = prm_find (PRM_NAME_HA_SERVER_STATE, NULL);

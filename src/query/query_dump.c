@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright (C) 2008 Search Solution Corporation
+ * Copyright (C) 2016 CUBRID Corporation
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -731,6 +732,10 @@ qdump_print_list (LIST_SPEC_TYPE * list_p)
   qdump_print_regu_variable_list (list_p->list_regu_list_pred);
   fprintf (foutput, "\n	regu_list_rest:");
   qdump_print_regu_variable_list (list_p->list_regu_list_rest);
+  fprintf (foutput, "\n	regu_list_build:");
+  qdump_print_regu_variable_list (list_p->list_regu_list_build);
+  fprintf (foutput, "\n	regu_list_probe:");
+  qdump_print_regu_variable_list (list_p->list_regu_list_probe);
   return true;
 }
 
@@ -1213,11 +1218,13 @@ qdump_print_value (REGU_VARIABLE * value_p)
   switch (value_p->type)
     {
     case TYPE_DBVAL:
+      fprintf (foutput, "[type:%s]", qdump_data_type_string (value_p->domain->type->id));
       qdump_print_db_value (&value_p->value.dbval);
       return true;
 
     case TYPE_CONSTANT:
     case TYPE_ORDERBY_NUM:
+      fprintf (foutput, "[type:%s]", qdump_data_type_string (value_p->domain->type->id));
       qdump_print_db_value (value_p->value.dbvalptr);
       return true;
 
@@ -1262,6 +1269,7 @@ qdump_print_value (REGU_VARIABLE * value_p)
 
     case TYPE_POS_VALUE:
     case TYPE_OID:
+      fprintf (foutput, "[type:%s]", qdump_data_type_string (value_p->domain->type->id));
       return true;
 
     case TYPE_FUNC:

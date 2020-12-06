@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright (C) 2008 Search Solution Corporation
+ * Copyright (C) 2016 CUBRID Corporation
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -252,6 +253,8 @@ static bool pt_is_explicit_coerce_allowed_for_default_value (PARSER_CONTEXT * pa
 static int pt_coerce_value_internal (PARSER_CONTEXT * parser, PT_NODE * src, PT_NODE * dest,
 				     PT_TYPE_ENUM desired_type, PT_NODE * data_type, bool check_string_precision,
 				     bool implicit_coercion);
+static int pt_coerce_value_explicit (PARSER_CONTEXT * parser, PT_NODE * src, PT_NODE * dest, PT_TYPE_ENUM desired_type,
+				     PT_NODE * data_type);
 #if defined(ENABLE_UNUSED_FUNCTION)
 static int generic_func_casecmp (const void *a, const void *b);
 static void init_generic_funcs (void);
@@ -1369,7 +1372,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
       sig.arg2_type.val.generic_type = PT_GENERIC_TYPE_CHAR;
       /* return type */
       sig.return_type.type = pt_arg_type::GENERIC;
-      sig.return_type.val.generic_type = PT_GENERIC_TYPE_CHAR;
+      sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
       def->overloads[num++] = sig;
 
       /* arg1 */
@@ -1380,7 +1383,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
       sig.arg2_type.val.generic_type = PT_GENERIC_TYPE_NCHAR;
       /* return type */
       sig.return_type.type = pt_arg_type::GENERIC;
-      sig.return_type.val.generic_type = PT_GENERIC_TYPE_NCHAR;
+      sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
       def->overloads[num++] = sig;
 
       def->overloads_count = num;
@@ -1402,7 +1405,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
       sig.arg3_type.val.generic_type = PT_GENERIC_TYPE_CHAR;
       /* return type */
       sig.return_type.type = pt_arg_type::GENERIC;
-      sig.return_type.val.generic_type = PT_GENERIC_TYPE_CHAR;
+      sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
       def->overloads[num++] = sig;
 
       /* arg1 */
@@ -1416,7 +1419,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
       sig.arg3_type.val.generic_type = PT_GENERIC_TYPE_NCHAR;
       /* return type */
       sig.return_type.type = pt_arg_type::GENERIC;
-      sig.return_type.val.generic_type = PT_GENERIC_TYPE_NCHAR;
+      sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
       def->overloads[num++] = sig;
 
       def->overloads_count = num;
@@ -1619,7 +1622,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
 	  sig.arg2_type.type = pt_arg_type::GENERIC;
 	  sig.arg2_type.val.generic_type = PT_GENERIC_TYPE_CHAR;
 	  sig.return_type.type = pt_arg_type::GENERIC;
-	  sig.return_type.val.generic_type = PT_GENERIC_TYPE_CHAR;
+	  sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
 	  def->overloads[num++] = sig;
 
 	  /* nchar + nchar */
@@ -1628,7 +1631,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
 	  sig.arg2_type.type = pt_arg_type::GENERIC;
 	  sig.arg2_type.val.generic_type = PT_GENERIC_TYPE_NCHAR;
 	  sig.return_type.type = pt_arg_type::GENERIC;
-	  sig.return_type.val.generic_type = PT_GENERIC_TYPE_NCHAR;
+	  sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
 	  def->overloads[num++] = sig;
 
 	  /* bit + bit */
@@ -2241,7 +2244,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
 
       /* return type */
       sig.return_type.type = pt_arg_type::GENERIC;
-      sig.return_type.val.generic_type = PT_GENERIC_TYPE_CHAR;
+      sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
       def->overloads[num++] = sig;
 
       /* arg1 */
@@ -2254,7 +2257,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
 
       /* return type */
       sig.return_type.type = pt_arg_type::GENERIC;
-      sig.return_type.val.generic_type = PT_GENERIC_TYPE_NCHAR;
+      sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
       def->overloads[num++] = sig;
 
       def->overloads_count = num;
@@ -8443,6 +8446,7 @@ pt_wrap_with_cast_op (PARSER_CONTEXT * parser, PT_NODE * arg, PT_TYPE_ENUM new_t
 
   new_att->type_enum = new_type;
   new_att->info.expr.op = PT_CAST;
+  PT_EXPR_INFO_SET_FLAG (new_att, PT_EXPR_INFO_CAST_WRAP);
   new_att->info.expr.cast_type = new_dt;
   new_att->info.expr.arg1 = arg;
   new_att->next = next_att;
@@ -9347,7 +9351,6 @@ pt_eval_expr_type (PARSER_CONTEXT * parser, PT_NODE * node)
 	      node->type_enum = PT_TYPE_DATETIMETZ;
 	    }
 	  break;
-
 	default:
 	  break;
 	}
@@ -9822,6 +9825,13 @@ pt_eval_expr_type (PARSER_CONTEXT * parser, PT_NODE * node)
 	  SET_EXPECTED_DOMAIN (arg2, d);
 	  pt_preset_hostvar (parser, arg2);
 	}
+      if (PT_IS_VALUE_NODE (arg2))
+	{
+	  if (pt_coerce_value_explicit (parser, arg2, arg2, arg1_type, arg1->data_type) != NO_ERROR)
+	    {
+	      goto error;
+	    }
+	}
       break;
 
     case PT_LIKE_ESCAPE:
@@ -10186,24 +10196,24 @@ pt_eval_expr_type (PARSER_CONTEXT * parser, PT_NODE * node)
 		  && (nextcase->info.expr.op == PT_CASE || nextcase->info.expr.op == PT_DECODE))
 		{
 		  /* cast nextcase->arg1 to common type */
-		  arg1 = nextcase->info.expr.arg1;
-		  arg1_type = arg1->type_enum;
-		  if (arg1_type != common_type && arg1_type != PT_TYPE_NULL)
+		  PT_NODE *next_arg1 = nextcase->info.expr.arg1;
+		  PT_TYPE_ENUM next_arg1_type = next_arg1->type_enum;
+		  if (next_arg1_type != common_type && next_arg1_type != PT_TYPE_NULL)
 		    {
-		      if (pt_coerce_expression_argument (parser, nextcase, &arg1, common_type, NULL) != NO_ERROR)
+		      if (pt_coerce_expression_argument (parser, nextcase, &next_arg1, common_type, NULL) != NO_ERROR)
 			{
 			  /* abandon implicit casting and return error */
 			  node->type_enum = PT_TYPE_NONE;
 			  goto error;
 			}
-		      nextcase->info.expr.arg1 = arg1;
+		      nextcase->info.expr.arg1 = next_arg1;
 		      /* nextcase was already evaluated and may have a data_type set. We need to replace it with the
 		       * cast data_type */
 		      nextcase->type_enum = common_type;
 		      if (nextcase->data_type)
 			{
 			  parser_free_tree (parser, nextcase->data_type);
-			  nextcase->data_type = parser_copy_tree_list (parser, arg1->data_type);
+			  nextcase->data_type = parser_copy_tree_list (parser, next_arg1->data_type);
 			}
 		    }
 		  /* set nextcase to nextcase->arg2 and continue */
@@ -12427,6 +12437,11 @@ pt_eval_function_type (PARSER_CONTEXT * parser, PT_NODE * node)
     case F_JSON_TYPE:
     case F_JSON_UNQUOTE:
     case F_JSON_VALID:
+    case F_REGEXP_COUNT:
+    case F_REGEXP_INSTR:
+    case F_REGEXP_LIKE:
+    case F_REGEXP_REPLACE:
+    case F_REGEXP_SUBSTR:
       return pt_eval_function_type_new (parser, node);
 
       // legacy functions are still managed by old checking function; all should be migrated though
@@ -12961,26 +12976,9 @@ pt_eval_function_type_old (PARSER_CONTEXT * parser, PT_NODE * node)
 	  PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_AGG_FUN_WANT_1_ARG,
 		      pt_short_print (parser, node));
 	}
-      else
-	{
-	  /* do special constant folding; COUNT(1), COUNT(?), COUNT(:x), ... -> COUNT(*) */
-	  /* TODO does this belong to type checking or constant folding? */
-	  if (pt_is_const (arg_list))
-	    {
-	      PT_MISC_TYPE all_or_distinct;
-
-	      all_or_distinct = node->info.function.all_or_distinct;
-	      if (fcode == PT_COUNT && all_or_distinct != PT_DISTINCT)
-		{
-		  fcode = node->info.function.function_type = PT_COUNT_STAR;
-		  parser_free_tree (parser, arg_list);
-		  arg_list = node->info.function.arg_list = NULL;
-		}
-	    }
-	}
     }
 
-  if (node->type_enum == PT_TYPE_NONE || node->data_type == NULL)
+  if (node->type_enum == PT_TYPE_NONE || node->data_type == NULL || !(node->info.function.is_type_checked))
     {
       /* determine function result type */
       switch (fcode)
@@ -13368,6 +13366,8 @@ pt_eval_function_type_old (PARSER_CONTEXT * parser, PT_NODE * node)
 	  node->data_type = parser_copy_tree_list (parser, arg_list->data_type);
 	  break;
 	}
+      /* to prevent recheck of function return type at pt_eval_function_type_old() */
+      node->info.function.is_type_checked = true;
     }
 
   /* collation checking */
@@ -19839,6 +19839,26 @@ pt_evaluate_function_w_args (PARSER_CONTEXT * parser, FUNC_TYPE fcode, DB_VALUE 
       error = db_evaluate_json_valid (result, args, num_args);
       break;
 
+    case F_REGEXP_COUNT:
+      error = db_string_regexp_count (result, args, num_args, NULL, NULL);
+      break;
+
+    case F_REGEXP_INSTR:
+      error = db_string_regexp_instr (result, args, num_args, NULL, NULL);
+      break;
+
+    case F_REGEXP_LIKE:
+      error = db_string_regexp_like (result, args, num_args, NULL, NULL);
+      break;
+
+    case F_REGEXP_REPLACE:
+      error = db_string_regexp_replace (result, args, num_args, NULL, NULL);
+      break;
+
+    case F_REGEXP_SUBSTR:
+      error = db_string_regexp_substr (result, args, num_args, NULL, NULL);
+      break;
+
     default:
       /* a supported function doesn't have const folding code */
       assert (false);
@@ -19882,6 +19902,31 @@ pt_fold_const_function (PARSER_CONTEXT * parser, PT_NODE * func)
       return func;
     }
 
+  /* FUNCTION type set consisting of all constant values is changed to VALUE type set
+     e.g.) (col1,1) in (..) and col1=1 -> qo_reduce_equality_terms() -> function type (1,1) -> value type (1,1) */
+  if (pt_is_set_type (func) && func->info.function.function_type == F_SEQUENCE)
+    {
+      PT_NODE *func_arg = func->info.function.arg_list;
+      bool is_const_multi_col = true;
+
+      for ( /* none */ ; func_arg; func_arg = func_arg->next)
+	{
+	  if (func_arg && func_arg->node_type != PT_VALUE)
+	    {
+	      is_const_multi_col = false;
+	      break;
+	    }
+	}
+      if (is_const_multi_col)
+	{
+	  func->node_type = PT_VALUE;
+	  func_arg = func->info.function.arg_list;
+	  memset (&(func->info), 0, sizeof (func->info));
+	  func->info.value.data_value.set = func_arg;
+	  func->type_enum == PT_TYPE_SEQUENCE;
+	}
+    }
+
   if (func->do_not_fold)
     {
       return func;
@@ -19891,7 +19936,7 @@ pt_fold_const_function (PARSER_CONTEXT * parser, PT_NODE * func)
     {
       parser_node *arg_list = func->info.function.arg_list;
       /* do special constant folding; COUNT(1), COUNT(?), COUNT(:x), ... -> COUNT(*) */
-      if (pt_is_const (arg_list))
+      if (pt_is_const (arg_list) && !PT_IS_NULL_NODE (arg_list))
 	{
 	  PT_MISC_TYPE all_or_distinct;
 	  all_or_distinct = func->info.function.all_or_distinct;
@@ -20255,6 +20300,22 @@ int
 pt_coerce_value (PARSER_CONTEXT * parser, PT_NODE * src, PT_NODE * dest, PT_TYPE_ENUM desired_type, PT_NODE * data_type)
 {
   return pt_coerce_value_internal (parser, src, dest, desired_type, data_type, false, true);
+}
+
+/*
+ * pt_coerce_value_explicit () - coerce a PT_VALUE into another PT_VALUE of compatible type
+ *   return: NO_ERROR on success, non-zero for ERROR
+ *   parser(in):
+ *   src(in): a pointer to the original PT_VALUE
+ *   dest(out): a pointer to the coerced PT_VALUE
+ *   desired_type(in): the desired type of the coerced result
+ *   data_type(in): the data type list of a (desired) set type or the data type of an object or NULL
+ */
+int
+pt_coerce_value_explicit (PARSER_CONTEXT * parser, PT_NODE * src, PT_NODE * dest, PT_TYPE_ENUM desired_type,
+			  PT_NODE * data_type)
+{
+  return pt_coerce_value_internal (parser, src, dest, desired_type, data_type, true, false);
 }
 
 /*
@@ -21822,6 +21883,11 @@ pt_get_collation_info_for_collection_type (PARSER_CONTEXT * parser, const PT_NOD
       else if ((node->node_type == PT_VALUE) && (PT_IS_COLLECTION_TYPE (node->type_enum)))
 	{
 	  current_set_node = node->info.value.data_value.set;
+	  is_collection_of_collection = true;
+	}
+      else if ((node->node_type == PT_SELECT) && (PT_IS_COLLECTION_TYPE (node->type_enum)))
+	{
+	  current_set_node = node->info.query.q.select.list;
 	  is_collection_of_collection = true;
 	}
 
@@ -24011,6 +24077,10 @@ pt_fix_enumeration_comparison (PARSER_CONTEXT * parser, PT_NODE * expr)
   op = expr->info.expr.op;
   arg1 = expr->info.expr.arg1;
   arg2 = expr->info.expr.arg2;
+  if (arg1->type_enum == PT_TYPE_NULL || arg2->type_enum == PT_TYPE_NULL)
+    {
+      return expr;
+    }
 
   switch (op)
     {
@@ -24308,7 +24378,7 @@ static PT_TYPE_ENUM
 pt_wrap_type_for_collation (const PT_NODE * arg1, const PT_NODE * arg2, const PT_NODE * arg3,
 			    PT_TYPE_ENUM * wrap_type_collection)
 {
-  PT_TYPE_ENUM common_type = PT_TYPE_VARCHAR;
+  PT_TYPE_ENUM common_type = PT_TYPE_CHAR;
   PT_TYPE_ENUM arg1_type = PT_TYPE_NONE, arg2_type = PT_TYPE_NONE, arg3_type = PT_TYPE_NONE;
 
   if (arg1)

@@ -88,7 +88,8 @@ typedef enum
   MSGCAT_UTIL_SET_RESTORESLAVE = 53,
   MSGCAT_UTIL_SET_DELVOLDB = 54,
   MSGCAT_UTIL_SET_VACUUMDB = 55,
-  MSGCAT_UTIL_SET_CHECKSUMDB = 56
+  MSGCAT_UTIL_SET_CHECKSUMDB = 56,
+  MSGCAT_UTIL_SET_TDE = 57,
 } MSGCAT_UTIL_SET;
 
 /* Message id in the set MSGCAT_UTIL_SET_GENERIC */
@@ -137,6 +138,9 @@ typedef enum
 {
   BACKUPDB_INVALID_THREAD_NUM_OPT = 30,
   BACKUPDB_INVALID_PATH = 31,
+  BACKUPDB_USING_SEPARATE_KEYS = 32,
+  BACKUPDB_NOT_USING_SEPARATE_KEYS = 33,
+  BACKUPDB_FIFO_KEYS_NOT_SUPPORTED = 34,
   BACKUPDB_MSG_USAGE = 60
 } MSGCAT_BACKUPDB_MSG;
 
@@ -686,6 +690,19 @@ typedef enum
   CHECKSUMDB_MSG_USAGE = 60
 } MSGCAT_CHECKSUMDB_MSG;
 
+/* Message id in the set MSGCAT_UTIL_SET_TDE */
+typedef enum
+{
+  TDE_MSG_DBA_PASSWORD = 21,
+  TDE_MSG_NO_SET_MK_INFO = 25,
+  TDE_MSG_MK_CHANGING = 26,
+  TDE_MSG_MK_CHANGED = 27,
+  TDE_MSG_MK_SET_ON_DATABASE_DELETE = 28,
+  TDE_MSG_MK_DELETED = 29,
+  TDE_MSG_MK_GENERATED = 30,
+  TDE_MSG_USAGE = 60
+} MSGCAT_TDE_MSG;
+
 typedef void *DSO_HANDLE;
 
 typedef enum
@@ -731,6 +748,7 @@ typedef enum
   RESTORESLAVE,
   VACUUMDB,
   CHECKSUMDB,
+  TDE,
   LOGFILEDUMP,
 } UTIL_INDEX;
 
@@ -819,6 +837,7 @@ typedef struct _ha_config
 #define UTIL_CUBRID             "cubrid" UTIL_EXE_EXT
 #define UTIL_COPYLOGDB          "copylogdb" UTIL_EXE_EXT
 #define UTIL_APPLYLOGDB         "applylogdb" UTIL_EXE_EXT
+#define UTIL_JAVASP_NAME        "cub_javasp" UTIL_EXE_EXT
 
 #define PROPERTY_ON             "on"
 #define PROPERTY_OFF            "off"
@@ -830,12 +849,15 @@ typedef struct _ha_config
 #define PRINT_BROKER_NAME       "cubrid broker"
 #define PRINT_MANAGER_NAME      "cubrid manager server"
 #define PRINT_HEARTBEAT_NAME    "cubrid heartbeat"
+#define PRINT_JAVASP_NAME       "cubrid javasp"
 #define PRINT_HA_PROCS_NAME     "HA processes"
 
 #define PRINT_CMD_SERVICE       "service"
 #define PRINT_CMD_BROKER        "broker"
 #define PRINT_CMD_MANAGER       "manager"
 #define PRINT_CMD_SERVER        "server"
+#define PRINT_CMD_JAVASP        "javasp"
+
 #define PRINT_CMD_START         "start"
 #define PRINT_CMD_STOP          "stop"
 #define PRINT_CMD_STATUS        "status"
@@ -887,6 +909,7 @@ typedef struct _ha_config
 #define MASK_MANAGER            0x08
 #define MASK_ADMIN              0x20
 #define MASK_HEARTBEAT          0x40
+#define MASK_JAVASP             0x80
 
 /* utility option list */
 #define UTIL_OPTION_CREATEDB                    "createdb"
@@ -931,6 +954,9 @@ typedef struct _ha_config
 #define UTIL_OPTION_RESTORESLAVE                "restoreslave"
 #define UTIL_OPTION_VACUUMDB			"vacuumdb"
 #define UTIL_OPTION_CHECKSUMDB			"checksumdb"
+#define UTIL_OPTION_TDE			        "tde"
+
+#define HIDDEN_CS_MODE_S                        15000
 
 /* createdb option list */
 #define CREATE_PAGES_S                          'p'
@@ -1029,6 +1055,9 @@ typedef struct _ha_config
 #define BACKUP_EXCEPT_ACTIVE_LOG_L              "except-active-log"
 #define BACKUP_SLEEP_MSECS_S                    10600
 #define BACKUP_SLEEP_MSECS_L                    "sleep-msecs"
+#define BACKUP_SEPARATE_KEYS_S                  'k'
+#define BACKUP_SEPARATE_KEYS_L                  "separate-keys"
+
 
 /* restoredb option list */
 #define RESTORE_UP_TO_DATE_S                    'd'
@@ -1045,6 +1074,8 @@ typedef struct _ha_config
 #define RESTORE_OUTPUT_FILE_L                   "output-file"
 #define RESTORE_USE_DATABASE_LOCATION_PATH_S    'u'
 #define RESTORE_USE_DATABASE_LOCATION_PATH_L    "use-database-location-path"
+#define RESTORE_KEYS_FILE_PATH_S                'k'
+#define RESTORE_KEYS_FILE_PATH_L                "keys-file-path"
 
 /* addvoldb option list */
 #define ADDVOL_VOLUME_NAME_S                    'n'
@@ -1163,16 +1194,20 @@ typedef struct _ha_config
 #define PLANDUMP_OUTPUT_FILE_L                  "output-file"
 
 /* tranlist option list */
+#if defined(NEED_PRIVILEGE_PASSWORD)
 #define TRANLIST_USER_S                         'u'
 #define TRANLIST_USER_L                         "user"
 #define TRANLIST_PASSWORD_S                     'p'
 #define TRANLIST_PASSWORD_L                     "password"
+#endif
 #define TRANLIST_SUMMARY_S                      's'
 #define TRANLIST_SUMMARY_L                      "summary"
 #define TRANLIST_SORT_KEY_S                     'k'
 #define TRANLIST_SORT_KEY_L                     "sort-key"
 #define TRANLIST_REVERSE_S                      'r'
 #define TRANLIST_REVERSE_L                      "reverse"
+#define TRANLIST_FULL_SQL_S                     'f'
+#define TRANLIST_FULL_SQL_L                     "full"
 
 
 /* killtran option list */
@@ -1294,6 +1329,8 @@ typedef struct _ha_config
 #define COMPACT_INSTANCE_LOCK_TIMEOUT_L		"Instance-lock-timeout"
 #define COMPACT_CLASS_LOCK_TIMEOUT_S		'c'
 #define COMPACT_CLASS_LOCK_TIMEOUT_L		"class-lock-timeout"
+#define COMPACT_STANDBY_CS_MODE_S               12000
+#define COMPACT_STANDBY_CS_MODE_L               "standby"
 
 /* sqlx option list */
 #define CSQL_SA_MODE_S                          'S'
@@ -1336,6 +1373,16 @@ typedef struct _ha_config
 #define CSQL_PLAIN_OUTPUT_L                     "plain-output"
 #define CSQL_SKIP_COL_NAMES_S                   'N'
 #define CSQL_SKIP_COL_NAMES_L                   "skip-column-names"
+#define CSQL_SKIP_VACUUM_S			12017
+#define CSQL_SKIP_VACUUM_L			"skip-vacuum"
+#define CSQL_QUERY_OUTPUT_S			'q'
+#define CSQL_QUERY_OUTPUT_L			"query-output"
+#define CSQL_QUERY_COLUMN_DELIMITER_S		12018
+#define CSQL_QUERY_COLUMN_DELIMITER_L		"delimiter"
+#define CSQL_QUERY_COLUMN_ENCLOSURE_S		12019
+#define CSQL_QUERY_COLUMN_ENCLOSURE_L		"enclosure"
+#define CSQL_LOADDB_OUTPUT_S			'd'
+#define CSQL_LOADDB_OUTPUT_L			"loaddb-output"
 
 #define COMMDB_SERVER_LIST_S                    'P'
 #define COMMDB_SERVER_LIST_L                    "server-list"
@@ -1519,6 +1566,8 @@ typedef struct _ha_config
 #define RESTORESLAVE_OUTPUT_FILE_L                   "output-file"
 #define RESTORESLAVE_USE_DATABASE_LOCATION_PATH_S    'u'
 #define RESTORESLAVE_USE_DATABASE_LOCATION_PATH_L    "use-database-location-path"
+#define RESTORESLAVE_KEYS_FILE_PATH_S                'k'
+#define RESTORESLAVE_KEYS_FILE_PATH_L                "keys-file-path"
 
 /* vacuumdb option list */
 #define VACUUM_SA_MODE_S                         'S'
@@ -1547,6 +1596,24 @@ typedef struct _ha_config
 #define CHECKSUM_REPORT_ONLY_L			"report-only"
 #define CHECKSUM_SCHEMA_ONLY_S			14002
 #define CHECKSUM_SCHEMA_ONLY_L			"schema-only"
+
+/* tde option list */
+#define TDE_GENERATE_KEY_S    'n'
+#define TDE_GENERATE_KEY_L    "generate-new-key"
+#define TDE_SHOW_KEYS_S       's'
+#define TDE_SHOW_KEYS_L       "show-keys"
+#define TDE_PRINT_KEY_VALUE_S 14000
+#define TDE_PRINT_KEY_VALUE_L "print-value"
+#define TDE_SA_MODE_S         'S'
+#define TDE_SA_MODE_L         "SA-mode"
+#define TDE_CS_MODE_S         HIDDEN_CS_MODE_S
+#define TDE_CS_MODE_L         "CS-mode"
+#define TDE_CHANGE_KEY_S      'c'
+#define TDE_CHANGE_KEY_L      "change-key"
+#define TDE_DELETE_KEY_S      'd'
+#define TDE_DELETE_KEY_L      "delete-key"
+#define TDE_DBA_PASSWORD_S    'p'
+#define TDE_DBA_PASSWORD_L    "dba-password"
 
 #if defined(WINDOWS)
 #define LIB_UTIL_CS_NAME                "cubridcs.dll"
@@ -1680,6 +1747,7 @@ extern "C"
   extern int restoreslave (UTIL_FUNCTION_ARG * arg_map);
   extern int vacuumdb (UTIL_FUNCTION_ARG * arg_map);
   extern int checksumdb (UTIL_FUNCTION_ARG * arg_map);
+  extern int tde (UTIL_FUNCTION_ARG * arg_map);
 
   extern void util_admin_usage (const char *argv0);
   extern void util_admin_version (const char *argv0);

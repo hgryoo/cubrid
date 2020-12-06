@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright (C) 2008 Search Solution Corporation
+ * Copyright (C) 2016 CUBRID Corporation
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -88,6 +89,7 @@ typedef enum query_trace_format QUERY_TRACE_FORMAT;
 
 /* NOTE:
  * System parameter ids must respect the order in prm_Def array
+ * When adding a new system paramter, insert it before PRM_LAST_ID and change PRM_LAST_ID to it
  */
 enum param_id
 {
@@ -243,7 +245,7 @@ enum param_id
   PRM_ID_HA_APPLYLOGDB_MAX_COMMIT_INTERVAL_IN_MSECS,
   PRM_ID_HA_APPLYLOGDB_MAX_COMMIT_INTERVAL,
   PRM_ID_HA_CHECK_DISK_FAILURE_INTERVAL_IN_SECS,
-  PRM_ID_JAVA_STORED_PROCEDURE,
+  PRM_ID_GENERAL_RESERVE_01,
   PRM_ID_COMPAT_PRIMARY_KEY,
   PRM_ID_LOG_HEADER_FLUSH_INTERVAL,
   PRM_ID_LOG_ASYNC_COMMIT,
@@ -317,7 +319,7 @@ enum param_id
   PRM_ID_AGG_HASH_RESPECT_ORDER,
   PRM_ID_USE_BTREE_FENCE_KEY,
   PRM_ID_OPTIMIZER_ENABLE_MERGE_JOIN,
-  PRM_ID_OPTIMIZER_RESERVE_01,
+  PRM_ID_MAX_HASH_LIST_SCAN_SIZE,
   PRM_ID_OPTIMIZER_RESERVE_02,
   PRM_ID_OPTIMIZER_RESERVE_03,
   PRM_ID_OPTIMIZER_RESERVE_04,
@@ -438,8 +440,22 @@ enum param_id
 
   PRM_ID_HEAP_INFO_CACHE_LOGGING,
 
+  PRM_ID_TDE_KEYS_FILE_PATH,
+  PRM_ID_TDE_DEFAULT_ALGORITHM,
+
+  PRM_ID_JAVA_STORED_PROCEDURE,
+  PRM_ID_JAVA_STORED_PROCEDURE_PORT,
+  PRM_ID_JAVA_STORED_PROCEDURE_JVM_OPTIONS,
+  PRM_ID_JAVA_STORED_PROCEDURE_DEBUG,
+  PRM_ID_JAVA_STORED_PROCEDURE_RESERVE_01,
+  PRM_ID_ALLOW_TRUNCATED_STRING,
+  PRM_ID_TB_DEFAULT_REUSE_OID,
+  PRM_ID_USE_STAT_ESTIMATION,
+  PRM_ID_IGNORE_TRAILING_SPACE,
+  PRM_ID_DDL_AUDIT_LOG,
+  PRM_ID_DDL_AUDIT_LOG_SIZE,
   /* change PRM_LAST_ID when adding new system parameters */
-  PRM_LAST_ID = PRM_ID_HEAP_INFO_CACHE_LOGGING
+  PRM_LAST_ID = PRM_ID_DDL_AUDIT_LOG_SIZE
 };
 typedef enum param_id PARAM_ID;
 

@@ -1,5 +1,6 @@
 #
-# Copyright (C) 2016 Search Solution Corporation. All rights reserved.
+# Copyright (C) 2008 Search Solution Corporation
+# Copyright (C) 2016 CUBRID Corporation
 #
 #   This program is free software; you can redistribute it and/or modify
 #   it under the terms of the GNU General Public License as published by
@@ -18,6 +19,7 @@
 
 set(EXECUTABLE_SOURCES
   ${EXECUTABLES_DIR}/compactdb_cl.c
+  ${EXECUTABLES_DIR}/compactdb_common.c
   ${EXECUTABLES_DIR}/csql.c
   ${EXECUTABLES_DIR}/csql_result.c
   ${EXECUTABLES_DIR}/csql_result_format.c
@@ -97,9 +99,9 @@ set(BASE_SOURCES
   ${BASE_DIR}/ini_parser.c
   ${BASE_DIR}/intl_support.c
   ${BASE_DIR}/language_support.c
+  ${BASE_DIR}/locale_helper.cpp
   ${BASE_DIR}/locale_support.c
   ${BASE_DIR}/lockfree_bitmap.cpp
-  ${BASE_DIR}/md5.c
   ${BASE_DIR}/mem_block.cpp
   ${BASE_DIR}/memory_alloc.c
   ${BASE_DIR}/memory_hash.c
@@ -108,7 +110,7 @@ set(BASE_SOURCES
   ${BASE_DIR}/misc_string.c
   ${BASE_DIR}/mprec.c
   ${BASE_DIR}/packer.cpp
-  ${BASE_DIR}/get_clockfreq.c
+  ${BASE_DIR}/get_clock_freq.c
   ${BASE_DIR}/perf.cpp
   ${BASE_DIR}/perf_monitor.c
   ${BASE_DIR}/pinnable_buffer.cpp
@@ -128,6 +130,7 @@ set(BASE_SOURCES
   ${BASE_DIR}/util_func.c
   ${BASE_DIR}/variable_string.c
   ${BASE_DIR}/xml_parser.c
+  ${BASE_DIR}/ddl_log.c
   )
 
 set(BASE_HEADERS
@@ -136,6 +139,7 @@ set(BASE_HEADERS
   ${BASE_DIR}/error_manager.h
   ${BASE_DIR}/extensible_array.hpp
   ${BASE_DIR}/fileline_location.hpp
+  ${BASE_DIR}/locale_helper.hpp
   ${BASE_DIR}/lockfree_bitmap.hpp
   ${BASE_DIR}/mem_block.hpp
   ${BASE_DIR}/memory_reference_store.hpp
@@ -152,6 +156,7 @@ set(BASE_HEADERS
   ${BASE_DIR}/string_buffer.hpp
   ${BASE_DIR}/resource_tracker.hpp
   ${BASE_DIR}/semaphore.hpp
+  ${BASE_DIR}/ddl_log.h
   )
 
 set(HEAPLAYER_SOURCES
@@ -227,10 +232,12 @@ set(QUERY_SOURCES
   ${QUERY_DIR}/query_method.c
   ${QUERY_DIR}/regu_var.cpp
   ${QUERY_DIR}/string_opfunc.c
+  ${QUERY_DIR}/string_regex.cpp
   ${QUERY_DIR}/xasl_to_stream.c
   )
 set(QUERY_HEADERS
   ${QUERY_DIR}/query_monitoring.hpp
+  ${QUERY_DIR}/string_regex.hpp
 )
 
 set(OBJECT_SOURCES
@@ -265,6 +272,8 @@ set(OBJECT_HEADERS
 
 set(JSP_SOURCES
   ${JSP_DIR}/jsp_cl.c
+  ${JSP_DIR}/jsp_comm.c
+  ${JSP_DIR}/jsp_file.c
   )
 
 set(TRANSACTION_SOURCES
@@ -298,6 +307,7 @@ set(STORAGE_SOURCES
   ${STORAGE_DIR}/es_common.c
   ${STORAGE_DIR}/es.c
   ${STORAGE_DIR}/es_posix.c
+  ${STORAGE_DIR}/tde.c
   )
 
 set(XASL_SOURCES
@@ -363,6 +373,7 @@ endif(UNIX)
 
 SET_SOURCE_FILES_PROPERTIES(
   ${EXECUTABLES_DIR}/compactdb_cl.c
+  ${EXECUTABLES_DIR}/compactdb_common.c
   ${EXECUTABLES_DIR}/csql.c
   ${EXECUTABLES_DIR}/csql_result.c
   ${EXECUTABLES_DIR}/csql_result_format.c
@@ -411,7 +422,6 @@ SET_SOURCE_FILES_PROPERTIES(
   PROPERTIES LANGUAGE CXX
   )
 SET_SOURCE_FILES_PROPERTIES(
-  ${BASE_DIR}/md5.c
   ${CSQL_GRAMMAR_OUTPUT}
   ${CSQL_LEXER_OUTPUT}
   ${ESQL_GRAMMAR_OUTPUT}
@@ -474,7 +484,7 @@ if(WIN32)
   target_link_libraries(cubridcs LINK_PRIVATE ws2_32)
   set_target_properties(cubridcs PROPERTIES LINK_FLAGS "/DEF:\"${CMAKE_SOURCE_DIR}/win/cubridcs/cubridcs.def\"" LINK_FLAGS_RELEASE "/NODEFAULTLIB:libcmt.lib" LINK_FLAGS_DEBUG "/NODEFAULTLIB:msvcrt.lib")
 endif(WIN32)
-target_include_directories(cubridcs PRIVATE ${CMAKE_SOURCE_DIR}/src/heaplayers/util ${FLEX_INCLUDE_DIRS} ${EP_INCLUDES})
+target_include_directories(cubridcs PRIVATE ${FLEX_INCLUDE_DIRS} ${EP_INCLUDES})
 if(UNIX)
   target_link_libraries(cubridcs LINK_PRIVATE -Wl,-whole-archive cas ${EP_LIBS} -Wl,-no-whole-archive)
   target_link_libraries(cubridcs LINK_PUBLIC ${CURSES_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})

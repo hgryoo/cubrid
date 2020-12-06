@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright (C) 2008 Search Solution Corporation
+ * Copyright (C) 2016 CUBRID Corporation
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -84,6 +85,8 @@ struct qmgr_temp_file
   PAGE_PTR *membuf;
   int membuf_npages;
   QMGR_TEMP_FILE_MEMBUF_TYPE membuf_type;
+  bool preserved;		/* if temp file is preserved */
+  bool tde_encrypted;		/* whether the file of temp_vfid has to be encrypted when flushing (TDE) */
 };
 
 /*
@@ -114,7 +117,8 @@ typedef enum
 typedef enum
 {
   QUERY_IN_PROGRESS,
-  QUERY_COMPLETED
+  QUERY_COMPLETED,		/* execution completed */
+  QUERY_CLOSED,			/* cursor closed or aborted */
 } QMGR_QUERY_STATUS;
 
 typedef struct qmgr_query_entry QMGR_QUERY_ENTRY;
@@ -134,7 +138,7 @@ struct qmgr_query_entry
   QMGR_QUERY_STATUS query_status;
   QUERY_FLAG query_flag;
   bool is_holdable;		/* true if this query should be available */
-  bool is_preserved;		/* true if query was preserved in session, false otherwise. */
+  bool includes_tde_class;	/* true if this query include some tde class. It is from xasl node */
 };
 
 extern QMGR_QUERY_ENTRY *qmgr_get_query_entry (THREAD_ENTRY * thread_p, QUERY_ID query_id, int trans_ind);
@@ -159,7 +163,7 @@ extern QMGR_TEMP_FILE *qmgr_create_new_temp_file (THREAD_ENTRY * thread_p, QUERY
 extern QMGR_TEMP_FILE *qmgr_create_result_file (THREAD_ENTRY * thread_p, QUERY_ID query_id);
 extern int qmgr_free_list_temp_file (THREAD_ENTRY * thread_p, QUERY_ID query_id, QMGR_TEMP_FILE * tfile_vfidp);
 extern int qmgr_free_temp_file_list (THREAD_ENTRY * thread_p, QMGR_TEMP_FILE * tfile_vfidp, QUERY_ID query_id,
-				     bool is_error, bool was_preserved);
+				     bool is_error);
 
 #if defined (SERVER_MODE)
 extern bool qmgr_is_query_interrupted (THREAD_ENTRY * thread_p, QUERY_ID query_id);

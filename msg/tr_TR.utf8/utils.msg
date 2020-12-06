@@ -72,6 +72,7 @@ $       52      dump_tz
 $       53      restoreslave
 $       54      delvoldb
 $       56      checksumdb
+$       57      tde
 
 $set 1 MSGCAT_UTIL_SET_GENERIC
 1 Geçersiz uzunluk veya karakter '%1$c' veritabanı adı '%2$s' \n
@@ -124,6 +125,7 @@ Mevcut yönetici yardımcı programı-adı:\n\
     dump_tz\n\
     restoreslave\n\
     vacuumdb\n\
+    tde\n\
 \n\
 %4$s DBMS için bir araçtır.\n\
 Daha fazla bilgi için bkz:http://www.cubrid.org\n
@@ -148,6 +150,7 @@ Mevcut hizmetin programları:\n\
     broker\n\
     manager\n\
     heartbeat\n\
+    javasp\n\
 \n\
 Mevcut yönetici programları:\n\
     addvoldb\n\
@@ -182,6 +185,7 @@ Mevcut yönetici programları:\n\
     dump_tz\n\
     vacuumdb\n\
     checksumdb\n\
+    tde\n\
 \n\
 %4$s DBMS için bir araçtır.\n\
 Daha fazla bilgi için bkz: http://www.cubrid.org\n
@@ -248,10 +252,24 @@ Mevcut komut:\n\
 41 CUBRID sunucu yöneticisi yüklü değildir.\n
 42 Değişken geçersiz.\n
 43 (%1$s) dosya açma hatası.\n
+44 cubrid yardımcı programı, sürüm %1$s\n\
+kullanım: %2$s javasp <komut> [args]\n\
+\n\
+Mevcut komut:\n\
+    start       [database-name]\n\
+    stop        [database-name]\n\
+    restart     [database-name]\n\
+    status      [database-name]\n
 
 $set 2 MSGCAT_UTIL_SET_BACKUPDB
 30 UYARI: -t seçeneği stand-alone modu yürütülmesine göz ardı edilir.\n
 31 HATA: Hedef-yolu yok veya bir dizin değil.\n
+32 --separate-keys seçeneğini kullanarak, anahtar dosyasını (_keys) yedekleme biriminden ayırır.\n\
+Anahtar dosyası kaybolursa, yedekleme birimi olsa bile geri yükleme (geri yüklendib) düzgün çalışmayabilir.\n
+33 Yedekleme birimi anahtar dosyasını (_keys) içerir.\n\
+Bir tablo TDE şifreli ise, bu veriler için güvenlik sorununa neden olabilir.\n\
+Önlemek üzere anahtar dosyasını ayırmak için --separate-keys seçeneğini kullanın.\n
+34 HATA: FIFIO dosyası ayrı anahtarla hedef yol olarak kullanılamaz.\n
 60 \
 backupdb: Bir veritabanı yedeklemesi.\n\
 kullanım: %1$s backupdb [SEÇENEK] veritabanı-adı\n\
@@ -270,7 +288,8 @@ geçerli opsiyonlar:\n\
       --no-check               veritabanının tutarlılığını kontrol etmez; varsayılan: kontrol edin\n\
   -t, --thread-count=COUNT     Konu sayısı; Varsayılan olarak: 0 (otomatik)\n\
   -z, --compress               yedekleme birimleri sıkıştırmak; varsayılan: sıkıştırmayı açma\n\
-      --sleep-msecs=N          sleep N millisecond per 1M read; default: 0\n
+      --sleep-msecs=N          sleep N millisecond per 1M read; default: 0\n\
+  -k, --separate-keys          TDE için anahtarlar dosyası (_keys) yedekleme birimine dahil değildir, bunun yerine bir dosyaya ayrılmıştır\n
 71 Uyumsuz bağımsız değişkenleri, \"%1$s\", ve \"%2$s\"\n
 
 
@@ -388,7 +407,8 @@ geçerli seçenekler:\n\
   -l, --level=LEVEL                 Yedekleme SEVİYE geri yüklenecek; yedekleme kullanımını görmek; varsayılan: 0 (tam yedekleme)\n\
   -p, --partial-recovery            herhangi bir log arşiv bulunmayışı halinde kısmi kurtarma işlemi\n\
   -o, --output-file=FILE            DOSYA çıktı mesajları yönlendirme; varsayılan: hiçbir\n\
-  -u, --use-database-location-path  veritabanı konumu dosyasında belirtilen yoluna veritabanı ve günlük yoğunlukları geri yükleme.\n
+  -u, --use-database-location-path  veritabanı konumu dosyasında belirtilen yoluna veritabanı ve günlük yoğunlukları geri yükleme.\n\
+  -k, --keys-file-path              TDE için geri yükleme sırasında kullanılacak anahtar dosyasının yolu (_keys)\n
 
 
 $set 12 MSGCAT_UTIL_SET_LOADDB
@@ -401,7 +421,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 25 \n*** syntax kontrolü ***\n\n
 26 %1$d hataları algılandı.\n
 27 \n*** Ekleme nesneleri ***\n\n
-28 Toplam %1$8d nesneleri eklenir.\n
+28 Toplam %1$ld nesneleri eklenir.\n
 29 Toplam %1$8d varsayılan içeriği ile eklenen nesneleri başvurulan.\n
 30 \n*** İşlem İşlemek ***\n
 31 \n*** Veritabanı Kapama ***\n
@@ -421,7 +441,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 45 Sınıf %2$s Derece %1$d zaten tanımlanmış\n
 46 Sınıf %2$s Derece %1$d zaten ayrılmıştır\n
 47 Özniteliği '%1$s 'EŞSİZ aykırı, NULL'a dönüştürülür\n
-48 %1$s %2$d örnekleri\n
+48 %1$s %2$ld örnekleri\n
 49 Sınıf %1$s\n
 50 Şifre:
 51 \n*** Sınıf istatistikleri güncelleniyor ***\n
@@ -431,16 +451,16 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 55 eksik
 56 %1$s de
 57 Uyumsuz bağımsız değişkenleri, \"%1$s\", ve \"%2$s\"\n
-58 %1$s %2$d taahhüt örnekleri\n
+58 %1$s %2$ld taahhüt örnekleri\n
 59 \nLoaddb olmayan-optimize edilmiş sürümü çağırılamaz.\n
 60 Hata ayrıştırma \"%1$s\", gibi %2$s tür.\n
 61 Nesne Referans CS modunda desteklenmez.\n
 62 %1$s sınıfı için güncellenmiş istatistikler.\n
-112   %1$d örnekleri\r
+112   %1$ld örnekleri\r
 113 Son kararlı hattı: %1$d\n
 114 hata-kontrol-dosyası
 115 yükleme sırasında bir hata(lar) kontrol etmek için giriş dosyası
-116 Toplam %1$8d nesne (ler) eklenen, %2$d nesne (ler) başarısız oldu.\n
+116 Toplam %1$ld nesne (ler) eklenen, %2$ld nesne (ler) başarısız oldu.\n
 117 Başarısız yük.\n
 118 Sınıf adının uzunluğu en fazla %1$d bayttır.\n
 119 Toplam %1$8d nesne kontrol edildi, %2$d nesne başarısız oldu.\n
@@ -474,10 +494,10 @@ geçerli seçenekler:\n\
 $set 13 MSGCAT_UTIL_SET_UNLOADDB
 41 önbelleğe alınmış sayfaları değeri geçersiz.\n
 42 önbelleğe alınmış sayfa boyutu değeri geçersiz.\n
-43 %1$d nesneler atılıyor.\n
+43 %1$ld nesneler atılıyor.\n
 44 Class %1$s
 45 , %1$d örnekleri.\n
-46 %2$d nesneleri yalnızca %1$d tanesinde başarılı atılıyor.\n
+46 %2$ld nesneleri yalnızca %1$ld tanesinde başarılı atılıyor.\n
 47 çıkış dizin çok uzun.\n
 48 LSA : %1$d %2$d \n
 49 Şifre:
@@ -553,16 +573,17 @@ geçerli seçenekler:\n\
   -i, --input-class-file=FILE       tablo adlarının girişi FILE\n\
                                     class_name liste boş olmalıdır\n\
                                     varsayılan: kompakt tüm sınıflar\n\
-                                    CS-mode sadece etkinleştirilmiş,\n\
   -p, --pages-commited-once=NUMBER  maksimum sayfa sayısı bir kez işlemek için\n\
                                     varsayılan: 10\n\
                                     CS-mode sadece etkinleştirilmiş\n\
   -S, --SA-mode                     stand-alone modu yürütme\n\
   -C, --CS-mode                     istemci-sunucu modunda yürütme\n\
   -d, --delete-old-repr             katalogdan eski sınıf temsilleri silmek; varsayılan: devre dışı\n\
-  class_name_list                   CS-mode sadece etkinleştirilmiş\n\
   -I, --Instance-lock-timeout       Örneğin kilidi için zaman aşımı\n\
-  -c, --class-lock-timeout          sınıf kilidi için zaman aşımı\n
+                                    CS-mode sadece etkinleştirilmiş,\n\
+  -c, --class-lock-timeout          sınıf kilidi için zaman aşımı\n\
+                                    CS-mode sadece etkinleştirilmiş,\n\
+  class_name_list                   sınıf adı listesi sıkıştırılacak\n
 
 $set 15 MSGCAT_UTIL_SET_COMMDB
 21 Host üzerinde çalışan CUBRID Master %1$s \n başlandı %2$s
@@ -808,6 +829,7 @@ geçerli seçenekler:\n\
       --kill-program-name=NAME       istemci programı NAME ile tüm işlemleri iptal etme\n\
       --kill-sql-id=SQL_ID           li tüm geçişleri sonlandırır\n\
   -p, --dba-password=PASS            DBA kullanıcı şifresi; belirtmezseniz isteyecektir\n\
+                                     (yalnızca -i veya --kill seçenekleriyle çalışır. Aksi takdirde hata alır)\n\
   -d, --display-information          etkin işlemler hakkında bilgi görüntülemek\n\
   -q, --query-exec-info              aktif geçişlerin sorgulama çalışması bilgisi hakkında bilgiyi görüntüler\n\
   -f, --force                        doğrulaması için bir istemi olmadan işlemi iptal etme\n
@@ -1061,8 +1083,6 @@ tranlist: Aktif geçiş bilgisini boşalt.\n\
 kullanım: %1$s tranlist [SEÇENEK] database-name\n\
 \n\
 geçerli seçenekler:\n\
-  -u, --user=ID                veri tabanı erişimi için kullanıcı kimliği; default: DBA user\n\
-  -p, --password=PASS          kullanıcı şifresi; default: none\n\
   -s, --summary                geçişin sonuçlandırılmış bilgisini yazdır\n\
       --sort-key=COLUMN_NUMBER Sıralanacak sütun numarası\n\
       --reverse                Sıralama sonucu ters\n
@@ -1124,7 +1144,8 @@ geçerli seçenekler:\n\
       --list                        zorunlu görüntüleme geri yüklemeden yedek hacimlerinin listesi\n\
   -B, --backup-file-path=PATH       PATH yedekleme ciltlik bir dizin restore edilecek olan\n\
   -o, --output-file=FILE            FILE çıktı iletileri yönlendirmek; varsayılan: yok\n\
-  -u, --use-database-location-path  veritabanı konumu dosyasında belirtilen yolu veritabanı ve log birimlar geri\n
+  -u, --use-database-location-path  veritabanı konumu dosyasında belirtilen yolu veritabanı ve log birimlar geri\n\
+  -k, --keys-file-path              TDE için geri yükleme sırasında kullanılacak anahtar dosyasının yolu (_keys)\n
 
 $set 54 MSGCAT_UTIL_SET_DELVOLDB
 21 Aşağıdaki birimlerini kaldırmak için hazır:\n\n
@@ -1177,3 +1198,23 @@ geçerli seçenekler:\n\
       --resume                  checksum hesaplanması devam\n\
       --schema-only             sadece şema tutarlılığını denetlemek\n\
       --cont-on-error           hesaplama hatası devam\n
+
+$set 57 MSGCAT_UTIL_SET_TDE
+21 DBA şifresini girin:
+25 Veritabanındaki anahtar bilgi kümesini alamadı\n
+26 Anahtarı anahtardan (dizin: %1$d) anahtara (dizin: %2$d) değiştirmeye çalışılıyor ..\n
+27 Anahtar, anahtardan (dizin: %1$d) anahtara (dizin: %2$d) değiştirildi\n
+28 Veritabanındaki anahtar seti silinemez\n
+29 Anahtar (dizin: %1$d) silindi\n
+30 Yeni bir anahtar oluşturuldu - anahtar dizini: %1$d %2$s üzerinde oluşturuldu
+60 \
+tde: Şeffaf Veri Şifreleme (TDE) yönetimi\n\
+kullanım: %1$s tde İŞLEM (-s|-n|-d|-c) [SEÇENEK] veritabanı-adı\n\
+\n\
+geçerli seçenekler:\n\
+    -p, --dba-password=PASS      DBA kullanıcısının şifresi; belirtmezseniz sorulacak\n\
+İŞLEMLER: işlemlerden biri verilmelidir ve bunlar özeldir\n\
+    -s, --show-keys              veritabanında ve anahtar dosyasında (_keys) ayarlanan anahtar bilgileri yazdırır\n\
+    -n, --generate-new-key       anahtar dosyasında (_keys) yeni bir anahtar oluşturur; maksimum sayı: 128\n\
+    -d, --delete-key=KEY_INDEX   anahtar dosyasındaki (_keys) bir anahtarı sil\n\
+    -c, --change-key=KEY_INDEX   anahtar dosyasındaki (_keys) başka bir anahtar için veritabanındaki anahtarı değiştir\n

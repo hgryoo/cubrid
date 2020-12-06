@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright (C) 2008 Search Solution Corporation
+ * Copyright (C) 2016 CUBRID Corporation
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -326,9 +327,6 @@ struct buildlist_proc_node
   OUTPTR_LIST *a_outptr_list_ex;	/* ext output ptr list */
   OUTPTR_LIST *a_outptr_list_interm;	/* intermediate output list */
   VAL_LIST *a_val_list;		/* analytic value list */
-  PRED_EXPR *a_instnum_pred;	/* instnum predicate for query with analytic */
-  DB_VALUE *a_instnum_val;	/* inst_num() value for query with analytic */
-  int a_instnum_flag;		/* inst_num() flag for query with analytic */
   int g_grbynum_flag;		/* stop or continue grouping? */
   bool g_with_rollup;		/* WITH ROLLUP clause for GROUP BY */
   int g_hash_eligible;		/* eligible for hash aggregate evaluation */
@@ -466,6 +464,7 @@ struct cte_proc_node
 #define XASL_INSTNUM_FLAG_SCAN_STOP	    0x04
 #define XASL_INSTNUM_FLAG_SCAN_LAST_STOP    0x08
 #define XASL_INSTNUM_FLAG_EVAL_DEFER	    0x10
+#define XASL_INSTNUM_FLAG_SCAN_STOP_AT_ANALYTIC	    0x20
 
 /*
  * Macros for buildlist block
@@ -492,6 +491,8 @@ struct cte_proc_node
 #define XASL_DECACHE_CLONE	      0x1000	/* decache clone */
 #define XASL_RETURN_GENERATED_KEYS    0x2000	/* return generated keys */
 #define XASL_NO_FIXED_SCAN	      0x4000	/* disable fixed scan for this proc */
+#define XASL_NEED_SINGLE_TUPLE_SCAN   0x8000	/* for exists operation */
+#define XASL_INCLUDES_TDE_CLASS              0x10000	/* is any tde class related */
 
 #define XASL_IS_FLAGED(x, f)        (((x)->flag & (int) (f)) != 0)
 #define XASL_SET_FLAG(x, f)         (x)->flag |= (int) (f)
@@ -748,6 +749,9 @@ struct list_spec_node
 {
   REGU_VARIABLE_LIST list_regu_list_pred;	/* regu list for the predicate */
   REGU_VARIABLE_LIST list_regu_list_rest;	/* regu list for rest of attrs */
+  REGU_VARIABLE_LIST list_regu_list_build;	/* regu list for hash build */
+  REGU_VARIABLE_LIST list_regu_list_probe;	/* regu list for hash probe */
+  int hash_list_scan_yn;	/* Is hash list scan possible? */
   XASL_NODE *xasl_node;		/* the XASL node that contains the list file identifier */
 };
 

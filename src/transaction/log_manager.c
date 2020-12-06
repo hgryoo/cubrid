@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright (C) 2008 Search Solution Corporation
++* Copyright (C) 2016 CUBRID Corporation
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -2113,6 +2114,18 @@ log_append_undoredo_crumbs (THREAD_ENTRY * thread_p, LOG_RCVINDEX rcvindex, LOG_
       return;
     }
 
+  if (LOG_MAY_CONTAIN_USER_DATA (rcvindex))
+    {
+      if (pgbuf_get_tde_algorithm (addr->pgptr) != TDE_ALGORITHM_NONE)
+	{
+	  if (prior_set_tde_encrypted (node, rcvindex) != NO_ERROR)
+	    {
+	      assert (false);
+	      return;
+	    }
+	}
+    }
+
   start_lsa = prior_lsa_next_record (thread_p, node, tdes);
 
   if (LOG_NEED_TO_SET_LSA (rcvindex, addr->pgptr))
@@ -2227,6 +2240,22 @@ log_append_undo_crumbs (THREAD_ENTRY * thread_p, LOG_RCVINDEX rcvindex, LOG_DATA
     {
       assert (false);
       return;
+    }
+
+  /* 
+   * if pgptr is NULL, the user data can be spilled as un-encrypted. 
+   * Now it seems that there is no case, but can be in the future.
+   */
+  if (addr->pgptr != NULL && LOG_MAY_CONTAIN_USER_DATA (rcvindex))
+    {
+      if (pgbuf_get_tde_algorithm (addr->pgptr) != TDE_ALGORITHM_NONE)
+	{
+	  if (prior_set_tde_encrypted (node, rcvindex) != NO_ERROR)
+	    {
+	      assert (false);
+	      return;
+	    }
+	}
     }
 
   start_lsa = prior_lsa_next_record (thread_p, node, tdes);
@@ -2345,6 +2374,18 @@ log_append_redo_crumbs (THREAD_ENTRY * thread_p, LOG_RCVINDEX rcvindex, LOG_DATA
   if (node == NULL)
     {
       return;
+    }
+
+  if (LOG_MAY_CONTAIN_USER_DATA (rcvindex))
+    {
+      if (pgbuf_get_tde_algorithm (addr->pgptr) != TDE_ALGORITHM_NONE)
+	{
+	  if (prior_set_tde_encrypted (node, rcvindex) != NO_ERROR)
+	    {
+	      assert (false);
+	      return;
+	    }
+	}
     }
 
   start_lsa = prior_lsa_next_record (thread_p, node, tdes);
@@ -2479,7 +2520,6 @@ log_append_undoredo_recdes2 (THREAD_ENTRY * thread_p, LOG_RCVINDEX rcvindex, con
   log_append_undoredo_crumbs (thread_p, rcvindex, &addr, num_undo_crumbs, num_redo_crumbs, undo_crumbs, redo_crumbs);
 }
 
-#if defined (ENABLE_UNUSED_FUNCTION)
 /*
  * log_append_undo_recdes - LOG UNDO (BEFORE) RECORD DESCRIPTOR
  *
@@ -2495,7 +2535,6 @@ log_append_undo_recdes (THREAD_ENTRY * thread_p, LOG_RCVINDEX rcvindex, LOG_DATA
 {
   log_append_undo_recdes2 (thread_p, rcvindex, addr->vfid, addr->pgptr, addr->offset, recdes);
 }
-#endif /* ENABLE_UNUSED_FUNCTION */
 
 void
 log_append_undo_recdes2 (THREAD_ENTRY * thread_p, LOG_RCVINDEX rcvindex, const VFID * vfid, PAGE_PTR pgptr,
@@ -2755,6 +2794,18 @@ log_append_postpone (THREAD_ENTRY * thread_p, LOG_RCVINDEX rcvindex, LOG_DATA_AD
       return;
     }
 
+  if (LOG_MAY_CONTAIN_USER_DATA (rcvindex))
+    {
+      if (pgbuf_get_tde_algorithm (addr->pgptr) != TDE_ALGORITHM_NONE)
+	{
+	  if (prior_set_tde_encrypted (node, rcvindex) != NO_ERROR)
+	    {
+	      assert (false);
+	      return;
+	    }
+	}
+    }
+
   // redo data must be saved before calling prior_lsa_next_record, which may free this prior node
   tdes->m_log_postpone_cache.add_redo_data (*node);
 
@@ -2845,6 +2896,23 @@ log_append_run_postpone (THREAD_ENTRY * thread_p, LOG_RCVINDEX rcvindex, LOG_DAT
       if (node == NULL)
 	{
 	  return;
+	}
+
+      /* 
+       * By the comment above for this function, all the potpone log is page-oriented, 
+       * and have to contain page address. However, code below check if addr->pgptr is NULL.
+       * So, we also check it just in case.
+       */
+      if (addr->pgptr != NULL && LOG_MAY_CONTAIN_USER_DATA (rcvindex))
+	{
+	  if (pgbuf_get_tde_algorithm (addr->pgptr) != TDE_ALGORITHM_NONE)
+	    {
+	      if (prior_set_tde_encrypted (node, rcvindex) != NO_ERROR)
+		{
+		  assert (false);
+		  return;
+		}
+	    }
 	}
 
       run_posp = (LOG_REC_RUN_POSTPONE *) node->data_header;
@@ -3005,6 +3073,24 @@ log_append_compensate_internal (THREAD_ENTRY * thread_p, LOG_RCVINDEX rcvindex, 
       LSA_COPY (&compensate->undo_nxlsa, &prev_lsa);
     }
   compensate->length = length;
+
+  /*
+   * Although compensation log is page-oriented, pgptr can be NULL 
+   * when fails to fix the page because of an error.
+   * In this case, we don't encrypt the log and it can contain user data un-encrypted.
+   * After all, it is very rare and exceptional case.
+   */
+  if (pgptr != NULL && LOG_MAY_CONTAIN_USER_DATA (rcvindex))
+    {
+      if (pgbuf_get_tde_algorithm (pgptr) != TDE_ALGORITHM_NONE)
+	{
+	  if (prior_set_tde_encrypted (node, rcvindex) != NO_ERROR)
+	    {
+	      assert (false);
+	      return;
+	    }
+	}
+    }
 
   start_lsa = prior_lsa_next_record (thread_p, node, tdes);
 
@@ -3861,6 +3947,8 @@ log_sysop_end_logical_undo (THREAD_ENTRY * thread_p, LOG_RCVINDEX rcvindex, cons
       log_record.undo.data.rcvindex = rcvindex;
       log_record.undo.length = undo_size;
     }
+  assert (LOG_MAY_CONTAIN_USER_DATA (rcvindex) ? vfid != NULL : true);
+  log_record.vfid = vfid;
 
   log_sysop_commit_internal (thread_p, &log_record, undo_size, undo_data, false);
 }
@@ -4352,11 +4440,42 @@ log_append_sysop_end (THREAD_ENTRY * thread_p, LOG_TDES * tdes, LOG_REC_SYSOP_EN
     }
   else
     {
+      LOG_RCVINDEX rcvindex = RV_NOT_DEFINED;
       /* Save data head. */
       /* First save lastparent_lsa and prv_topresult_lsa. */
       LOG_LSA start_lsa = LSA_INITIALIZER;
 
       memcpy (node->data_header, sysop_end, node->data_header_length);
+
+      if (sysop_end->type == LOG_SYSOP_END_LOGICAL_UNDO)
+	{
+	  rcvindex = sysop_end->undo.data.rcvindex;
+	}
+      else if (sysop_end->type == LOG_SYSOP_END_LOGICAL_MVCC_UNDO)
+	{
+	  rcvindex = sysop_end->mvcc_undo.undo.data.rcvindex;
+	}
+
+      if (LOG_MAY_CONTAIN_USER_DATA (rcvindex))
+	{
+	  /* Some cases of logical undo */
+	  TDE_ALGORITHM tde_algo = TDE_ALGORITHM_NONE;
+
+	  assert (sysop_end->vfid != NULL);
+	  if (file_get_tde_algorithm (thread_p, sysop_end->vfid, PGBUF_CONDITIONAL_LATCH, &tde_algo) != NO_ERROR)
+	    {
+	      tde_algo = TDE_ALGORITHM_NONE;
+	      /* skip to encrypt in release */
+	    }
+	  if (tde_algo != TDE_ALGORITHM_NONE)
+	    {
+	      if (prior_set_tde_encrypted (node, rcvindex) != NO_ERROR)
+		{
+		  assert (false);
+		  return;
+		}
+	    }
+	}
 
       start_lsa = prior_lsa_next_record (thread_p, node, tdes);
       assert (!LSA_ISNULL (&start_lsa));
@@ -4404,6 +4523,15 @@ log_append_repl_info_internal (THREAD_ENTRY * thread_p, LOG_TDES * tdes, bool is
 	    {
 	      assert (false);
 	      continue;
+	    }
+
+	  if (repl_rec->tde_encrypted)
+	    {
+	      if (prior_set_tde_encrypted (node, repl_rec->rcvindex) != NO_ERROR)
+		{
+		  assert (false);
+		  continue;
+		}
 	    }
 
 	  log = (LOG_REC_REPLICATION *) node->data_header;
@@ -6702,7 +6830,7 @@ xlog_dump (THREAD_ENTRY * thread_p, FILE * out_fp, int isforward, LOG_PAGEID sta
 
   if (log_dump_ptr == NULL)
     {
-      log_dump_ptr = log_zip_alloc (IO_PAGESIZE, false);
+      log_dump_ptr = log_zip_alloc (IO_PAGESIZE);
       if (log_dump_ptr == NULL)
 	{
 	  fprintf (out_fp, " Error memory alloc... Quit\n");
@@ -7269,7 +7397,7 @@ log_rollback (THREAD_ENTRY * thread_p, LOG_TDES * tdes, const LOG_LSA * upto_lsa
 
   isdone = false;
 
-  log_unzip_ptr = log_zip_alloc (IO_PAGESIZE, false);
+  log_unzip_ptr = log_zip_alloc (IO_PAGESIZE);
 
   if (log_unzip_ptr == NULL)
     {
@@ -9356,7 +9484,7 @@ log_get_undo_record (THREAD_ENTRY * thread_p, LOG_PAGE * log_page_p, LOG_LSA pro
 
   if (is_zipped)
     {
-      log_unzip_ptr = log_zip_alloc (IO_PAGESIZE, false);
+      log_unzip_ptr = log_zip_alloc (IO_PAGESIZE);
       if (log_unzip_ptr == NULL)
 	{
 	  logpb_fatal_error (thread_p, true, ARG_FILE_LINE, "log_get_undo_record");

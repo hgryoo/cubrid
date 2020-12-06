@@ -72,6 +72,7 @@ $       52      dump_tz
 $       53      restoreslave
 $       54      delvoldb
 $       56      checksumdb
+$       57      tde
 
 $set 1 MSGCAT_UTIL_SET_GENERIC
 1 在数据库名 '%2$s' 中有无效的长度或字符 '%1$c' \n
@@ -124,6 +125,7 @@ cubrid 管理工具，版本 %1$s\n\
     dump_tz\n\
     restoreslave\n\
     vacuumdb\n\
+    tde\n\
 \n\
 %4$s 是一个 DBMS 工具.\n\
 要寻找额外的信息, 可浏览 http://www.cubrid.org\n
@@ -148,6 +150,7 @@ cubrid 管理工具，版本 %1$s\n\
     broker\n\
     manager\n\
     heartbeat\n\
+    javasp\n\
 \n\
 可用的管理员工具:\n\
     addvoldb\n\
@@ -182,6 +185,7 @@ cubrid 管理工具，版本 %1$s\n\
     dump_tz\n\
     vacuumdb\n\
     checksumdb\n\
+    tde\n\
 \n\
 %4$s 是一个 DBMS 工具.\n\
 要寻找额外的信息, 可浏览 http://www.cubrid.org\n
@@ -248,10 +252,24 @@ cubrid 管理工具，版本 %1$s\n\
 41 没有安装 cubrid manager 服务.\n
 42 无效的参数.\n
 43 打开文件 (%1$s) 时出错.\n
+44 cubrid 应用工具, 版本 %1$s\n\
+用法: %2$s javasp <命令> [参数]\n\
+\n\
+可用命令:\n\
+    start       [数据库名]\n\
+    stop        [数据库名]\n\
+    restart     [数据库名]\n\
+    status      [数据库名]\n
 
 $set 2 MSGCAT_UTIL_SET_BACKUPDB
 30 警告: 在单机模式下 -t 选项将被忽略.\n
 31 错误: 目标路径不存在或不是目录.\n
+32 通过使用--separate-keys选项，它将密钥文件（_keys）与备份卷分开。\n\
+如果密钥文件丢失，即使有备份卷，还原（restoredb）也可能无法正常进行。\n
+33 备份卷包括密钥文件（_keys）。\n\
+如果表经过TDE加密，则可能导致该数据的安全性问题。\n\
+要分离密钥文件以防止该文件，请使用--separate-keys选项。\n
+34 错误:无法将FIFIO文件用作带有分隔键的目标路径。\n
 60 \
 backupdb: 备份一个数据库.\n\
 用法: %1$s backupdb [选项] 数据库名\n\
@@ -270,7 +288,8 @@ backupdb: 备份一个数据库.\n\
       --no-check               不检测数据库的一致性; 默认: 检测\n\
   -t, --thread-count=COUNT     线程数; 默认: 0(auto)\n\
   -z, --compress               压缩备份卷; 默认: 不压缩\n\
-      --sleep-msecs=N          每读 1M 休眠 N  毫秒; 默认: 0\n
+      --sleep-msecs=N          每读 1M 休眠 N  毫秒; 默认: 0\n\
+  -k, --separate-keys          TDE的密钥文件（_keys）不包含在备份卷中，而是被分成一个文件\n
 71 不兼容的参数, \"%1$s\", 和 \"%2$s\"\n
 
 
@@ -388,7 +407,8 @@ restoredb: 恢复一个数据库.\n\
   -l, --level=LEVEL                 指定将要被恢复的备份的等级为 LEVEL ; 查看 backup 的使用说明; 默认: 0(full backup)\n\
   -p, --partial-recovery            执行部分恢复，如果有任何日志档案存在\n\
   -o, --output-file=FILE            将输出信息重定向到FILE; 默认: 空\n\
-  -u, --use-database-location-path  将数据库和日志文件恢复到数据库位置文件中指定的路径中去\n
+  -u, --use-database-location-path  将数据库和日志文件恢复到数据库位置文件中指定的路径中去\n\
+  -k, --keys-file-path              还原期间要使用的TDE的密钥文件（_keys）路径\n
 
 
 $set 12 MSGCAT_UTIL_SET_LOADDB
@@ -401,7 +421,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 25 \n*** 语法检测 ***\n\n
 26 %1$d 个错误被检测到\n
 27 \n*** 插入对象 ***\n\n
-28 总共 %1$8d 个对象被插入.\n
+28 总共 %1$ld 个对象被插入.\n
 29 总共 %1$8d 个被涉及的对象以默认内容被插入.\n
 30 \n*** 提交事务中 ***\n
 31 \n*** 关闭数据库 ***\n
@@ -421,7 +441,7 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 45 类 %2$s 的实例 %1$d 已经被定义\n
 46 类 %2$s 的实例 %1$d 已经被保留\n
 47 在属性 '%1$s' 上违反了唯一性, 转化为 NULL\n
-48 %1$s %2$d 个实例\n
+48 %1$s %2$ld 个实例\n
 49 类 %1$s\n
 50 密码:
 51 \n*** 更新类统计信息 ***\n
@@ -431,16 +451,16 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 55 丢失
 56 在 %1$s
 57 不兼容的参数, \"%1$s\", 和 \"%2$s\"\n
-58 %1$s %2$d 个实例被提交\n
+58 %1$s %2$ld 个实例被提交\n
 59 \n无法调用非优化版本的loaddb.\n
 60 将 \"%1$s\" 解析为 %2$s 类型时出错.\n
 61 CS模式下不支持对象引用\n
 62 更新 %1$s 类的统计信息\n
-112   %1$d 个实例\r
+112   %1$ld 个实例\r
 113 最后提交的行 : %1$d\n
 114 错误控制文件
 115 在加载过程中输入文件来控制错误
-116 共插入了 %1$8d 个对象, 其中 %2$d 个对象插入失败.\n
+116 共插入了 %1$ld 个对象, 其中 %2$ld 个对象插入失败.\n
 117 装载失败.\n
 118 类名的最大长度是 %1$d 字节.\n
 119 共检查 %1$8d 个对象, %2$d 个对象失败.\n
@@ -474,10 +494,10 @@ loaddb: 将对象和结构导入到数据库.\n\
 $set 13 MSGCAT_UTIL_SET_UNLOADDB
 41 缓存页数值无效.\n
 42 缓存页大小无效.\n
-43 %1$d 个对象被转储.\n
+43 %1$ld 个对象被转储.\n
 44 类 %1$s
 45 , %1$d 个实例.\n
-46 %2$d 个对象中只有 %1$d 个对象被成功转储.\n
+46 %2$ld 个对象中只有 %1$ld 个对象被成功转储.\n
 47 输出目录过长.\n
 48 LSA : %1$d %2$d \n
 49 密码:
@@ -553,16 +573,17 @@ compactdb: 释放数据库中未使用的空间.\n\
   -i, --input-class-file=FILE       类名的输入文件\n\
                                     class_name 列表必须为空\n\
                                     默认: 压缩所有的类\n\
-                                    只在CS模式中有效\n\
   -p, --pages-commited-once=NUMBER  一次提交的最大页数目\n\
                                     默认: 10\n\
                                     只在CS模式中可用\n\
   -S, --SA-mode                     单机模式执行\n\
   -C, --CS-mode                     客户端-服务端模式执行\n\
   -d, --delete-old-repr             从目录中删除旧的类表述; 默认: 不使用\n\
-  class_name_list                   只在CS模式中有效\n\
   -I, --Instance-lock-timeout       实例锁的超时\n\
-  -c, --class-lock-timeout          类锁的超时\n
+                                    只在CS模式中有效\n\
+  -c, --class-lock-timeout          类锁的超时\n\
+                                    只在CS模式中有效\n\
+  class_name_list                   压缩类名列表\n
 
 $set 15 MSGCAT_UTIL_SET_COMMDB
 21 运行在主机 %1$s 上的 CUBRID master进程\n在 %2$s 启动.
@@ -808,6 +829,7 @@ killtran: 管理数据库的事务.\n\
       --kill-program-name=NAME       通过客户端程序名取消所有事务\n\
       --kill-sql-id=SQL_ID           取消所有sql-id为SQL_ID的事务\n\
   -p, --dba-password=PASS            DBA用户的密码; 如果没有指定将提示输入\n\
+                                     (仅与-i或--kill选项一起使用。否则会出错)\n\
   -d, --display-information          显示关于活动事务的信息\n\
   -q, --query-exec-info              显示活动事务查询执行的信息\n\
   -f, --force                        取消事务而不需要核对提示\n
@@ -1061,8 +1083,6 @@ tranlist: 输出活动事务信息.\n\
 用法: %1$s tranlist [选项] 数据库名\n\
 \n\
 可用选项:\n\
-  -u, --user=ID                访问数据库的用户ID; default: DBA user\n\
-  -p, --password=PASS          用户密码; default: none\n\
   -s, --summary                打印事务的汇总信息\n\
       --sort-key=COLUMN_NUMBER 列序号将被排序\n\
       --reverse                反转排序结果\n
@@ -1120,7 +1140,8 @@ restoreslave: 恢复一个从数据库.\n\
       --list                        显示一个未恢复的备份卷的列表\n\
   -B, --backup-file-path=PATH       指定一个将被恢复的备份卷的路径\n\
   -o, --output-file=FILE            重定向输出信息到FILE; 默认: 无\n\
-  -u, --use-database-location-path  恢复数据库和日志卷到数据库位置文件指定的路径\n
+  -u, --use-database-location-path  恢复数据库和日志卷到数据库位置文件指定的路径\n\
+  -k, --keys-file-path              还原期间要使用的TDE的密钥文件（_keys）路径\n
 
 $set 54 MSGCAT_UTIL_SET_DELVOLDB
 21 准备删除下面的卷:\n\n
@@ -1173,3 +1194,23 @@ checksumdb: 检查复制完整性.\n\
       --resume                  重新开始计算校验和\n\
       --schema-only             只检查结构(schema)的一致性\n\
       --cont-on-error           计算过程中遇到错误时仍然继续\n
+
+$set 57 MSGCAT_UTIL_SET_TDE
+21 输入DBA密码:
+25 无法获取在数据库上设置的密钥信息\n
+26 试图将键从键（索引: %1$d）更改为键（索引: %2$d）.. \n
+27 密钥已从密钥（索引: %1$d）更改为密钥（索引: %2$d）\n
+28 无法删除数据库上设置的密钥\n
+29 键（索引: %1$d）已被删除\n
+30 生成了一个新密钥-密钥索引:在%2$s上创建了%1$d
+60 \
+tde: 透明数据加密（TDE）管理\n\
+用法: %1$s tde OPERATION（-s|-n|-d|-c）[OPTION]数据库名称\n\
+\n\
+有效选项:\n\
+    -p, --dba-password=PASS    DBA用户的密码；如果未指定，则会提示\n\
+操作:必须给出一种操作，并且它们是唯一的\n\
+    -s, --show-keys            打印在数据库和密钥文件（_keys）上设置的密钥信息\n\
+    -n, --generate-new-key     在密钥文件（_keys）中生成一个新密钥；最大计数:128\n\
+    -d, --delete-key=KEY_INDEX 删除密钥文件（_keys）中的密钥\n\
+    -c, --change-key=KEY_INDEX 将数据库中设置的密钥更改为密钥文件（_keys）中的另一个密钥\n

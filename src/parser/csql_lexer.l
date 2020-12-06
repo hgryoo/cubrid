@@ -113,6 +113,7 @@ int yybuffer_pos;
 										csql_yylval.cptr = pt_makename(yytext);
 										return ADDDATE; }
 [aA][dD][dD]_[mM][oO][nN][tT][hH][sS]					{ begin_token(yytext);   return ADD_MONTHS; }
+[aA][eE][sS]        { begin_token(yytext);   return AES; }
 [aA][fF][tT][eE][rR]							{ begin_token(yytext);   return AFTER; }
 [aA][lL][lL]								{ begin_token(yytext);   return ALL; }
 [aA][lL][lL][oO][cC][aA][tT][eE]					{ begin_token(yytext);   return ALLOCATE; }
@@ -126,6 +127,7 @@ int yybuffer_pos;
 										csql_yylval.cptr = pt_makename(yytext);
 										return ARCHIVE; }
 [aA][rR][eE]								{ begin_token(yytext);   return ARE; }
+[aA][rR][iI][aA]								{ begin_token(yytext);   return ARIA; }
 [aA][sS]								{ begin_token(yytext);   return AS; }
 [aA][sS][cC]								{ begin_token(yytext);   return ASC; }
 [aA][sS][sS][eE][rR][tT][iI][oO][nN]					{ begin_token(yytext);   return ASSERTION; }
@@ -158,6 +160,9 @@ int yybuffer_pos;
 [bB][oO][tT][hH]							{ begin_token(yytext);   return BOTH_; }
 [bB][rR][eE][aA][dD][tT][hH]						{ begin_token(yytext);   return BREADTH; }
 [bB][yY]								{ begin_token(yytext);   return BY; }
+[bB][uU][fF][fF][eE][rR]						{ begin_token(yytext);
+										csql_yylval.cptr = pt_makename(yytext);
+										return BUFFER; }
 [cC][aA][lL][lL]							{ begin_token(yytext);   return CALL; }
 [cC][aA][cC][hH][eE]							{ begin_token(yytext);
 										csql_yylval.cptr = pt_makename(yytext);
@@ -287,6 +292,9 @@ int yybuffer_pos;
 [dD][uU][pP][lL][iI][cC][aA][tT][eE]					{ begin_token(yytext);   return DUPLICATE_; }
 [dD][aA][tT][eE]							{ begin_token(yytext);   return Date; }
 [dD][oO][uU][bB][lL][eE]						{ begin_token(yytext);   return Double; }
+[dD][oO][nN][tT]_[Rr][Ee][uU][sS][eE]_[oO][iI][dD]			{ begin_token(yytext);
+									  csql_yylval.cptr = pt_makename(yytext);
+									  return DONT_REUSE_OID; }
 [eE][aA][cC][hH]							{ begin_token(yytext);   return EACH; }
 [eE][lL][sS][eE]							{ begin_token(yytext);   return ELSE; }
 [eE][lL][sS][eE][iI][fF]						{ begin_token(yytext);   return ELSEIF; }
@@ -294,6 +302,7 @@ int yybuffer_pos;
 										csql_yylval.cptr = pt_makename(yytext);
 										return ELT; }
 [eE][mM][pP][tT][yY]                                                    { begin_token(yytext);   return EMPTY; }
+[eE][nN][cC][rR][yY][pP][tT]        { begin_token(yytext);   return ENCRYPT; }
 [eE][nN][dD]								{ begin_token(yytext);   return END; }
 [eE][nN][uU][mM]							{ begin_token(yytext);	 return ENUM; }
 [eE][qQ][uU][aA][lL][sS]						{ begin_token(yytext);   return EQUALS; }
@@ -724,6 +733,11 @@ int yybuffer_pos;
 [rR][eE][fF][eE][rR][eE][nN][cC][eE][sS]				{ begin_token(yytext);   return REFERENCES; }
 [rR][eE][fF][eE][rR][eE][nN][cC][iI][nN][gG]				{ begin_token(yytext);   return REFERENCING; }
 [rR][eE][gG][eE][xX][pP]						{ begin_token(yytext);   return REGEXP; }
+[rR][eE][gG][eE][xX][pP][_][cC][oO][uU][nN][tT]					{ begin_token(yytext);   return REGEXP_COUNT; }
+[rR][eE][gG][eE][xX][pP][_][iI][nN][sS][tT][rR]					{ begin_token(yytext);   return REGEXP_INSTR; }
+[rR][eE][gG][eE][xX][pP][_][lL][iI][kK][eE]						{ begin_token(yytext);   return REGEXP_LIKE; }
+[rR][eE][gG][eE][xX][pP][_][rR][eE][pP][lL][aA][cC][eE]			{ begin_token(yytext);   return REGEXP_REPLACE; }
+[rR][eE][gG][eE][xX][pP][_][sS][uU][bB][sS][tT][rR]				{ begin_token(yytext);   return REGEXP_SUBSTR; }
 [rR][eE][jJ][eE][cC][tT]						{ begin_token(yytext);
 										csql_yylval.cptr = pt_makename(yytext);
 										return REJECT_; }
