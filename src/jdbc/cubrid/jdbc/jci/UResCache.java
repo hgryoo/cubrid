@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation
- * Copyright (C) 2016 CUBRID Corporation 
+ * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution. 
  *
  * Redistribution and use in source and binary forms, with or without modification, 
  * are permitted provided that the following conditions are met: 
@@ -61,14 +60,11 @@ public class UResCache {
 		}
 	}
 
-	public void setExpire() {
-		cache_data.srvCacheTime = 0;
-	}
-	
 	boolean isExpired(long checkTime) {
 		if (cache_data != null && used == false) {
 			return true;
 		} else {
+			used = false;
 			return false;
 		}
 	}

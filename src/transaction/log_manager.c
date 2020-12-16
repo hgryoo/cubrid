@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation
-+* Copyright (C) 2016 CUBRID Corporation
+ * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by

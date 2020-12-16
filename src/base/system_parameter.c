@@ -1405,22 +1405,18 @@ int PRM_FILTER_PRED_MAX_CACHE_CLONES = 10;
 static int prm_filter_pred_max_cache_clones_default = 10;
 static unsigned int prm_filter_pred_max_cache_clones_flag = 0;
 
-int PRM_LIST_QUERY_CACHE_MODE = 2;
-static int prm_list_query_cache_mode_default = 2;
+int PRM_LIST_QUERY_CACHE_MODE = 0;
+static int prm_list_query_cache_mode_default = 0;	/* disabled */
 static int prm_list_query_cache_mode_upper = 2;
-static int prm_list_query_cache_mode_lower = 2;
+static int prm_list_query_cache_mode_lower = 0;
 static unsigned int prm_list_query_cache_mode_flag = 0;
 
-int PRM_LIST_MAX_QUERY_CACHE_ENTRIES = 200;
-static int prm_list_max_query_cache_entries_default = 200;
-static int prm_list_max_query_cache_entries_upper = INT_MAX;
-static int prm_list_max_query_cache_entries_lower = 0;
+int PRM_LIST_MAX_QUERY_CACHE_ENTRIES = -1;
+static int prm_list_max_query_cache_entries_default = -1;	/* disabled */
 static unsigned int prm_list_max_query_cache_entries_flag = 0;
 
-int PRM_LIST_MAX_QUERY_CACHE_PAGES = 1000;
-static int prm_list_max_query_cache_pages_default = 1000;
-static int prm_list_max_query_cache_pages_upper = INT_MAX;
-static int prm_list_max_query_cache_pages_lower = 0;
+int PRM_LIST_MAX_QUERY_CACHE_PAGES = -1;
+static int prm_list_max_query_cache_pages_default = -1;	/* infinity */
 static unsigned int prm_list_max_query_cache_pages_flag = 0;
 
 bool PRM_USE_ORDERBY_SORT_LIMIT = true;
@@ -3611,7 +3607,7 @@ static SYSPRM_PARAM prm_Def[] = {
    (DUP_PRM_FUNC) NULL},
   {PRM_ID_LIST_QUERY_CACHE_MODE,
    PRM_NAME_LIST_QUERY_CACHE_MODE,
-   (PRM_FOR_SERVER | PRM_HIDDEN),
+   (PRM_FOR_SERVER),
    PRM_INTEGER,
    &prm_list_query_cache_mode_flag,
    (void *) &prm_list_query_cache_mode_default,
@@ -3628,8 +3624,7 @@ static SYSPRM_PARAM prm_Def[] = {
    &prm_list_max_query_cache_entries_flag,
    (void *) &prm_list_max_query_cache_entries_default,
    (void *) &PRM_LIST_MAX_QUERY_CACHE_ENTRIES,
-   (void *) &prm_list_max_query_cache_entries_upper,
-   (void *) &prm_list_max_query_cache_entries_lower,
+   (void *) NULL, (void *) NULL,
    (char *) NULL,
    (DUP_PRM_FUNC) NULL,
    (DUP_PRM_FUNC) NULL},
@@ -3640,8 +3635,7 @@ static SYSPRM_PARAM prm_Def[] = {
    &prm_list_max_query_cache_pages_flag,
    (void *) &prm_list_max_query_cache_pages_default,
    (void *) &PRM_LIST_MAX_QUERY_CACHE_PAGES,
-   (void *) &prm_list_max_query_cache_pages_upper,
-   (void *) &prm_list_max_query_cache_pages_lower,
+   (void *) NULL, (void *) NULL,
    (char *) NULL,
    (DUP_PRM_FUNC) NULL,
    (DUP_PRM_FUNC) NULL},
@@ -10411,7 +10405,12 @@ prm_tune_parameters (void)
       prm_set (pb_aout_ratio_prm, "0", false);
     }
 
-
+  /* temporarily modifies the query result cache feature to be disabled in RB-8.2.2. because it is not verified on 64
+   * bit environment. */
+  if (query_cache_mode_prm != NULL)
+    {
+      prm_set (query_cache_mode_prm, "0", false);
+    }
 
   ha_mode_prm = prm_find (PRM_NAME_HA_MODE, NULL);
   ha_server_state_prm = prm_find (PRM_NAME_HA_SERVER_STATE, NULL);

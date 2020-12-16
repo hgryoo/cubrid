@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation
- * Copyright (C) 2016 CUBRID Corporation 
+ * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution. 
  *
  * Redistribution and use in source and binary forms, with or without modification, 
  * are permitted provided that the following conditions are met: 
@@ -274,7 +273,6 @@ public class CUBRIDResultSet implements ResultSet {
 						}
 						is_closed = true;
 
-						u_stmt.moveCursor(0, 0);
 						clearCurrentRow();
 						if (stmt.getResultSetHoldability() == ResultSet.HOLD_CURSORS_OVER_COMMIT) {
 							u_stmt.closeCursor();
@@ -1433,7 +1431,7 @@ public class CUBRIDResultSet implements ResultSet {
 
 		clearCurrentRow();
 
-		u_stmt.reFresh();
+		u_stmt.reFetch();
 		error = u_stmt.getRecentError();
 
 		switch (error.getErrorCode()) {

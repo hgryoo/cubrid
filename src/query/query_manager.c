@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation
- * Copyright (C) 2016 CUBRID Corporation
+ * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -138,15 +137,12 @@ QMGR_QUERY_TABLE qmgr_Query_table = { NULL, 0, NULL,
   {{PTHREAD_MUTEX_INITIALIZER, NULL, 0}, {PTHREAD_MUTEX_INITIALIZER, NULL, 0}}
 };
 
-int xcache_invalidate_qcaches (THREAD_ENTRY * thread_p, const OID * arg);
-
 #if !defined(SERVER_MODE)
 static struct drand48_data qmgr_rand_buf;
 #endif
 
 static QMGR_PAGE_TYPE qmgr_get_page_type (PAGE_PTR page_p, QMGR_TEMP_FILE * temp_file_p);
 static bool qmgr_is_allowed_result_cache (QUERY_FLAG flag);
-static bool qmgr_can_get_from_cache (QUERY_FLAG flag);
 static bool qmgr_can_get_result_from_cache (QUERY_FLAG flag);
 static void qmgr_put_page_header (PAGE_PTR page_p, QFILE_PAGE_HEADER * header_p);
 
@@ -219,13 +215,9 @@ qmgr_get_page_type (PAGE_PTR page_p, QMGR_TEMP_FILE * temp_file_p)
 static bool
 qmgr_is_allowed_result_cache (QUERY_FLAG flag)
 {
-  static int query_cache_mode = prm_get_integer_value (PRM_ID_LIST_QUERY_CACHE_MODE);
+  int query_cache_mode;
 
-  if (QFILE_IS_LIST_CACHE_DISABLED)
-    {
-      return false;
-    }
-
+  query_cache_mode = prm_get_integer_value (PRM_ID_LIST_QUERY_CACHE_MODE);
   if (query_cache_mode == QFILE_LIST_QUERY_CACHE_MODE_OFF
       || (query_cache_mode == QFILE_LIST_QUERY_CACHE_MODE_SELECTIVELY_OFF && (flag & RESULT_CACHE_INHIBITED))
       || (query_cache_mode == QFILE_LIST_QUERY_CACHE_MODE_SELECTIVELY_ON && !(flag & RESULT_CACHE_REQUIRED)))
@@ -239,12 +231,9 @@ qmgr_is_allowed_result_cache (QUERY_FLAG flag)
 static bool
 qmgr_can_get_result_from_cache (QUERY_FLAG flag)
 {
-  static int query_cache_mode = prm_get_integer_value (PRM_ID_LIST_QUERY_CACHE_MODE);
+  int query_cache_mode;
 
-  if (QFILE_IS_LIST_CACHE_DISABLED)
-    {
-      return false;
-    }
+  query_cache_mode = prm_get_integer_value (PRM_ID_LIST_QUERY_CACHE_MODE);
 
   if (query_cache_mode == QFILE_LIST_QUERY_CACHE_MODE_OFF
       || (query_cache_mode != QFILE_LIST_QUERY_CACHE_MODE_OFF && (flag & NOT_FROM_RESULT_CACHE)))
@@ -362,6 +351,7 @@ qmgr_allocate_query_entry (THREAD_ENTRY * thread_p, QMGR_TRAN_ENTRY * tran_entry
   query_p->er_msg = NULL;
   query_p->query_flag = 0;
   query_p->is_holdable = false;
+  query_p->is_preserved = false;
   query_p->includes_tde_class = false;
 
 #if defined (NDEBUG)
@@ -1506,8 +1496,9 @@ xqmgr_execute_query (THREAD_ENTRY * thread_p, const XASL_ID * xasl_id_p, QUERY_I
 	{
 	  if (list_id_p == NULL)
 	    {
-	      goto end;
+	      goto exit_on_error;
 	    }
+
 	  /* the type of the result file should be FILE_QUERY_AREA in order not to deleted at the time of query_end */
 	  if (list_id_p->tfile_vfid != NULL && list_id_p->tfile_vfid->temp_file_type != FILE_QUERY_AREA)
 	    {
@@ -1531,24 +1522,10 @@ xqmgr_execute_query (THREAD_ENTRY * thread_p, const XASL_ID * xasl_id_p, QUERY_I
 	    }
 
 	  /* update the cache entry for the result associated with the used parameter values (DB_VALUE array) if there
-	   * is, or make new one
-	   * in case list_ht_no is less than 0,
-	   *     the cache is not found and should be newly added (surely list_cache_entry_p is null)
-	   * in case list_ht_no is not less than 0 and list_cache_entry_p is null
-	   *     the cache entry is found but the entry is used by other transaction
-	   */
-	  if (list_cache_entry_p && xasl_cache_entry_p->list_ht_no < 0)
-	    {
-	      assert (false);
-	    }
-
-	  if (list_cache_entry_p || xasl_cache_entry_p->list_ht_no < 0)
-	    {
-	      list_cache_entry_p =
-		qfile_update_list_cache_entry (thread_p, &xasl_cache_entry_p->list_ht_no, &params, list_id_p,
-					       xasl_cache_entry_p);
-	    }
-
+	   * is, or make new one */
+	  list_cache_entry_p =
+	    qfile_update_list_cache_entry (thread_p, &xasl_cache_entry_p->list_ht_no, &params, list_id_p,
+					   xasl_cache_entry_p->sql_info.sql_hash_text);
 	  if (list_cache_entry_p == NULL)
 	    {
 	      char *s;
@@ -1973,15 +1950,13 @@ xqmgr_end_query (THREAD_ENTRY * thread_p, QUERY_ID query_id)
 
   assert (query_p->query_status == QUERY_COMPLETED);
 
-  /* query is closed */
+  /* end use of the list file of the cached result */
   if (query_p->xasl_ent && query_p->list_ent)
     {
       (void) qfile_end_use_of_list_cache_entry (thread_p, query_p->list_ent, false);
-      query_p->list_ent = NULL;
-      query_p->xasl_ent = NULL;
     }
 
-  /* destroy the temp file from list id */
+  /* destroy query result list file */
   if (query_p->list_id)
     {
       QFILE_FREE_AND_INIT_LIST_ID (query_p->list_id);
@@ -2048,7 +2023,7 @@ qmgr_clear_relative_cache_entries (THREAD_ENTRY * thread_p, QMGR_TRAN_ENTRY * tr
     {
       for (i = 0, class_oid_p = oid_block_p->oid_array; i < oid_block_p->last_oid_idx; i++, class_oid_p++)
 	{
-	  if (xcache_invalidate_qcaches (thread_p, class_oid_p) != NO_ERROR)
+	  if (qexec_clear_list_cache_by_class (thread_p, class_oid_p) != NO_ERROR)
 	    {
 	      er_log_debug (ARG_FILE_LINE,
 			    "qm_clear_trans_wakeup: qexec_clear_list_cache_by_class failed for class { %d %d %d }\n",
@@ -2081,7 +2056,7 @@ qmgr_clear_relative_cache_entries (THREAD_ENTRY * thread_p, QMGR_TRAN_ENTRY * tr
 void
 qmgr_clear_trans_wakeup (THREAD_ENTRY * thread_p, int tran_index, bool is_tran_died, bool is_abort)
 {
-  QMGR_QUERY_ENTRY *query_p, *q;
+  QMGR_QUERY_ENTRY *query_p;
   QMGR_TRAN_ENTRY *tran_entry_p;
 
   /* for bulletproofing check if tran_index is a valid index, note that normally this should never happen... */
@@ -2099,13 +2074,19 @@ qmgr_clear_trans_wakeup (THREAD_ENTRY * thread_p, int tran_index, bool is_tran_d
 
   tran_entry_p = &qmgr_Query_table.tran_entries_p[tran_index];
 
-  /* if the transaction is aborting, clear relative cache entries */
-  if (tran_entry_p->modified_classes_p && !QFILE_IS_LIST_CACHE_DISABLED)
+  if (!QFILE_IS_LIST_CACHE_DISABLED)
     {
-      if (!qfile_has_no_cache_entries ())
+      qfile_clear_uncommited_list_cache_entry (thread_p, tran_index);
+    }
+
+  /* if the transaction is aborting, clear relative cache entries */
+  if (tran_entry_p->modified_classes_p)
+    {
+      if (is_abort)
 	{
 	  qmgr_clear_relative_cache_entries (thread_p, tran_entry_p);
 	}
+
       qmgr_free_oid_block (thread_p, tran_entry_p->modified_classes_p);
       tran_entry_p->modified_classes_p = NULL;
     }
@@ -2126,29 +2107,30 @@ qmgr_clear_trans_wakeup (THREAD_ENTRY * thread_p, int tran_index, bool is_tran_d
   query_p = tran_entry_p->query_entry_list_p;
   while (query_p)
     {
-
-      if (is_abort || is_tran_died)
+      if (query_p->is_holdable)
 	{
-	  /* Make sure query entry info is not leaked in session. */
-	  xsession_clear_query_entry_info (thread_p, query_p->query_id);
-	}
-      else
-	{
-	  /* this is a commit and we have to add the result to the holdable queries list. */
-	  if (query_p->query_status != QUERY_COMPLETED)
+	  if (is_abort || is_tran_died)
 	    {
-	      er_log_debug (ARG_FILE_LINE, "query %d not completed !\n", query_p->query_id);
+	      /* Make sure query entry info is not leaked in session. */
+	      xsession_clear_query_entry_info (thread_p, query_p->query_id);
 	    }
 	  else
 	    {
-	      er_log_debug (ARG_FILE_LINE, "query %d is completed!\n", query_p->query_id);
+	      /* this is a commit and we have to add the result to the holdable queries list. */
+	      if (query_p->query_status != QUERY_COMPLETED)
+		{
+		  er_log_debug (ARG_FILE_LINE, "query %d not completed !\n", query_p->query_id);
+		}
+	      else
+		{
+		  er_log_debug (ARG_FILE_LINE, "query %d is completed!\n", query_p->query_id);
+		}
+	      xsession_store_query_entry_info (thread_p, query_p);
+	      /* reset result info */
+	      query_p->list_id = NULL;
+	      query_p->temp_vfid = NULL;
 	    }
-	  xsession_store_query_entry_info (thread_p, query_p);
-	  /* reset result info */
-	  query_p->list_id = NULL;
-	  query_p->temp_vfid = NULL;
 	}
-
       /* destroy the query result if not destroyed yet */
       if (query_p->list_id)
 	{
@@ -2167,8 +2149,6 @@ qmgr_clear_trans_wakeup (THREAD_ENTRY * thread_p, int tran_index, bool is_tran_d
       if (query_p->xasl_ent != NULL && query_p->list_ent != NULL)
 	{
 	  (void) qfile_end_use_of_list_cache_entry (thread_p, query_p->list_ent, false);
-	  query_p->xasl_ent = NULL;
-	  query_p->list_ent = NULL;
 	}
 
       /* remove query entry */
@@ -2178,6 +2158,7 @@ qmgr_clear_trans_wakeup (THREAD_ENTRY * thread_p, int tran_index, bool is_tran_d
       query_p = tran_entry_p->query_entry_list_p;
     }
 
+  assert (tran_entry_p->query_entry_list_p == NULL);
   tran_entry_p->trans_stat = QMGR_TRAN_TERMINATED;
 }
 
@@ -2658,10 +2639,9 @@ qmgr_create_new_temp_file (THREAD_ENTRY * thread_p, QUERY_ID query_id, QMGR_TEMP
   tfile_vfid_p->temp_file_type = FILE_TEMP;
   tfile_vfid_p->membuf_npages = num_buffer_pages;
   tfile_vfid_p->membuf_type = membuf_type;
-  tfile_vfid_p->preserved = false;
   tfile_vfid_p->tde_encrypted = false;
-  tfile_vfid_p->membuf_last = -1;
 
+  tfile_vfid_p->membuf_last = -1;
   page_p = (PAGE_PTR) ((PAGE_PTR) tfile_vfid_p->membuf
 		       + DB_ALIGN (sizeof (PAGE_PTR) * tfile_vfid_p->membuf_npages, MAX_ALIGNMENT));
 
@@ -2760,7 +2740,6 @@ qmgr_create_result_file (THREAD_ENTRY * thread_p, QUERY_ID query_id)
   tfile_vfid_p->membuf = NULL;
   tfile_vfid_p->membuf_npages = 0;
   tfile_vfid_p->membuf_type = TEMP_FILE_MEMBUF_NONE;
-  tfile_vfid_p->preserved = false;
   tfile_vfid_p->tde_encrypted = false;
 
   /* Find the query entry and chain the created temp file to the entry */
@@ -2800,11 +2779,7 @@ qmgr_create_result_file (THREAD_ENTRY * thread_p, QUERY_ID query_id)
       return NULL;
     }
 
-  if (qmgr_is_allowed_result_cache (query_p->query_flag))
-    {
-      file_temp_preserve (thread_p, &tfile_vfid_p->temp_vfid);
-      tfile_vfid_p->preserved = true;
-    }
+  file_temp_preserve (thread_p, &tfile_vfid_p->temp_vfid);
 
   /* chain the tfile_vfid to the query_entry->temp_vfid */
   temp = query_p->temp_vfid;
@@ -2840,7 +2815,8 @@ qmgr_create_result_file (THREAD_ENTRY * thread_p, QUERY_ID query_id)
  * was_preserved (in) : true if query was preserved
  */
 int
-qmgr_free_temp_file_list (THREAD_ENTRY * thread_p, QMGR_TEMP_FILE * tfile_vfid_p, QUERY_ID query_id, bool is_error)
+qmgr_free_temp_file_list (THREAD_ENTRY * thread_p, QMGR_TEMP_FILE * tfile_vfid_p, QUERY_ID query_id, bool is_error,
+			  bool was_preserved)
 {
   QMGR_TEMP_FILE *temp = NULL;
   int rc = NO_ERROR, fd_ret = NO_ERROR;
@@ -2853,7 +2829,7 @@ qmgr_free_temp_file_list (THREAD_ENTRY * thread_p, QMGR_TEMP_FILE * tfile_vfid_p
       fd_ret = NO_ERROR;
       if ((tfile_vfid_p->temp_file_type != FILE_QUERY_AREA || is_error) && !VFID_ISNULL (&tfile_vfid_p->temp_vfid))
 	{
-	  if (tfile_vfid_p->preserved)
+	  if (was_preserved)
 	    {
 	      fd_ret = file_temp_retire_preserved (thread_p, &tfile_vfid_p->temp_vfid);
 	      if (fd_ret != NO_ERROR)
@@ -2913,7 +2889,7 @@ qmgr_free_query_temp_file_helper (THREAD_ENTRY * thread_p, QMGR_QUERY_ENTRY * qu
       tfile_vfid_p = query_p->temp_vfid;
       tfile_vfid_p->prev->next = NULL;
 
-      rc = qmgr_free_temp_file_list (thread_p, tfile_vfid_p, query_p->query_id, is_error);
+      rc = qmgr_free_temp_file_list (thread_p, tfile_vfid_p, query_p->query_id, is_error, query_p->is_preserved);
 
       query_p->temp_vfid = NULL;
     }
@@ -2994,15 +2970,7 @@ qmgr_free_list_temp_file (THREAD_ENTRY * thread_p, QUERY_ID query_id, QMGR_TEMP_
     {
       if (!VFID_ISNULL (&tfile_vfid_p->temp_vfid))
 	{
-	  if (tfile_vfid_p->preserved)
-	    {
-	      if (file_temp_retire_preserved (thread_p, &tfile_vfid_p->temp_vfid) != NO_ERROR)
-		{
-		  /* stop; return error */
-		  rc = ER_FAILED;
-		}
-	    }
-	  else if (file_temp_retire (thread_p, &tfile_vfid_p->temp_vfid) != NO_ERROR)
+	  if (file_temp_retire (thread_p, &tfile_vfid_p->temp_vfid) != NO_ERROR)
 	    {
 	      /* stop; return error */
 	      rc = ER_FAILED;

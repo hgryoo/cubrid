@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation
- * Copyright (C) 2016 CUBRID Corporation
+ * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -5092,7 +5091,11 @@ sqmgr_execute_query (THREAD_ENTRY * thread_p, unsigned int rid, char *request, i
   has_updated = false;
 
 null_list:
+#if 0
   if (list_id == NULL && !CACHE_TIME_EQ (&clt_cache_time, &srv_cache_time))
+#else
+  if (list_id == NULL)
+#endif
     {
       ASSERT_ERROR_AND_SET (error_code);
 
