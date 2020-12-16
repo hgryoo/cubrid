@@ -131,7 +131,9 @@ class JdbcCacheWorker extends Thread {
 				synchronized (UJCIManager.url_cache_remove_list) {
 					for (int i = 0; i < UJCIManager.url_cache_remove_list.size(); i++) {
 						UUrlCache uc = (UUrlCache) UJCIManager.url_cache_remove_list.get(i);
-						uc.remove_expired_stmt(curTime);
+						if (uc.getCacheSize() > uc.getLimit()) {
+							uc.remove_expired_stmt(curTime);
+						}
 					}
 				}
 			} catch (Exception e) {

@@ -1676,6 +1676,228 @@ public class UConnection {
 		} catch (Exception e) {
 		    	logException(e);
 			errorHandler.setErrorCode(UErrorCode.ER_UNKNOWN);
+			b.append('\n');
+		}
+
+		synchronized (this) {
+			getLogger().logInfo(b.toString());
+		}
+	}
+
+	/* 
+	 * methods related to Connection Properties
+	 */
+	public int getQueryTimeout() {
+		return connectionProperties.getQueryTimeout();
+	}
+
+	public void setCharset(String newCharsetName) {}
+	public String getCharset() {
+		return connectionProperties.getCharSet();
+	}
+
+	public void setZeroDateTimeBehavior(String behavior) {}
+	public String getZeroDateTimeBehavior() {
+		return connectionProperties.getZeroDateTimeBehavior();
+	}
+
+	public void setResultWithCUBRIDTypes(String support) {}
+	public String getResultWithCUBRIDTypes() {
+		return connectionProperties.getResultWithCUBRIDTypes();
+	}
+
+	public boolean getLogSlowQuery() {
+		return connectionProperties.getLogSlowQueries();
+	}
+
+	public boolean getUseOldBooleanValue() {
+		return connectionProperties.getUseOldBooleanValue();
+	}
+
+	public boolean getOracleStyleEmpltyString() {
+		return connectionProperties.getOracleStyleEmptyString();
+	}
+	
+	public int getClientCacheSize() { /* unit = MByte */
+		return connectionProperties.getClientCacheSize() * 1024 * 1024;
+	}
+
+	public void setCasIp (String casIp) {
+		this.casIp = casIp;
+	}
+
+	public String getCasIp () {
+		return this.casIp;
+	}
+
+	public void setCasPort (int casPort) {
+		this.casPort = casPort;
+	}
+
+	public int getCasPort () {
+		return this.casPort;
+	}
+
+	public void setCasProcessId (int processId) {
+		this.casProcessId = processId;
+	}
+
+	public int getCasProcessId () {
+		return this.casProcessId;
+	}
+
+	public void setCasId (int casId) {
+		this.casId = casId;
+	}
+
+	public int getCasId () {
+		return this.casId;
+	}
+
+	public abstract void setAutoCommit(boolean autoCommit);
+
+	public abstract boolean getAutoCommit();
+
+	public synchronized void turnOnAutoCommitBySelf() {
+		isAutoCommitBySelf = true;
+	}
+
+	public synchronized void turnOffAutoCommitBySelf() {
+		isAutoCommitBySelf = false;
+	}
+
+	public boolean getAutoCommitBySelf() {
+		return isAutoCommitBySelf;
+	}
+
+	public synchronized OutputStream getOutputStream() {
+		return output;
+	}
+
+	public UError getRecentError() {
+		return errorHandler;
+	}
+
+	public boolean isClosed() {
+		return isClosed;
+	}
+
+	public boolean isErrorCommunication (int error) {
+		switch (error) {
+		case UErrorCode.ER_COMMUNICATION:
+		case UErrorCode.ER_ILLEGAL_DATA_SIZE:
+		case UErrorCode.CAS_ER_COMMUNICATION:
+			return true;
+		default:
+			return false;
+		}
+	}
+
+	public boolean isErrorToReconnect(int error) {
+		if (isErrorCommunication(error)) {
+			return true;
+		}
+
+		switch (error) {
+		case -111: // ER_TM_SERVER_DOWN_UNILATERALLY_ABORTED
+		case -199: // ER_NET_SERVER_CRASHED
+		case -224: // ER_OBJ_NO_CONNECT
+		case -677: // ER_BO_CONNECT_FAILED
+			return true;
+		default:
+			return false;
+		}
+	}
+
+	public int getLockTimeout() {
+		return lastLockTimeout;
+	}
+
+	/*
+	 * 3.0 synchronized public void savepoint(int mode, String name) {
+	 * errorHandler = new UError(); if (isClosed == true) {
+	 * errorHandler.setErrorCode(UErrorCode.ER_IS_CLOSED); return; }
+	 * 
+	 * try { checkReconnect(); if (errorHandler.getErrorCode() !=
+	 * UErrorCode.ER_NO_ERROR) return;
+	 * 
+	 * outBuffer.newRequest(out, UFunctionCode.SAVEPOINT);
+	 * outBuffer.addByte(mode); outBuffer.addStringWithNull(name);
+	 * 
+	 * UInputBuffer inBuffer; inBuffer = send_recv_msg(); } catch (UJciException
+	 * e) { e.toUError(errorHandler); } catch (IOException e) {
+	 * errorHandler.setErrorCode(UErrorCode.ER_COMMUNICATION); } }
+	 */
+
+	public byte getCASInfoStatus() {
+		if (casInfo == null) {
+			return (byte) CAS_INFO_STATUS_INACTIVE;
+		}
+		return casInfo[CAS_INFO_STATUS];
+	}
+
+	public byte[] getCASInfo() {
+		return casInfo;
+	}
+
+	public void setCASInfo(byte[] casinfo) {
+		this.casInfo = casinfo;
+	}
+
+	public byte getDbmsType() {
+		// jci 3.0
+		if (brokerInfo == null)
+			return DBMS_CUBRID;
+		return brokerInfo[BROKER_INFO_DBMS_TYPE];
+
+		/*
+		 * jci 2.x return DBMS_CUBRID;
+		 */
+	}
+
+	public boolean isConnectedToCubrid() {
+		byte dbms_type = getDbmsType();
+		if (dbms_type == DBMS_CUBRID 
+				|| dbms_type == DBMS_PROXY_CUBRID) {
+			return true;
+		}
+		return false;
+	}
+
+	public boolean isConnectedToOracle() {
+		byte dbms_type = getDbmsType();
+		if (dbms_type == DBMS_ORACLE 
+				|| dbms_type == DBMS_PROXY_ORACLE) {
+			return true;
+		}
+		return false;
+	}
+
+	public boolean isConnectedToProxy() {
+		byte dbms_type = getDbmsType();
+		if (dbms_type == DBMS_PROXY_CUBRID 
+				|| dbms_type == DBMS_PROXY_MYSQL 
+				|| dbms_type == DBMS_PROXY_ORACLE) {
+			return true;
+		}
+		return false;
+	}
+
+	public boolean brokerInfoStatementPooling() {
+		if (brokerInfo == null)
+			return false;
+
+		if (brokerInfo[BROKER_INFO_STATEMENT_POOLING] == (byte) 1)
+			return true;
+		else
+			return false;
+	}
+
+	public boolean brokerInfoRenewedErrorCode() {
+		if ((brokerInfo[BROKER_INFO_PROTO_VERSION] & CAS_PROTO_INDICATOR)
+				!= CAS_PROTO_INDICATOR) {
+			return false;
+>>>>>>> 860358017... [CBRD-23801] [Regression] In JDBC, the cursor forward and backward doesn't work. (#2512)
 		}
 		return -1;
 	}
@@ -1902,6 +2124,7 @@ public class UConnection {
 		if (url_cache == null) {
 			UUrlHostKey key = new UUrlHostKey(CASIp, CASPort, dbname, user);
 			url_cache = UJCIManager.getUrlCache(key);
+			url_cache.setLimit(getClientCacheSize());
 		}
 		return url_cache;
 	}
