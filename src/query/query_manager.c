@@ -362,7 +362,6 @@ qmgr_allocate_query_entry (THREAD_ENTRY * thread_p, QMGR_TRAN_ENTRY * tran_entry
   query_p->query_flag = 0;
   query_p->is_holdable = false;
   query_p->is_preserved = false;
-  query_p->includes_tde_class = false;
 
 #if defined (NDEBUG)
   /* just a safe guard for a release build. I don't expect it will be hit. */
@@ -2640,12 +2639,8 @@ qmgr_create_new_temp_file (THREAD_ENTRY * thread_p, QUERY_ID query_id, QMGR_TEMP
   tfile_vfid_p->temp_file_type = FILE_TEMP;
   tfile_vfid_p->membuf_npages = num_buffer_pages;
   tfile_vfid_p->membuf_type = membuf_type;
-<<<<<<< HEAD
-
-=======
   tfile_vfid_p->preserved = false;
   tfile_vfid_p->tde_encrypted = false;
->>>>>>> d1b959da1... [CBRD-23602] regression: Statement cache to improve performance for frequently repeated queries (#2489)
   tfile_vfid_p->membuf_last = -1;
 
   page_p = (PAGE_PTR) ((PAGE_PTR) tfile_vfid_p->membuf
@@ -2739,11 +2734,7 @@ qmgr_create_result_file (THREAD_ENTRY * thread_p, QUERY_ID query_id)
   tfile_vfid_p->membuf = NULL;
   tfile_vfid_p->membuf_npages = 0;
   tfile_vfid_p->membuf_type = TEMP_FILE_MEMBUF_NONE;
-<<<<<<< HEAD
-=======
   tfile_vfid_p->preserved = false;
-  tfile_vfid_p->tde_encrypted = false;
->>>>>>> d1b959da1... [CBRD-23602] regression: Statement cache to improve performance for frequently repeated queries (#2489)
 
   /* Find the query entry and chain the created temp file to the entry */
 
@@ -2769,30 +2760,11 @@ qmgr_create_result_file (THREAD_ENTRY * thread_p, QUERY_ID query_id)
       return NULL;
     }
 
-<<<<<<< HEAD
-  file_temp_preserve (thread_p, &tfile_vfid_p->temp_vfid);
-=======
   if (qmgr_is_allowed_result_cache (query_p->query_flag))
     {
       file_temp_preserve (thread_p, &tfile_vfid_p->temp_vfid);
       tfile_vfid_p->preserved = true;
     }
-
-  if (query_p->includes_tde_class)
-    {
-      tfile_vfid_p->tde_encrypted = true;
-      tde_algo = (TDE_ALGORITHM) prm_get_integer_value (PRM_ID_TDE_DEFAULT_ALGORITHM);
-    }
-
-  if (file_apply_tde_algorithm (thread_p, &tfile_vfid_p->temp_vfid, tde_algo) != NO_ERROR)
-    {
-      file_temp_retire (thread_p, &tfile_vfid_p->temp_vfid);
-      free_and_init (tfile_vfid_p);
-      return NULL;
-    }
->>>>>>> d1b959da1... [CBRD-23602] regression: Statement cache to improve performance for frequently repeated queries (#2489)
-
-  /* chain the tfile_vfid to the query_entry->temp_vfid */
   temp = query_p->temp_vfid;
   query_p->temp_vfid = tfile_vfid_p;
   if (temp != NULL)

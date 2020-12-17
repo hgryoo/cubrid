@@ -138,11 +138,7 @@ struct qmgr_query_entry
   QMGR_QUERY_STATUS query_status;
   QUERY_FLAG query_flag;
   bool is_holdable;		/* true if this query should be available */
-<<<<<<< HEAD
   bool is_preserved;		/* true if query was preserved in session, false otherwise. */
-=======
-  bool includes_tde_class;	/* true if this query include some tde class. It is from xasl node */
->>>>>>> d1b959da1... [CBRD-23602] regression: Statement cache to improve performance for frequently repeated queries (#2489)
 };
 
 extern QMGR_QUERY_ENTRY *qmgr_get_query_entry (THREAD_ENTRY * thread_p, QUERY_ID query_id, int trans_ind);
