@@ -263,15 +263,13 @@ jsp_find_stored_procedure (const char *name)
  * Note:
  */
 
-int
+bool
 jsp_is_exist_stored_procedure (const char *name)
 {
-  MOP mop = NULL;
-
-  mop = jsp_find_stored_procedure (name);
+  MOP mop = jsp_find_stored_procedure (name);
   er_clear ();
 
-  return mop != NULL;
+  return (mop != NULL);
 }
 
 /*
