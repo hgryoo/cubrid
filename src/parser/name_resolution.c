@@ -165,7 +165,8 @@ static PT_NODE *pt_insert_conjunct (PARSER_CONTEXT * parser, PT_NODE * path_dot,
 static PT_NODE *pt_lookup_entity (PARSER_CONTEXT * parser, PT_NODE * path_entities, PT_NODE * expr);
 static bool pt_resolve_method_type (PARSER_CONTEXT * parser, PT_NODE * node);
 static PT_NODE *pt_make_method_call (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NAMES_ARG * bind_arg);
-static PT_NODE *pt_make_stored_procedure (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NAMES_ARG * bind_arg);
+static PT_NODE *pt_resolve_method (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NAMES_ARG * bind_arg);
+static PT_NODE *pt_resolve_stored_procedure (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NAMES_ARG * bind_arg);
 static PT_NODE *pt_find_entity_in_scopes (PARSER_CONTEXT * parser, SCOPES * scopes, UINTPTR spec_id);
 static PT_NODE *pt_find_outer_entity_in_scopes (PARSER_CONTEXT * parser, SCOPES * scopes, UINTPTR spec_id,
 						short *scope_location);
@@ -3021,11 +3022,11 @@ pt_bind_names (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue
 
 	      if (jsp_is_exist_stored_procedure (generic_name))
 		{
-		  node1 = pt_make_stored_procedure (parser, node, bind_arg);
+		  node1 = pt_resolve_stored_procedure (parser, node, bind_arg);
 		}
 	      else
 		{
-		  node1 = pt_make_method_call (parser, node, bind_arg);
+		  node1 = pt_resolve_method (parser, node, bind_arg);
 		}
 
 	      if (node1->node_type == PT_METHOD_CALL)
@@ -8944,22 +8945,16 @@ pt_resolve_method_type (PARSER_CONTEXT * parser, PT_NODE * node)
 }				/* pt_resolve_method_type */
 
 /*
- * pt_make_method_call () - creates a PT_METHOD_CALL for method to replace the node
- *     resolves the method call
+ * pt_make_method_call () - creates a PT_METHOD_CALL node and initilaizes from PT_FUNCTION node
  *   return:
  *   parser(in):
  *   node(in): an PT_FUNCTION node that may really be a method call
  *   bind_arg(in):
  */
 static PT_NODE *
-pt_make_method_call (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NAMES_ARG * bind_arg)
+pt_make_method_call (PARSER_CONTEXT * parser, PT_NODE * f_node, PT_BIND_NAMES_ARG * bind_arg)
 {
   PT_NODE *new_node;
-
-  if (node->info.function.arg_list == NULL)
-    {
-      return node;		/* return the function since it is not a method */
-    }
 
   /* initialize the new node with the corresponding fields from the PT_FUNCTION node. */
   new_node = parser_new_node (parser, PT_METHOD_CALL);
@@ -8976,20 +8971,44 @@ pt_make_method_call (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NAMES_ARG 
       return NULL;
     }
 
-  PT_NODE_COPY_NUMBER_OUTERLINK (new_node, node);
+  PT_NODE_COPY_NUMBER_OUTERLINK (new_node, f_node);
 
-  new_node->info.method_call.method_name->info.name.original = node->info.function.generic_name;
-  new_node->info.method_call.arg_list = parser_copy_tree_list (parser, node->info.function.arg_list);
+  new_node->info.method_call.method_name->info.name.original = f_node->info.function.generic_name;
+  new_node->info.method_call.arg_list = parser_copy_tree_list (parser, f_node->info.function.arg_list);
   new_node->info.method_call.call_or_expr = PT_IS_MTHD_EXPR;
+
+  /* make method name look resolved */
+  new_node->info.method_call.method_name->info.name.spec_id = (UINTPTR) new_node->info.method_call.method_name;
+  new_node->info.method_call.method_name->info.name.meta_class = PT_METHOD;
+
+  return new_node;
+}
+
+/*
+ * pt_resolve_method () - creates and resolves the PT_METHOD_CALL node for method
+ *   return:
+ *   parser(in):
+ *   node(in): an PT_FUNCTION node that may really be a method call
+ *   bind_arg(in):
+ */
+static PT_NODE *
+pt_resolve_method (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NAMES_ARG * bind_arg)
+{
+  PT_NODE *new_node = pt_make_method_call (parser, node, bind_arg);
+  if (new_node == NULL)
+    {
+      return NULL;
+    }
+
+  if (new_node->info.method_call.arg_list == NULL)
+    {
+      return node;		/* return the function since it is not a method */
+    }
 
   /* The first argument (which must be present), is the target of the method.  Move it to the on_call_target. */
   new_node->info.method_call.on_call_target = new_node->info.method_call.arg_list;
   new_node->info.method_call.arg_list = new_node->info.method_call.arg_list->next;
   new_node->info.method_call.on_call_target->next = NULL;
-
-  /* make method name look resolved */
-  new_node->info.method_call.method_name->info.name.spec_id = (UINTPTR) new_node->info.method_call.method_name;
-  new_node->info.method_call.method_name->info.name.meta_class = PT_METHOD;
 
   /* bind the names in the method arguments and target, their scope will be the same as the method node's scope */
   parser_walk_leaves (parser, new_node, pt_bind_names, bind_arg, pt_bind_names_post, bind_arg);
@@ -9042,44 +9061,23 @@ pt_make_method_call (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NAMES_ARG 
 
       return new_node;		/* it is a method call */
     }
-}				/* pt_make_method_call */
+}				/* pt_resolve_method */
 
 /*
- * pt_make_stored_procedure () - creates a PT_METHOD_CALL for java sp and replace the node
- *     resolves the method call
+ * pt_resolve_stored_procedure () - creates and resolves the PT_METHOD_CALL node for java sp
  *   return:
  *   parser(in):
  *   node(in): an PT_FUNCTION node that may really be a method call
  *   bind_arg(in):
  */
 static PT_NODE *
-pt_make_stored_procedure (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NAMES_ARG * bind_arg)
+pt_resolve_stored_procedure (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NAMES_ARG * bind_arg)
 {
-  PT_NODE *new_node;
-
-  /* initialize the new node with the corresponding fields from the PT_FUNCTION node. */
-  new_node = parser_new_node (parser, PT_METHOD_CALL);
+  PT_NODE *new_node = pt_make_method_call (parser, node, bind_arg);
   if (new_node == NULL)
     {
-      PT_INTERNAL_ERROR (parser, "allocate new node");
       return NULL;
     }
-
-  new_node->info.method_call.method_name = parser_new_node (parser, PT_NAME);
-  if (new_node->info.method_call.method_name == NULL)
-    {
-      PT_INTERNAL_ERROR (parser, "allocate new node");
-      return NULL;
-    }
-
-  PT_NODE_COPY_NUMBER_OUTERLINK (new_node, node);
-
-  new_node->info.method_call.method_name->info.name.original = node->info.function.generic_name;
-  new_node->info.method_call.arg_list = parser_copy_tree_list (parser, node->info.function.arg_list);
-  new_node->info.method_call.call_or_expr = PT_IS_MTHD_EXPR;
-
-  new_node->info.method_call.method_name->info.name.spec_id = (UINTPTR) new_node->info.method_call.method_name;
-  new_node->info.method_call.method_name->info.name.meta_class = PT_METHOD;
 
   parser_walk_leaves (parser, new_node, pt_bind_names, bind_arg, pt_bind_names_post, bind_arg);
 
@@ -9090,7 +9088,7 @@ pt_make_stored_procedure (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NAMES
       PT_INTERNAL_ERROR (parser, "jsp_get_return_type");
       return NULL;
     }
-  new_node->type_enum = pt_db_to_type_enum ((DB_TYPE) error);
+  new_node->type_enum = pt_db_to_type_enum ((DB_TYPE) return_type);
 
   TP_DOMAIN *d = pt_type_enum_to_db_domain (new_node->type_enum);
   d = tp_domain_cache (d);
@@ -9099,7 +9097,7 @@ pt_make_stored_procedure (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NAMES
   new_node->info.method_call.method_id = (UINTPTR) new_node;
 
   return new_node;
-}				/* pt_make_stored_procedure */
+}				/* pt_resolve_stored_procedure */
 
 /*
  * pt_find_entity_in_scopes () - looks up an entity spec in a scope list
