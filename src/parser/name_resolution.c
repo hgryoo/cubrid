@@ -3039,47 +3039,41 @@ pt_bind_names (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue
 		}
 	      else
 		{
-		  /* It may be a generic function supported on the server. We put this case last so that user written
-		   * methods will resolve before trying to make it a server function. */
-		  if (!pt_type_generic_func (parser, node))
+		  PT_NODE *top_node = NULL;
+		  int is_spec_attr = 0;
+
+		  /* get top node */
+		  if (bind_arg != NULL && bind_arg->sc_info != NULL)
 		    {
-		      PT_NODE *top_node = NULL;
-		      int is_spec_attr = 0;
+		      top_node = bind_arg->sc_info->top_node;
+		    }
 
-		      /* get top node */
-		      if (bind_arg != NULL && bind_arg->sc_info != NULL)
+		  if (top_node != NULL
+		      && (top_node->node_type == PT_CREATE_INDEX || top_node->node_type == PT_ALTER_INDEX
+			  || (top_node->node_type == PT_ALTER && (top_node->info.alter.create_index != NULL))))
+		    {
+		      /* check if function name is a spec attribute */
+		      if (pt_function_name_is_spec_attr (parser, node, bind_arg, &is_spec_attr) != NO_ERROR)
 			{
-			  top_node = bind_arg->sc_info->top_node;
+			  return NULL;
 			}
+		    }
 
-		      if (top_node != NULL
-			  && (top_node->node_type == PT_CREATE_INDEX || top_node->node_type == PT_ALTER_INDEX
-			      || (top_node->node_type == PT_ALTER && (top_node->info.alter.create_index != NULL))))
-			{
-			  /* check if function name is a spec attribute */
-			  if (pt_function_name_is_spec_attr (parser, node, bind_arg, &is_spec_attr) != NO_ERROR)
-			    {
-			      return NULL;
-			    }
-			}
-
-		      /* show appropriate error message */
-		      if (is_spec_attr)
-			{
-			  PT_ERRORm (parser, node, MSGCAT_SET_PARSER_SEMANTIC,
-				     MSGCAT_SEMANTIC_PREFIX_IN_FUNC_INDX_NOT_ALLOWED);
-			}
-		      else if (parser_function_code != PT_EMPTY)
-			{
-			  PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC,
-				      MSGCAT_SEMANTIC_INVALID_INTERNAL_FUNCTION, node->info.function.generic_name);
-			}
-		      else
-			{
-			  PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_UNKNOWN_FUNCTION,
-				      node->info.function.generic_name);
-			}
-
+		  /* show appropriate error message */
+		  if (is_spec_attr)
+		    {
+		      PT_ERRORm (parser, node, MSGCAT_SET_PARSER_SEMANTIC,
+				 MSGCAT_SEMANTIC_PREFIX_IN_FUNC_INDX_NOT_ALLOWED);
+		    }
+		  else if (parser_function_code != PT_EMPTY)
+		    {
+		      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC,
+				  MSGCAT_SEMANTIC_INVALID_INTERNAL_FUNCTION, node->info.function.generic_name);
+		    }
+		  else
+		    {
+		      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_UNKNOWN_FUNCTION,
+				  node->info.function.generic_name);
 		    }
 		}
 	    }
