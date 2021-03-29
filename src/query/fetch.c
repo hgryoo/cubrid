@@ -3927,6 +3927,57 @@ fetch_peek_dbval (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 	      || REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_FETCH_NOT_CONST));
       break;
 
+    case TYPE_STORED_PROC:
+      {
+	STORED_PROC_TYPE *sp = regu_var->value.sp;
+	assert (sp != NULL);
+
+	if (REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_FETCH_ALL_CONST))
+	  {
+	    *peek_dbval = sp->return_val;
+	    return NO_ERROR;
+	  }
+	else
+	  {
+	    error = qdata_evaluate_stored_procedure (thread_p, regu_var, vd, obj_oid, tpl);
+	    if (error != NO_ERROR)
+	      {
+		goto exit_on_error;
+	      }
+
+	    *peek_dbval = sp->return_val;
+
+	    /* check for the first time */
+	    if (!REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_FETCH_ALL_CONST)
+		&& !REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_FETCH_NOT_CONST))
+	      {
+		int not_const = 0;
+		regu_variable_list_node *arg = sp->args;
+
+		while (arg != NULL)
+		  {
+		    if (!REGU_VARIABLE_IS_FLAGED (&(arg->value), REGU_VARIABLE_FETCH_ALL_CONST))
+		      {
+			not_const++;
+			break;
+		      }
+		    arg = arg->next;
+		  }
+		if (not_const == 0)
+		  {
+		    REGU_VARIABLE_SET_FLAG (regu_var, REGU_VARIABLE_FETCH_ALL_CONST);
+		    assert (!REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_FETCH_NOT_CONST));
+		  }
+		else
+		  {
+		    REGU_VARIABLE_SET_FLAG (regu_var, REGU_VARIABLE_FETCH_NOT_CONST);
+		    assert (!REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_FETCH_ALL_CONST));
+		  }
+	      }
+	  }
+	break;
+      }
+
     case TYPE_FUNC:		/* fetch function value */
       if (REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_FETCH_ALL_CONST))
 	{
@@ -4861,6 +4912,7 @@ fetch_force_not_const_recursive (REGU_VARIABLE & reguvar)
       case TYPE_INARITH:
       case TYPE_OUTARITH:
       case TYPE_FUNC:
+	  case TYPE_STORED_PROC:
         REGU_VARIABLE_SET_FLAG (&regu, REGU_VARIABLE_FETCH_NOT_CONST);
         break;
       default:

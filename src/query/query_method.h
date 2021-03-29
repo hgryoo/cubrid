@@ -54,4 +54,6 @@ extern int method_invoke_for_server (unsigned int rc, char *host, char *server_n
 
 void method_sig_list_freemem (method_sig_list * meth_sig_list);
 
+extern int method_sp_invoke_for_server (unsigned int rc, char *host_p, char *server_name_p, char *sig, DB_VALUE ** args,
+					int num_args);
 #endif /* _QUERY_METHOD_H_ */

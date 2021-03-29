@@ -149,6 +149,8 @@ extern void smnt_server_copy_global_stats (THREAD_ENTRY * thread_p, unsigned int
 extern void sct_check_rep_dir (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern int xs_send_method_call_info_to_client (THREAD_ENTRY * thread_p, qfile_list_id * list_id,
 					       method_sig_list * methsg_list);
+extern int xs_send_stored_procedure_info_to_client (THREAD_ENTRY * thread_p, const char *sig, DB_VALUE ** args,
+						    int num_args);
 extern int xs_receive_data_from_client (THREAD_ENTRY * thread_p, char **area, int *datasize);
 extern int xs_receive_data_from_client_with_timeout (THREAD_ENTRY * thread_p, char **area, int *datasize, int timeout);
 extern int xs_send_action_to_client (THREAD_ENTRY * thread_p, VACOMM_BUFFER_CLIENT_ACTION action);

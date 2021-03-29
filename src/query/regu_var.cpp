@@ -75,6 +75,18 @@ regu_variable_node::map_regu (const map_regu_func_type &func, bool &stop)
 	}
       break;
 
+    case TYPE_STORED_PROC:
+      if (value.sp == NULL)
+	{
+	  assert (false);
+	  return;
+	}
+      for (regu_variable_list_node *arg = value.sp->args; arg != NULL; arg = arg->next)
+	{
+	  map_regu_and_check_stop (&arg->value);
+	}
+      break;
+
     case TYPE_REGUVAL_LIST:
       if (value.reguval_list == NULL)
 	{
@@ -168,6 +180,19 @@ regu_variable_node::clear_xasl_local ()
 	  value.funcp->tmp_obj = NULL;
 	}
 
+      break;
+
+    case TYPE_STORED_PROC:
+      assert (value.sp != NULL);
+      pr_clear_value (value.sp->return_val);
+
+#ifdef SERVER_MODE
+      if (value.sp->vacomm_buffer)
+	{
+	  free_and_init (value.sp->vacomm_buffer->area);
+	  free_and_init (value.sp->vacomm_buffer);
+	}
+#endif
       break;
 
     case TYPE_DBVAL:

@@ -3807,6 +3807,10 @@ qo_set_value_to_range_list (PARSER_CONTEXT * parser, PT_NODE * node)
     {
       set_val = node->info.function.arg_list;
     }
+  else if (node->node_type == PT_METHOD_CALL)
+    {
+      set_val = node->info.method_call.arg_list;
+    }
   else if (node->node_type == PT_NAME && !PT_IS_COLLECTION_TYPE (node->type_enum))
     {
       set_val = node;

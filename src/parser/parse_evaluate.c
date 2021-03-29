@@ -1355,7 +1355,10 @@ pt_evaluate_tree_internal (PARSER_CONTEXT * parser, PT_NODE * tree, DB_VALUE * d
       break;
 
     case PT_METHOD_CALL:
-      error = do_call_method (parser, tree);
+      if (PT_IS_METHOD (tree))
+	{
+	  error = do_call_method (parser, tree);
+	}
       if (error >= NO_ERROR)
 	{
 	  if ((val = (DB_VALUE *) (tree->etc)) != NULL)

@@ -96,6 +96,7 @@ static int xts_save_xasl_node (const XASL_NODE * ptr);
 static int xts_save_filter_pred_node (const PRED_EXPR_WITH_CONTEXT * pred);
 static int xts_save_func_pred (const FUNC_PRED * ptr);
 static int xts_save_cache_attrinfo (const HEAP_CACHE_ATTRINFO * ptr);
+static int xts_save_stored_procedure_type (const STORED_PROC_TYPE * sp);
 #if 0
 /* there are currently no pointers to these type of structures in xasl
  * so there is no need to have a separate restore function.
@@ -181,6 +182,7 @@ static char *xts_process_aggregate_type (char *ptr, const AGGREGATE_TYPE * aggre
 static char *xts_process_analytic_type (char *ptr, const ANALYTIC_TYPE * analytic);
 static char *xts_process_analytic_eval_type (char *ptr, const ANALYTIC_EVAL_TYPE * analytic);
 static char *xts_process_function_type (char *ptr, const FUNCTION_TYPE * function);
+static char *xts_process_stored_procedure_type (char *ptr, const STORED_PROC_TYPE * sp);
 static char *xts_process_srlist_id (char *ptr, const QFILE_SORTED_LIST_ID * sort_list_id);
 static char *xts_process_sort_list (char *ptr, const SORT_LIST * sort_list);
 static char *xts_process_method_sig_list (char *ptr, const METHOD_SIG_LIST * method_sig_list);
@@ -245,6 +247,7 @@ static int xts_sizeof_method_sig (const METHOD_SIG * ptr);
 static int xts_sizeof_connectby_proc (const CONNECTBY_PROC_NODE * ptr);
 static int xts_sizeof_regu_value_list (const REGU_VALUE_LIST * regu_value_list);
 static int xts_sizeof_cte_proc (const CTE_PROC_NODE * ptr);
+static int xts_sizeof_stored_procedure_type (const STORED_PROC_TYPE * ptr);
 
 static int xts_mark_ptr_visited (const void *ptr, int offset);
 static int xts_get_offset_visited_ptr (const void *ptr);
@@ -606,6 +609,74 @@ xts_save_function_type (const FUNCTION_TYPE * function)
     }
 
   buf = xts_process_function_type (buf_p, function);
+  if (buf == NULL)
+    {
+      offset = ER_FAILED;
+      goto end;
+    }
+  assert (buf <= buf_p + size);
+
+  memcpy (&xts_Stream_buffer[offset], buf_p, size);
+
+end:
+  if (is_buf_alloced)
+    {
+      free_and_init (buf_p);
+    }
+
+  return offset;
+}
+
+static int
+xts_save_stored_procedure_type (const STORED_PROC_TYPE * sp)
+{
+  int offset;
+  int size;
+  OR_ALIGNED_BUF (sizeof (*sp) * 2) a_buf;
+  char *buf = OR_ALIGNED_BUF_START (a_buf);
+  char *buf_p = NULL;
+  bool is_buf_alloced = false;
+
+  if (sp == NULL)
+    {
+      return NO_ERROR;
+    }
+
+  offset = xts_get_offset_visited_ptr (sp);
+  if (offset != ER_FAILED)
+    {
+      return offset;
+    }
+
+  size = xts_sizeof_stored_procedure_type (sp);
+  if (size == ER_FAILED)
+    {
+      return ER_FAILED;
+    }
+
+  offset = xts_reserve_location_in_stream (size);
+  if (offset == ER_FAILED || xts_mark_ptr_visited (sp, offset) == ER_FAILED)
+    {
+      return ER_FAILED;
+    }
+
+  if (size <= (int) OR_ALIGNED_BUF_SIZE (a_buf))
+    {
+      buf_p = buf;
+    }
+  else
+    {
+      buf_p = (char *) malloc (size);
+      if (buf_p == NULL)
+	{
+	  xts_Xasl_errcode = ER_OUT_OF_VIRTUAL_MEMORY;
+	  return ER_FAILED;
+	}
+
+      is_buf_alloced = true;
+    }
+
+  buf = xts_process_stored_procedure_type (buf_p, sp);
   if (buf == NULL)
     {
       offset = ER_FAILED;
@@ -5055,6 +5126,15 @@ xts_pack_regu_variable_value (char *ptr, const REGU_VARIABLE * regu_var)
       ptr = or_pack_int (ptr, offset);
       break;
 
+    case TYPE_STORED_PROC:
+      offset = xts_save_stored_procedure_type (regu_var->value.sp);
+      if (offset == ER_FAILED)
+	{
+	  return NULL;
+	}
+      ptr = or_pack_int (ptr, offset);
+      break;
+
     case TYPE_ATTR_ID:
     case TYPE_SHARED_ATTR_ID:
     case TYPE_CLASS_ATTR_ID:
@@ -5287,6 +5367,37 @@ xts_process_function_type (char *ptr, const FUNCTION_TYPE * function)
   ptr = or_pack_int (ptr, function->ftype);
 
   offset = xts_save_regu_variable_list (function->operand);
+  if (offset == ER_FAILED)
+    {
+      return NULL;
+    }
+  ptr = or_pack_int (ptr, offset);
+
+  return ptr;
+}
+
+static char *
+xts_process_stored_procedure_type (char *ptr, const STORED_PROC_TYPE * sp)
+{
+  int offset;
+
+  offset = xts_save_db_value (sp->return_val);
+  if (offset == ER_FAILED)
+    {
+      return NULL;
+    }
+  ptr = or_pack_int (ptr, offset);
+
+  offset = xts_save_regu_variable_list (sp->args);
+  if (offset == ER_FAILED)
+    {
+      return NULL;
+    }
+  ptr = or_pack_int (ptr, offset);
+
+  assert (sp->sig != NULL);
+
+  offset = xts_save_string (sp->sig);
   if (offset == ER_FAILED)
     {
       return NULL;
@@ -6910,7 +7021,8 @@ xts_get_regu_variable_value_size (const REGU_VARIABLE * regu_var)
       break;
 
     case TYPE_FUNC:
-      size = PTR_SIZE;		/* funcp */
+    case TYPE_STORED_PROC:
+      size = PTR_SIZE;		/* funcp, sp */
       break;
 
     case TYPE_ATTR_ID:
@@ -7078,6 +7190,23 @@ xts_sizeof_function_type (const FUNCTION_TYPE * function)
   size += (PTR_SIZE		/* value */
 	   + OR_INT_SIZE	/* ftype */
 	   + PTR_SIZE);		/* operand */
+
+  return size;
+}
+
+/*
+ * xts_sizeof_stored_procedure_type () -
+ *   return:
+ *   ptr(in)    :
+ */
+static int
+xts_sizeof_stored_procedure_type (const STORED_PROC_TYPE * sp)
+{
+  int size = 0;
+
+  size += (PTR_SIZE		/* result_val */
+	   + PTR_SIZE		/* args */
+	   + PTR_SIZE);		/* sig */
 
   return size;
 }

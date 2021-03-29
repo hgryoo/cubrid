@@ -1907,6 +1907,104 @@ net_client_request_with_callback (int request, char *argbuf, int argsize, char *
 	      }
 	      break;
 
+	    case SP_CALL:
+	      {
+		char *sp_databuf = NULL;
+		int sp_databuf_size;
+
+		int num_args;
+		DB_VALUE **sp_args = NULL;
+		char *sp_sig = NULL;
+
+		er_clear ();
+		error = NO_ERROR;
+
+		or_unpack_int (ptr, &sp_databuf_size);
+		COMPARE_AND_FREE_BUFFER (replybuf, reply);
+
+		sp_databuf = (char *) malloc (sp_databuf_size);
+		if (sp_databuf != NULL)
+		  {
+		    css_queue_receive_data_buffer (rc, sp_databuf, sp_databuf_size);
+		    error = css_receive_data_from_server (rc, &reply, &size);
+		    if (error != NO_ERROR)
+		      {
+			COMPARE_AND_FREE_BUFFER (sp_databuf, reply);
+			free_and_init (sp_databuf);
+			return set_server_error (error);
+		      }
+		    else
+		      {
+#if defined(CS_MODE)
+			bool need_to_reset = false;
+			if (method_request_id == 0)
+			  {
+			    method_request_id = CSS_RID_FROM_EID (rc);
+			    need_to_reset = true;
+			  }
+#endif /* CS_MODE */
+			error = COMPARE_SIZE_AND_BUFFER (&sp_databuf_size, size, &sp_databuf, reply);
+
+			ptr = or_unpack_int (sp_databuf, &num_args);
+      ptr = or_unpack_string (ptr, &sp_sig);
+			sp_args = (DB_VALUE **) malloc (num_args * sizeof (DB_VALUE *));
+			for (int i = 0; i < num_args; i++)
+			  {
+			    sp_args[i] = (DB_VALUE *) malloc (sizeof (DB_VALUE));
+			    ptr = or_unpack_db_value (ptr, sp_args[i]);
+			  }
+
+			COMPARE_AND_FREE_BUFFER (sp_databuf, reply);
+
+			error =
+			  method_sp_invoke_for_server (rc, net_Server_host, net_Server_name, sp_sig, sp_args, num_args);
+			if (error != NO_ERROR)
+			  {
+			    assert (er_errid () != NO_ERROR);
+			    error = er_errid ();
+			    if (error == NO_ERROR)
+			      {
+				error = ER_NET_SERVER_DATA_RECEIVE;
+				er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 0);
+			      }
+			  }
+			else
+			  {
+			    error = NO_ERROR;
+			  }
+
+			free_and_init (sp_databuf);
+			/* free memory */
+			for (int i = 0; i < num_args; i++)
+			  {
+			    free_and_init (sp_args[i]);
+			  }
+			free_and_init (sp_args);
+#if defined(CS_MODE)
+			if (need_to_reset == true)
+			  {
+			    method_request_id = 0;
+			    need_to_reset = false;
+			  }
+#endif /* CS_MODE */
+		      }
+		  }
+		else
+		  {
+		    error = net_set_alloc_err_if_not_set (error, ARG_FILE_LINE);
+
+		    net_consume_expected_packets (rc, 1);
+		  }
+
+		if (error != NO_ERROR)
+		  {
+		    return_error_to_server (net_Server_host, rc);
+		    method_send_error_to_server (rc, net_Server_host, net_Server_name);
+		  }
+		css_queue_receive_data_buffer (rc, replybuf, replysize);
+	      }
+	      break;
+
 	      /*
 	       * A code of END_CALLBACK is followed immediately by an
 	       * integer returning status from the remote call.  The second

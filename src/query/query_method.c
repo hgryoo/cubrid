@@ -258,6 +258,42 @@ method_send_error_to_server (unsigned int rc, char *host_p, char *server_name_p)
   return NO_ERROR;
 }
 
+int
+method_sp_invoke_for_server (unsigned int rc, char *host_p, char *server_name_p, char *sig, DB_VALUE ** args,
+			     int num_args)
+{
+  int error = NO_ERROR;
+  DB_VALUE value;
+  /* java stored procedure call */
+  int turn_on_auth = 0;
+  AU_ENABLE (turn_on_auth);
+  db_disable_modification ();
+  error = jsp_call_from_server (&value, args, sig, num_args);
+  db_enable_modification ();
+  AU_DISABLE (turn_on_auth);
+
+  if (error == NO_ERROR)
+    {
+      if (DB_VALUE_TYPE (&value) == DB_TYPE_ERROR && er_errid () == NO_ERROR)
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_GENERIC_ERROR, 1);
+	}
+
+      VACOMM_BUFFER vacomm_buffer;
+      if (method_initialize_vacomm_buffer (&vacomm_buffer, rc, host_p, server_name_p) != NO_ERROR)
+	{
+	  return ER_FAILED;
+	}
+
+      error = method_send_value_to_server (&value, &vacomm_buffer);
+
+      pr_clear_value (&value);
+      error = method_send_eof_to_server (&vacomm_buffer);
+      method_clear_vacomm_buffer (&vacomm_buffer);
+    }
+  return error;
+}
+
 /*
  * method_invoke_for_server () -
  *   return: int
@@ -418,16 +454,6 @@ method_invoke_for_server (unsigned int rc, char *host_p, char *server_name_p, qf
 		  db_enable_modification ();
 		  AU_DISABLE (turn_on_auth);
 		}
-	    }
-	  else
-	    {
-	      /* java stored procedure call */
-	      turn_on_auth = 0;
-	      AU_ENABLE (turn_on_auth);
-	      db_disable_modification ();
-	      error = jsp_call_from_server (&value, values_p, meth_sig_p->method_name, meth_sig_p->num_method_args);
-	      db_enable_modification ();
-	      AU_DISABLE (turn_on_auth);
 	    }
 
 	  if (error != NO_ERROR)

@@ -307,6 +307,7 @@ static PT_NODE *pt_fix_interpolation_aggregate_function_order_by (PARSER_CONTEXT
 static int pt_fix_buildlist_aggregate_cume_dist_percent_rank (PARSER_CONTEXT * parser, PT_NODE * node,
 							      AGGREGATE_INFO * info, REGU_VARIABLE * regu);
 
+static REGU_VARIABLE *pt_stored_procedure_to_regu (PARSER_CONTEXT * parser, PT_NODE * node);
 
 #define APPEND_TO_XASL(xasl_head, list, xasl_tail) \
   do \
@@ -3092,7 +3093,9 @@ pt_split_hash_attrs_for_HQ (PARSER_CONTEXT * parser, PT_NODE * pred, PT_NODE ** 
 
 	      // *INDENT-OFF*
 	      HASHABLE hashable_arg1, hashable_arg2;
-	      hashable_arg1 = hashable_arg2 = {false, false};
+	      hashable_arg1 = hashable_arg2 =
+	      {
+	      false, false};
 	      HASH_ATTR hash_arg1, hash_arg2;
 	      // *INDENT-ON*
 
@@ -3761,7 +3764,7 @@ pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * s
 
 	  (*tail)->method_name = (char *) node->info.method_call.method_name->info.name.original;
 
-	  if (node->info.method_call.on_call_target == NULL)
+	  if (node->info.method_call.on_call_target == NULL)	/* java sp */
 	    {
 	      (*tail)->class_name = NULL;
 	    }
@@ -3777,10 +3780,9 @@ pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * s
 		{
 		  (*tail)->class_name = (char *) dt->info.data_type.entity->info.name.original;
 		}
-	    }
 
-	  (*tail)->method_type = ((node->info.method_call.class_or_inst == PT_IS_CLASS_MTHD)
-				  ? METHOD_IS_CLASS_METHOD : METHOD_IS_INSTANCE_METHOD);
+	      (*tail)->method_type = (PT_IS_CLASS_METHOD (node) ? METHOD_IS_CLASS_METHOD : METHOD_IS_INSTANCE_METHOD);
+	    }
 
 	  /* num_method_args does not include the target by convention */
 	  (*tail)->num_method_args = pt_length_of_list (node->info.method_call.arg_list);
@@ -4841,6 +4843,10 @@ pt_cnt_attrs (const REGU_VARIABLE_LIST attr_list)
 	  /* need to check all the operands for the function */
 	  cnt += pt_cnt_attrs (tmp->value.value.funcp->operand);
 	}
+      else if (tmp->value.type == TYPE_STORED_PROC)
+	{
+	  cnt += pt_cnt_attrs (tmp->value.value.sp->args);
+	}
     }
 
   return cnt;
@@ -4873,6 +4879,10 @@ pt_fill_in_attrid_array (REGU_VARIABLE_LIST attr_list, ATTR_ID * attr_array, int
 	{
 	  /* need to check all the operands for the function */
 	  pt_fill_in_attrid_array (tmp->value.value.funcp->operand, attr_array, next_pos);
+	}
+      else if (tmp->value.type == TYPE_STORED_PROC)
+	{
+	  pt_fill_in_attrid_array (tmp->value.value.sp->args, attr_array, next_pos);
 	}
     }
 }
@@ -7506,11 +7516,18 @@ pt_to_regu_variable (PARSER_CONTEXT * parser, PT_NODE * node, UNBOX unbox)
 
 	    case PT_METHOD_CALL:
 	      /* a method call that can be evaluated as a constant expression. */
-	      regu_alloc (val);
-	      pt_evaluate_tree (parser, node, val, 1);
-	      if (!pt_has_error (parser))
+	      if (PT_IS_METHOD (node))
 		{
-		  regu = pt_make_regu_constant (parser, val, pt_node_to_db_type (node), node);
+		  regu_alloc (val);
+		  pt_evaluate_tree (parser, node, val, 1);
+		  if (!pt_has_error (parser))
+		    {
+		      regu = pt_make_regu_constant (parser, val, pt_node_to_db_type (node), node);
+		    }
+		}
+	      else
+		{
+		  regu = pt_stored_procedure_to_regu (parser, node);
 		}
 	      break;
 
@@ -22608,8 +22625,17 @@ pt_get_var_regu_variable_p_list (const REGU_VARIABLE * regu, bool is_prior, int 
       break;
 
     case TYPE_FUNC:
+    case TYPE_STORED_PROC:
       {
-	REGU_VARIABLE_LIST *r = &regu->value.funcp->operand;
+	REGU_VARIABLE_LIST *r = NULL;
+	if (regu->type == TYPE_FUNC)
+	  {
+	    r = &regu->value.funcp->operand;
+	  }
+	else
+	  {
+	    r = &regu->value.sp->args;
+	  }
 	while (*r)
 	  {
 	    list1 = pt_get_var_regu_variable_p_list (&(*r)->value, is_prior, err);
@@ -26743,4 +26769,56 @@ pt_to_instnum_pred (PARSER_CONTEXT * parser, XASL_NODE * xasl, PT_NODE * pred)
     }
 
   return xasl;
+}
+
+/*
+ * pt_stored_procedure_to_regu () - takes a PT_METHOD_CALL and converts to a regu_variable
+ *   return: A NULL return indicates an error occurred
+ *   parser(in):
+ *   function(in/out):
+ */
+static REGU_VARIABLE *
+pt_stored_procedure_to_regu (PARSER_CONTEXT * parser, PT_NODE * node)
+{
+  REGU_VARIABLE *regu = NULL;
+  REGU_VARIABLE_LIST args;
+
+  regu_alloc (regu);
+  if (regu)
+    {
+      regu->type = TYPE_STORED_PROC;
+      regu->domain = pt_xasl_node_to_domain (parser, node);
+      regu_alloc (regu->value.sp);
+
+      if (regu->value.sp)
+	{
+	  regu->value.sp->args =
+	    pt_to_regu_variable_list (parser, node->info.method_call.arg_list, UNBOX_AS_VALUE, NULL, NULL);
+	  regu->value.sp->sig = (char *) node->info.method_call.method_name->info.name.original;
+
+	  DB_TYPE result_type = pt_node_to_db_type (node);
+	  switch (result_type)
+	  {
+		case DB_TYPE_RESULTSET:
+		case DB_TYPE_TABLE:
+			break;
+
+		case DB_TYPE_VOBJ:
+			 regu_dbval_type_init (regu->value.sp->return_val, result_type);
+			 assert (false);
+			 break;
+		default:
+			 regu_dbval_type_init (regu->value.sp->return_val, result_type);
+			 break;
+	  }
+	}
+    }
+  else
+    {
+      PT_ERROR (parser, node,
+		msgcat_message (MSGCAT_CATALOG_CUBRID, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_OUT_OF_MEMORY));
+      return NULL;
+    }
+
+  return regu;
 }

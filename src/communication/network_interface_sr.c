@@ -6396,6 +6396,54 @@ xs_send_method_call_info_to_client (THREAD_ENTRY * thread_p, qfile_list_id * lis
 }
 
 /*
+ * xs_send_stored_procedure_info_to_client -
+ *
+ * NOTE:
+ */
+int
+xs_send_stored_procedure_info_to_client (THREAD_ENTRY * thread_p, const char *sig, DB_VALUE ** args, int num_args)
+{
+  int length = 0;
+  char *databuf = NULL;
+  char *ptr = NULL;
+  unsigned int rid;
+  OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
+  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  int strlen;
+
+  rid = css_get_comm_request_id (thread_p);
+
+  length = OR_INT_SIZE; /* num_args */
+  length += or_packed_string_length (sig, &strlen);
+  for (int i = 0; i < num_args; i++)
+    {
+      length += OR_VALUE_ALIGNED_SIZE (args[i]);
+    }
+
+  databuf = (char *) db_private_alloc (thread_p, length);
+  if (databuf == NULL)
+    {
+      return ER_FAILED;
+    }
+
+  char* db_val_ptr = NULL;
+  ptr = or_pack_int (databuf, num_args);
+  ptr = or_pack_string_with_length (ptr, sig, strlen);
+  for (int i = 0; i < num_args; i++)
+    {
+      ptr = or_pack_value (ptr, args[i]);
+    }
+
+  ptr = or_pack_int (reply, (int) SP_CALL);
+  ptr = or_pack_int (ptr, length);
+
+  css_send_reply_and_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply), databuf, length);
+  db_private_free_and_init (thread_p, databuf);
+
+  return NO_ERROR;
+}
+
+/*
  * xs_receive_data_from_client -
  *
  * return:

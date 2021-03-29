@@ -325,6 +325,10 @@ meth_translate_helper (PARSER_CONTEXT * parser, PT_NODE * node)
 		    {
 		      elm = derived_table->info.function.arg_list;
 		    }
+    	else if (derived_table->node_type == PT_METHOD_CALL)
+		    {
+		      elm = derived_table->info.method_call.arg_list;
+		    }
 		  else
 		    {
 		      /* skip and go ahead for example: use parameter case create class x; -- set audit all on x;
@@ -474,11 +478,10 @@ meth_create_method_list (PARSER_CONTEXT * parser, PT_NODE * node, void *void_arg
       node->info.dot.arg2->info.name.meta_class = PT_PARAMETER;
     }
 
-  if ((node->node_type != PT_METHOD_CALL) || (node->info.method_call.method_name->info.name.spec_id == 0))
+  if (!PT_IS_METHOD (node) || (node->info.method_call.method_name->info.name.spec_id == 0))
     {
       return node;
     }
-
 
   /* check for nested method calls */
   nested_methods = 0;
@@ -1819,7 +1822,7 @@ meth_is_method (PARSER_CONTEXT * parser, PT_NODE * node, void *void_arg, int *co
 
   *continue_walk = PT_CONTINUE_WALK;
 
-  if (node->node_type == PT_METHOD_CALL && node->info.method_call.call_or_expr != PT_PARAMETER)
+  if (PT_IS_METHOD (node) && node->info.method_call.call_or_expr != PT_PARAMETER)
     {
       *is_a_method = 1;
     }

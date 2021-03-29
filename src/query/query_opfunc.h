@@ -81,6 +81,8 @@ extern int qdata_get_valptr_type_list (THREAD_ENTRY * thread_p, valptr_list_node
 				       qfile_tuple_value_type_list * type_list);
 extern int qdata_evaluate_function (THREAD_ENTRY * thread_p, regu_variable_node * func, val_descr * vd, OID * obj_oid,
 				    QFILE_TUPLE tpl);
+extern int qdata_evaluate_stored_procedure (THREAD_ENTRY * thread_p, regu_variable_node * func, val_descr * vd,
+					    OID * obj_oid, QFILE_TUPLE tpl);
 
 
 #if defined (ENABLE_UNUSED_FUNCTION)

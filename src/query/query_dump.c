@@ -1058,6 +1058,8 @@ qdump_regu_type_string (REGU_DATATYPE type)
       return "TYPE_CLASSOID";
     case TYPE_FUNC:
       return "TYPE_FUNC";
+    case TYPE_STORED_PROC:
+      return "TYPE_STORED_PROCEDURE";
     case TYPE_REGUVAL_LIST:
       return "TYPE_REGUVAL_LIST";
     case TYPE_REGU_VAR_LIST:

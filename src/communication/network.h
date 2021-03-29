@@ -276,7 +276,8 @@ typedef enum
   ASYNC_OBTAIN_USER_INPUT,	/* server needs info from operator */
   GET_NEXT_LOG_PAGES,		/* log writer uses this type of request */
   END_CALLBACK,			/* normal end of non-query callback */
-  CONSOLE_OUTPUT
+  CONSOLE_OUTPUT,
+  SP_CALL,			/* invoke stored procedures */
 } QUERY_SERVER_REQUEST;
 
 /* Server startup */

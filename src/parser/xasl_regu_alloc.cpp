@@ -286,6 +286,18 @@ regu_init (function_node &fnode)
 }
 
 void
+regu_init (stored_proc_node &sp_node)
+{
+  sp_node.return_val = NULL;
+  sp_node.args = NULL;
+  sp_node.sig = NULL;
+  sp_node.vacomm_buffer = NULL;
+
+  regu_alloc (sp_node.return_val);
+}
+
+
+void
 regu_init (cubxasl::aggregate_list_node &agg)
 {
   agg.next = NULL;

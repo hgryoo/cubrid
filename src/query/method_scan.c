@@ -75,8 +75,6 @@ static SCAN_CODE method_receive_results (THREAD_ENTRY * thread_p, METHOD_SCAN_BU
 #ifndef SERVER_MODE
 static void method_clear_scan_buffer (METHOD_SCAN_BUFFER * scan_buf);
 #else
-static VACOMM_BUFFER *method_initialize_vacomm_buffer (void);
-static void method_free_vacomm_buffer (VACOMM_BUFFER * vacomm_buffer);
 static SCAN_CODE method_receive_value (THREAD_ENTRY * thread_p, DB_VALUE * dbval, VACOMM_BUFFER * vacomm_buffer);
 #endif /* SERVER_MODE */
 
@@ -633,7 +631,7 @@ method_clear_scan_buffer (METHOD_SCAN_BUFFER * scan_buffer_p)
  *   return:
  *   vacomm_buffer(in)  : Transmission buffer
  */
-static void
+void
 method_free_vacomm_buffer (VACOMM_BUFFER * vacomm_buffer_p)
 {
   if (vacomm_buffer_p)
@@ -647,7 +645,7 @@ method_free_vacomm_buffer (VACOMM_BUFFER * vacomm_buffer_p)
  * method_initialize_vacomm_buffer () - Initializes the method comm buffer
  *   return:
  */
-static VACOMM_BUFFER *
+VACOMM_BUFFER *
 method_initialize_vacomm_buffer (void)
 {
   VACOMM_BUFFER *vacomm_buffer;

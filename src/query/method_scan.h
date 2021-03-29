@@ -62,6 +62,9 @@ struct vacomm_buffer
   int size;			/* size of buffer */
   int action;			/* client action */
 };
+
+extern VACOMM_BUFFER *method_initialize_vacomm_buffer (void);
+extern void method_free_vacomm_buffer (VACOMM_BUFFER * vacomm_buffer);
 #endif
 
 #define MAX_XS_SCANBUF_DBVALS 256

@@ -1556,6 +1556,20 @@ qexec_clear_regu_var (THREAD_ENTRY * thread_p, XASL_NODE * xasl_p, REGU_VARIABLE
 	}
 
       break;
+
+    case TYPE_STORED_PROC:
+      pr_clear_value (regu_var->value.sp->return_val);
+      pg_cnt += qexec_clear_regu_list (thread_p, xasl_p, regu_var->value.sp->args, is_final);
+
+#ifdef SERVER_MODE
+      if (regu_var->value.sp->vacomm_buffer)
+	{
+	  free_and_init (regu_var->value.sp->vacomm_buffer->area);
+	  free_and_init (regu_var->value.sp->vacomm_buffer);
+	}
+#endif
+      break;
+
     case TYPE_REGUVAL_LIST:
       pg_cnt += qexec_clear_regu_value_list (thread_p, xasl_p, regu_var->value.reguval_list, is_final);
       break;
@@ -7497,6 +7511,9 @@ qexec_reset_regu_variable (REGU_VARIABLE * var)
     case TYPE_FUNC:
       /* use funcp */
       qexec_reset_regu_variable_list (var->value.funcp->operand);
+      break;
+	case TYPE_STORED_PROC:
+	  qexec_reset_regu_variable_list (var->value.sp->args);
       break;
     default:
       break;
@@ -16069,6 +16086,17 @@ qexec_replace_prior_regu_vars_prior_expr (THREAD_ENTRY * thread_p, regu_variable
       }
       break;
 
+    case TYPE_STORED_PROC:
+      {
+	REGU_VARIABLE_LIST r = regu->value.sp->args;
+	while (r)
+	  {
+	    qexec_replace_prior_regu_vars_prior_expr (thread_p, &r->value, xasl, connect_by_ptr);
+	    r = r->next;
+	  }
+      }
+      break;
+
     default:
       break;
     }
@@ -16108,6 +16136,17 @@ qexec_replace_prior_regu_vars (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu, XA
     case TYPE_FUNC:
       {
 	REGU_VARIABLE_LIST r = regu->value.funcp->operand;
+	while (r)
+	  {
+	    qexec_replace_prior_regu_vars (thread_p, &r->value, xasl);
+	    r = r->next;
+	  }
+      }
+      break;
+
+    case TYPE_STORED_PROC:
+      {
+	REGU_VARIABLE_LIST r = regu->value.sp->args;
 	while (r)
 	  {
 	    qexec_replace_prior_regu_vars (thread_p, &r->value, xasl);

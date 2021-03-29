@@ -2877,6 +2877,7 @@ pt_bind_names (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue
 	  && jsp_is_exist_stored_procedure (node->info.method_call.method_name->info.name.original))
 	{
 	  node->info.method_call.method_name->info.name.spec_id = (UINTPTR) node->info.method_call.method_name;
+	  node->info.method_call.method_type = (PT_MISC_TYPE) jsp_get_sp_type (node->info.method_call.method_name->info.name.original);
 	  node->info.method_call.method_name->info.name.meta_class = PT_METHOD;
 	  parser_walk_leaves (parser, node, pt_bind_names, bind_arg, pt_bind_names_post, bind_arg);
 	  /* don't revisit leaves */
@@ -3019,7 +3020,6 @@ pt_bind_names (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue
 	       * nodes PT_FUNCTION.  If so, pt_make_stored_procedure() and pt_make_method_call() will
 	       * translate it into a method_call.
 	       */
-
 	      if (jsp_is_exist_stored_procedure (generic_name))
 		{
 		  node1 = pt_resolve_stored_procedure (parser, node, bind_arg);
@@ -5313,7 +5313,7 @@ pt_get_resolution (PARSER_CONTEXT * parser, PT_BIND_NAMES_ARG * bind_arg, PT_NOD
   if ((in_node->node_type == PT_FUNCTION) || (in_node->node_type == PT_METHOD_CALL))
     {
       PT_NODE *new_node;
-      if (in_node->node_type == PT_FUNCTION)
+      if (in_node->node_type == PT_FUNCTION || PT_IS_JAVA_SP (in_node))
 	{
 	  /* call pt_bind_names() to convert the function node into a method node as well as binding its arguments and
 	   * its target. */
@@ -8895,11 +8895,11 @@ pt_resolve_method_type (PARSER_CONTEXT * parser, PT_NODE * node)
 	{
 	  return false;		/* not a method */
 	}
-      node->info.method_call.class_or_inst = PT_IS_CLASS_MTHD;
+      node->info.method_call.method_type = PT_MTHD_CLASS;
     }
   else
     {
-      node->info.method_call.class_or_inst = PT_IS_INST_MTHD;
+      node->info.method_call.method_type = PT_MTHD_INST;
     }
 
   /* look up the domain of the method's return type */
@@ -8973,7 +8973,6 @@ pt_make_method_call (PARSER_CONTEXT * parser, PT_NODE * f_node, PT_BIND_NAMES_AR
 
   /* make method name look resolved */
   new_node->info.method_call.method_name->info.name.spec_id = (UINTPTR) new_node->info.method_call.method_name;
-  new_node->info.method_call.method_name->info.name.meta_class = PT_METHOD;
 
   return new_node;
 }
@@ -9028,7 +9027,7 @@ pt_resolve_method (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NAMES_ARG * 
 	{
 	  PT_NODE *entity, *spec;
 	  entity = NULL;	/* init */
-	  if (new_node->info.method_call.class_or_inst == PT_IS_CLASS_MTHD)
+	  if (PT_IS_CLASS_METHOD (node))
 	    {
 	      for (spec = bind_arg->spec_frames->extra_specs; spec != NULL; spec = spec->next)
 		{
@@ -9053,6 +9052,7 @@ pt_resolve_method (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NAMES_ARG * 
 	    }
 	}
 
+      new_node->info.method_call.method_name->info.name.meta_class = PT_METHOD;
       return new_node;		/* it is a method call */
     }
 }				/* pt_resolve_method */
@@ -9076,19 +9076,41 @@ pt_resolve_stored_procedure (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NA
   parser_walk_leaves (parser, new_node, pt_bind_names, bind_arg, pt_bind_names_post, bind_arg);
 
   /* returns either error or DB_TYPE... */
-  int return_type = jsp_get_return_type (new_node->info.method_call.method_name->info.name.original);
+  const char *sp_name = new_node->info.method_call.method_name->info.name.original;
+  int return_type = jsp_get_return_type (sp_name);
   if (return_type < 0)
     {
       PT_INTERNAL_ERROR (parser, "jsp_get_return_type");
       return NULL;
     }
-  new_node->type_enum = pt_db_to_type_enum ((DB_TYPE) return_type);
 
+  new_node->type_enum = pt_db_to_type_enum ((DB_TYPE) return_type);
   TP_DOMAIN *d = pt_type_enum_to_db_domain (new_node->type_enum);
   d = tp_domain_cache (d);
-  new_node->data_type = pt_domain_to_data_type (parser, d);
+
+  switch (node->type_enum)
+    {
+    case PT_TYPE_OBJECT:
+    case PT_TYPE_SET:
+    case PT_TYPE_SEQUENCE:
+    case PT_TYPE_MULTISET:
+    case PT_TYPE_NUMERIC:
+    case PT_TYPE_BIT:
+    case PT_TYPE_VARBIT:
+    case PT_TYPE_CHAR:
+    case PT_TYPE_VARCHAR:
+    case PT_TYPE_NCHAR:
+    case PT_TYPE_VARNCHAR:
+  		new_node->data_type = pt_domain_to_data_type (parser, d);
+      break;
+    default:
+      break;
+    }
 
   new_node->info.method_call.method_id = (UINTPTR) new_node;
+
+  int sp_type_misc = jsp_get_sp_type (sp_name);
+  new_node->info.method_call.method_type = (PT_MISC_TYPE) sp_type_misc;
 
   return new_node;
 }				/* pt_resolve_stored_procedure */

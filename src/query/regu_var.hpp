@@ -28,6 +28,11 @@
 #include "query_list.h"
 #include "string_opfunc.h"
 #include "object_primitive.h"
+#include "method_def.hpp"
+
+#ifdef SERVER_MODE
+#include "method_scan.h"
+#endif
 
 #include <functional>
 
@@ -57,7 +62,8 @@ typedef enum
   TYPE_CLASSOID,		/* does not have corresponding field use current class identifier value */
   TYPE_FUNC,			/* use funcp */
   TYPE_REGUVAL_LIST,		/* use reguval_list */
-  TYPE_REGU_VAR_LIST		/* use regu_variable_list for 'CUME_DIST' and 'PERCENT_RANK' */
+  TYPE_REGU_VAR_LIST,		/* use regu_variable_list for 'CUME_DIST' and 'PERCENT_RANK' */
+  TYPE_STORED_PROC      /* use sp */
 } REGU_DATATYPE;
 
 /* declare ahead REGU_VARIABLE */
@@ -152,6 +158,19 @@ union function_tmp_obj
   cub_compiled_regex *compiled_regex;
 };
 
+typedef struct stored_proc_node STORED_PROC_TYPE;
+struct stored_proc_node
+{
+  DB_VALUE *return_val;		/* result */
+  REGU_VARIABLE_LIST args;	/* operands */
+  char *sig;
+#ifdef SERVER_MODE
+  VACOMM_BUFFER *vacomm_buffer;
+#else
+  void *vacomm_buffer;
+#endif				/* SERVER_MODE */
+};
+
 /* regular variable flags */
 const int REGU_VARIABLE_HIDDEN_COLUMN = 0x01;	/* does not go to list file */
 const int REGU_VARIABLE_FIELD_COMPARE = 0x02;	/* for FIELD function, marks the bottom of regu tree */
@@ -190,6 +209,7 @@ class regu_variable_node
       struct function_node *funcp;	/* function */
       REGU_VALUE_LIST *reguval_list;	/* for "values" query */
       REGU_VARIABLE_LIST regu_var_list;	/* for CUME_DIST and PERCENT_RANK */
+      STORED_PROC_TYPE *sp;             /* for java stored procedure */
     } value;
 
     regu_variable_node () = default;

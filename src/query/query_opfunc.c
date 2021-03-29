@@ -44,6 +44,7 @@
 #include "databases_file.h"
 #include "tz_support.h"
 #include "memory_hash.h"
+#include "method_scan.h"
 #include "numeric_opfunc.h"
 #include "tz_support.h"
 #include "db_date.h"
@@ -55,6 +56,7 @@
 #include "xasl.h"
 #include "xasl_aggregate.hpp"
 #include "xasl_analytic.hpp"
+#include "network_interface_sr.h"
 
 #include "dbtype.h"
 
@@ -9271,7 +9273,6 @@ qdata_get_interpolation_function_result (THREAD_ENTRY * thread_p, QFILE_LIST_SCA
     }
 
 end:
-
   pr_clear_value (&f_fetch_value);
   pr_clear_value (&c_fetch_value);
 
@@ -9323,4 +9324,142 @@ qdata_update_interpolation_func_value_and_domain (DB_VALUE * src_val, DB_VALUE *
 end:
 
   return error;
+}
+
+/*
+ * qdata_evaluate_stored_procedure () -
+ *   return: NO_ERROR, or ER_code
+ *   func(in)   :
+ *   vd(in)     :
+ *   obj_oid(in)        :
+ *   tpl(in)    :
+ *
+ * Note: Evaluate given function.
+ */
+int
+qdata_evaluate_stored_procedure (THREAD_ENTRY * thread_p, regu_variable_node * regu, val_descr * val_desc_p,
+				 OID * obj_oid_p, QFILE_TUPLE tuple)
+{
+  int error_status = NO_ERROR;
+  STORED_PROC_TYPE *sp = NULL;
+  REGU_VARIABLE_LIST sp_arg;
+  DB_VALUE **args = NULL;
+  
+  /* should sync with fetch_peek_dbval () */
+  {
+    sp = regu->value.sp;
+    /* clear any value from a previous iteration */
+    pr_clear_value (sp->return_val);
+
+    int no_args = 0, index = 0;
+
+    sp_arg = sp->args;
+    while (sp_arg != NULL)
+      {
+	no_args++;
+	sp_arg = sp_arg->next;
+      }
+
+    if (no_args > 0) 
+    {
+      args = (DB_VALUE **) db_private_alloc (thread_p, sizeof (DB_VALUE *) * no_args);
+
+      sp_arg = sp->args;
+      DB_VALUE *value = NULL;
+      while (sp_arg != NULL)
+        {
+    error_status = fetch_peek_dbval (thread_p, &sp_arg->value, val_desc_p, NULL, obj_oid_p, tuple, &value);
+    if (error_status != NO_ERROR)
+      {
+        return error_status;
+      }
+
+    args[index++] = value;
+    sp_arg = sp_arg->next;
+        }
+    }
+
+    assert (index == no_args);
+
+#ifdef SERVER_MODE
+    // SEND CALL
+    int num_args = index;
+    error_status = xs_send_stored_procedure_info_to_client (thread_p, sp->sig, args, num_args);
+    if (error_status != NO_ERROR)
+      {
+	error_status = ER_FAILED;
+	goto exit;
+      }
+
+    // RECEIVE CALL
+    if (sp->vacomm_buffer == NULL)
+      {
+	sp->vacomm_buffer = method_initialize_vacomm_buffer ();
+      }
+
+    VACOMM_BUFFER *vacomm_buffer_p = sp->vacomm_buffer;
+
+    vacomm_buffer_p->status = METHOD_ERROR;
+
+    error_status = xs_receive_data_from_client (thread_p, &vacomm_buffer_p->area, &vacomm_buffer_p->size);
+    if (error_status == NO_ERROR)
+      {
+	char *p;
+	vacomm_buffer_p->buffer = vacomm_buffer_p->area + VACOMM_BUFFER_HEADER_SIZE;
+	p = or_unpack_int (vacomm_buffer_p->area + VACOMM_BUFFER_HEADER_LENGTH_OFFSET, &vacomm_buffer_p->length);
+	p = or_unpack_int (vacomm_buffer_p->area + VACOMM_BUFFER_HEADER_STATUS_OFFSET, &vacomm_buffer_p->status);
+
+	if (vacomm_buffer_p->status == METHOD_ERROR)
+	  {
+	    p = or_unpack_int (vacomm_buffer_p->area + VACOMM_BUFFER_HEADER_ERROR_OFFSET, &vacomm_buffer_p->error);
+	  }
+	else
+	  {
+	    p = or_unpack_int (vacomm_buffer_p->area + VACOMM_BUFFER_HEADER_NO_VALS_OFFSET, &vacomm_buffer_p->num_vals);
+	  }
+
+	if (vacomm_buffer_p->status == METHOD_SUCCESS)
+	  {
+	    error_status = xs_send_action_to_client (thread_p, (VACOMM_BUFFER_CLIENT_ACTION) vacomm_buffer_p->action);
+	    if (error_status != NO_ERROR)
+	      {
+		error_status = ER_FAILED;
+		goto exit;
+	      }
+	  }
+
+	if (vacomm_buffer_p->num_vals > 0)
+	  {
+	    p = or_unpack_db_value (vacomm_buffer_p->buffer + vacomm_buffer_p->cur_pos, sp->return_val);
+	    vacomm_buffer_p->cur_pos += OR_VALUE_ALIGNED_SIZE (sp->return_val);
+	    vacomm_buffer_p->num_vals--;
+	  }
+
+	if (vacomm_buffer_p->num_vals == 0)
+	  {
+	    vacomm_buffer_p->cur_pos = 0;
+	  }
+      }
+    else
+      {
+	xs_send_action_to_client (thread_p, (VACOMM_BUFFER_CLIENT_ACTION) vacomm_buffer_p->action);
+	error_status = ER_FAILED;
+	goto exit;
+      }
+
+    if (vacomm_buffer_p->status == METHOD_ERROR)
+      {
+	error_status = ER_FAILED;
+	goto exit;
+      }
+
+    
+#else
+    db_make_null (sp->return_val);
+#endif
+  }
+exit:
+
+  db_private_free (thread_p, args);
+  return error_status;
 }
