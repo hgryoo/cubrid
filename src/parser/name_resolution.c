@@ -2877,7 +2877,8 @@ pt_bind_names (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue
 	  && jsp_is_exist_stored_procedure (node->info.method_call.method_name->info.name.original))
 	{
 	  node->info.method_call.method_name->info.name.spec_id = (UINTPTR) node->info.method_call.method_name;
-	  node->info.method_call.method_type = (PT_MISC_TYPE) jsp_get_sp_type (node->info.method_call.method_name->info.name.original);
+	  node->info.method_call.method_type =
+	    (PT_MISC_TYPE) jsp_get_sp_type (node->info.method_call.method_name->info.name.original);
 	  node->info.method_call.method_name->info.name.meta_class = PT_METHOD;
 	  parser_walk_leaves (parser, node, pt_bind_names, bind_arg, pt_bind_names_post, bind_arg);
 	  /* don't revisit leaves */
@@ -9101,7 +9102,7 @@ pt_resolve_stored_procedure (PARSER_CONTEXT * parser, PT_NODE * node, PT_BIND_NA
     case PT_TYPE_VARCHAR:
     case PT_TYPE_NCHAR:
     case PT_TYPE_VARNCHAR:
-  		new_node->data_type = pt_domain_to_data_type (parser, d);
+      new_node->data_type = pt_domain_to_data_type (parser, d);
       break;
     default:
       break;

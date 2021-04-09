@@ -325,7 +325,7 @@ meth_translate_helper (PARSER_CONTEXT * parser, PT_NODE * node)
 		    {
 		      elm = derived_table->info.function.arg_list;
 		    }
-    	else if (derived_table->node_type == PT_METHOD_CALL)
+		  else if (derived_table->node_type == PT_METHOD_CALL)
 		    {
 		      elm = derived_table->info.method_call.arg_list;
 		    }

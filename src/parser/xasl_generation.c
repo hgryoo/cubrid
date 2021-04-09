@@ -26798,19 +26798,19 @@ pt_stored_procedure_to_regu (PARSER_CONTEXT * parser, PT_NODE * node)
 
 	  DB_TYPE result_type = pt_node_to_db_type (node);
 	  switch (result_type)
-	  {
-		case DB_TYPE_RESULTSET:
-		case DB_TYPE_TABLE:
-			break;
+	    {
+	    case DB_TYPE_RESULTSET:
+	    case DB_TYPE_TABLE:
+	      break;
 
-		case DB_TYPE_VOBJ:
-			 regu_dbval_type_init (regu->value.sp->return_val, result_type);
-			 assert (false);
-			 break;
-		default:
-			 regu_dbval_type_init (regu->value.sp->return_val, result_type);
-			 break;
-	  }
+	    case DB_TYPE_VOBJ:
+	      regu_dbval_type_init (regu->value.sp->return_val, result_type);
+	      assert (false);
+	      break;
+	    default:
+	      regu_dbval_type_init (regu->value.sp->return_val, result_type);
+	      break;
+	    }
 	}
     }
   else
