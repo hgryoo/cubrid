@@ -1946,7 +1946,7 @@ net_client_request_with_callback (int request, char *argbuf, int argsize, char *
 			error = COMPARE_SIZE_AND_BUFFER (&sp_databuf_size, size, &sp_databuf, reply);
 
 			ptr = or_unpack_int (sp_databuf, &num_args);
-      ptr = or_unpack_string (ptr, &sp_sig);
+			ptr = or_unpack_string (ptr, &sp_sig);
 			sp_args = (DB_VALUE **) malloc (num_args * sizeof (DB_VALUE *));
 			for (int i = 0; i < num_args; i++)
 			  {
