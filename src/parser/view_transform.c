@@ -2587,13 +2587,10 @@ mq_class_meth_corr_subq_pre (PARSER_CONTEXT * parser, PT_NODE * node, void *void
 
   *continue_walk = PT_CONTINUE_WALK;
 
-  if (node->node_type == PT_METHOD_CALL)
+  if (PT_IS_CLASS_METHOD (node))
     {
       /* found class method */
-      if (node->info.method_call.class_or_inst == PT_IS_CLASS_MTHD)
-	{
-	  *found = true;
-	}
+      *found = true;
     }
   else if (pt_is_query (node))
     {

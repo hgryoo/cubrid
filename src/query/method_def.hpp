@@ -46,7 +46,8 @@ typedef enum
 {
   METHOD_IS_NONE = 0,
   METHOD_IS_INSTANCE_METHOD = 1,
-  METHOD_IS_CLASS_METHOD
+  METHOD_IS_CLASS_METHOD,
+  METHOD_IS_JAVA_SP
 } METHOD_TYPE;
 
 typedef struct method_sig_node METHOD_SIG;

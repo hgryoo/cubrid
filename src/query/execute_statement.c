@@ -13761,7 +13761,7 @@ do_call_method (PARSER_CONTEXT * parser, PT_NODE * statement)
       return er_errid ();
     }
 
-  if (statement->info.method_call.on_call_target)
+  if (PT_IS_METHOD (statement))
     {
       return call_method (parser, statement);
     }
@@ -13769,6 +13769,9 @@ do_call_method (PARSER_CONTEXT * parser, PT_NODE * statement)
     {
       return jsp_call_stored_procedure (parser, statement);
     }
+
+  assert (false);		/* should not be here */
+  return ER_FAILED;
 }
 
 /*

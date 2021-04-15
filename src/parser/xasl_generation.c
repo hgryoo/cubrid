@@ -3761,9 +3761,10 @@ pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * s
 
 	  (*tail)->method_name = (char *) node->info.method_call.method_name->info.name.original;
 
-	  if (node->info.method_call.on_call_target == NULL)
+	  if (!PT_IS_METHOD (node))	/* java sp */
 	    {
 	      (*tail)->class_name = NULL;
+	      (*tail)->method_type = METHOD_IS_JAVA_SP;
 	    }
 	  else
 	    {
@@ -3777,10 +3778,9 @@ pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * s
 		{
 		  (*tail)->class_name = (char *) dt->info.data_type.entity->info.name.original;
 		}
-	    }
 
-	  (*tail)->method_type = ((node->info.method_call.class_or_inst == PT_IS_CLASS_MTHD)
-				  ? METHOD_IS_CLASS_METHOD : METHOD_IS_INSTANCE_METHOD);
+	      (*tail)->method_type = PT_IS_CLASS_METHOD (node) ? METHOD_IS_CLASS_METHOD : METHOD_IS_INSTANCE_METHOD;
+	    }
 
 	  /* num_method_args does not include the target by convention */
 	  (*tail)->num_method_args = pt_length_of_list (node->info.method_call.arg_list);
