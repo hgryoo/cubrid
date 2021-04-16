@@ -10,13 +10,21 @@
         </filesystem>
 
         <!-- from CUBRID artifactory -->
-        <ibiblio name="cubrid-artifactory" m2compatible="true" root="http://maven.cubrid.org/"/>
+        <ibiblio name="cubrid-artifactory" m2compatible="true" root="https://maven.cubrid.org/"/>
+
+        <!-- from Maven central repository -->
+        <ibiblio name="maven-central" m2compatible="true" root="https://repo.maven.apache.org/maven2/"/>
 
         <chain name="cubrid-javasp-chain" returnFirst="true">
             <resolver ref="cubrid-jdbc-submodule"/>
             <resolver ref="cubrid-artifactory"/>
         </chain>
     </resolvers>
+    <modules>
+        <module organisation="cubrid" name="cubrid-jdbc" resolver="cubrid-javasp-chain"/>
+        <module organisation="net.java.dev.jna" name="jna" resolver="maven-central"/>   
+        <module organisation="net.java.dev.jna" name="jna-platform" resolver="maven-central"/>   
+    </modules>
     <latest-strategies>
         <latest-revision name="cub-latest-revision"/>
     </latest-strategies>
