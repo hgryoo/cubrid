@@ -105,6 +105,9 @@ method_open_value_array_scan (METHOD_SCAN_BUFFER * scan_buffer_p)
     }
 
 #ifdef SERVER_MODE
+
+  socket = INVALID_SOCKET;
+
   scan_buffer_p->vacomm_buffer = method_initialize_vacomm_buffer ();
   if (scan_buffer_p->vacomm_buffer == NULL)
     {

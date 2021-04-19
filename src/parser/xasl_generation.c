@@ -558,8 +558,9 @@ static PT_NODE *pt_build_do_stmt_aptr_list_pre (PARSER_CONTEXT * parser, PT_NODE
 
 static XASL_NODE *pt_build_do_stmt_aptr_list (PARSER_CONTEXT * parser, PT_NODE * node);
 
+using METHOD_TYPE_COMPARE = bool (*) (PT_NODE * node);
 static METHOD_SIG_LIST *pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list,
-					       PT_NODE * subquery_as_attr_list);
+					       PT_NODE * subquery_as_attr_list, METHOD_TYPE_COMPARE compare);
 
 static int pt_is_subquery (PT_NODE * node);
 
@@ -3726,7 +3727,6 @@ pt_to_method_arglist (PARSER_CONTEXT * parser, PT_NODE * target, PT_NODE * node_
   return arg_list;
 }
 
-
 /*
  * pt_to_method_sig_list () - converts a parse expression tree list of
  *                            method calls to method signature list
@@ -3736,7 +3736,7 @@ pt_to_method_arglist (PARSER_CONTEXT * parser, PT_NODE * target, PT_NODE * node_
  *   subquery_as_attr_list(in):
  */
 static METHOD_SIG_LIST *
-pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * subquery_as_attr_list)
+pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * subquery_as_attr_list, METHOD_TYPE_COMPARE compare)
 {
   METHOD_SIG_LIST *sig_list = NULL;
   METHOD_SIG **tail = NULL;
@@ -3753,9 +3753,11 @@ pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * s
 
   for (node = node_list; node != NULL; node = node->next)
     {
+	  if (node->node_type == PT_METHOD_CALL && node->info.method_call.method_name && compare (node))
+	  {
       regu_alloc (*tail);
 
-      if (*tail && node->node_type == PT_METHOD_CALL && node->info.method_call.method_name)
+      if (*tail)
 	{
 	  (sig_list->num_methods)++;
 
@@ -3796,6 +3798,7 @@ pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * s
 	  sig_list = NULL;
 	  break;
 	}
+	  }
     }
 
   return sig_list;

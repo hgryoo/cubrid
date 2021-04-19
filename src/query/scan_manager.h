@@ -359,6 +359,7 @@ struct scan_id_struct
     REGU_VALUES_SCAN_ID rvsid;	/* regu_variable list identifier */
     SHOWSTMT_SCAN_ID stsid;	/* show stmt identifier */
     JSON_TABLE_SCAN_ID jtid;
+    JAVASP_SCAN_ID jspid;
   } s;
 
   SCAN_STATS scan_stats;

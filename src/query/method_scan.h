@@ -82,6 +82,7 @@ struct method_scan_buffer
     METHOD_INFO method_ctl;
   } s;
 #ifdef SERVER_MODE
+  SOCKET socket;
   VACOMM_BUFFER *vacomm_buffer;
 #else				/* SERVER_MODE */
   /* These are needed for calling */
