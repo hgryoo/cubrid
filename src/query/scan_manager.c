@@ -3971,7 +3971,9 @@ scan_open_method_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
   /* mvcc_select_lock_needed = false, fixed = true */
   scan_init_scan_id (scan_id, false, S_SELECT, true, grouped, single_fetch, join_dbval, val_list, vd);
 
-  return method_open_scan (thread_p, &scan_id->s.vaid.scan_buf, list_id, meth_sig_list);
+  scan_id->s.jspid.init (thread_p, list_id, meth_sig_list);
+  return scan_id->s.jspid.open ();
+  // return method_open_scan (thread_p, &scan_id->s.vaid.scan_buf, list_id, meth_sig_list);
 }
 
 /*
@@ -4850,7 +4852,8 @@ scan_close_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
       break;
 
     case S_METHOD_SCAN:
-      method_close_scan (thread_p, &scan_id->s.vaid.scan_buf);
+	  scan_id->s.jspid.close ();
+      // method_close_scan (thread_p, &scan_id->s.vaid.scan_buf);
       break;
 
     case S_JSON_TABLE_SCAN:
@@ -6724,7 +6727,8 @@ scan_next_method_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
   vaidp = &scan_id->s.vaid;
 
   /* execute method scan */
-  qp_scan = method_scan_next (thread_p, &vaidp->scan_buf, &vl);
+  //qp_scan = method_scan_next (thread_p, &vaidp->scan_buf, &vl);
+  qp_scan = scan_id->s.jspid.next_scan (vl);
   if (qp_scan != S_SUCCESS)
     {
       /* scan error or end of scan */

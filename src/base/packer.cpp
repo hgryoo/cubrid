@@ -228,6 +228,94 @@ namespace cubpacking
   }
 
   size_t
+  packer::get_packed_float_size (size_t curr_offset)
+  {
+    return DB_ALIGN (curr_offset, FLOAT_ALIGNMENT) - curr_offset + OR_FLOAT_SIZE;
+  }
+
+  void
+  packer::pack_float (const float value)
+  {
+    align (FLOAT_ALIGNMENT);
+    check_range (m_ptr, m_end_ptr, OR_FLOAT_SIZE);
+
+    OR_PUT_FLOAT (m_ptr, value);
+    m_ptr += OR_FLOAT_SIZE;
+  }
+
+  size_t
+  packer::get_packed_size_overloaded (float value, size_t curr_offset)
+  {
+    return get_packed_float_size (curr_offset);
+  }
+
+  void
+  packer::pack_overloaded (float value)
+  {
+    pack_float (value);
+  }
+
+  void
+  unpacker::unpack_float (float &value)
+  {
+    align (FLOAT_ALIGNMENT);
+    check_range (m_ptr, m_end_ptr, OR_FLOAT_SIZE);
+
+    value = OR_GET_SHORT (m_ptr);
+    m_ptr += OR_SHORT_SIZE;
+  }
+
+  void
+  unpacker::unpack_overloaded (float &value)
+  {
+    unpack_float (value);
+  }
+
+  size_t
+  packer::get_packed_double_size (size_t curr_offset)
+  {
+    return DB_ALIGN (curr_offset, DOUBLE_ALIGNMENT) - curr_offset + OR_DOUBLE_SIZE;
+  }
+
+  void
+  packer::pack_double (const double value)
+  {
+    align (DOUBLE_ALIGNMENT);
+    check_range (m_ptr, m_end_ptr, OR_DOUBLE_SIZE);
+
+    OR_PUT_DOUBLE (m_ptr, value);
+    m_ptr += OR_DOUBLE_SIZE;
+  }
+
+  size_t
+  packer::get_packed_size_overloaded (double value, size_t curr_offset)
+  {
+    return get_packed_double_size (curr_offset);
+  }
+
+  void
+  packer::pack_overloaded (double value)
+  {
+    pack_double (value);
+  }
+
+  void
+  unpacker::unpack_double (double &value)
+  {
+    align (DOUBLE_ALIGNMENT);
+    check_range (m_ptr, m_end_ptr, OR_DOUBLE_SIZE);
+
+    value = OR_GET_SHORT (m_ptr);
+    m_ptr += OR_SHORT_SIZE;
+  }
+
+  void
+  unpacker::unpack_overloaded (double &value)
+  {
+    unpack_double (value);
+  }
+
+  size_t
   packer::get_packed_bigint_size (size_t curr_offset)
   {
     return DB_ALIGN (curr_offset, MAX_ALIGNMENT) - curr_offset + OR_BIGINT_SIZE;

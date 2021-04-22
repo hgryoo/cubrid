@@ -31,6 +31,7 @@
 
 package com.cubrid.jsp;
 
+import com.cubrid.jsp.Packer;
 import com.cubrid.jsp.exception.ExecuteException;
 import com.cubrid.jsp.exception.TypeMismatchException;
 import com.cubrid.jsp.value.DateValue;
@@ -316,8 +317,9 @@ public class ExecuteThread extends Thread {
         input.readFully(methodSig);
 
         int paramCount = input.readInt();
-        Value[] args = readArguments(input, paramCount);
+        Value[] args = Packer.readArguments(input, paramCount);
 
+        // TODO
         int returnType = input.readInt();
 
         int endCode = input.readInt();
@@ -490,187 +492,6 @@ public class ExecuteThread extends Thread {
         byteBuf.writeTo(output);
         output.writeInt(REQ_CODE_ERROR);
         output.flush();
-    }
-
-    private Value[] readArguments(DataInputStream dis, int paramCount)
-            throws IOException, TypeMismatchException, SQLException {
-        Value[] args = new Value[paramCount];
-
-        for (int i = 0; i < paramCount; i++) {
-            int mode = dis.readInt();
-            int dbType = dis.readInt();
-            int paramType = dis.readInt();
-            int paramSize = dis.readInt();
-
-            Value arg = readArgument(dis, paramSize, paramType, mode, dbType);
-            args[i] = (arg);
-        }
-
-        return args;
-    }
-
-    private Value[] readArgumentsForSet(DataInputStream dis, int paramCount)
-            throws IOException, TypeMismatchException, SQLException {
-        Value[] args = new Value[paramCount];
-
-        for (int i = 0; i < paramCount; i++) {
-            int paramType = dis.readInt();
-            int paramSize = dis.readInt();
-            Value arg = readArgument(dis, paramSize, paramType, Value.IN, 0);
-            args[i] = (arg);
-        }
-
-        return args;
-    }
-
-    private Value readArgument(
-            DataInputStream dis, int paramSize, int paramType, int mode, int dbType)
-            throws IOException, TypeMismatchException, SQLException {
-        Value arg = null;
-        switch (paramType) {
-            case DB_SHORT:
-                // assert paramSize == 4
-                arg = new ShortValue((short) dis.readInt(), mode, dbType);
-                break;
-            case DB_INT:
-                // assert paramSize == 4
-                arg = new IntValue(dis.readInt(), mode, dbType);
-                break;
-            case DB_BIGINT:
-                // assert paramSize == 8
-                arg = new LongValue(dis.readLong(), mode, dbType);
-                break;
-            case DB_FLOAT:
-                // assert paramSize == 4
-                arg = new FloatValue(dis.readFloat(), mode, dbType);
-                break;
-            case DB_DOUBLE:
-            case DB_MONETARY:
-                // assert paramSize == 8
-                arg = new DoubleValue(dis.readDouble(), mode, dbType);
-                break;
-            case DB_NUMERIC:
-                {
-                    byte[] paramValue = new byte[paramSize];
-                    dis.readFully(paramValue);
-
-                    int i;
-                    for (i = 0; i < paramValue.length; i++) {
-                        if (paramValue[i] == 0) break;
-                    }
-
-                    byte[] strValue = new byte[i];
-                    System.arraycopy(paramValue, 0, strValue, 0, i);
-
-                    arg = new NumericValue(new String(strValue), mode, dbType);
-                }
-                break;
-            case DB_CHAR:
-            case DB_STRING:
-                // assert paramSize == n
-                {
-                    byte[] paramValue = new byte[paramSize];
-                    dis.readFully(paramValue);
-
-                    int i;
-                    for (i = 0; i < paramValue.length; i++) {
-                        if (paramValue[i] == 0) break;
-                    }
-
-                    byte[] strValue = new byte[i];
-                    System.arraycopy(paramValue, 0, strValue, 0, i);
-                    arg = new StringValue(new String(strValue), mode, dbType);
-                }
-                break;
-            case DB_DATE:
-                // assert paramSize == 3
-                {
-                    int year = dis.readInt();
-                    int month = dis.readInt();
-                    int day = dis.readInt();
-
-                    arg = new DateValue(year, month, day, mode, dbType);
-                }
-                break;
-            case DB_TIME:
-                // assert paramSize == 3
-                {
-                    int hour = dis.readInt();
-                    int min = dis.readInt();
-                    int sec = dis.readInt();
-                    Calendar cal = Calendar.getInstance();
-                    cal.set(0, 0, 0, hour, min, sec);
-
-                    arg = new TimeValue(hour, min, sec, mode, dbType);
-                }
-                break;
-            case DB_TIMESTAMP:
-                // assert paramSize == 6
-                {
-                    int year = dis.readInt();
-                    int month = dis.readInt();
-                    int day = dis.readInt();
-                    int hour = dis.readInt();
-                    int min = dis.readInt();
-                    int sec = dis.readInt();
-                    Calendar cal = Calendar.getInstance();
-                    cal.set(year, month, day, hour, min, sec);
-
-                    arg = new TimestampValue(year, month, day, hour, min, sec, mode, dbType);
-                }
-                break;
-            case DB_DATETIME:
-                // assert paramSize == 7
-                {
-                    int year = dis.readInt();
-                    int month = dis.readInt();
-                    int day = dis.readInt();
-                    int hour = dis.readInt();
-                    int min = dis.readInt();
-                    int sec = dis.readInt();
-                    int msec = dis.readInt();
-                    Calendar cal = Calendar.getInstance();
-                    cal.set(year, month, day, hour, min, sec);
-
-                    arg = new DatetimeValue(year, month, day, hour, min, sec, msec, mode, dbType);
-                }
-                break;
-            case DB_SET:
-            case DB_MULTISET:
-            case DB_SEQUENCE:
-                {
-                    int nCol = dis.readInt();
-                    // System.out.println(nCol);
-                    arg = new SetValue(readArgumentsForSet(dis, nCol), mode, dbType);
-                }
-                break;
-            case DB_OBJECT:
-                {
-                    int page = dis.readInt();
-                    short slot = (short) dis.readInt();
-                    short vol = (short) dis.readInt();
-
-                    byte[] bOID = new byte[UConnection.OID_BYTE_SIZE];
-                    bOID[0] = ((byte) ((page >>> 24) & 0xFF));
-                    bOID[1] = ((byte) ((page >>> 16) & 0xFF));
-                    bOID[2] = ((byte) ((page >>> 8) & 0xFF));
-                    bOID[3] = ((byte) ((page >>> 0) & 0xFF));
-                    bOID[4] = ((byte) ((slot >>> 8) & 0xFF));
-                    bOID[5] = ((byte) ((slot >>> 0) & 0xFF));
-                    bOID[6] = ((byte) ((vol >>> 8) & 0xFF));
-                    bOID[7] = ((byte) ((vol >>> 0) & 0xFF));
-
-                    arg = new OidValue(bOID, mode, dbType);
-                }
-                break;
-            case DB_NULL:
-                arg = new NullValue(mode, dbType);
-                break;
-            default:
-                // unknown type
-                break;
-        }
-        return arg;
     }
 
     private void sendValue(Object result, DataOutputStream dos, int ret_type)

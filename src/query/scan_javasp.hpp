@@ -19,10 +19,13 @@
 #ifndef _SCAN_JAVASP_HPP_
 #define _SCAN_JAVASP_HPP_
 
-#include "scan_manager.h"
 #include "storage_common.h"
+#include "method_scan.h"
 
-#include <vector>
+#include "jsp_comm.h"
+#include "jsp_sr.h"
+
+#include "packer.hpp"
 
 // thread_entry.hpp
 namespace cubthread
@@ -30,21 +33,68 @@ namespace cubthread
   class entry;
 }
 
-namespace cubscan {
-    namespace javasp {
-        class scanner {
-            public:
+struct qproc_db_value_list;
+struct val_list_node;
+struct qfile_list_id;
 
-            int open (cubthread::entry *thread_p);
+namespace cubscan
+{
+  namespace javasp
+  {
+    class scanner
+    {
+      public:
+	void init (cubthread::entry *thread_p, qfile_list_id *list_id, method_sig_list *meth_sig_list);
+	int open ();
+	SCAN_CODE next_scan (val_list_node &vl);
+	int close ();
 
-            int next_scan (cubthread::entry *thread_p, scan_id_struct &sid, SCAN_CODE &sc);
+	int get_argument_size (METHOD_SIG *&method_sig)
+	{
+	  // TODO
+	  return sizeof (int) + sizeof (int) + 32;
+	}
 
-            void end (cubthread::entry *thread_p);
+	int get_argument_count (METHOD_SIG *&method_sig)
+	{
+	  return method_sig->num_method_args;
+	}
 
-            
-            METHOD_SCAN_BUFFER scan_buf;	/* value array buffer */
-        };
-    }
+      protected:
+
+//////////////////////////////////////////////////////////////////////////
+// Communication with Java SP Server routine declarations
+//////////////////////////////////////////////////////////////////////////
+
+	bool connect ();
+	bool disconnect ();
+	int request (METHOD_SIG *&method_sig);
+	int receive (METHOD_SIG *&method_sig, DB_VALUE *v);
+	int invoke ()
+	{
+	  return 0;
+	}
+
+	int pack_request (METHOD_SIG *&method_sig);
+	void pack_arg (cubpacking::packer &serializator, METHOD_SIG *&method_sig, int &strlen);
+	void pack_arg_value (cubpacking::packer &serializator, DB_VALUE &v);
+	size_t get_request_size (METHOD_SIG *&method_sig, int &strlen);
+
+//////////////////////////////////////////////////////////////////////////
+// Value array scanning declarations
+//////////////////////////////////////////////////////////////////////////
+
+	int open_value_array ();
+	SCAN_CODE next_value_array (val_list_node &vl);
+	int close_value_array ();
+
+      private:
+
+	SOCKET m_sock_fd;
+	METHOD_SCAN_BUFFER m_scan_buf;	/* value array buffer */
+	cubthread::entry *m_thread_p;
+    };
+  }
 }
 
 // naming convention of SCAN_ID's

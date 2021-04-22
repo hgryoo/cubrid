@@ -69,6 +69,16 @@ namespace cubpacking
       size_t get_packed_size_overloaded (short value, size_t curr_offset);
       void pack_overloaded (short value);
 
+      size_t get_packed_float_size (size_t curr_offset);
+      void pack_float (const float value);
+      size_t get_packed_size_overloaded (float value, size_t curr_offset);
+      void pack_overloaded (float value);
+
+      size_t get_packed_double_size (size_t curr_offset);
+      void pack_double (const double value);
+      size_t get_packed_size_overloaded (double value, size_t curr_offset);
+      void pack_overloaded (double value);
+
       size_t get_packed_bigint_size (size_t curr_offset);
       void pack_bigint (const std::int64_t &value);
       void pack_bigint (const std::uint64_t &value);
@@ -196,6 +206,12 @@ namespace cubpacking
 
       void unpack_short (short &value);
       void unpack_overloaded (short &value);
+
+      void unpack_float (float &value);
+      void unpack_overloaded (float &value);
+
+      void unpack_double (double &value);
+      void unpack_overloaded (double &value);
 
       void unpack_bigint (std::int64_t &value);
       void unpack_bigint (std::uint64_t &value);

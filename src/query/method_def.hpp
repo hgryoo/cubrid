@@ -61,6 +61,10 @@ struct method_sig_node
   int num_method_args;		/* number of arguments */
   int *method_arg_pos;		/* arg position in list file */
 
+  int *arg_mode;
+  int *arg_type;
+  int result_type;
+
   method_sig_node () = default;
 };
 

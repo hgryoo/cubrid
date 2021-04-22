@@ -150,7 +150,7 @@ cursor_copy_list_id (QFILE_LIST_ID * dest_list_id_p, const QFILE_LIST_ID * src_l
  *   list_id: List file identifier
  */
 void
-cursor_free_list_id (QFILE_LIST_ID * list_id_p, bool self)
+cursor_free_list_id (QFILE_LIST_ID * & list_id_p, bool self)
 {
   if (list_id_p->last_pgptr)
     {
@@ -178,13 +178,26 @@ cursor_free_list_id (QFILE_LIST_ID * list_id_p, bool self)
     }
 }
 
+void 
+cursor_free_list_id (QFILE_LIST_ID * &&list_id, bool self)
+{
+  cursor_free_list_id (std::forward<QFILE_LIST_ID * &>(list_id), self);
+}
+
 void
-cursor_free_self_list_id (QFILE_LIST_ID * list_id)
+cursor_free_self_list_id (QFILE_LIST_ID *& list_id)
 {
   if (list_id != NULL)
     {
       cursor_free_list_id (list_id, true);
     }
+}
+
+void 
+cursor_free_self_list_id (QFILE_LIST_ID * &&list_id)
+{
+  cursor_free_self_list_id (std::forward<QFILE_LIST_ID * &>(list_id));
+  assert (list_id == NULL);
 }
 
 /*

@@ -65,6 +65,8 @@
 #include "compile_context.h"
 #include "db_json.hpp"
 
+#include "jsp_cl.h"
+
 #if defined(WINDOWS)
 #include "wintcp.h"
 #endif /* WINDOWS */
@@ -560,7 +562,7 @@ static XASL_NODE *pt_build_do_stmt_aptr_list (PARSER_CONTEXT * parser, PT_NODE *
 
 using METHOD_TYPE_COMPARE = bool (*) (PT_NODE * node);
 static METHOD_SIG_LIST *pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list,
-					       PT_NODE * subquery_as_attr_list, METHOD_TYPE_COMPARE compare);
+					       PT_NODE * subquery_as_attr_list);
 
 static int pt_is_subquery (PT_NODE * node);
 
@@ -3736,7 +3738,7 @@ pt_to_method_arglist (PARSER_CONTEXT * parser, PT_NODE * target, PT_NODE * node_
  *   subquery_as_attr_list(in):
  */
 static METHOD_SIG_LIST *
-pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * subquery_as_attr_list, METHOD_TYPE_COMPARE compare)
+pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * subquery_as_attr_list)
 {
   METHOD_SIG_LIST *sig_list = NULL;
   METHOD_SIG **tail = NULL;
@@ -3753,7 +3755,7 @@ pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * s
 
   for (node = node_list; node != NULL; node = node->next)
     {
-	  if (node->node_type == PT_METHOD_CALL && node->info.method_call.method_name && compare (node))
+	  if (node->node_type == PT_METHOD_CALL && node->info.method_call.method_name)
 	  {
       regu_alloc (*tail);
 
@@ -3763,10 +3765,69 @@ pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * s
 
 	  (*tail)->method_name = (char *) node->info.method_call.method_name->info.name.original;
 
+	  /* num_method_args does not include the target by convention */
+	  (*tail)->num_method_args = pt_length_of_list (node->info.method_call.arg_list);
+	  (*tail)->method_arg_pos =
+	    pt_to_method_arglist (parser, node->info.method_call.on_call_target, node->info.method_call.arg_list,
+				  subquery_as_attr_list);
+
 	  if (!PT_IS_METHOD (node))	/* java sp */
 	    {
 	      (*tail)->class_name = NULL;
 	      (*tail)->method_type = METHOD_IS_JAVA_SP;
+
+		  int err;
+		  DB_OBJECT *mop_p = jsp_find_stored_procedure ((*tail)->method_name);
+		  DB_OBJECT *arg_mop_p;
+		  DB_VALUE method, param, mode, arg_type, result_type, temp;
+
+		  if (!mop_p) break;
+		  db_get (mop_p, SP_ATTR_ARGS, &param);
+		  DB_SET *param_set = db_get_set (&param);
+
+		  int num_args = (*tail)->num_method_args;
+		  (*tail)->arg_mode = regu_int_array_alloc (num_args);
+		  (*tail)->arg_type = regu_int_array_alloc (num_args);
+
+		  for (int i = 0; i < num_args; i++)
+			{
+			set_get_element (param_set, i, &temp);
+			arg_mop_p = db_get_object (&temp);
+
+			err = db_get (arg_mop_p, SP_ATTR_MODE, &mode);
+			if (err != NO_ERROR)
+			{
+				pr_clear_value (&temp);
+				break;
+			}
+
+			(*tail)->arg_mode[i] = db_get_int (&mode);
+
+			err = db_get (arg_mop_p, SP_ATTR_DATA_TYPE, &arg_type);
+			if (err != NO_ERROR)
+			{
+			pr_clear_value (&temp);
+			break;
+			}
+
+			(*tail)->arg_type[i] = db_get_int (&arg_type);
+			pr_clear_value (&temp);
+
+			/*
+			if (sp_args.arg_type[i] == DB_TYPE_RESULTSET && !is_prepare_call[call_cnt])
+			{
+			  break;
+			}
+			*/
+			}
+
+		    err = db_get (mop_p, SP_ATTR_RETURN_TYPE, &result_type);
+			if (err != NO_ERROR)
+				{
+				break;
+				}
+
+			(*tail)->result_type = db_get_int (&result_type);
 	    }
 	  else
 	    {
@@ -3782,13 +3843,9 @@ pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * s
 		}
 
 	      (*tail)->method_type = PT_IS_CLASS_METHOD (node) ? METHOD_IS_CLASS_METHOD : METHOD_IS_INSTANCE_METHOD;
+		  (*tail)->arg_mode = NULL;
+		  (*tail)->arg_type = NULL;
 	    }
-
-	  /* num_method_args does not include the target by convention */
-	  (*tail)->num_method_args = pt_length_of_list (node->info.method_call.arg_list);
-	  (*tail)->method_arg_pos =
-	    pt_to_method_arglist (parser, node->info.method_call.on_call_target, node->info.method_call.arg_list,
-				  subquery_as_attr_list);
 
 	  tail = &(*tail)->next;
 	}

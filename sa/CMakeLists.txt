@@ -315,7 +315,12 @@ set(JSP_SOURCES
   ${JSP_DIR}/jsp_comm.c
   ${JSP_DIR}/jsp_file.c
   ${JSP_DIR}/jsp_sr.c
+  ${JSP_DIR}/jsp_packing.cpp
   )
+
+set(JSP_HEADERS
+  ${JSP_DIR}/jsp_packing.hpp
+)
 
 set(THREAD_SOURCES
   ${THREAD_DIR}/critical_section_tracker.cpp
@@ -562,6 +567,7 @@ add_library(cubridsa SHARED
   ${ES_SOURCES}
   ${EXECUTABLE_SOURCES}
   ${HEAPLAYER_SOURCES}
+  ${JSP_HEADERS}
   ${JSP_SOURCES}
   ${MONITOR_HEADERS}
   ${MONITOR_SOURCES}

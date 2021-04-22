@@ -258,7 +258,12 @@ set(JSP_SOURCES
   ${JSP_DIR}/jsp_comm.c
   ${JSP_DIR}/jsp_file.c
   ${JSP_DIR}/jsp_sr.c
+  ${JSP_DIR}/jsp_packing.cpp
   )
+
+set(JSP_HEADERS
+  ${JSP_DIR}/jsp_packing.hpp
+)
 
 set(TRANSACTION_SOURCES
   ${TRANSACTION_DIR}/boot_sr.c
@@ -462,6 +467,7 @@ set (CUBRID_LIB_HEADERS
   ${BASE_HEADERS}
   ${COMPAT_HEADERS}
   ${MONITOR_HEADERS}
+  ${JSP_HEADERS}
   ${OBJECT_HEADERS}
   ${QUERY_HEADERS}
   ${STORAGE_HEADERS}

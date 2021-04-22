@@ -45,6 +45,7 @@
 #include "scan_json_table.hpp"
 #include "storage_common.h"	/* for PAGEID */
 #include "query_hash_scan.h"
+#include "scan_javasp.hpp"
 
 // forward definitions
 struct indx_info;

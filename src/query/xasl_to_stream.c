@@ -5524,6 +5524,20 @@ xts_process_method_sig (char *ptr, const METHOD_SIG * method_sig, int count)
       ptr = or_pack_int (ptr, method_sig->method_arg_pos[n]);
     }
 
+  if (method_sig->method_type == METHOD_IS_JAVA_SP)
+  {
+    for (n = 0; n < method_sig->num_method_args; n++)
+    {
+      ptr = or_pack_int (ptr, method_sig->arg_mode[n]);
+    }
+    for (n = 0; n < method_sig->num_method_args; n++)
+    {
+      ptr = or_pack_int (ptr, method_sig->arg_type[n]);
+    }
+
+    ptr = or_pack_int (ptr, method_sig->result_type);
+  }
+
   offset = xts_save_method_sig (method_sig->next, count - 1);
   if (offset == ER_FAILED)
     {
@@ -7223,6 +7237,13 @@ xts_sizeof_method_sig (const METHOD_SIG * method_sig)
 	   + OR_INT_SIZE	/* num_method_args */
 	   + (OR_INT_SIZE * (method_sig->num_method_args + 1))	/* method_arg_pos */
 	   + PTR_SIZE);		/* next */
+
+  if (method_sig->method_type == METHOD_IS_JAVA_SP)
+  {
+    size += method_sig->num_method_args * OR_INT_SIZE; /* arg_mode */
+    size += method_sig->num_method_args * OR_INT_SIZE; /* arg_type */
+    size += OR_INT_SIZE; /* result type */
+  }
 
   return size;
 }
