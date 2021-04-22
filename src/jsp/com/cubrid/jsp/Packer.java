@@ -1,5 +1,5 @@
 /*
- * 
+ *
  * Copyright (c) 2016 CUBRID Corporation.
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -31,7 +31,6 @@
 
 package com.cubrid.jsp;
 
-import com.cubrid.jsp.exception.ExecuteException;
 import com.cubrid.jsp.exception.TypeMismatchException;
 import com.cubrid.jsp.value.DateValue;
 import com.cubrid.jsp.value.DatetimeValue;
@@ -48,31 +47,14 @@ import com.cubrid.jsp.value.StringValue;
 import com.cubrid.jsp.value.TimeValue;
 import com.cubrid.jsp.value.TimestampValue;
 import com.cubrid.jsp.value.Value;
-import cubrid.jdbc.driver.CUBRIDConnectionDefault;
-import cubrid.jdbc.driver.CUBRIDResultSet;
 import cubrid.jdbc.jci.UConnection;
-import cubrid.jdbc.jci.UJCIUtil;
-import cubrid.sql.CUBRIDOID;
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.math.BigDecimal;
-import java.net.Socket;
-import java.sql.Connection;
-import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.text.SimpleDateFormat;
 import java.util.Calendar;
-import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class Packer {
-	
+
     /* DB Types */
     public static final int DB_NULL = 0;
     public static final int DB_INT = 1;
@@ -93,7 +75,7 @@ public class Packer {
     public static final int DB_RESULTSET = 28;
     public static final int DB_BIGINT = 31;
     public static final int DB_DATETIME = 32;
-    
+
     public static Value[] readArguments(DataInputStream dis, int paramCount)
             throws IOException, TypeMismatchException, SQLException {
         Value[] args = new Value[paramCount];
@@ -274,6 +256,4 @@ public class Packer {
         }
         return arg;
     }
-
-	
 }
