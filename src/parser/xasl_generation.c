@@ -3782,6 +3782,10 @@ pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * s
 		  DB_VALUE method, param, mode, arg_type, result_type, temp;
 
 		  if (!mop_p) break;
+
+		  err = db_get (mop_p, SP_ATTR_TARGET, &method);
+		  (*tail)->signature = (char *) db_get_string (&method);
+
 		  db_get (mop_p, SP_ATTR_ARGS, &param);
 		  DB_SET *param_set = db_get_set (&param);
 

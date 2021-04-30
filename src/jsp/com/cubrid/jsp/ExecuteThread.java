@@ -31,6 +31,7 @@
 
 package com.cubrid.jsp;
 
+import com.cubrid.jsp.Packer;
 import com.cubrid.jsp.exception.ExecuteException;
 import com.cubrid.jsp.exception.TypeMismatchException;
 import com.cubrid.jsp.value.Value;
@@ -38,6 +39,7 @@ import cubrid.jdbc.driver.CUBRIDConnectionDefault;
 import cubrid.jdbc.driver.CUBRIDResultSet;
 import cubrid.jdbc.jci.UJCIUtil;
 import cubrid.sql.CUBRIDOID;
+
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
@@ -54,6 +56,7 @@ import java.sql.SQLException;
 import java.text.SimpleDateFormat;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import com.esotericsoftware.reflectasm.MethodAccess;
 
 public class ExecuteThread extends Thread {
     private String charSet = System.getProperty("file.encoding");
@@ -95,7 +98,7 @@ public class ExecuteThread extends Thread {
     private CUBRIDConnectionDefault connection = null;
     private String threadName = null;
 
-    private DataInputStream input;
+    private DataInputStream input = null;
     private DataOutputStream output;
     private ByteArrayOutputStream byteBuf = new ByteArrayOutputStream(1024);
     private DataOutputStream outBuf = new DataOutputStream(byteBuf);
@@ -262,8 +265,11 @@ public class ExecuteThread extends Thread {
         closeSocket();
     }
 
-    private int listenCommand() throws Exception {
-        input = new DataInputStream(new BufferedInputStream(this.client.getInputStream()));
+    private int listenCommand() throws IOException {
+        //if (input == null)
+        //{
+          input = new DataInputStream(new BufferedInputStream(this.client.getInputStream()));
+        //}
         setStatus(ExecuteThreadStatus.IDLE);
         return input.readInt();
     }
@@ -273,15 +279,20 @@ public class ExecuteThread extends Thread {
         StoredProcedure procedure = makeStoredProcedure();
         Method m = procedure.getTarget().getMethod();
 
+        //MethodAccess ma = procedure.getTarget().getMethodAccess ();
+
+        /*
         if (threadName == null || threadName.equalsIgnoreCase(m.getName())) {
             threadName = m.getName();
             Thread.currentThread().setName(threadName);
         }
+        */
 
         Object[] resolved = procedure.checkArgs(procedure.getArgs());
 
         setStatus(ExecuteThreadStatus.INVOKE);
-        Object result = m.invoke(null, resolved);
+        // Object result = m.invoke(null, resolved);
+        Object result = procedure.getTarget().invoke(resolved);
 
         /* close server-side JDBC connection */
         closeJdbcConnection();
@@ -295,9 +306,19 @@ public class ExecuteThread extends Thread {
     }
 
     private StoredProcedure makeStoredProcedure() throws Exception {
-        int methodSigLength = input.readInt();
+        byte len = input.readByte();
+        int methodSigLength = 0;
+        if (len == 0xff)
+        {
+            methodSigLength = input.readInt();
+        }
+        else
+        {
+            methodSigLength = (int) len;
+        }
         byte[] methodSig = new byte[methodSigLength];
         input.readFully(methodSig);
+        input.read(); // consume NULL
 
         int paramCount = input.readInt();
         Value[] args = Packer.readArguments(input, paramCount);

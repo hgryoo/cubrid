@@ -39,11 +39,16 @@ import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.util.HashMap;
+import com.esotericsoftware.reflectasm.MethodAccess;
 
 public class TargetMethod {
     private String className;
     private String methodName;
     private Class<?>[] argsTypes;
+
+    private Class<?> clazz;
+    private MethodAccess access = null;
+    int index = -1;
 
     private static HashMap<String, Class<?>> argClassMap = new HashMap<String, Class<?>>();
     private static HashMap<String, String> descriptorMap = new HashMap<String, String>();
@@ -203,7 +208,29 @@ public class TargetMethod {
 
     public Method getMethod()
             throws SecurityException, NoSuchMethodException, ClassNotFoundException {
-        return getClass(className).getMethod(methodName, argsTypes);
+        if (clazz == null)
+        {
+            clazz = getClass(className);
+        }
+        return clazz.getMethod(methodName, argsTypes);
+    }
+
+    public Object invoke (Object[] args) throws ClassNotFoundException
+    {
+        if (access == null)
+        {
+            clazz = getClass(className);
+            access = MethodAccess.get(clazz);
+        }
+
+        if (index == -1)
+        {
+            index = access.getIndex(methodName);
+        }
+
+        Object obj = access.invoke (null, index, args);
+
+        return obj;
     }
 
     public Class<?>[] getArgsTypes() {

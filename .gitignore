@@ -47,6 +47,9 @@ libedit.pc
 *.x86_64
 *.hex
 
+# Java
+.project
+
 # Debug files
 *.dSYM/
 
@@ -129,6 +132,7 @@ x86
 *.*.orig
 tags
 cscope.out
+*.err
 
 ## popular build directories
 Debug/

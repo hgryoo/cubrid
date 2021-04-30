@@ -6879,6 +6879,7 @@ or_pack_method_sig (char *ptr, void *method_sig_ptr)
   
   if (method_sig->method_type == METHOD_IS_JAVA_SP)
   {
+    ptr = or_pack_string (ptr, method_sig->signature);
     for (n = 0; n < method_sig->num_method_args; n++)
     {
       ptr = or_pack_int (ptr, method_sig->arg_mode[n]);
@@ -6938,6 +6939,7 @@ or_unpack_method_sig (char *ptr, void **method_sig_ptr, int n)
 
   if (method_sig->method_type == METHOD_IS_JAVA_SP)
   {
+    ptr = or_unpack_string (ptr, &method_sig->signature);
     for (n = 0; n < method_sig->num_method_args; n++)
     {
       ptr = or_unpack_int (ptr, &method_sig->arg_mode[n]);
@@ -7055,6 +7057,7 @@ or_method_sig_list_length (void *method_sig_list_ptr)
 
       if (method_sig->method_type == METHOD_IS_JAVA_SP)
       {
+        length += or_packed_string_length (method_sig->signature, NULL);
         length += method_sig->num_method_args * OR_INT_SIZE; /* arg_mode */
         length += method_sig->num_method_args * OR_INT_SIZE; /* arg_type */
         length += OR_INT_SIZE; /* result type */

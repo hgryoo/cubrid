@@ -27,6 +27,8 @@
 
 #include "packer.hpp"
 
+#include <vector>
+
 // thread_entry.hpp
 namespace cubthread
 {
@@ -36,6 +38,7 @@ namespace cubthread
 struct qproc_db_value_list;
 struct val_list_node;
 struct qfile_list_id;
+struct scan_id_struct;
 
 namespace cubscan
 {
@@ -44,21 +47,12 @@ namespace cubscan
     class scanner
     {
       public:
+	scanner();
+
 	void init (cubthread::entry *thread_p, qfile_list_id *list_id, method_sig_list *meth_sig_list);
 	int open ();
 	SCAN_CODE next_scan (val_list_node &vl);
 	int close ();
-
-	int get_argument_size (METHOD_SIG *&method_sig)
-	{
-	  // TODO
-	  return sizeof (int) + sizeof (int) + 32;
-	}
-
-	int get_argument_count (METHOD_SIG *&method_sig)
-	{
-	  return method_sig->num_method_args;
-	}
 
       protected:
 
@@ -68,18 +62,30 @@ namespace cubscan
 
 	bool connect ();
 	bool disconnect ();
-	int request (METHOD_SIG *&method_sig);
+	int request (METHOD_SIG *&method_sig, std::vector<DB_VALUE> &arg_vals);
 	int receive (METHOD_SIG *&method_sig, DB_VALUE *v);
 	int invoke ()
 	{
 	  return 0;
 	}
 
-	int pack_request (METHOD_SIG *&method_sig);
-	void pack_arg (cubpacking::packer &serializator, METHOD_SIG *&method_sig, int &strlen);
-	void pack_arg_value (cubpacking::packer &serializator, DB_VALUE &v);
-	size_t get_request_size (METHOD_SIG *&method_sig, int &strlen);
+//////////////////////////////////////////////////////////////////////////
+// Serialization and Deserialization of DB_VALUE
+//////////////////////////////////////////////////////////////////////////
 
+	int pack_request (METHOD_SIG *&method_sig);
+	void pack_arg (cubpacking::packer &serializator, METHOD_SIG *&method_sig, std::vector<DB_VALUE> &arg_vals, int &strlen);
+	void pack_arg_value (cubpacking::packer &serializator, DB_VALUE &v);
+	void unpack_result (cubpacking::unpacker &deserializator, DB_VALUE *retval);
+
+	size_t get_request_size (METHOD_SIG *&method_sig, int &strlen, std::vector<DB_VALUE> &arg_vals);
+	size_t get_arg_value_size (DB_VALUE &val);
+	size_t get_arg_size (METHOD_SIG *&method_sig, std::vector<DB_VALUE> &arg_vals);
+
+	int get_argument_count (METHOD_SIG *&method_sig)
+	{
+	  return method_sig->num_method_args;
+	}
 //////////////////////////////////////////////////////////////////////////
 // Value array scanning declarations
 //////////////////////////////////////////////////////////////////////////
@@ -88,11 +94,18 @@ namespace cubscan
 	SCAN_CODE next_value_array (val_list_node &vl);
 	int close_value_array ();
 
+	int get_single_tuple_from_list_id (METHOD_SIG *sig, qfile_list_id *list_id_p, std::vector<DB_VALUE> &vec);
+
       private:
 
-	SOCKET m_sock_fd;
+	SOCKET m_sock_fd = INVALID_SOCKET;
+	bool is_connected = false;
+
 	METHOD_SCAN_BUFFER m_scan_buf;	/* value array buffer */
 	cubthread::entry *m_thread_p;
+	METHOD_INFO *m_method_ctl;
+
+	int m_num_args;
     };
   }
 }

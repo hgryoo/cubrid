@@ -2443,6 +2443,7 @@ stx_build_method_sig (THREAD_ENTRY * thread_p, char *ptr, METHOD_SIG * method_si
 
   if (method_sig->method_type == METHOD_IS_JAVA_SP)
   {
+    method_sig->signature = stx_restore_string (thread_p, ptr);
     method_sig->arg_mode = (int *) stx_alloc_struct (thread_p, sizeof (int) * method_sig->num_method_args);
     if (method_sig->arg_mode == NULL)
     {

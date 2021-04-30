@@ -109,7 +109,7 @@ jsp_connect_server (int server_port)
   else
     {
       b = 1;
-      setsockopt (sockfd, IPPROTO_TCP, TCP_NODELAY, (char *) &b, sizeof (b));
+      // setsockopt (sockfd, IPPROTO_TCP, TCP_NODELAY, (char *) &b, sizeof (b));
     }
 
   success = connect (sockfd, saddr, slen);
@@ -159,7 +159,7 @@ jsp_disconnect_server (const SOCKET sockfd)
 int
 jsp_writen (SOCKET fd, const void *vptr, int n)
 {
-  int nleft;
+  int nleft = 0;
   int nwritten;
   const char *ptr;
 

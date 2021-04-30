@@ -77,6 +77,7 @@ typedef struct method_scan_buffer METHOD_SCAN_BUFFER;
 struct method_scan_buffer
 {				/* value array scanbuf */
   qproc_db_value_list *dbval_list;	/* ptrs into the value array */
+  qproc_db_value_list *arg_list;
   union
   {				/* ctl info based on type */
     METHOD_INFO method_ctl;
@@ -89,9 +90,9 @@ struct method_scan_buffer
   /* methods in standalone mode */
   DB_VALUE *vallist;		/* values from the input list file */
   DB_VALUE **valptrs;		/* ptrs to the above values */
-  int *oid_cols;		/* OID columns in list file */
-  CURSOR_ID crs_id;		/* cursor id */
+  int *oid_cols;		/* OID columns in list file */  
   int val_cnt;			/* number of values in vallist */
+  CURSOR_ID crs_id;		/* cursor id */
 #endif				/* SERVER_MODE */
 };
 
