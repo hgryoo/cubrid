@@ -39,9 +39,18 @@ import java.sql.Statement;
 
 public class CUBRIDServerSideStatement implements Statement {
 
-    CUBRIDServerSideConnection con;
+    private CUBRIDServerSideConnection connection = null;
+    
+    private int type;
+    private int concurrency;
+    private int holdable;
 
-    protected CUBRIDServerSideStatement() {}
+    protected CUBRIDServerSideStatement(CUBRIDServerSideConnection con, int type, int concurrency, int holdable) {
+        this.connection = con;
+        this.type = type;
+        this.concurrency = concurrency;
+        this.holdable = holdable;
+    }
 
     public ResultSet executeQuery(String sql) throws SQLException {
         // TODO
@@ -192,7 +201,7 @@ public class CUBRIDServerSideStatement implements Statement {
     }
 
     public Connection getConnection() throws SQLException {
-        return con;
+        return connection;
     }
 
     public boolean getMoreResults(int current) throws SQLException {

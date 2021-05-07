@@ -62,7 +62,9 @@ import java.util.Calendar;
 public class CUBRIDServerSidePreparedStatement extends CUBRIDServerSideStatement
         implements PreparedStatement {
 
-    protected CUBRIDServerSidePreparedStatement() {}
+    CUBRIDServerSidePreparedStatement(CUBRIDServerSideConnection con, int type, int concurrency, int holdable) {
+        super(con, type, concurrency, holdable);
+    }
 
     /*
      * java.sql.PreparedStatement interface
@@ -304,11 +306,6 @@ public class CUBRIDServerSidePreparedStatement extends CUBRIDServerSideStatement
      */
     public CUBRIDOID executeInsert() throws SQLException {
         return null;
-    }
-
-    public boolean hasResultSet() {
-        // TODO
-        return true;
     }
 
     /* JDK 1.6 */

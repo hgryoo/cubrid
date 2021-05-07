@@ -51,6 +51,8 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executor;
 
+import java.util.concurrent.CopyOnWriteArrayList;
+
 /**
  * Title: CUBRID JDBC Driver Description:
  *
@@ -60,11 +62,17 @@ public class CUBRIDServerSideConnection implements Connection {
 
     int holdability;
 
-    public CUBRIDServerSideConnection() {}
+    protected CUBRIDServerSideDatabaseMetaData mdata = null;
+    protected CopyOnWriteArrayList<Statement> statements = null;
+
+    public CUBRIDServerSideConnection() {
+        // there is no meaning for the holdable cursor on server-side
+        holdability = ResultSet.HOLD_CURSORS_OVER_COMMIT;
+        statements = new CopyOnWriteArrayList<Statement> ();
+    }
 
     public Statement createStatement() throws SQLException {
-        // TODO
-        return null;
+        return createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
     }
 
     public PreparedStatement prepareStatement(String sql) throws SQLException {
@@ -99,17 +107,21 @@ public class CUBRIDServerSideConnection implements Connection {
     }
 
     public synchronized void close() throws SQLException {
-        // TODO
+        /* Becuase JDBC code is running inside the single Java SP server, It should not be closed */
+        /* The connection is an implicit data channel, not an explicit connection instance as from a client. */
+        /* do nothing */
     }
 
     public boolean isClosed() throws SQLException {
-        // TODO
-        return true;
+        /* always false */
+        return false;
     }
 
     public DatabaseMetaData getMetaData() throws SQLException {
-        // TODO
-        return null;
+        if (mdata == null) {
+            mdata = new CUBRIDServerSideDatabaseMetaData(this);
+        }
+        return mdata;
     }
 
     public void setReadOnly(boolean arg0) throws SQLException {
@@ -122,15 +134,17 @@ public class CUBRIDServerSideConnection implements Connection {
     }
 
     public void setCatalog(String catalog) throws SQLException {
-        // TODO
+        /* do nothing */
     }
 
     public String getCatalog() throws SQLException {
+        /* do nothing */
         return "";
     }
 
     public void setTransactionIsolation(int level) throws SQLException {
         /* do nothing */
+        /* transaction isolation should not be set by server-side connection */
     }
 
     public int getTransactionIsolation() throws SQLException {
@@ -150,8 +164,9 @@ public class CUBRIDServerSideConnection implements Connection {
 
     public Statement createStatement(int resultSetType, int resultSetConcurrency)
             throws SQLException {
-        // TODO
-        return null;
+        Statement stmt = new CUBRIDServerSideStatement(this, resultSetType, resultSetConcurrency, holdability);
+        statements.add (stmt);
+        return stmt;
     }
 
     public PreparedStatement prepareStatement(
@@ -175,21 +190,11 @@ public class CUBRIDServerSideConnection implements Connection {
     }
 
     public synchronized void setHoldability(int holdable) throws SQLException {
-        // TODO
+        /* do nothing */
     }
 
     public synchronized int getHoldability() throws SQLException {
-        if (holdability == ResultSet.HOLD_CURSORS_OVER_COMMIT) {
-            // TODO
-            /*
-            if (u_con.supportHoldableResult()) {
-                return ResultSet.HOLD_CURSORS_OVER_COMMIT;
-            } else {
-                return ResultSet.CLOSE_CURSORS_AT_COMMIT;
-            }
-            */
-        }
-
+        /* do nothing, return default value */
         return holdability;
     }
 
@@ -209,9 +214,10 @@ public class CUBRIDServerSideConnection implements Connection {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
-    public synchronized Statement createStatement(int type, int concur, int holdable) {
-        // TODO
-        return null;
+    public synchronized Statement createStatement(int resultSetType, int resultSetConcurrency, int holdable) {
+        Statement stmt = new CUBRIDServerSideStatement(this, resultSetType, resultSetConcurrency, holdable);
+        statements.add (stmt);
+        return stmt;
     }
 
     public synchronized PreparedStatement prepareStatement(
