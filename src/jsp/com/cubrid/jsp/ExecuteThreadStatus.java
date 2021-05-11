@@ -30,6 +30,9 @@
  */
 package com.cubrid.jsp;
 
+import java.util.Map;
+import java.util.HashMap;
+
 public enum ExecuteThreadStatus {
     IDLE(0),
     PARSE(1),
@@ -37,10 +40,19 @@ public enum ExecuteThreadStatus {
     CALL(3),
     RESULT(4),
     DESTROY(5),
+    STATUS(6),
+    PING(99),
     ERROR(-1),
     END(-2);
 
-    private int status;
+    private final int status;
+    private static final Map<Integer, ExecuteThreadStatus> lookup = new HashMap<Integer, ExecuteThreadStatus>();
+    static {
+        for (ExecuteThreadStatus e : ExecuteThreadStatus.values()) {
+            lookup.put(e.getValue(), e);
+        }
+    }
+
 
     ExecuteThreadStatus(int status) {
         this.status = status;
@@ -48,5 +60,9 @@ public enum ExecuteThreadStatus {
 
     public int getValue() {
         return this.status;
+    }
+
+    public static ExecuteThreadStatus get(int status) {
+        return lookup.get(status);
     }
 }

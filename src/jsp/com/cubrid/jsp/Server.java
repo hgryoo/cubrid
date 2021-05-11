@@ -36,14 +36,17 @@ import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.lang.management.RuntimeMXBean;
 import java.net.ServerSocket;
-import java.net.Socket;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.concurrent.Executors;
+import java.net.Socket;
 
 public class Server {
+    private final static Logger LOG = Logger.getGlobal();
     private static final Logger logger = Logger.getLogger("com.cubrid.jsp");
     private static final String LOG_DIR = "log";
 
@@ -56,8 +59,11 @@ public class Server {
     private ServerSocket serverSocket;
     private Thread socketListener;
     private AtomicBoolean shutdown;
+    private ExecutorService executorService;
 
     private static Server serverInstance = null;
+
+    private static Reactor reactor = null;
 
     private Server(String name, String path, String version, String rPath, String port)
             throws IOException {
@@ -67,37 +73,48 @@ public class Server {
         shutdown = new AtomicBoolean(false);
 
         try {
-            int port_number = Integer.parseInt(port);
+            final int port_number = Integer.parseInt(port);
             serverSocket = new ServerSocket(port_number);
 
             Class.forName("cubrid.jdbc.driver.CUBRIDDriver");
             System.setSecurityManager(new SpSecurityManager());
             System.setProperty("cubrid.server.version", version);
 
+            LOG.setLevel(Level.INFO);
             getJVMArguments(); /* store jvm options */
+
+            //reactor = new Reactor(port_number, false);
+            //socketListener = new Thread(reactor);
+
+            int maxCore = Runtime.getRuntime().availableProcessors();
+            executorService = Executors.newFixedThreadPool(150);
+
+            socketListener =
+                    new Thread(
+                            new Runnable() {
+                                public void run() {
+                                    Socket client = null;
+                                    while (!Thread.interrupted()) {
+                                        try {
+                                            client = serverSocket.accept();
+                                            client.setTcpNoDelay(true);
+                                            executorService.submit(new ProcedureThread (client));
+                                            //new ExecuteThread(client).start();
+                                        } catch (IOException e) {
+                                            log(e);
+                                            break;
+                                        }
+                                    }
+                                }
+                            });
+
         } catch (Exception e) {
             log(e);
             e.printStackTrace();
         }
-
-        socketListener =
-                new Thread(
-                        new Runnable() {
-                            public void run() {
-                                Socket client = null;
-                                while (true) {
-                                    try {
-                                        client = serverSocket.accept();
-                                        client.setTcpNoDelay(true);
-                                        new ExecuteThread(client).start();
-                                    } catch (IOException e) {
-                                        log(e);
-                                        break;
-                                    }
-                                }
-                            }
-                        });
     }
+
+    public void startNIOServer() throws IOException {}
 
     private void startSocketListener() {
         socketListener.setDaemon(true);
@@ -106,9 +123,10 @@ public class Server {
 
     private void stopSocketListener() {
         try {
-            serverSocket.close();
-            serverSocket = null;
-        } catch (IOException e) {
+            socketListener.interrupt();
+            // serverSocket.close();
+            // serverSocket = null;
+        } catch (Exception e) {
             log(e);
         }
     }
@@ -142,7 +160,7 @@ public class Server {
             RuntimeMXBean runtimeMxBean = ManagementFactory.getRuntimeMXBean();
             jvmArguments = runtimeMxBean.getInputArguments();
         }
-        
+
         return jvmArguments;
     }
 
@@ -151,6 +169,7 @@ public class Server {
             serverInstance = new Server(args[0], args[1], args[2], args[3], args[4]);
             serverInstance.startSocketListener();
             return serverInstance.getServerSocket().getLocalPort();
+            // return reactor.getPort();
         } catch (Exception e) {
             e.printStackTrace();
         }

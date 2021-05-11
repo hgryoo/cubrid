@@ -48,6 +48,7 @@ namespace cubscan
     {
       public:
 	scanner();
+	~scanner();
 
 	void init (cubthread::entry *thread_p, qfile_list_id *list_id, method_sig_list *meth_sig_list);
 	int open ();

@@ -29,9 +29,11 @@
 #include "dbtype_def.h"
 
 #include "db_date.h"
-#include "jsp_comm.h"
+
 #include "numeric_opfunc.h"
 #include "set_object.h"
+
+#include "jsp_comm.h"
 #include "object_primitive.h"
 
 namespace cubprocedure
@@ -190,6 +192,8 @@ namespace cubprocedure
 	assert (false);
 	break;
       }
+
+	return size;
   }
 
   void

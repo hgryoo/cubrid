@@ -28,50 +28,34 @@
  * OF SUCH DAMAGE.
  *
  */
-
 package com.cubrid.jsp;
 
-import com.cubrid.jsp.Packer;
 import com.cubrid.jsp.exception.ExecuteException;
 import com.cubrid.jsp.exception.TypeMismatchException;
 import com.cubrid.jsp.value.Value;
-import cubrid.jdbc.driver.CUBRIDConnectionDefault;
-import cubrid.jdbc.driver.CUBRIDResultSet;
 import cubrid.jdbc.jci.UJCIUtil;
 import cubrid.sql.CUBRIDOID;
-
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
-import java.net.Socket;
-import java.sql.Connection;
+import java.nio.ByteBuffer;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.nio.channels.SocketChannel;
 import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.text.SimpleDateFormat;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
-import com.esotericsoftware.reflectasm.MethodAccess;
 
-public class ExecuteTask extends Thread {
+public class ExecuteHandler implements Runnable {
+
     private String charSet = System.getProperty("file.encoding");
 
-    private static final int REQ_CODE_INVOKE_SP = 0x01;
-    private static final int REQ_CODE_RESULT = 0x02;
-    private static final int REQ_CODE_ERROR = 0x04;
-    private static final int REQ_CODE_INTERNAL_JDBC = 0x08;
-    private static final int REQ_CODE_DESTROY = 0x10;
-    private static final int REQ_CODE_END = 0x20;
-
-    private static final int REQ_CODE_UTIL_PING = 0xDE;
-    private static final int REQ_CODE_UTIL_STATUS = 0xEE;
-    private static final int REQ_CODE_UTIL_TERMINATE_THREAD = 0xFE;
-    private static final int REQ_CODE_UTIL_TERMINATE_SERVER = 0xFF; // to shutdown javasp server
+    final SocketChannel socketChannel;
+    final SelectionKey selectionKey;
 
     /* DB Types */
     public static final int DB_NULL = 0;
@@ -94,132 +78,83 @@ public class ExecuteTask extends Thread {
     public static final int DB_BIGINT = 31;
     public static final int DB_DATETIME = 32;
 
-    private Socket client;
-    private CUBRIDConnectionDefault connection = null;
-    private String threadName = null;
+    private static final int REQ_CODE_INVOKE_SP = 0x01;
+    private static final int REQ_CODE_RESULT = 0x02;
+    private static final int REQ_CODE_ERROR = 0x04;
+    private static final int REQ_CODE_INTERNAL_JDBC = 0x08;
+    private static final int REQ_CODE_DESTROY = 0x10;
+    private static final int REQ_CODE_END = 0x20;
 
-    private DataInputStream input = null;
-    private DataOutputStream output;
-    private ByteArrayOutputStream byteBuf = new ByteArrayOutputStream(1024);
-    private DataOutputStream outBuf = new DataOutputStream(byteBuf);
+    private static final int REQ_CODE_UTIL_PING = 0xDE;
+    private static final int REQ_CODE_UTIL_STATUS = 0xEE;
+    private static final int REQ_CODE_UTIL_TERMINATE_THREAD = 0xFE;
+    private static final int REQ_CODE_UTIL_TERMINATE_SERVER = 0xFF; // to shutdown javasp server
 
+    ByteBuffer input = ByteBuffer.allocateDirect(1024);
+    StoredProcedure procedure;
+
+    static final int READING = 0, SENDING = 1;
+    int state = READING;
+
+    String clientName = "";
     private AtomicInteger status = new AtomicInteger(ExecuteThreadStatus.IDLE.getValue());
 
-    private StoredProcedure storedProcedure = null;
+    Value result = null;
 
-    ExecuteTask(Socket client) throws IOException {
-        super();
-        this.client = client;
-        output = new DataOutputStream(new BufferedOutputStream(this.client.getOutputStream()));
-    }
-
-    public Socket getSocket() {
-        return client;
-    }
-
-    public void closeJdbcConnection() throws IOException, SQLException {
-        if (connection != null && compareStatus(ExecuteThreadStatus.CALL)) {
-            connection.close();
-            setStatus(ExecuteThreadStatus.INVOKE);
-        }
-    }
-
-    public void closeSocket() {
-        try {
-            byteBuf.close();
-            outBuf.close();
-            output.close();
-            client.close();
-        } catch (IOException e) {
-        }
-
-        client = null;
-        output = null;
-        byteBuf = null;
-        outBuf = null;
-        connection = null;
-        charSet = null;
-    }
-
-    public void setJdbcConnection(Connection con) {
-        this.connection = (CUBRIDConnectionDefault) con;
-    }
-
-    public Connection getJdbcConnection() {
-        return this.connection;
-    }
-
-    public void setStatus(Integer value) {
-        this.status.set(value);
-    }
-
-    public void setStatus(ExecuteThreadStatus value) {
-        this.status.set(value.getValue());
-    }
-
-    public Integer getStatus() {
-        return status.get();
-    }
-
-    public boolean compareStatus(ExecuteThreadStatus value) {
-        return (status.get() == value.getValue());
-    }
-
-    public void setCharSet(String conCharsetName) {
-        this.charSet = conCharsetName;
+    ExecuteHandler(Selector selector, SocketChannel c) throws IOException {
+        socketChannel = c;
+        socketChannel.configureBlocking(false);
+        selectionKey = socketChannel.register(selector, 0);
+        selectionKey.attach(this);
+        selectionKey.interestOps(SelectionKey.OP_READ);
+        selector.wakeup();
     }
 
     public void run() {
-        /* main routine handling stored procedure */
-        int requestCode = -1;
-        while (!Thread.interrupted()) {
+        try {
+            System.out.println("run");
+            if (state == READING) {
+                read();
+            } else if (state == SENDING) {
+                send();
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
+
+    void read() throws IOException {
+        System.out.println("read");
+        int readCount = socketChannel.read(input);
+        if (readCount > 0) {
+            input.flip();
             try {
-                requestCode = listenCommand();
+                System.out.println("listenCommand");
+                int requestCode = listenCommand();
                 switch (requestCode) {
                         /* the following two request codes are for processing java stored procedure routine */
                     case REQ_CODE_INVOKE_SP:
                         {
-                            processStoredProcedure();
-                            break;
-                        }
-                    case REQ_CODE_DESTROY:
-                        {
-                            destroyJDBCResources();
-                            Thread.currentThread().interrupt();
+                            System.out.println("processStoredProcedure");
+                            result = processStoredProcedure();
+                            setStatus(ExecuteThreadStatus.RESULT);
                             break;
                         }
 
                         /* the following request codes are for javasp utility */
                     case REQ_CODE_UTIL_PING:
                         {
-                            String ping = Server.getServerName();
-                            output.writeInt(ping.length());
-                            output.writeBytes(ping);
-                            output.flush();
+                            setStatus(ExecuteThreadStatus.PING);
                             break;
                         }
                     case REQ_CODE_UTIL_STATUS:
                         {
-                            String dbName = Server.getServerName();
-                            List<String> vm_args = Server.getJVMArguments();
-                            int length = getLengthtoSend(dbName) + 12;
-                            for (String arg : vm_args) {
-                                length += getLengthtoSend(arg) + 4;
-                            }
-                            output.writeInt(length);
-                            output.writeInt(Server.getServerPort());
-                            packAndSendRawString(dbName, output);
-
-                            output.writeInt(vm_args.size());
-                            for (String arg : vm_args) {
-                                packAndSendRawString(arg, output);
-                            }
-                            output.flush();
+                            setStatus(ExecuteThreadStatus.STATUS);
                             break;
                         }
                     case REQ_CODE_UTIL_TERMINATE_THREAD:
                         {
-                            Thread.currentThread().interrupt();
+                            // Thread.currentThread().interrupt();
                             break;
                         }
                     case REQ_CODE_UTIL_TERMINATE_SERVER:
@@ -242,10 +177,10 @@ public class ExecuteTask extends Thread {
                      * 1) end of the procedure successfully by calling jsp_close_internal_connection ()
                      * 2) socket is in invalid status. we do not have to deal with it here.
                      */
-                    break;
+                    // break;
                 } else {
                     try {
-                        closeJdbcConnection();
+                        // closeJdbcConnection();
                     } catch (Exception e2) {
                     }
                     setStatus(ExecuteThreadStatus.ERROR);
@@ -254,39 +189,107 @@ public class ExecuteTask extends Thread {
                         throwable = ((InvocationTargetException) e).getTargetException();
                     }
                     Server.log(throwable);
+                    /*
                     try {
                         sendError(throwable.toString(), client);
                     } catch (IOException e1) {
                         Server.log(e1);
                     }
+                    */
                 }
             }
+            input.clear();
         }
-        closeSocket();
+        state = SENDING;
+        // Interested in writing
+        selectionKey.interestOps(SelectionKey.OP_WRITE);
+    }
+
+    /**
+     * Processing of the read message. This only prints the message to stdOut.
+     *
+     * @param readCount
+     */
+    synchronized void readProcess(int readCount) {
+        StringBuilder sb = new StringBuilder();
+        input.flip();
+        byte[] subStringBytes = new byte[readCount];
+        byte[] array = input.array();
+        System.arraycopy(array, 0, subStringBytes, 0, readCount);
+        // Assuming ASCII (bad assumption but simplifies the example)
+        sb.append(new String(subStringBytes));
+        input.clear();
+        clientName = sb.toString().trim();
+    }
+
+    void send() throws IOException, ExecuteException, TypeMismatchException {
+        System.out.println("send");
+        ByteBuffer output = null;
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        DataOutputStream w = new DataOutputStream(baos);
+
+        ExecuteThreadStatus status = getStatus();
+        System.out.println("send " + status);
+        switch (status) {
+            case RESULT:
+                {
+                    ByteArrayOutputStream resultStream = getResultStream(result, procedure);
+
+                    w.writeInt(REQ_CODE_RESULT);
+                    w.writeInt(byteBuf.size() + 4);
+                    resultStream.writeTo(w);
+                    w.writeInt(REQ_CODE_RESULT);
+                    setStatus(ExecuteThreadStatus.IDLE);
+                    break;
+                }
+            case PING:
+                {
+                    String ping = Server.getServerName();
+                    w.writeInt(ping.length());
+                    w.writeBytes(ping);
+                    break;
+                }
+            case STATUS:
+                {
+                    String dbName = Server.getServerName();
+                    List<String> vm_args = Server.getJVMArguments();
+                    int length = getLengthtoSend(dbName) + 12;
+                    for (String arg : vm_args) {
+                        length += getLengthtoSend(arg) + 4;
+                    }
+
+                    w.writeInt(length);
+                    w.writeInt(Server.getServerPort());
+                    packAndSendRawString(dbName, w);
+
+                    w.writeInt(vm_args.size());
+                    for (String arg : vm_args) {
+                        packAndSendRawString(arg, w);
+                    }
+                }
+                break;
+
+            default:
+        }
+
+        output = ByteBuffer.wrap(baos.toByteArray());
+        socketChannel.write(output);
+
+        setStatus(ExecuteThreadStatus.IDLE);
+        baos.reset();
+        w.flush();
+        selectionKey.cancel();
     }
 
     private int listenCommand() throws IOException {
-        //if (input == null)
-        //{
-          input = new DataInputStream(new BufferedInputStream(this.client.getInputStream()));
-        //}
         setStatus(ExecuteThreadStatus.IDLE);
-        return input.readInt();
+        return input.getInt();
     }
 
-    private void processStoredProcedure() throws Exception {
+    private Value processStoredProcedure() throws Exception {
         setStatus(ExecuteThreadStatus.PARSE);
-        StoredProcedure procedure = makeStoredProcedure();
+        procedure = makeStoredProcedure();
         Method m = procedure.getTarget().getMethod();
-
-        //MethodAccess ma = procedure.getTarget().getMethodAccess ();
-
-        /*
-        if (threadName == null || threadName.equalsIgnoreCase(m.getName())) {
-            threadName = m.getName();
-            Thread.currentThread().setName(threadName);
-        }
-        */
 
         Object[] resolved = procedure.checkArgs(procedure.getArgs());
 
@@ -295,57 +298,209 @@ public class ExecuteTask extends Thread {
         Object result = procedure.getTarget().invoke(resolved);
 
         /* close server-side JDBC connection */
-        closeJdbcConnection();
+        // closeJdbcConnection();
 
         /* send results */
-        setStatus(ExecuteThreadStatus.RESULT);
         Value resolvedResult = procedure.makeReturnValue(result);
-        sendResult(resolvedResult, procedure);
 
-        setStatus(ExecuteThreadStatus.IDLE);
+        System.out.println ("Value: " + resolvedResult);
+
+        return resolvedResult;
     }
 
     private StoredProcedure makeStoredProcedure() throws Exception {
-        byte len = input.readByte();
+        byte len = input.get();
         int methodSigLength = 0;
-        if (len == 0xff)
-        {
-            methodSigLength = input.readInt();
-        }
-        else
-        {
+        if (len == 0xff) {
+            methodSigLength = input.getInt();
+        } else {
             methodSigLength = (int) len;
         }
-        byte[] methodSig = new byte[methodSigLength];
-        input.readFully(methodSig);
-        input.read(); // consume NULL
 
-        int paramCount = input.readInt();
-        Value[] args = Packer.readArguments(input, paramCount);
+        byte[] methodSig = new byte[methodSigLength];
+        input.get(methodSig);
+        input.get();
+
+        int paramCount = input.getInt();
+        Value[] args = PackerNG.getArguments(input, paramCount);
 
         // TODO
-        int returnType = input.readInt();
+        int returnType = input.getInt();
 
-        int endCode = input.readInt();
+        int endCode = input.getInt();
         if (endCode != REQ_CODE_INVOKE_SP) {
             return null;
         }
 
-        storedProcedure = new StoredProcedure(new String(methodSig), args, returnType);
-        return storedProcedure;
+        procedure = new StoredProcedure(new String(methodSig), args, returnType);
+        return procedure;
     }
 
-    private void destroyJDBCResources() throws SQLException, IOException {
-        setStatus(ExecuteThreadStatus.DESTROY);
+    public void setStatus(int value) {
+        this.status.set(value);
+    }
 
-        if (connection != null) {
-            output.writeInt(REQ_CODE_DESTROY);
-            output.flush();
-            connection.destroy();
-            connection = null;
-        } else {
-            output.writeInt(REQ_CODE_END);
-            output.flush();
+    public void setStatus(ExecuteThreadStatus value) {
+        this.status.set(value.getValue());
+    }
+
+    public ExecuteThreadStatus getStatus() {
+        return ExecuteThreadStatus.get(status.get());
+    }
+
+    public boolean compareStatus(ExecuteThreadStatus value) {
+        return (status.get() == value.getValue());
+    }
+
+    ByteArrayOutputStream byteBuf = new ByteArrayOutputStream(1024);
+
+    private ByteArrayOutputStream getResultStream(Value result, StoredProcedure procedure)
+            throws IOException, ExecuteException, TypeMismatchException {
+
+        DataOutputStream w = new DataOutputStream(byteBuf);
+
+        Object resolvedResult = null;
+        if (result != null) {
+            resolvedResult = toDbTypeValue(procedure.getReturnType(), result);
+        }
+
+        byteBuf.reset();
+        sendValue(resolvedResult, w, procedure.getReturnType());
+        returnOutArgs(procedure, w);
+
+        return byteBuf;
+    }
+
+    private void sendValue(Object result, DataOutputStream dos, int ret_type)
+            throws IOException, ExecuteException {
+        if (result == null) {
+            dos.writeInt(DB_NULL);
+        } else if (result instanceof Short) {
+            dos.writeInt(DB_SHORT);
+            dos.writeInt(((Short) result).intValue());
+        } else if (result instanceof Integer) {
+            dos.writeInt(DB_INT);
+            dos.writeInt(((Integer) result).intValue());
+        } else if (result instanceof Long) {
+            dos.writeInt(DB_BIGINT);
+            dos.writeLong(((Long) result).longValue());
+        } else if (result instanceof Float) {
+            dos.writeInt(DB_FLOAT);
+            dos.writeFloat(((Float) result).floatValue());
+        } else if (result instanceof Double) {
+            dos.writeInt(ret_type);
+            dos.writeDouble(((Double) result).doubleValue());
+        } else if (result instanceof BigDecimal) {
+            dos.writeInt(DB_NUMERIC);
+            packAndSendString(((BigDecimal) result).toString(), dos);
+        } else if (result instanceof String) {
+            dos.writeInt(DB_STRING);
+            packAndSendString((String) result, dos);
+        } else if (result instanceof java.sql.Date) {
+            dos.writeInt(DB_DATE);
+            packAndSendString(result.toString(), dos);
+        } else if (result instanceof java.sql.Time) {
+            dos.writeInt(DB_TIME);
+            packAndSendString(result.toString(), dos);
+        } else if (result instanceof java.sql.Timestamp) {
+            dos.writeInt(ret_type);
+
+            if (ret_type == DB_DATETIME) {
+                packAndSendString(result.toString(), dos);
+            } else {
+                SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+                packAndSendString(formatter.format(result), dos);
+            }
+        } else if (result instanceof CUBRIDOID) {
+            dos.writeInt(DB_OBJECT);
+            byte[] oid = ((CUBRIDOID) result).getOID();
+            dos.writeInt(UJCIUtil.bytes2int(oid, 0));
+            dos.writeInt(UJCIUtil.bytes2short(oid, 4));
+            dos.writeInt(UJCIUtil.bytes2short(oid, 6));
+        } else if (result instanceof ResultSet) {
+            dos.writeInt(DB_RESULTSET);
+            // dos.writeInt(((CUBRIDResultSet) result).getServerHandle());
+        } else if (result instanceof int[]) {
+            int length = ((int[]) result).length;
+            Integer[] array = new Integer[length];
+            for (int i = 0; i < array.length; i++) {
+                array[i] = new Integer(((int[]) result)[i]);
+            }
+            sendValue(array, dos, ret_type);
+        } else if (result instanceof short[]) {
+            int length = ((short[]) result).length;
+            Short[] array = new Short[length];
+            for (int i = 0; i < array.length; i++) {
+                array[i] = new Short(((short[]) result)[i]);
+            }
+            sendValue(array, dos, ret_type);
+        } else if (result instanceof float[]) {
+            int length = ((float[]) result).length;
+            Float[] array = new Float[length];
+            for (int i = 0; i < array.length; i++) {
+                array[i] = new Float(((float[]) result)[i]);
+            }
+            sendValue(array, dos, ret_type);
+        } else if (result instanceof double[]) {
+            int length = ((double[]) result).length;
+            Double[] array = new Double[length];
+            for (int i = 0; i < array.length; i++) {
+                array[i] = new Double(((double[]) result)[i]);
+            }
+            sendValue(array, dos, ret_type);
+        } else if (result instanceof Object[]) {
+            dos.writeInt(ret_type);
+            Object[] arr = (Object[]) result;
+
+            dos.writeInt(arr.length);
+            for (int i = 0; i < arr.length; i++) {
+                sendValue(arr[i], dos, ret_type);
+            }
+        } else ;
+    }
+
+    private int getLengthtoSend(String str) throws IOException {
+        byte b[] = str.getBytes();
+
+        int len = b.length + 1;
+
+        int bits = len & 3;
+        int pad = 0;
+
+        if (bits != 0) pad = 4 - bits;
+
+        return len + pad;
+    }
+
+    private void packAndSendRawString(String str, DataOutputStream dos) throws IOException {
+        byte b[] = str.getBytes();
+
+        int len = b.length + 1;
+        int bits = len & 3;
+        int pad = 0;
+
+        if (bits != 0) pad = 4 - bits;
+
+        dos.writeInt(len + pad);
+        dos.write(b);
+        for (int i = 0; i <= pad; i++) {
+            dos.writeByte(0);
+        }
+    }
+
+    private void packAndSendString(String str, DataOutputStream dos) throws IOException {
+        byte b[] = str.getBytes(this.charSet);
+
+        int len = b.length + 1;
+        int bits = len & 3;
+        int pad = 0;
+
+        if (bits != 0) pad = 4 - bits;
+
+        dos.writeInt(len + pad);
+        dos.write(b);
+        for (int i = 0; i <= pad; i++) {
+            dos.writeByte(0);
         }
     }
 
@@ -450,184 +605,5 @@ public class ExecuteTask extends Thread {
         }
 
         return sp.makeReturnValue(obj);
-    }
-
-    private void sendResult(Value result, StoredProcedure procedure)
-            throws IOException, ExecuteException, TypeMismatchException {
-        Object resolvedResult = null;
-        if (result != null) {
-            resolvedResult = toDbTypeValue(procedure.getReturnType(), result);
-        }
-
-        byteBuf.reset();
-
-        sendValue(resolvedResult, outBuf, procedure.getReturnType());
-        returnOutArgs(procedure, outBuf);
-        outBuf.flush();
-
-        output.writeInt(REQ_CODE_RESULT);
-        output.writeInt(byteBuf.size() + 4);
-        byteBuf.writeTo(output);
-        output.writeInt(REQ_CODE_RESULT);
-        output.flush();
-    }
-
-    public void sendCall() throws IOException {
-        if (compareStatus(ExecuteThreadStatus.INVOKE)) {
-            setStatus(ExecuteThreadStatus.CALL);
-            output.writeInt(REQ_CODE_INTERNAL_JDBC);
-            output.flush();
-        }
-    }
-
-    private void sendError(String exception, Socket socket) throws IOException {
-        byteBuf.reset();
-
-        try {
-            sendValue(new Integer(1), outBuf, DB_INT);
-            sendValue(exception, outBuf, DB_STRING);
-        } catch (ExecuteException e) {
-            // ignore, never happened
-        }
-
-        outBuf.flush();
-        output.writeInt(REQ_CODE_ERROR);
-        output.writeInt(byteBuf.size() + 4);
-        byteBuf.writeTo(output);
-        output.writeInt(REQ_CODE_ERROR);
-        output.flush();
-    }
-
-    private void sendValue(Object result, DataOutputStream dos, int ret_type)
-            throws IOException, ExecuteException {
-        if (result == null) {
-            dos.writeInt(DB_NULL);
-        } else if (result instanceof Short) {
-            dos.writeInt(DB_SHORT);
-            dos.writeInt(((Short) result).intValue());
-        } else if (result instanceof Integer) {
-            dos.writeInt(DB_INT);
-            dos.writeInt(((Integer) result).intValue());
-        } else if (result instanceof Long) {
-            dos.writeInt(DB_BIGINT);
-            dos.writeLong(((Long) result).longValue());
-        } else if (result instanceof Float) {
-            dos.writeInt(DB_FLOAT);
-            dos.writeFloat(((Float) result).floatValue());
-        } else if (result instanceof Double) {
-            dos.writeInt(ret_type);
-            dos.writeDouble(((Double) result).doubleValue());
-        } else if (result instanceof BigDecimal) {
-            dos.writeInt(DB_NUMERIC);
-            packAndSendString(((BigDecimal) result).toString(), dos);
-        } else if (result instanceof String) {
-            dos.writeInt(DB_STRING);
-            packAndSendString((String) result, dos);
-        } else if (result instanceof java.sql.Date) {
-            dos.writeInt(DB_DATE);
-            packAndSendString(result.toString(), dos);
-        } else if (result instanceof java.sql.Time) {
-            dos.writeInt(DB_TIME);
-            packAndSendString(result.toString(), dos);
-        } else if (result instanceof java.sql.Timestamp) {
-            dos.writeInt(ret_type);
-
-            if (ret_type == DB_DATETIME) {
-                packAndSendString(result.toString(), dos);
-            } else {
-                SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-                packAndSendString(formatter.format(result), dos);
-            }
-        } else if (result instanceof CUBRIDOID) {
-            dos.writeInt(DB_OBJECT);
-            byte[] oid = ((CUBRIDOID) result).getOID();
-            dos.writeInt(UJCIUtil.bytes2int(oid, 0));
-            dos.writeInt(UJCIUtil.bytes2short(oid, 4));
-            dos.writeInt(UJCIUtil.bytes2short(oid, 6));
-        } else if (result instanceof ResultSet) {
-            dos.writeInt(DB_RESULTSET);
-            dos.writeInt(((CUBRIDResultSet) result).getServerHandle());
-        } else if (result instanceof int[]) {
-            int length = ((int[]) result).length;
-            Integer[] array = new Integer[length];
-            for (int i = 0; i < array.length; i++) {
-                array[i] = new Integer(((int[]) result)[i]);
-            }
-            sendValue(array, dos, ret_type);
-        } else if (result instanceof short[]) {
-            int length = ((short[]) result).length;
-            Short[] array = new Short[length];
-            for (int i = 0; i < array.length; i++) {
-                array[i] = new Short(((short[]) result)[i]);
-            }
-            sendValue(array, dos, ret_type);
-        } else if (result instanceof float[]) {
-            int length = ((float[]) result).length;
-            Float[] array = new Float[length];
-            for (int i = 0; i < array.length; i++) {
-                array[i] = new Float(((float[]) result)[i]);
-            }
-            sendValue(array, dos, ret_type);
-        } else if (result instanceof double[]) {
-            int length = ((double[]) result).length;
-            Double[] array = new Double[length];
-            for (int i = 0; i < array.length; i++) {
-                array[i] = new Double(((double[]) result)[i]);
-            }
-            sendValue(array, dos, ret_type);
-        } else if (result instanceof Object[]) {
-            dos.writeInt(ret_type);
-            Object[] arr = (Object[]) result;
-
-            dos.writeInt(arr.length);
-            for (int i = 0; i < arr.length; i++) {
-                sendValue(arr[i], dos, ret_type);
-            }
-        } else ;
-    }
-
-    private int getLengthtoSend(String str) throws IOException {
-        byte b[] = str.getBytes();
-
-        int len = b.length + 1;
-
-        int bits = len & 3;
-        int pad = 0;
-
-        if (bits != 0) pad = 4 - bits;
-
-        return len + pad;
-    }
-
-    private void packAndSendRawString(String str, DataOutputStream dos) throws IOException {
-        byte b[] = str.getBytes();
-
-        int len = b.length + 1;
-        int bits = len & 3;
-        int pad = 0;
-
-        if (bits != 0) pad = 4 - bits;
-
-        dos.writeInt(len + pad);
-        dos.write(b);
-        for (int i = 0; i <= pad; i++) {
-            dos.writeByte(0);
-        }
-    }
-
-    private void packAndSendString(String str, DataOutputStream dos) throws IOException {
-        byte b[] = str.getBytes(this.charSet);
-
-        int len = b.length + 1;
-        int bits = len & 3;
-        int pad = 0;
-
-        if (bits != 0) pad = 4 - bits;
-
-        dos.writeInt(len + pad);
-        dos.write(b);
-        for (int i = 0; i <= pad; i++) {
-            dos.writeByte(0);
-        }
     }
 }
