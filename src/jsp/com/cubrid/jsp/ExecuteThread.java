@@ -37,9 +37,9 @@ import com.cubrid.jsp.data.DBType;
 import com.cubrid.jsp.data.DataUtilities;
 import com.cubrid.jsp.exception.ExecuteException;
 import com.cubrid.jsp.exception.TypeMismatchException;
-import com.cubrid.jsp.jdbc.CUBRIDServerSideConnection;
 import com.cubrid.jsp.value.Value;
 import com.cubrid.jsp.value.ValueUtilities;
+import cubrid.jdbc.driver.CUBRIDConnectionDefault;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
@@ -50,9 +50,7 @@ import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ExecuteThread extends Thread {
@@ -73,7 +71,7 @@ public class ExecuteThread extends Thread {
 
     private long id;
     private Socket client;
-    private CUBRIDServerSideConnection connection = null;
+    private CUBRIDConnectionDefault connection = null;
     private String threadName = null;
 
     private DataInputStream input;
@@ -90,8 +88,6 @@ public class ExecuteThread extends Thread {
     private AtomicInteger status = new AtomicInteger(ExecuteThreadStatus.IDLE.getValue());
 
     private Value[] arguments = null;
-    private Map<Long, StoredProcedure> procedureMap = new HashMap<Long, StoredProcedure>();
-
     private StoredProcedure storedProcedure = null;
 
     ExecuteThread(Socket client) throws IOException {
@@ -130,9 +126,9 @@ public class ExecuteThread extends Thread {
         charSet = null;
     }
 
-    public void setJdbcConnection(Connection con) {
-        this.connection = (CUBRIDServerSideConnection) con;
-        this.connection.setThread(this);
+    public void setJdbcConnection(Connection con) throws IOException {
+        this.connection = (CUBRIDConnectionDefault) con;
+        sendCommand(null);
     }
 
     public Connection getJdbcConnection() {
@@ -386,8 +382,10 @@ public class ExecuteThread extends Thread {
 
     public void sendCommand(ByteBuffer buffer) throws IOException {
         output.writeInt(REQ_CODE_INTERNAL_JDBC);
-        output.writeInt(buffer.position());
-        output.write(buffer.array(), 0, buffer.position());
+        if (buffer != null) {
+            output.writeInt(buffer.position());
+            output.write(buffer.array(), 0, buffer.position());
+        }
         output.flush();
     }
 

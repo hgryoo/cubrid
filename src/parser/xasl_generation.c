@@ -3817,25 +3817,25 @@ pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * s
 			  set_get_element (param_set, i, &temp);
 			  DB_OBJECT *arg_mop_p = db_get_object (&temp);
 			  if (arg_mop_p)
-			  {
-			  if (db_get (arg_mop_p, SP_ATTR_MODE, &mode) == NO_ERROR)
 			    {
-			      (*tail)->arg_info.arg_mode[i] = db_get_int (&mode);
-			    }
+			      if (db_get (arg_mop_p, SP_ATTR_MODE, &mode) == NO_ERROR)
+				{
+				  (*tail)->arg_info.arg_mode[i] = db_get_int (&mode);
+				}
 
-			  if (db_get (arg_mop_p, SP_ATTR_DATA_TYPE, &arg_type) == NO_ERROR)
-			    {
-			      (*tail)->arg_info.arg_type[i] = db_get_int (&arg_type);
-			    }
+			      if (db_get (arg_mop_p, SP_ATTR_DATA_TYPE, &arg_type) == NO_ERROR)
+				{
+				  (*tail)->arg_info.arg_type[i] = db_get_int (&arg_type);
+				}
 
-			  pr_clear_value (&mode);
-			  pr_clear_value (&arg_type);
-			  pr_clear_value (&temp);
-			  }
+			      pr_clear_value (&mode);
+			      pr_clear_value (&arg_type);
+			      pr_clear_value (&temp);
+			    }
 			  else
-			  {
-				break;
-			  }
+			    {
+			      break;
+			    }
 			}
 		      pr_clear_value (&args);
 		    }
@@ -4312,9 +4312,9 @@ pt_to_aggregate_node (PARSER_CONTEXT * parser, PT_NODE * tree, void *arg, int *c
 	   * needs for a "select count(distinct foo)" query, which adds a lot of unnecessary overhead. */
 	  aggregate_list->option = Q_ALL;
 
-	  aggregate_list->domain = &tp_Integer_domain;
-	  regu_dbval_type_init (aggregate_list->accumulator.value, DB_TYPE_INTEGER);
-	  regu_dbval_type_init (aggregate_list->accumulator.value2, DB_TYPE_INTEGER);
+	  aggregate_list->domain = &tp_Bigint_domain;
+	  regu_dbval_type_init (aggregate_list->accumulator.value, DB_TYPE_BIGINT);
+	  regu_dbval_type_init (aggregate_list->accumulator.value2, DB_TYPE_BIGINT);
 	  aggregate_list->opr_dbtype = DB_TYPE_INTEGER;
 
 	  regu_alloc (aggregate_list->operands);

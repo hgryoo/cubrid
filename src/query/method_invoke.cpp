@@ -21,7 +21,9 @@
 #include <algorithm>
 
 #include "dbtype.h"		/* db_value_* */
+
 #include "jsp_comm.h"		/* common communcation functions for javasp */
+
 #include "method_invoke_common.hpp"
 #include "method_invoke_group.hpp"
 #include "object_representation.h"	/* OR_ */
@@ -65,8 +67,7 @@ namespace cubmethod
   }
 
   int
-  method_invoke_builtin::get_return (cubthread::entry *thread_p,
-				     DB_VALUE &result)
+  method_invoke_builtin::get_return (cubthread::entry *thread_p, std::vector <DB_VALUE> &arg_base, DB_VALUE &result)
   {
     int error = NO_ERROR;
 #if defined (SERVER_MODE)
@@ -85,7 +86,6 @@ namespace cubmethod
       else
 	{
 	  unpacker.unpack_int (e);	/* er_errid */
-	  // er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, e, 0);
 	}
       return e;
     };
@@ -146,7 +146,7 @@ namespace cubmethod
   }
 
   int
-  method_invoke_java::get_return (cubthread::entry *thread_p, DB_VALUE &returnval)
+  method_invoke_java::get_return (cubthread::entry *thread_p, std::vector <DB_VALUE> &arg_base, DB_VALUE &returnval)
   {
     /* read request code */
     int start_code, error_code = NO_ERROR;
@@ -168,37 +168,39 @@ namespace cubmethod
 	/* read size of buffer to allocate and data */
 	cubmem::extensible_block blk;
 	error_code = alloc_response (blk);
+
+	if (error_code == NO_ERROR)
+	  {
+	    if (start_code == SP_CODE_INTERNAL_JDBC)
+	      {
+		error_code = callback_dispatch (blk);
+	      }
+	    else if (start_code == SP_CODE_RESULT || start_code == SP_CODE_ERROR)
+	      {
+		switch (start_code)
+		  {
+		  case SP_CODE_RESULT:
+		  {
+		    error_code = receive_result (blk, arg_base, returnval);
+		    break;
+		  }
+		  case SP_CODE_ERROR:
+		  {
+		    error_code = receive_error (blk);
+		    db_make_null (&returnval);
+		    break;
+		  }
+		  }
+	      }
+	    else
+	      {
+		er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_NETWORK_ERROR, 1,
+			start_code);
+		error_code = ER_SP_NETWORK_ERROR;
+	      }
+	  }
 	if (error_code != NO_ERROR)
 	  {
-	    assert (false);
-	  }
-
-	if (start_code == SP_CODE_INTERNAL_JDBC)
-	  {
-	    callback_dispatch (blk);
-	  }
-	else if (start_code == SP_CODE_RESULT || start_code == SP_CODE_ERROR)
-	  {
-	    switch (start_code)
-	      {
-	      case SP_CODE_RESULT:
-	      {
-		error_code = receive_result (blk, returnval);
-		break;
-	      }
-	      case SP_CODE_ERROR:
-	      {
-		error_code = receive_error (blk);
-		db_make_null (&returnval);
-		break;
-	      }
-	      }
-	  }
-	else
-	  {
-	    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_NETWORK_ERROR, 1,
-		    start_code);
-	    error_code = ER_SP_NETWORK_ERROR;
 	    break;
 	  }
       }
@@ -233,7 +235,8 @@ namespace cubmethod
   }
 
   int
-  method_invoke_java::receive_result (cubmem::extensible_block &blk, DB_VALUE &returnval)
+  method_invoke_java::receive_result (cubmem::extensible_block &blk, std::vector <DB_VALUE> &arg_base,
+				      DB_VALUE &returnval)
   {
     int error_code = NO_ERROR;
 #if defined (SERVER_MODE)
@@ -244,6 +247,26 @@ namespace cubmethod
     db_make_null (&returnval);
     value_unpacker.value = &returnval;
     value_unpacker.unpack (unpacker);
+
+    /* out arguments */
+    DB_VALUE temp;
+    int num_args = m_method_sig->num_method_args;
+    for (int i = 0; i < num_args; i++)
+      {
+	if (m_method_sig->arg_info.arg_mode[i] == 1) // FIXME: SP_MODE_IN in jsp_cl.h
+	  {
+	    continue;
+	  }
+
+	value_unpacker.value = &temp;
+	value_unpacker.unpack (unpacker);
+
+	int pos = m_method_sig->method_arg_pos[i];
+	db_value_clear (&arg_base[pos]);
+	db_value_clone (&temp, &arg_base[pos]);
+	db_value_clear (&temp);
+      }
+
 #endif
     return error_code;
   }

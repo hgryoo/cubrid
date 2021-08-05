@@ -20,6 +20,15 @@
 
 #include "memory_private_allocator.hpp"
 
+method_sig_node::method_sig_node ()
+{
+  next = nullptr;
+  method_name = nullptr;
+  method_type = METHOD_TYPE_NONE;
+  num_method_args = 0;
+  method_arg_pos = nullptr;
+}
+
 void
 method_sig_node::pack (cubpacking::packer &serializator) const
 {
@@ -113,14 +122,27 @@ method_sig_node::unpack (cubpacking::unpacker &deserializator)
     }
   else
     {
-      for (int i = 0; i < num_method_args; i++)
+      if (num_method_args > 0)
 	{
-	  deserializator.unpack_int (arg_info.arg_mode[i]);
+	  arg_info.arg_mode = (int *) db_private_alloc (NULL, sizeof (int) * (num_method_args));
+	  arg_info.arg_type = (int *) db_private_alloc (NULL, sizeof (int) * (num_method_args));
+
+	  for (int i = 0; i < num_method_args; i++)
+	    {
+	      deserializator.unpack_int (arg_info.arg_mode[i]);
+	    }
+
+	  for (int i = 0; i < num_method_args; i++)
+	    {
+	      deserializator.unpack_int (arg_info.arg_type[i]);
+	    }
 	}
-      for (int i = 0; i < num_method_args; i++)
+      else
 	{
-	  deserializator.unpack_int (arg_info.arg_type[i]);
+	  arg_info.arg_mode = nullptr;
+	  arg_info.arg_type = nullptr;
 	}
+
       deserializator.unpack_int (arg_info.result_type);
     }
 }
@@ -128,8 +150,15 @@ method_sig_node::unpack (cubpacking::unpacker &deserializator)
 void
 method_sig_node::freemem ()
 {
-  db_private_free_and_init (NULL, method_name);
-  db_private_free_and_init (NULL, method_arg_pos);
+  if (method_name != nullptr)
+    {
+      db_private_free_and_init (NULL, method_name);
+    }
+
+  if (method_arg_pos != nullptr)
+    {
+      db_private_free_and_init (NULL, method_arg_pos);
+    }
 
   if (method_type != METHOD_TYPE_JAVA_SP && class_name)
     {

@@ -16,6 +16,10 @@
  *
  */
 
+/*
+ * method_invoke_group.hpp
+ */
+
 #ifndef _METHOD_INVOKE_GROUP_HPP_
 #define _METHOD_INVOKE_GROUP_HPP_
 
@@ -78,9 +82,10 @@ namespace cubmethod
 
       int begin (cubthread::entry *thread_p);
       int prepare (std::vector <DB_VALUE> &arg_base);
-      int execute ();
+      int execute (std::vector <DB_VALUE> &arg_base);
       int reset ();
       int end ();
+
       DB_VALUE &get_return_value (int index);
 
       int get_num_methods () const;
@@ -98,6 +103,7 @@ namespace cubmethod
       int64_t m_id;
       std::vector <METHOD_TYPE> m_kind_type;
       std::vector <method_invoke *> m_method_vector;
+
       std::vector <DB_VALUE> m_result_vector;	/* placeholder for result value */
   };
 

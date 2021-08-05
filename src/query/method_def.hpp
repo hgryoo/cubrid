@@ -61,6 +61,8 @@ struct method_arg_info
   int *arg_mode; /* IN, OUT, INOUT */
   int *arg_type; /* DB_TYPE */
   int result_type; /* DB_TYPE */
+
+  method_arg_info () = default;
 };
 
 typedef struct method_sig_node METHOD_SIG;
@@ -85,7 +87,7 @@ struct method_sig_node
 
   void freemem ();
 
-  method_sig_node () = default;
+  method_sig_node ();
 };
 
 struct method_sig_list
@@ -103,19 +105,5 @@ struct method_sig_list
   method_sig_list () = default;
 };
 typedef struct method_sig_list METHOD_SIG_LIST;
-
-struct nested_query_handler
-{
-  std::string sql_stmt;
-  char flag;
-  int stmt_no;
-  STATEMENT_ID stmt_id;		/* compiled stmt number */
-  CUBRID_STMT_TYPE stmt_type;	/* statement type */
-  DB_SESSION *session;
-  bool is_prepared;
-  int num_markers;         /* # of input markers */
-  DB_QUERY_RESULT *result; /* result column descriptor */
-};
-typedef struct nested_query_handler METHOD_NESTED_QUERY_HANDLE;
 
 #endif // _METHOD_DEF_H_
