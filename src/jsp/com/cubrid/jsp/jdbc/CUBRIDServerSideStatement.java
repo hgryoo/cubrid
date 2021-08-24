@@ -70,12 +70,9 @@ public class CUBRIDServerSideStatement implements Statement {
 
         fetchSize = 0;
         fetchDirection = ResultSet.FETCH_FORWARD;
-
         maxRows = 0;
         maxFieldSize = 0;
-
         queryTimeout = 0;
-
         updateCount = -1;
 
         closed = false;
@@ -91,20 +88,24 @@ public class CUBRIDServerSideStatement implements Statement {
         // TODO
         byte prepareFlag = (byte) 0;
         if (isUpdatable() || isSensitive()) {
-            // PREPARE_UPDATABLE
+            prepareFlag |= CUBRIDServerSideConstants.PREPARE_UPDATABLE;
         }
         if (false) { // TODO: query info 
-            // PREPARE QUERY INFO
+            prepareFlag |= CUBRIDServerSideConstants.PREPARE_QUERY_INFO;
         }
-        if (false) {
-            // PREPARE HOLDABLE
+        if (false) { // TODO: is_holdable
+            prepareFlag |= CUBRIDServerSideConstants.PREPARE_HOLDABLE;
         }
 
-        connection.requestPrepare (sql, prepareFlag);
+        connection.requestPrepare (this, sql, prepareFlag);
     }
 
-    protected void executeInternal () {
+    protected void executeInternal (boolean all) {
         // TODO
+
+
+
+        // Get Result Info 
 
 
     }
@@ -300,13 +301,16 @@ public class CUBRIDServerSideStatement implements Statement {
     
     public ResultSet executeQuery(String sql) throws SQLException {
         // TODO
-        long begin = 0;
 
-        begin = System.currentTimeMillis();
+        // complete previous resultSet
 
+        // prepare
+        prepareInternal(sql);
 
-
-        long end = System.currentTimeMillis();
+        // check SQL Type (SELECT, CALL, GET_STATS, EVALUATE)
+        
+        // execute
+        executeInternal (false);
 
         return currentResultSet;
     }
@@ -349,7 +353,7 @@ public class CUBRIDServerSideStatement implements Statement {
 
         }
 
-        executeInternal ();
+        executeInternal (false);
 
 
 

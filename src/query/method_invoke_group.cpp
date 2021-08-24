@@ -113,6 +113,12 @@ namespace cubmethod
     return m_socket;
   }
 
+  cubthread::entry*
+  method_invoke_group::get_thread_entry () const
+  {
+    return m_thread_p;
+  }
+
   int
   method_invoke_group::connect ()
   {
@@ -149,7 +155,7 @@ namespace cubmethod
   }
 
   int
-  method_invoke_group::prepare (std::vector <DB_VALUE> &arg_base)
+  method_invoke_group::prepare (cubthread::entry *thread_p, std::vector <DB_VALUE> &arg_base)
   {
     int error = NO_ERROR;
 
@@ -165,11 +171,33 @@ namespace cubmethod
 	  case METHOD_TYPE_INSTANCE_METHOD:
 	  case METHOD_TYPE_CLASS_METHOD:
 	  {
-	    cubmethod::header header (METHOD_CALLBACK_ARG_PREPARE, m_id);
+	    cubmethod::header header (METHOD_REQUEST_ARG_PREPARE, m_id);
 	    cubmethod::prepare_args arg (elem, arg_base);
 	    packer.set_buffer_and_pack_all (eb, header, arg);
 	    cubmem::block b (packer.get_current_size (), eb.get_ptr ());
-	    error = xs_send (m_thread_p, b);
+	    error = xs_send (thread_p, b);
+
+      // dummy
+      DB_VALUE result;
+      db_make_null (&result);
+      auto get_method_result = [&] (cubmem::block & b)
+    {
+      int e = NO_ERROR;
+      packing_unpacker unpacker (b.ptr, (size_t) b.dim);
+      int status;
+      unpacker.unpack_int (status);
+      if (status == METHOD_SUCCESS)
+	{
+	  unpacker.unpack_db_value (result);
+	}
+      else
+	{
+	  unpacker.unpack_int (e);	/* er_errid */
+	}
+      return e;
+    };
+
+    error = xs_receive (thread_p, get_method_result);
 	    break;
 	  }
 	  case METHOD_TYPE_JAVA_SP:
@@ -213,19 +241,19 @@ namespace cubmethod
     return error;
   }
 
-  int method_invoke_group::execute (std::vector <DB_VALUE> &arg_base)
+  int method_invoke_group::execute (cubthread::entry *thread_p, std::vector <DB_VALUE> &arg_base)
   {
     int error = NO_ERROR;
 
     for (int i = 0; i < get_num_methods (); i++)
       {
-	error = m_method_vector[i]->invoke (m_thread_p);
+	error = m_method_vector[i]->invoke (thread_p, arg_base);
 	if (error != NO_ERROR)
 	  {
 	    break;
 	  }
 
-	error = m_method_vector[i]->get_return (m_thread_p, arg_base, m_result_vector[i]);
+	error = m_method_vector[i]->get_return (thread_p, arg_base, m_result_vector[i]);
 	if (error != NO_ERROR)
 	  {
 	    break;
@@ -235,12 +263,29 @@ namespace cubmethod
     return error;
   }
 
+  int method_invoke_group::get_return (cubthread::entry *thread_p, std::vector <DB_VALUE> &arg_base)
+  {
+    int error = NO_ERROR;
+
+    for (int i = 0; i < get_num_methods (); i++)
+      {
+	error = m_method_vector[i]->get_return (thread_p, arg_base, m_result_vector[i]);
+	if (error != NO_ERROR)
+	  {
+	    break;
+	  }
+      }
+
+    return error;
+  }
+
+
   int method_invoke_group::begin (cubthread::entry *thread_p)
   {
     int error = NO_ERROR;
 
     // set executing thread entry
-    m_thread_p = thread_p;
+    // m_thread_p = thread_p;
 
     // connect socket for java sp
     connect ();
@@ -260,9 +305,20 @@ namespace cubmethod
     return error;
   }
 
-  int method_invoke_group::end ()
+  int method_invoke_group::end (cubthread::entry *thread_p)
   {
     int error = NO_ERROR;
+
+#if defined (SERVER_MODE)
+/* TODO
+    packing_packer packer;
+    cubmem::extensible_block eb;
+    cubmethod::header header (METHOD_REQUEST_END, get_id());
+    packer.set_buffer_and_pack_all (eb, header);
+    cubmem::block b (packer.get_current_size (), eb.get_ptr ());
+    error = xs_send (thread_p, b);
+*/
+#endif
 
     reset ();
 

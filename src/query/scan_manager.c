@@ -4017,7 +4017,7 @@ scan_open_method_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
   int error = scan_id->s.msid.init (thread_p, meth_sig_list, list_id);
   if (error == NO_ERROR)
     {
-      error = scan_id->s.msid.open ();
+      error = scan_id->s.msid.open (thread_p);
     }
   return error;
 }
@@ -4912,7 +4912,7 @@ scan_close_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
       break;
 
     case S_METHOD_SCAN:
-      scan_id->s.msid.close ();
+      scan_id->s.msid.close (thread_p);
       break;
 
     case S_JSON_TABLE_SCAN:
@@ -6783,7 +6783,7 @@ scan_next_method_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
   QPROC_DB_VALUE_LIST dest_valp;
 
   /* execute method scan */
-  qp_scan = scan_id->s.msid.next_scan (vl);
+  qp_scan = scan_id->s.msid.next_scan (thread_p, vl);
   if (qp_scan == S_SUCCESS)
     {
       /* copy the result into the value list of the scan ID */

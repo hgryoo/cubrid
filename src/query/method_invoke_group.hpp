@@ -81,16 +81,18 @@ namespace cubmethod
       ~method_invoke_group ();
 
       int begin (cubthread::entry *thread_p);
-      int prepare (std::vector <DB_VALUE> &arg_base);
-      int execute (std::vector <DB_VALUE> &arg_base);
+      int prepare (cubthread::entry * thread_p, std::vector <DB_VALUE> &arg_base);
+      int execute (cubthread::entry * thread_p, std::vector <DB_VALUE> &arg_base);
+      int get_return (cubthread::entry * thread_p, std::vector <DB_VALUE> &arg_base);
       int reset ();
-      int end ();
+      int end (cubthread::entry *thread_p);
 
       DB_VALUE &get_return_value (int index);
 
       int get_num_methods () const;
       int64_t get_id () const;
       SOCKET get_socket () const;
+      cubthread::entry *get_thread_entry () const;
 
     private:
       /* Temporarily, method_invoke_group has socket fd here */

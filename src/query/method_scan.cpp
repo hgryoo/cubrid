@@ -41,10 +41,12 @@ namespace cubscan
     scanner::init (cubthread::entry *thread_p, METHOD_SIG_LIST *sig_list, qfile_list_id *list_id)
     {
       // check initialized
+	  /*
       if (m_thread_p != thread_p)
 	{
 	  m_thread_p = thread_p;
 	}
+	  */
 
       if (m_method_group == nullptr) // signature is not initialized
 	{
@@ -71,7 +73,7 @@ namespace cubscan
 
       if (m_dbval_list == nullptr)
 	{
-	  m_dbval_list = (qproc_db_value_list *) db_private_alloc (m_thread_p,
+	  m_dbval_list = (qproc_db_value_list *) db_private_alloc (thread_p,
 			 sizeof (m_dbval_list[0]) * m_method_group->get_num_methods ());
 	  if (m_dbval_list == NULL)
 	    {
@@ -82,9 +84,9 @@ namespace cubscan
     }
 
     void
-    scanner::clear (bool is_final)
+    scanner::clear (cubthread::entry * thread_p, bool is_final)
     {
-      close_value_array ();
+      close_value_array (thread_p);
       for (DB_VALUE &value : m_arg_vector)
 	{
 	  db_value_clear (&value);
@@ -92,7 +94,7 @@ namespace cubscan
 
       if (is_final)
 	{
-	  m_method_group->end ();
+	  m_method_group->end (thread_p);
 	  if (m_method_group != nullptr)
 	    {
 	      delete m_method_group;
@@ -102,42 +104,44 @@ namespace cubscan
     }
 
     int
-    scanner::open ()
+    scanner::open (cubthread::entry *thread_p)
     {
       int error = NO_ERROR;
       error = qfile_open_list_scan (m_list_id, &m_scan_id);
 
       // connect
-      m_method_group->begin (m_thread_p);
+      m_method_group->begin (thread_p);
+
+      SCAN_CODE scan_code = S_SUCCESS;
+
+      scan_code = get_single_tuple (thread_p);
+      if (scan_code == S_SUCCESS && m_method_group->prepare (thread_p, m_arg_vector) != NO_ERROR)
+	{
+	  scan_code = S_ERROR;
+	}
 
       return error;
     }
 
     int
-    scanner::close ()
+    scanner::close (cubthread::entry *thread_p)
     {
       int error = NO_ERROR;
 
-      clear (false);
-      qfile_close_scan (m_thread_p, &m_scan_id);
+      clear (thread_p, false);
+      qfile_close_scan (thread_p, &m_scan_id);
 
       return error;
     }
 
     SCAN_CODE
-    scanner::next_scan (val_list_node &vl)
+    scanner::next_scan (cubthread::entry * thread_p, val_list_node &vl)
     {
       SCAN_CODE scan_code = S_SUCCESS;
 
       next_value_array (vl);
 
-      scan_code = get_single_tuple ();
-      if (scan_code == S_SUCCESS && m_method_group->prepare (m_arg_vector) != NO_ERROR)
-	{
-	  scan_code = S_ERROR;
-	}
-
-      if (scan_code == S_SUCCESS && m_method_group->execute (m_arg_vector) != NO_ERROR)
+      if (scan_code == S_SUCCESS && m_method_group->execute (thread_p, m_arg_vector) != NO_ERROR)
 	{
 	  scan_code = S_ERROR;
 	}
@@ -147,7 +151,7 @@ namespace cubscan
 	  int num_methods = m_method_group->get_num_methods ();
 	  for (int i = 0; i < num_methods; i++)
 	    {
-	      DB_VALUE *dbval_p = (DB_VALUE *) db_private_alloc (m_thread_p, sizeof (DB_VALUE));
+	      DB_VALUE *dbval_p = (DB_VALUE *) db_private_alloc (thread_p, sizeof (DB_VALUE));
 	      db_make_null (dbval_p);
 
 	      DB_VALUE &result = m_method_group->get_return_value (i);
@@ -170,9 +174,9 @@ namespace cubscan
     }
 
     int
-    scanner::close_value_array ()
+    scanner::close_value_array (cubthread::entry * thread_p)
     {
-      db_private_free_and_init (m_thread_p, m_dbval_list);
+      db_private_free_and_init (thread_p, m_dbval_list);
       return NO_ERROR;
     }
 
@@ -194,10 +198,10 @@ namespace cubscan
     }
 
     SCAN_CODE
-    scanner::get_single_tuple ()
+    scanner::get_single_tuple (cubthread::entry * thread_p)
     {
       QFILE_TUPLE_RECORD tuple_record = { NULL, 0 };
-      SCAN_CODE scan_code = qfile_scan_list_next (m_thread_p, &m_scan_id, &tuple_record, PEEK);
+      SCAN_CODE scan_code = qfile_scan_list_next (thread_p, &m_scan_id, &tuple_record, PEEK);
       if (scan_code == S_SUCCESS)
 	{
 	  char *ptr;

@@ -228,6 +228,30 @@ public class SpPrepareTest {
         }
     }
 
+    public static String testStatement (String query) {
+        try {
+            Class.forName("cubrid.jdbc.driver.CUBRIDDriver");
+            Connection conn = DriverManager.getConnection("jdbc:default:connection:", "", "");
+
+            Statement stmt = conn.createStatement();
+            ResultSet rs = stmt.executeQuery(query);
+
+            String result = "";
+            while (rs.next()) {
+                result = rs.getString(1);
+                break;
+            }
+
+            rs.close();
+            stmt.close();
+            conn.close();
+            return result;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return e.getMessage();
+        }
+    }
+
     /*
      * CREATE OR REPLACE FUNCTION testSubquery(select_list string, from_claus string, where_claus string, value string) RETURN string as language java name 'SpPrepareTest.test(java.lang.String, java.lang.String, java.lang.String, java.lang.String) return java.lang.String';
      * SELECT h.host_year, testSubquery('o.host_nation', 'olympic o', 'o.host_year', h.host_year) AS host_nation, h.event_code, h.score, h.unit FROM history2 h LIMIT 20

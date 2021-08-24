@@ -26,6 +26,8 @@
 #include "network.h" /* METHOD_CALL */
 #include "network_interface_sr.h" /* xs_receive_data_from_client() */
 #include "server_support.h"	/* css_send_reply_and_data_to_client(), css_get_comm_request_id() */
+#include "thread_manager.hpp"
+#include "log_impl.h"
 #endif
 
 namespace cubmethod
@@ -39,26 +41,59 @@ namespace cubmethod
     OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
     char *reply = OR_ALIGNED_BUF_START (a_reply);
 
+    /*
+    bool continue_checking = true;
+    if (logtb_is_interrupted (thread_p, false, &continue_checking))
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERRUPTED, 0);
+      return ER_FAILED;
+    }
+    */
+
     /* pack headers */
     char *ptr = or_pack_int (reply, (int) METHOD_CALL);
     ptr = or_pack_int (ptr, mem.dim);
+    // ptr = or_pack_int (ptr, 0xEEABCDFFL);	/* padding, not used */
+
+    /* send */
+    
+    // CSS_CONN_ENTRY *conn = css_get_current_conn_entry ();
+    // unsigned int rid = css_get_request_id (thread_p->conn_entry);
+    unsigned int rid = css_get_comm_request_id (thread_p);
+    return css_send_reply_and_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply), mem.ptr,
+		mem.dim);
+  }
+
+  int xs_send2 (cubthread::entry *thread_p, cubmem::block &mem)
+  {
+    /* pack headers */
+    // char *ptr = or_pack_int (reply, (int) METHOD_CALL);
+    //OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
+    //char *reply = OR_ALIGNED_BUF_START (a_reply);
+    //char *ptr = or_pack_int (reply, mem.dim);
 
     /* send */
     unsigned int rid = css_get_comm_request_id (thread_p);
-    int error = css_send_reply_and_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply), mem.ptr,
-		mem.dim);
-    return error;
+    //css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
+    css_send_data_to_client (thread_p->conn_entry, rid, mem.ptr, mem.dim);
+    return NO_ERROR;
   }
 
   int xs_receive (cubthread::entry *thread_p, const xs_callback_func &func)
   {
     cubmem::block buffer;
-    int error = xs_receive_data_from_client (thread_p, &buffer.ptr, (int *) &buffer.dim);
+
+    int error = NO_ERROR;
+    int cnt = 10;
+    do {
+      error = xs_receive_data_from_client_with_timeout (thread_p, &buffer.ptr, (int *) &buffer.dim, 100);
+    } while (error != NO_ERROR && cnt-- > 0);
+
     if (error == NO_ERROR)
-      {
-	error = func (buffer);
-      }
-    free_and_init (buffer.ptr);
+    {
+      error = func (buffer);
+      free_and_init (buffer.ptr);
+    }
     return error;
   }
 #endif

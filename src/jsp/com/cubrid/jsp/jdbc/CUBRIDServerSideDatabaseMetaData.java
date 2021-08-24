@@ -31,11 +31,13 @@
 
 package com.cubrid.jsp.jdbc;
 
+import cubrid.jdbc.driver.CUBRIDDriver;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.RowIdLifetime;
 import java.sql.SQLException;
+import java.util.StringTokenizer;
 
 /**
  * Title: CUBRID JDBC Driver Description:
@@ -47,14 +49,28 @@ public class CUBRIDServerSideDatabaseMetaData implements DatabaseMetaData {
 
     CUBRIDServerSideConnection con;
     boolean isClosed;
-    int major_version;
-    int minor_version;
+
+    String productVersion;
+    int majorVersion;
+    int minorVersion;
 
     protected CUBRIDServerSideDatabaseMetaData(CUBRIDServerSideConnection c) {
         con = c;
         isClosed = false;
-        major_version = -1;
-        minor_version = -1;
+
+        productVersion = null;
+        majorVersion = -1;
+        minorVersion = -1;
+    }
+
+    protected void parserVersionString () {
+        productVersion = System.getProperty("cubrid.server.version");
+
+        StringTokenizer st = new StringTokenizer(productVersion, ".");
+        if (st.countTokens() == 4) { // ex) 8.4.9.9999(major.minor.patch.build
+            this.majorVersion = Integer.parseInt(st.nextToken());
+            this.minorVersion = Integer.parseInt(st.nextToken());
+        }
     }
 
     // ==============================================================
@@ -105,29 +121,26 @@ public class CUBRIDServerSideDatabaseMetaData implements DatabaseMetaData {
     }
 
     public String getDatabaseProductVersion() throws SQLException {
-        String version = System.getProperty("cubrid.server.version");
-        return version;
+        if (productVersion == null) {
+            parserVersionString ();
+        }
+        return productVersion;
     }
 
     public String getDriverName() throws SQLException {
-        return "CUBRID Server-side JDBC Driver";
+        return "CUBRID Internal JDBC Driver";
     }
 
     public String getDriverVersion() throws SQLException {
-        String version = System.getProperty("cubrid.server.version");
-        return version;
+        return CUBRIDDriver.version_string;
     }
 
     public int getDriverMajorVersion() {
-        // TODO
-        // return CUBRIDDriver.major_version;
-        return 0;
+        return CUBRIDDriver.major_version;
     }
 
     public int getDriverMinorVersion() {
-        // TODO
-        // return CUBRIDDriver.minor_version;
-        return 0;
+        return CUBRIDDriver.minor_version;
     }
 
     public boolean usesLocalFiles() throws SQLException {
@@ -850,18 +863,17 @@ public class CUBRIDServerSideDatabaseMetaData implements DatabaseMetaData {
     }
 
     public int getDatabaseMajorVersion() throws SQLException {
-        if (this.major_version == -1) {
-            getDatabaseProductVersion();
+        if (majorVersion == -1) {
+            parserVersionString ();
         }
-        return this.major_version;
+        return majorVersion;
     }
 
     public int getDatabaseMinorVersion() throws SQLException {
-
-        if (this.minor_version == -1) {
-            getDatabaseProductVersion();
+        if (minorVersion == -1) {
+            parserVersionString ();
         }
-        return this.minor_version;
+        return minorVersion;
     }
 
     public int getJDBCMajorVersion() throws SQLException {

@@ -6459,6 +6459,39 @@ xs_receive_data_from_client_with_timeout (THREAD_ENTRY * thread_p, char **area, 
 }
 
 /*
+ * xs_send_action_to_client -
+ *
+ * return:
+ *
+ *   action(in):
+ *
+ * NOTE:
+ */
+int
+xs_send_status_to_client (THREAD_ENTRY * thread_p, METHOD_CALL_STATUS status)
+{
+  unsigned int rid;
+  bool continue_checking = true;
+  OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
+  char *reply = OR_ALIGNED_BUF_START (a_reply);
+
+  if (logtb_is_interrupted (thread_p, false, &continue_checking))
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERRUPTED, 0);
+      return ER_FAILED;
+    }
+
+  rid = css_get_comm_request_id (thread_p);
+  (void) or_pack_int (reply, (int) status);
+  if (css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_INT_SIZE))
+    {
+      return ER_FAILED;
+    }
+
+  return NO_ERROR;
+}
+
+/*
  * slocator_assign_oid_batch -
  *
  * return:
@@ -10217,7 +10250,7 @@ smethod_invoke_fold_constants (THREAD_ENTRY * thread_p, unsigned int rid, char *
 
   method_group.begin (thread_p);
 
-  int error_code = method_group.prepare (args);
+  int error_code = method_group.prepare (thread_p, args);
   if (error_code != NO_ERROR)
     {
       return_error_to_client (thread_p, rid);
@@ -10231,7 +10264,7 @@ smethod_invoke_fold_constants (THREAD_ENTRY * thread_p, unsigned int rid, char *
   char *reply_data = NULL;
   int reply_data_size = 0;
 
-  error_code = method_group.execute (args);
+  error_code = method_group.execute (thread_p, args);
   if (error_code == NO_ERROR)
     {
       DB_VALUE & ret_value = method_group.get_return_value (0);
@@ -10290,14 +10323,16 @@ smethod_invoke_fold_constants (THREAD_ENTRY * thread_p, unsigned int rid, char *
       db_value_clear (&args[i]);
     }
 
-  method_group.end ();
+  method_group.end (thread_p);
   sig_list.freemem ();
 
   OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
-
   char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr = or_pack_int (reply, reply_data_size);
+  char *ptr = or_pack_int (reply, (int) END_CALLBACK);
+  ptr = or_pack_int (ptr, reply_data_size);
   ptr = or_pack_int (ptr, error_code);
+
+  // css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
 
   css_send_reply_and_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply), reply_data,
 				     reply_data_size);

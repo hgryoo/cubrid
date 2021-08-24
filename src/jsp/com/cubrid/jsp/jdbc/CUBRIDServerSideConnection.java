@@ -37,6 +37,10 @@ import java.util.logging.Logger;
 import com.cubrid.jsp.ExecuteThread;
 
 import com.cubrid.jsp.data.CUBRIDPacker;
+import com.cubrid.jsp.data.CUBRIDUnpacker;
+
+import cubrid.jdbc.jci.CUBRIDIsolationLevel;
+
 import java.nio.ByteBuffer;
 import java.sql.Array;
 import java.sql.Blob;
@@ -79,13 +83,14 @@ public class CUBRIDServerSideConnection implements Connection {
     // Request Function Code
     public static final int REQ_FUNCTION_PREPARE = 2; // UFunctionCode.PREPARE;
     public static final int REQ_FUNCTION_EXECUTE = 3; // UFunctionCode.EXECUTE;
+    public static final int REQ_FUNCTION_GET_DB_PARAMETER = 4; // UFunctionCode.GET_DB_PARAMETER;
     public static final int REQ_FUNCTION_CURSOR = 7; // UFunctionCode.CURSOR;
     public static final int REQ_FUNCTION_FETCH = 8; // UFunctionCode.FETCH;
     public static final int REQ_FUNCTION_GET_SCHEMA_INFO = 9; // UFunctionCode.GET_SCHEMA_INFO;
-    public static final int REQ_FUNCTION_GET_NEXT_RESULT = 19; // UFunctionCode.NEXT_RESULT;
+    public static final int REQ_FUNCTION_NEXT_RESULT = 19; // UFunctionCode.NEXT_RESULT;
     public static final int REQ_FUNCTION_MAKE_OUT_RS = 33; // UFunctionCode.MAKE_OUT_RS;
     public static final int REQ_FUNCTION_GET_GENERATED_KEYS = 34; // UFunctionCode.GET_GENERATED_KEYS;
-    public static final int REQ_FUNCTION_CURSOR_CLOSE = 34; // UFunctionCode.CURSOR_CLOSE;
+    public static final int REQ_FUNCTION_CURSOR_CLOSE = 42; // UFunctionCode.CURSOR_CLOSE;
 
     int transactionIsolation;
     int holdability;
@@ -97,31 +102,84 @@ public class CUBRIDServerSideConnection implements Connection {
         transactionIsolation = TRANSACTION_NONE;
 
         statements = new ArrayList<Statement> ();
-        LOG.info ("CUBRIDServerSideConnection constructor");
     }
 
     ExecuteThread thread = null;
     public void setThread (ExecuteThread t) {
         thread = t;
     }
-
-    public boolean requestPrepare (String sql, int flag) {
+    
+    public int requestDBParameter () {
+        int isolation = TRANSACTION_NONE;
         try {
-            ByteBuffer buffer = ByteBuffer.allocate(sql.length() + Integer.BYTES);
+            ByteBuffer buffer = ByteBuffer.allocate(Integer.BYTES);
             CUBRIDPacker packer = new CUBRIDPacker (buffer);
-            
+
+            packer.packInt (REQ_FUNCTION_GET_DB_PARAMETER);
+            thread.sendCommand(packer.getBuffer());
+
+            CUBRIDUnpacker unpacker = thread.receiveBuffer();
+            isolation = unpacker.unpackInt();
+        } catch (Exception e) {
+            return TRANSACTION_NONE;
+        }
+        return isolation;
+    }
+
+    public boolean requestPrepare (CUBRIDServerSideStatement statement, String sql, int flag) {
+        try {
+            ByteBuffer buffer = ByteBuffer.allocate(sql.length() + 1 + Integer.BYTES + Integer.BYTES);
+            CUBRIDPacker packer = new CUBRIDPacker (buffer);
+
             packer.packInt (REQ_FUNCTION_PREPARE);
             packer.packString (sql);
             packer.packInt (flag);
 
-            // thread.sendCommand(packer.getBuffer());
+            thread.sendCommand(packer.getBuffer());
+            CUBRIDUnpacker unpacker = thread.receiveBuffer();
+
+            int handleId = unpacker.unpackInt();
+            int commandType = unpacker.unpackInt();
+            int parameterCnt = unpacker.unpackInt();
+            int columnCnt = unpacker.unpackInt();
+
             } catch (Exception e) {
                 return false;
             }
         return true;
     }
 
+    public boolean requestExecute (CUBRIDServerSideStatement statement, String sql, int flag) {
+        try {
+            ByteBuffer buffer = ByteBuffer.allocate(sql.length() + Integer.BYTES + Integer.BYTES);
+            CUBRIDPacker packer = new CUBRIDPacker (buffer);
+
+            packer.packInt (REQ_FUNCTION_PREPARE);
+            packer.packString (sql);
+            packer.packInt (flag);
+
+            thread.sendCommand(packer.getBuffer());
+            CUBRIDUnpacker unpacker = thread.receiveBuffer();
+
+            int handleId = unpacker.unpackInt();
+            int commandType = unpacker.unpackInt();
+            int parameterCnt = unpacker.unpackInt();
+            int columnCnt = unpacker.unpackInt();
+
+            } catch (Exception e) {
+                return false;
+            }
+        return true;
+    }
+
+
+    
+
     public boolean requestExecute () {
+        return true;
+    }
+
+    public boolean requestFetch () {
         return true;
     }
 
@@ -146,7 +204,6 @@ public class CUBRIDServerSideConnection implements Connection {
     }
 
     public PreparedStatement prepareStatement(String sql) throws SQLException {
-        LOG.info ("prepareStatement");
         return prepareStatement(
             sql, 
             ResultSet.TYPE_FORWARD_ONLY,
@@ -223,10 +280,28 @@ public class CUBRIDServerSideConnection implements Connection {
     }
 
     public int getTransactionIsolation() throws SQLException {
-        // TODO
-        // It is able to get at DB Server
-        // int tran_index = LOG_FIND_THREAD_TRAN_INDEX (thread_p);
-        // TRAN_ISOLATION tran_isolation = logtb_find_isolation (tran_index);
+
+        if (transactionIsolation == TRANSACTION_NONE) {
+            int cubridIsolationLevel = requestDBParameter();
+            switch (cubridIsolationLevel) {
+                case CUBRIDIsolationLevel.TRAN_READ_COMMITTED:
+                    transactionIsolation = TRANSACTION_READ_COMMITTED;
+                    break;
+
+                case CUBRIDIsolationLevel.TRAN_REPEATABLE_READ:
+                    transactionIsolation = TRANSACTION_REPEATABLE_READ;
+                    break;
+
+                case CUBRIDIsolationLevel.TRAN_SERIALIZABLE:
+                    transactionIsolation = TRANSACTION_SERIALIZABLE;
+                    break;
+
+                default:
+                    transactionIsolation = TRANSACTION_NONE;
+                    break;
+            }
+        }
+
         return transactionIsolation;
     }
 

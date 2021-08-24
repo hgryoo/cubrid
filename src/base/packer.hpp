@@ -109,6 +109,11 @@ namespace cubpacking
       size_t get_packed_size_overloaded (const OID &oid, size_t curr_offset);
       void pack_overloaded (const OID &oid);
 
+      size_t get_packed_block_size (const cubmem::block &blk, const size_t curr_offset);
+      void pack_block (const cubmem::block &blk);
+      size_t get_packed_size_overloaded (const cubmem::block &blk, size_t curr_offset);
+      void pack_overloaded (const cubmem::block &blk);
+
       // packer should gradually replace OR_BUF, but they will coexist for a while. there will be functionality
       // strictly dependent on or_buf, so packer will have to cede at least some of the packing to or_buf
       //

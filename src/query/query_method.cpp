@@ -38,16 +38,23 @@
 #include "set_object.h"		/* set_convert_oids_to_objects() */
 #include "virtual_object.h"	/* vid_oid_to_object() */
 
+#include "transaction_cl.h"
+
 #if defined (CS_MODE)
 #include "network.h"
 #include "network_interface_cl.h"
 #include "mem_block.hpp"	/* cubmem::extensible_block */
 #include "packer.hpp"		/* packing_packer */
+
+#include "method_query.hpp"
 #endif
 
 // *INDENT-OFF*
+/* For builtin C Method */
 static std::unordered_map <UINT64, std::vector<DB_VALUE>> runtime_args;
-static std::vector<DB_VALUE> runtime_argument_base;
+
+/* For Java SP Method */
+// static std::unordered_map <UINT64, METHOD_QUERY_HANDLE> query_handles;
 // *INDENT-ON*
 
 struct method_server_conn_info
@@ -65,6 +72,8 @@ static int method_fixup_vobjs (DB_VALUE *value_p);
 #if defined (CS_MODE)
 static int method_callback_prepare_arguments (packing_unpacker &unpacker, method_server_conn_info &conn_info);
 static int method_callback_invoke_builtin (packing_unpacker &unpacker, method_server_conn_info &conn_info);
+
+static int method_callback_query (packing_unpacker &unpacker, method_server_conn_info &conn_inf);
 #endif
 
 /*
@@ -84,7 +93,27 @@ method_send_value_to_server (unsigned int rc, char *host_p, char *server_name_p,
 
   pr_clear_value (&value);
 
-  return net_client_send_data (host_p, rc, ext_blk.get_ptr (), packer.get_current_size ());
+  int error = net_client_send_data (host_p, rc, ext_blk.get_ptr (), packer.get_current_size ());
+  if (error != NO_ERROR)
+  {
+    return ER_FAILED;
+  }
+
+  /*
+  int action;
+  error = net_client_receive_action (rc, &action);
+  if (error)
+		{
+		  return ER_FAILED;
+		}
+  
+  if (action == METHOD_ERROR)
+  {
+    return ER_FAILED;
+  }
+  */
+
+  return NO_ERROR;
 }
 
 /*
@@ -102,7 +131,27 @@ method_send_error_to_server (unsigned int rc, char *host_p, char *server_name, i
   int code = METHOD_ERROR;
   packer.set_buffer_and_pack_all (ext_blk, code, error_id);
 
-  return net_client_send_data (host_p, rc, ext_blk.get_ptr (), packer.get_current_size ());
+  int error = net_client_send_data (host_p, rc, ext_blk.get_ptr (), packer.get_current_size ());
+  if (error != NO_ERROR)
+  {
+    return ER_FAILED;
+  }
+
+  /*
+  int action;
+  error = net_client_receive_action (rc, &action);
+  if (error)
+		{
+		  return ER_FAILED;
+		}
+  
+  if (action == METHOD_ERROR)
+  {
+    return ER_FAILED;
+  }
+  */
+
+  return NO_ERROR;
 }
 
 /*
@@ -123,19 +172,25 @@ method_dispatch (unsigned int rc, char *host, char *server_name, char *methoddat
 
 #if defined (CS_MODE)
   packing_unpacker unpacker (methoddata, (size_t) methoddata_size);
+
+  //unsigned int new_rc = css_get_request_id (css_connect_to_cubrid_server (net_Server_host, net_Server_name));
   method_server_conn_info conn_info {rc, host, server_name};
 
   int method_dispatch_code;
   unpacker.unpack_int (method_dispatch_code);
 
   dispatch_function_type dispatch_function;
+
   switch (method_dispatch_code)
     {
-    case METHOD_CALLBACK_ARG_PREPARE:
+    case METHOD_REQUEST_ARG_PREPARE:
       dispatch_function = method_callback_prepare_arguments;
       break;
-    case METHOD_CALLBACK_INVOKE:
+    case METHOD_REQUEST_INVOKE:
       dispatch_function = method_callback_invoke_builtin;
+      break;
+    case METHOD_REQUEST_CALLBACK:
+      dispatch_function = method_callback_query;
       break;
     default:
       assert (false); // the other callbacks are disabled now
@@ -144,7 +199,15 @@ method_dispatch (unsigned int rc, char *host, char *server_name, char *methoddat
     }
 
   // call dispatch function
-  error = dispatch_function (unpacker, conn_info);
+
+    /* methods must run with authorization turned on and database modifications turned off. */
+    int turn_on_auth = 0;
+    AU_ENABLE (turn_on_auth);
+    db_disable_modification ();
+    error = dispatch_function (unpacker, conn_info);
+    db_enable_modification ();
+    AU_DISABLE (turn_on_auth);
+
 #endif
 
   return error;
@@ -182,6 +245,11 @@ method_callback_prepare_arguments (packing_unpacker &unpacker, method_server_con
       method_fixup_vobjs (&arguments[i]);
     }
   runtime_args.insert ({id, arguments});
+
+  DB_VALUE result;
+  db_make_null (&result);
+	method_send_value_to_server (conn_info.rc, conn_info.host, conn_info.server_name, result);
+
   return NO_ERROR;
 }
 
@@ -217,6 +285,47 @@ method_callback_invoke_builtin (packing_unpacker &unpacker, method_server_conn_i
     }
 
   sig.freemem ();
+  return error;
+}
+
+static int
+method_callback_query (packing_unpacker &unpacker, method_server_conn_info &conn_info)
+{
+  int error = NO_ERROR;
+
+  UINT64 id;
+  unpacker.unpack_bigint (id);
+
+  int code;
+  unpacker.unpack_int (code);
+
+  static cubmethod::query_handler current_query;
+  switch (code)
+  {
+    case METHOD_CALLBACK_QUERY_PREPARE:
+    {
+      std::string sql;
+      int flag;
+
+      unpacker.unpack_string (sql);
+      unpacker.unpack_int (flag);
+
+      tran_begin_libcas_function ();
+      int error = current_query.prepare (sql, flag);
+      tran_end_libcas_function ();
+
+      DB_VALUE result;
+      db_make_null (&result);
+	    method_send_value_to_server (conn_info.rc, conn_info.host, conn_info.server_name, result);
+    }
+    break;
+    case METHOD_CALLBACK_QUERY_EXECUTE:
+    {
+      
+    }
+    break;
+  }
+
   return error;
 }
 #endif

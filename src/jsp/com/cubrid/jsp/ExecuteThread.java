@@ -37,9 +37,9 @@ import com.cubrid.jsp.data.DBType;
 import com.cubrid.jsp.data.DataUtilities;
 import com.cubrid.jsp.exception.ExecuteException;
 import com.cubrid.jsp.exception.TypeMismatchException;
+import com.cubrid.jsp.jdbc.CUBRIDServerSideConnection;
 import com.cubrid.jsp.value.Value;
 import com.cubrid.jsp.value.ValueUtilities;
-import cubrid.jdbc.driver.CUBRIDConnectionDefault;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
@@ -71,7 +71,7 @@ public class ExecuteThread extends Thread {
 
     private long id;
     private Socket client;
-    private CUBRIDConnectionDefault connection = null;
+    private CUBRIDServerSideConnection connection = null;
     private String threadName = null;
 
     private DataInputStream input;
@@ -126,9 +126,14 @@ public class ExecuteThread extends Thread {
         charSet = null;
     }
 
+    public Connection createConnection() {
+        return new CUBRIDServerSideConnection();
+    }
+    
     public void setJdbcConnection(Connection con) throws IOException {
-        this.connection = (CUBRIDConnectionDefault) con;
-        sendCommand(null);
+        this.connection = (CUBRIDServerSideConnection) con;
+        this.connection.setThread (this);
+        // sendCommand(null);
     }
 
     public Connection getJdbcConnection() {
@@ -154,6 +159,8 @@ public class ExecuteThread extends Thread {
     public void setCharSet(String conCharsetName) {
         this.charSet = conCharsetName;
     }
+
+
 
     @Override
     public void run() {
@@ -258,6 +265,16 @@ public class ExecuteThread extends Thread {
     }
 
     private int listenCommand() throws Exception {
+        receiveBuffer();
+
+        /* read header */
+        int command = unpacker.unpackInt();
+
+        setStatus(ExecuteThreadStatus.IDLE);
+        return command;
+    }
+
+    public CUBRIDUnpacker receiveBuffer() throws IOException {
         if (input == null || this.connection != null) {
             input = new DataInputStream(new BufferedInputStream(this.client.getInputStream()));
         }
@@ -273,11 +290,7 @@ public class ExecuteThread extends Thread {
         readbuffer.put(bytes);
         readbuffer.flip(); /* prepare to read */
 
-        /* read header */
-        int command = unpacker.unpackInt();
-
-        setStatus(ExecuteThreadStatus.IDLE);
-        return command;
+        return unpacker;
     }
 
     private void processPrepare() throws Exception {

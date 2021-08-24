@@ -793,6 +793,52 @@ namespace cubpacking
     pack_oid (oid);
   }
 
+  size_t
+  packer::get_packed_block_size (const cubmem::block &blk, const size_t curr_offset)
+  {
+    size_t actual_length = 0;
+
+    if (blk.ptr != NULL)
+      {
+	actual_length = blk.dim;
+      }
+
+    size_t entry_size = OR_INT_SIZE + actual_length;
+
+    return DB_ALIGN (curr_offset, INT_ALIGNMENT) + entry_size - curr_offset;
+  }
+
+  void
+  packer::pack_block (const cubmem::block &blk)
+  {
+    align (INT_ALIGNMENT);
+
+    check_range (m_ptr, m_end_ptr, blk.dim + OR_INT_SIZE);
+
+    OR_PUT_INT (m_ptr, blk.dim);
+    m_ptr += OR_INT_SIZE;
+
+    if (blk.dim > 0)
+      {
+	std::memcpy (m_ptr, blk.ptr, blk.dim);
+	m_ptr += blk.dim;
+
+	align (INT_ALIGNMENT);
+      }
+  }
+
+  size_t
+  packer::get_packed_size_overloaded (const cubmem::block &blk, size_t curr_offset)
+  {
+    return get_packed_block_size (blk, curr_offset);
+  }
+
+  void
+  packer::pack_overloaded (const cubmem::block &blk)
+  {
+    pack_block (blk);
+  }
+
   void
   unpacker::unpack_oid (OID &oid)
   {

@@ -84,7 +84,7 @@ public class CUBRIDServerSidePreparedStatement extends CUBRIDServerSideStatement
 
     public ResultSet executeQuery() throws SQLException {
         // TODO
-        return new CUBRIDServerSideResultSet (this.connection, this);
+        return new CUBRIDServerSideResultSet (this.connection, this, 0, 0);
     }
 
     public int executeUpdate() throws SQLException {

@@ -10424,6 +10424,10 @@ int
 method_invoke_fold_constants (method_sig_list & sig_list, std::vector < DB_VALUE * >&args, DB_VALUE & result)
 {
 #if defined(CS_MODE)
+  /* dummy variables */
+  char *rd1, *rd2;
+  int d1, d2;
+
   char *data_reply = NULL;
   int data_reply_size = 0;
 
@@ -10457,11 +10461,15 @@ method_invoke_fold_constants (method_sig_list & sig_list, std::vector < DB_VALUE
   char *reply = OR_ALIGNED_BUF_START (a_reply);
 
   int req_error =
-    net_client_request2 (NET_SERVER_METHOD_FOLD_CONSTANTS, eb.get_ptr (), (int) packer.get_current_size (), reply,
-			 OR_ALIGNED_BUF_SIZE (a_reply), NULL, 0, &data_reply, &data_reply_size);
+    net_client_request_with_callback (NET_SERVER_METHOD_FOLD_CONSTANTS, eb.get_ptr (), (int) packer.get_current_size (), reply,
+				      OR_ALIGNED_BUF_SIZE (a_reply), NULL, 0, NULL, 0, &rd1, &d1, &rd2, &d2, NULL, NULL);
   if (req_error != NO_ERROR)
     {
       return req_error;
+    }
+  else
+    {
+      
     }
 
   char *ptr = or_unpack_int (reply, &data_reply_size);

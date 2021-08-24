@@ -52,6 +52,7 @@ import java.sql.Statement;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.util.Calendar;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -61,17 +62,42 @@ import java.util.Map;
  */
 public class CUBRIDServerSideResultSet implements ResultSet {
 
-    CUBRIDServerSideConnection connection;
-    CUBRIDServerSideStatement stmt;
+    private CUBRIDServerSideConnection connection;
+    private CUBRIDServerSideStatement stmt;
+    private CUBRIDServerSideResultSetMetaData metadata;
+
+    private int type;
+    private int concurrency;
+
+    /* For findColumn */
+    protected HashMap<String, Integer> colNameToIdx;
 
     boolean isHoldable;
 
+    private int currentRowIndex;
+
     protected CUBRIDServerSideResultSet(
         CUBRIDServerSideConnection c, 
-        CUBRIDServerSideStatement s
+        CUBRIDServerSideStatement s,
+        int t,
+        int concur
     ) throws SQLException {
         connection = c;
         stmt = s;
+        type = t;
+        concurrency = concur;
+    }
+
+    public boolean isUpdatable () {
+        return concurrency == CONCUR_UPDATABLE;
+    }
+
+    public boolean isScrollable () {
+        return type != TYPE_FORWARD_ONLY;
+    }
+
+    public boolean isSensitive () {
+        return type == TYPE_SCROLL_SENSITIVE;
     }
 
     // ==============================================================
@@ -264,16 +290,13 @@ public class CUBRIDServerSideResultSet implements ResultSet {
 
     //
     public int findColumn(String columnName) throws SQLException {
-        // TODO
-        return 0;
-        /*
-        Integer index = col_name_to_index.get(columnName.toLowerCase());
+        Integer index = colNameToIdx.get(columnName.toLowerCase());
         if (index == null) {
-            throw con.createCUBRIDException(CUBRIDJDBCErrorCode.invalid_column_name, null);
+            // TODO
+            // throw con.createCUBRIDException(CUBRIDJDBCErrorCode.invalid_column_name, null);
         }
 
         return index.intValue() + 1;
-        */
     }
 
     public Reader getCharacterStream(int columnIndex) throws SQLException {

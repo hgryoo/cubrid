@@ -59,15 +59,15 @@ namespace cubscan
 	scanner ();
 
 	int init (cubthread::entry *thread_p, method_sig_list *sig_list, qfile_list_id *list_id);
-	void clear (bool is_final);
+	void clear (cubthread::entry * thread_p, bool is_final);
 
 //////////////////////////////////////////////////////////////////////////
 // Main SCAN routines
 //////////////////////////////////////////////////////////////////////////
 
-	int open ();
-	SCAN_CODE next_scan (val_list_node &vl);
-	int close ();
+	int open (cubthread::entry *thread_p);
+	SCAN_CODE next_scan (cubthread::entry *thread_p, val_list_node &vl);
+	int close (cubthread::entry *thread_p);
 
 //////////////////////////////////////////////////////////////////////////
 // Value array scanning declarations
@@ -77,13 +77,13 @@ namespace cubscan
 
 	int open_value_array ();
 	void next_value_array (val_list_node &vl);
-	int close_value_array ();
+	int close_value_array (cubthread::entry * thread_p);
 
 //////////////////////////////////////////////////////////////////////////
 // argument declarations
 //////////////////////////////////////////////////////////////////////////
 
-	SCAN_CODE get_single_tuple ();
+	SCAN_CODE get_single_tuple (cubthread::entry * thread_p);
 
       private:
 
