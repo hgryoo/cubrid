@@ -46,7 +46,6 @@ namespace cubmethod
   using xs_callback_func = std::function <int (cubmem::block &)>;
 
   int xs_send (cubthread::entry *thread_p, cubmem::block &mem);
-  int xs_send2 (cubthread::entry *thread_p, cubmem::block &mem);
   int xs_receive (cubthread::entry *thread_p, const xs_callback_func &func);
 #endif
 

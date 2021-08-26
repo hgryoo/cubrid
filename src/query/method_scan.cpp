@@ -41,12 +41,10 @@ namespace cubscan
     scanner::init (cubthread::entry *thread_p, METHOD_SIG_LIST *sig_list, qfile_list_id *list_id)
     {
       // check initialized
-	  /*
       if (m_thread_p != thread_p)
 	{
 	  m_thread_p = thread_p;
 	}
-	  */
 
       if (m_method_group == nullptr) // signature is not initialized
 	{
@@ -84,7 +82,7 @@ namespace cubscan
     }
 
     void
-    scanner::clear (cubthread::entry * thread_p, bool is_final)
+    scanner::clear (cubthread::entry *thread_p, bool is_final)
     {
       close_value_array (thread_p);
       for (DB_VALUE &value : m_arg_vector)
@@ -135,7 +133,7 @@ namespace cubscan
     }
 
     SCAN_CODE
-    scanner::next_scan (cubthread::entry * thread_p, val_list_node &vl)
+    scanner::next_scan (cubthread::entry *thread_p, val_list_node &vl)
     {
       SCAN_CODE scan_code = S_SUCCESS;
 
@@ -174,7 +172,7 @@ namespace cubscan
     }
 
     int
-    scanner::close_value_array (cubthread::entry * thread_p)
+    scanner::close_value_array (cubthread::entry *thread_p)
     {
       db_private_free_and_init (thread_p, m_dbval_list);
       return NO_ERROR;
@@ -198,7 +196,7 @@ namespace cubscan
     }
 
     SCAN_CODE
-    scanner::get_single_tuple (cubthread::entry * thread_p)
+    scanner::get_single_tuple (cubthread::entry *thread_p)
     {
       QFILE_TUPLE_RECORD tuple_record = { NULL, 0 };
       SCAN_CODE scan_code = qfile_scan_list_next (thread_p, &m_scan_id, &tuple_record, PEEK);

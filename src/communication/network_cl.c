@@ -1860,7 +1860,7 @@ net_client_request_with_callback (int request, char *argbuf, int argsize, char *
 			error = COMPARE_SIZE_AND_BUFFER (&methoddata_size, size, &methoddata, reply);
 			COMPARE_AND_FREE_BUFFER (methoddata, reply);
 			error = method_dispatch (rc, net_Server_host, net_Server_name, methoddata, methoddata_size);
-			//free_and_init (methoddata);
+			free_and_init (methoddata);
 			if (error != NO_ERROR)
 			  {
 			    assert (er_errid () != NO_ERROR);
@@ -1894,6 +1894,8 @@ net_client_request_with_callback (int request, char *argbuf, int argsize, char *
 		    method_send_error_to_server (rc, net_Server_host, net_Server_name, error);
 #endif
 		  }
+
+		/* expecting another reply */
 		css_queue_receive_data_buffer (rc, replybuf, replysize);
 	      }
 	      break;

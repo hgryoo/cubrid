@@ -23,8 +23,14 @@
 
 #include <string>
 
+#include "dbtype_def.h"
+
 namespace cubmethod
 {
+  std::string convert_db_value_to_string (DB_VALUE *value, DB_VALUE *value_string);
+  void stmt_trim (std::string &sql);
+
+#if !defined(SERVER_MODE)
   typedef enum
   {
     NONE_TOKENS,
@@ -35,11 +41,14 @@ namespace cubmethod
     DOUBLE_QUOTED_STRING
   } STATEMENT_STATUS;
 
-  void stmt_trim (std::string &sql);
 
   char get_stmt_type (std::string sql);
   int get_num_markers (std::string sql);
   int consume_tokens (std::string sql, int index, STATEMENT_STATUS stmt_status);
+
+  std::string get_column_default_as_string (DB_ATTRIBUTE *attr);
+  void serialize_collection_as_string (DB_VALUE *col, std::string &out);
+#endif
 }
 
 #endif

@@ -46,6 +46,7 @@
 #include "mem_block.hpp"	/* cubmem::extensible_block */
 #include "packer.hpp"		/* packing_packer */
 
+#include "method_callback.hpp"
 #include "method_query.hpp"
 #endif
 
@@ -70,11 +71,34 @@ static int method_fixup_set_vobjs (DB_VALUE *value_p);
 static int method_fixup_vobjs (DB_VALUE *value_p);
 
 #if defined (CS_MODE)
-static int method_callback_prepare_arguments (packing_unpacker &unpacker, method_server_conn_info &conn_info);
-static int method_callback_invoke_builtin (packing_unpacker &unpacker, method_server_conn_info &conn_info);
-
-static int method_callback_query (packing_unpacker &unpacker, method_server_conn_info &conn_inf);
+static int method_prepare_arguments (packing_unpacker &unpacker, method_server_conn_info &conn_info);
+static int method_invoke_builtin (packing_unpacker &unpacker, method_server_conn_info &conn_info);
+static int method_callback (packing_unpacker &unpacker, method_server_conn_info &conn_inf);
 #endif
+
+/*
+ * method_send_buffer_to_server () - Send an buffer indication to the server
+ *   return:
+ *   rc(in)     : enquiry return code
+ *   host(in)   : host name
+ *   server_name(in)    : server name
+ */
+int
+method_send_buffer_to_server (unsigned int rc, char *host_p, char *server_name_p, cubmem::block &buffer)
+{
+  packing_packer packer;
+  cubmem::extensible_block ext_blk;
+  int code = METHOD_SUCCESS;
+  packer.set_buffer_and_pack_all (ext_blk, code, buffer);
+
+  int error = net_client_send_data (host_p, rc, ext_blk.get_ptr (), packer.get_current_size ());
+  if (error != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+
+  return NO_ERROR;
+}
 
 /*
  * method_send_value_to_server () - Send an error indication to the server
@@ -95,23 +119,9 @@ method_send_value_to_server (unsigned int rc, char *host_p, char *server_name_p,
 
   int error = net_client_send_data (host_p, rc, ext_blk.get_ptr (), packer.get_current_size ());
   if (error != NO_ERROR)
-  {
-    return ER_FAILED;
-  }
-
-  /*
-  int action;
-  error = net_client_receive_action (rc, &action);
-  if (error)
-		{
-		  return ER_FAILED;
-		}
-  
-  if (action == METHOD_ERROR)
-  {
-    return ER_FAILED;
-  }
-  */
+    {
+      return ER_FAILED;
+    }
 
   return NO_ERROR;
 }
@@ -133,23 +143,9 @@ method_send_error_to_server (unsigned int rc, char *host_p, char *server_name, i
 
   int error = net_client_send_data (host_p, rc, ext_blk.get_ptr (), packer.get_current_size ());
   if (error != NO_ERROR)
-  {
-    return ER_FAILED;
-  }
-
-  /*
-  int action;
-  error = net_client_receive_action (rc, &action);
-  if (error)
-		{
-		  return ER_FAILED;
-		}
-  
-  if (action == METHOD_ERROR)
-  {
-    return ER_FAILED;
-  }
-  */
+    {
+      return ER_FAILED;
+    }
 
   return NO_ERROR;
 }
@@ -172,8 +168,6 @@ method_dispatch (unsigned int rc, char *host, char *server_name, char *methoddat
 
 #if defined (CS_MODE)
   packing_unpacker unpacker (methoddata, (size_t) methoddata_size);
-
-  //unsigned int new_rc = css_get_request_id (css_connect_to_cubrid_server (net_Server_host, net_Server_name));
   method_server_conn_info conn_info {rc, host, server_name};
 
   int method_dispatch_code;
@@ -184,13 +178,13 @@ method_dispatch (unsigned int rc, char *host, char *server_name, char *methoddat
   switch (method_dispatch_code)
     {
     case METHOD_REQUEST_ARG_PREPARE:
-      dispatch_function = method_callback_prepare_arguments;
+      dispatch_function = method_prepare_arguments;
       break;
     case METHOD_REQUEST_INVOKE:
-      dispatch_function = method_callback_invoke_builtin;
+      dispatch_function = method_invoke_builtin;
       break;
     case METHOD_REQUEST_CALLBACK:
-      dispatch_function = method_callback_query;
+      dispatch_function = method_callback;
       break;
     default:
       assert (false); // the other callbacks are disabled now
@@ -200,13 +194,13 @@ method_dispatch (unsigned int rc, char *host, char *server_name, char *methoddat
 
   // call dispatch function
 
-    /* methods must run with authorization turned on and database modifications turned off. */
-    int turn_on_auth = 0;
-    AU_ENABLE (turn_on_auth);
-    db_disable_modification ();
-    error = dispatch_function (unpacker, conn_info);
-    db_enable_modification ();
-    AU_DISABLE (turn_on_auth);
+  /* methods must run with authorization turned on and database modifications turned off. */
+  int turn_on_auth = 0;
+  AU_ENABLE (turn_on_auth);
+  db_disable_modification ();
+  error = dispatch_function (unpacker, conn_info);
+  db_enable_modification ();
+  AU_DISABLE (turn_on_auth);
 
 #endif
 
@@ -215,7 +209,7 @@ method_dispatch (unsigned int rc, char *host, char *server_name, char *methoddat
 
 #if defined (CS_MODE)
 static int
-method_callback_prepare_arguments (packing_unpacker &unpacker, method_server_conn_info &conn_info)
+method_prepare_arguments (packing_unpacker &unpacker, method_server_conn_info &conn_info)
 {
   UINT64 id;
   unpacker.unpack_bigint (id);
@@ -245,16 +239,11 @@ method_callback_prepare_arguments (packing_unpacker &unpacker, method_server_con
       method_fixup_vobjs (&arguments[i]);
     }
   runtime_args.insert ({id, arguments});
-
-  DB_VALUE result;
-  db_make_null (&result);
-	method_send_value_to_server (conn_info.rc, conn_info.host, conn_info.server_name, result);
-
   return NO_ERROR;
 }
 
 static int
-method_callback_invoke_builtin (packing_unpacker &unpacker, method_server_conn_info &conn_info)
+method_invoke_builtin (packing_unpacker &unpacker, method_server_conn_info &conn_info)
 {
   int error = NO_ERROR;
   UINT64 id;
@@ -289,7 +278,7 @@ method_callback_invoke_builtin (packing_unpacker &unpacker, method_server_conn_i
 }
 
 static int
-method_callback_query (packing_unpacker &unpacker, method_server_conn_info &conn_info)
+method_callback (packing_unpacker &unpacker, method_server_conn_info &conn_info)
 {
   int error = NO_ERROR;
 
@@ -299,33 +288,10 @@ method_callback_query (packing_unpacker &unpacker, method_server_conn_info &conn
   int code;
   unpacker.unpack_int (code);
 
-  static cubmethod::query_handler current_query;
-  switch (code)
-  {
-    case METHOD_CALLBACK_QUERY_PREPARE:
-    {
-      std::string sql;
-      int flag;
-
-      unpacker.unpack_string (sql);
-      unpacker.unpack_int (flag);
-
-      tran_begin_libcas_function ();
-      int error = current_query.prepare (sql, flag);
-      tran_end_libcas_function ();
-
-      DB_VALUE result;
-      db_make_null (&result);
-	    method_send_value_to_server (conn_info.rc, conn_info.host, conn_info.server_name, result);
-    }
-    break;
-    case METHOD_CALLBACK_QUERY_EXECUTE:
-    {
-      
-    }
-    break;
-  }
-
+  /* CAS is on single-thread now, */
+  static cubmethod::callback_handler handler (100);
+  cubmem::block response = std::move (handler.callback_dispatch (unpacker));
+  method_send_buffer_to_server (conn_info.rc, conn_info.host, conn_info.server_name, response);
   return error;
 }
 #endif

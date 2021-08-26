@@ -113,7 +113,7 @@ namespace cubmethod
     return m_socket;
   }
 
-  cubthread::entry*
+  cubthread::entry *
   method_invoke_group::get_thread_entry () const
   {
     return m_thread_p;
@@ -176,28 +176,6 @@ namespace cubmethod
 	    packer.set_buffer_and_pack_all (eb, header, arg);
 	    cubmem::block b (packer.get_current_size (), eb.get_ptr ());
 	    error = xs_send (thread_p, b);
-
-      // dummy
-      DB_VALUE result;
-      db_make_null (&result);
-      auto get_method_result = [&] (cubmem::block & b)
-    {
-      int e = NO_ERROR;
-      packing_unpacker unpacker (b.ptr, (size_t) b.dim);
-      int status;
-      unpacker.unpack_int (status);
-      if (status == METHOD_SUCCESS)
-	{
-	  unpacker.unpack_db_value (result);
-	}
-      else
-	{
-	  unpacker.unpack_int (e);	/* er_errid */
-	}
-      return e;
-    };
-
-    error = xs_receive (thread_p, get_method_result);
 	    break;
 	  }
 	  case METHOD_TYPE_JAVA_SP:
@@ -310,14 +288,14 @@ namespace cubmethod
     int error = NO_ERROR;
 
 #if defined (SERVER_MODE)
-/* TODO
-    packing_packer packer;
-    cubmem::extensible_block eb;
-    cubmethod::header header (METHOD_REQUEST_END, get_id());
-    packer.set_buffer_and_pack_all (eb, header);
-    cubmem::block b (packer.get_current_size (), eb.get_ptr ());
-    error = xs_send (thread_p, b);
-*/
+    /* TODO
+        packing_packer packer;
+        cubmem::extensible_block eb;
+        cubmethod::header header (METHOD_REQUEST_END, get_id());
+        packer.set_buffer_and_pack_all (eb, header);
+        cubmem::block b (packer.get_current_size (), eb.get_ptr ());
+        error = xs_send (thread_p, b);
+    */
 #endif
 
     reset ();

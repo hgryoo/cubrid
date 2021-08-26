@@ -25,44 +25,76 @@
 #include <vector>
 
 #include "dbtype_def.h"
+#include "packable_object.hpp"
 
 namespace cubmethod
 {
-    // forward declaration
-    struct query_result;
+  // forward declaration
+  struct query_result;
 
-    struct column_info
-    {
-        DB_OBJECT *class_obj;
-        DB_ATTRIBUTE *attr;
+  struct column_info : public cubpacking::packable_object
+  {
+    column_info ();
+    column_info (short scale, int prec, char charset,
+		 std::string col_name, std::string default_value, char auto_increment,
+		 char unique_key, char primary_key, char reverse_index, char reverse_unique,
+		 char foreign_key, char shared, std::string attr_name, std::string class_name,
+		 char nullable);
 
-        char ut;
-        short scale;
-        int prec;
-        char charset;
-        std::string col_name;
-        char is_non_null;
+    std::string class_name;
+    std::string attr_name;
 
-        char auto_increment;
-        char unique_key;
-        char primary_key;
-        char reverse_index;
-        char reverse_unique;
-        char foreign_key;
-        char shared;
-        std::string default_value_string;
-    };
+    short scale;
+    int prec;
+    char charset;
+    std::string col_name;
+    char is_non_null;
 
-    struct prepare_result
-    {
-        int64_t handle_id;
-        char stmt_id;
-        int num_markers;
-        int num_columns;
-        std::vector<column_info> column_infos;
-    };
+    char auto_increment;
+    char unique_key;
+    char primary_key;
+    char reverse_index;
+    char reverse_unique;
+    char foreign_key;
+    char shared;
+    std::string default_value_string;
 
-    int make_prepare_column_list_info (query_result& qresult);
+    void pack (cubpacking::packer &serializator) const override;
+    void unpack (cubpacking::unpacker &deserializator) override;
+    size_t get_packed_size (cubpacking::packer &serializator, std::size_t start_offset) const override;
+  };
+
+  struct prepare_info : public cubpacking::packable_object
+  {
+    int handle_id;
+    char stmt_type;
+    int num_markers;
+    std::vector<column_info> column_infos; // num_columns = column_infos.size()
+
+    void pack (cubpacking::packer &serializator) const override;
+    void unpack (cubpacking::unpacker &deserializator) override;
+    size_t get_packed_size (cubpacking::packer &serializator, std::size_t start_offset) const override;
+  };
+
+  struct query_result_info
+  {
+
+  };
+
+  struct execute_info
+  {
+    int num_affected;
+    int num_q_result;
+    std::vector<query_result_info> query_result_infos;
+
+    char stmt_type;
+    int num_markers;
+
+    bool include_column_info;
+    std::vector<column_info> column_infos;
+  };
+
+  int make_prepare_column_list_info (query_result &qresult);
 }
 
 #endif
