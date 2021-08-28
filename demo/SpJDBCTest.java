@@ -107,4 +107,44 @@ public class SpJDBCTest {
             return e.getMessage();
         }
     }
+
+    /* test_jdbc/src/cubrid/jdbc/common/usage/TestBlob.java */
+    // CREATE OR REPLACE FUNCTION testBlob() RETURN STRING AS LANGUAGE JAVA NAME 'SpJDBCTest.testBlob() return java.lang.String';
+    public static String testBlob () {
+        try {
+            Class.forName("cubrid.jdbc.driver.CUBRIDDriver");
+            Connection conn = DriverManager.getConnection("jdbc:default:connection:", "", "");
+            Statement stmt = conn.createStatement();
+            ResultSet rs = null;
+
+            byte[] blobData = new byte[32];
+            for (int i = 0; i < blobData.length; i++) {
+				blobData[i] = (byte) i;
+			}
+
+            stmt.executeUpdate("DROP TABLE IF EXISTS testBlob1");
+			stmt.executeUpdate("CREATE TABLE testBlob1(blobField BLOB)");
+
+            PreparedStatement pStmt = conn.prepareStatement("INSERT INTO testBlob1(blobField) VALUES (?)");
+            Blob blobdatas = conn.createBlob();
+            blobdatas.setBytes(1, blobData);
+            pStmt.setBlob(1, blobdatas);
+            pStmt.executeUpdate();
+
+            rs = stmt.executeQuery("SELECT blobField FROM testBlob1");
+            rs.next();
+
+            Blob blob = rs.getBlob(1);
+
+            byte[] newBlobData = blob.getBytes(1L, (int) blob.length());
+
+            stmt.close();
+            pStmt.close();
+            conn.close();
+            return new String (newBlobData);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return e.getMessage();
+        }
+    }
 }

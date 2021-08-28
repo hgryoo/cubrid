@@ -213,6 +213,8 @@ set(QUERY_SOURCES
   ${QUERY_DIR}/method_invoke_common_value.cpp
   ${QUERY_DIR}/method_invoke_group.cpp
   ${QUERY_DIR}/method_query_cursor.cpp
+  ${QUERY_DIR}/method_query_struct.cpp
+  ${QUERY_DIR}/method_query_util.cpp
   ${QUERY_DIR}/method_scan.cpp
   ${QUERY_DIR}/numeric_opfunc.c
   ${QUERY_DIR}/partition.c

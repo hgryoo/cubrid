@@ -24,6 +24,7 @@
 
 #include "jsp_comm.h"		/* common communcation functions for javasp */
 
+#include "client_support.h"
 #include "method_invoke_common.hpp"
 #include "method_invoke_group.hpp"
 #include "object_representation.h"	/* OR_ */
@@ -34,6 +35,7 @@
 #include "thread_manager.hpp"	/* thread_get_thread_entry_info() */
 #include "query_manager.h"	/* qmgr_get_current_query_id () */
 
+
 #include "thread_entry_task.hpp"
 
 #include "server_support.h"
@@ -42,6 +44,7 @@
 
 #include "log_impl.h"
 
+#include "method_query_struct.hpp"
 #endif
 
 namespace cubmethod
@@ -221,7 +224,9 @@ namespace cubmethod
   int method_invoke_java::alloc_response (cubmem::extensible_block &blk)
   {
     int nbytes, res_size;
-    nbytes = jsp_readn (m_group->get_socket(), (char *) &res_size, (int) sizeof (int));
+
+  #if defined (SERVER_MODE)
+    nbytes = css_readn (m_group->get_socket(), (char *) &res_size, (int) sizeof (int), -1);
     if (nbytes != (int) sizeof (int))
       {
 	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_NETWORK_ERROR, 1,
@@ -232,13 +237,14 @@ namespace cubmethod
 
     blk.extend_to (res_size);
 
-    nbytes = jsp_readn (m_group->get_socket(), blk.get_ptr (), res_size);
+    nbytes = css_readn (m_group->get_socket(), blk.get_ptr (), res_size, -1);
     if (nbytes != res_size)
       {
 	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_NETWORK_ERROR, 1,
 		nbytes);
 	return ER_SP_NETWORK_ERROR;
       }
+  #endif
 
     return NO_ERROR;
   }
@@ -325,16 +331,18 @@ namespace cubmethod
     int code;
     unpacker.unpack_int (code);
 
-    int remaining_size = blk.get_size() - unpacker.get_current_size ();
-    cubmem::block payload (remaining_size, (void *) unpacker.get_curr_ptr());
-
     switch (code)
     {
       case METHOD_CALLBACK_GET_DB_PARAMETER:
       {
-        error = callback_get_db_parameter (payload);
-        break;
+        /*
+        int remaining_size = blk.get_size() - unpacker.get_current_size ();
+        cubmem::block payload (remaining_size, (void *) unpacker.get_curr_ptr());
+        */
+        cubmem::block dummy;
+        error = callback_get_db_parameter (dummy);
       }
+      break;
 
       //case METHOD_CALLBACK_GET_DB_VERSION:
       case METHOD_CALLBACK_GET_GENERATED_KEYS:
@@ -344,14 +352,24 @@ namespace cubmethod
       {
         cubmem::block bb (blk.get_size(), blk.get_ptr());
         error = callback_prepare (thread_ref, bb);
-        break;
       }
+      break;
 
       case METHOD_CALLBACK_QUERY_EXECUTE:
+      {
+        cubmem::block bb (blk.get_size(), blk.get_ptr());
+        error = callback_execute (thread_ref, bb);
+      }
+      break;
+
       case METHOD_CALLBACK_GET_SCHEMA_INFO:
         break;
 
       case METHOD_CALLBACK_FETCH:
+      {
+
+      }
+      break;
       case METHOD_CALLBACK_NEXT_RESULT:
       case METHOD_CALLBACK_CURSOR:
       case METHOD_CALLBACK_CURSOR_CLOSE:
@@ -422,58 +440,109 @@ namespace cubmethod
     cubmethod::header header (METHOD_REQUEST_CALLBACK /* default */, id);
 
     packer.set_buffer_and_pack_all (eb, header, code, sql, flag);
-
     cubmem::block b (packer.get_current_size (), eb.get_ptr ());
     error = xs_send (&thread_ref, b);
 
-    DB_VALUE result;
-    auto get_method_result = [&] (cubmem::block & b)
+    auto get_prepare_info = [&] (cubmem::block & b)
     {
-      int e = NO_ERROR;
       packing_unpacker unpacker (b.ptr, (size_t) b.dim);
-      int status;
-      unpacker.unpack_int (status);
-      if (status == METHOD_SUCCESS)
-	{
-	  unpacker.unpack_db_value (result);
-	}
-      else
-	{
-	  unpacker.unpack_int (e);
-	}
-      return e;
-    };
+      
+      prepare_info info;
+      info.unpack (unpacker);
+      // info.dump ();
 
-    error = xs_receive (&thread_ref, get_method_result);
+	    OR_ALIGNED_BUF (OR_INT_SIZE) a_request;
+	    char *request = OR_ALIGNED_BUF_START (a_request);
+
+	    int request_size = (int) b.dim;
+	    or_pack_int (request, request_size);
+
+	    int nbytes = jsp_writen (m_group->get_socket (), request, OR_INT_SIZE);
+	    if (nbytes != OR_INT_SIZE)
+	      {
+		er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_NETWORK_ERROR, 1, nbytes);
+		error = er_errid ();
+    return error;
+	      }
+
+      nbytes = jsp_writen (m_group->get_socket (), b.ptr, b.dim);
+	    if (nbytes != (int) b.dim)
+	      {
+		er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_NETWORK_ERROR, 1, nbytes);
+		error = er_errid ();
+    return error;
+	      }
+
+      return NO_ERROR;
+    };
+    error = xs_receive (&thread_ref, get_prepare_info);
 #endif
     return error;
   }
 
   int
-  method_invoke_java::callback_execute (cubmem::block &blk)
+  method_invoke_java::callback_execute (cubthread::entry &thread_ref, cubmem::block &blk)
   {
     int error = NO_ERROR;
 #if defined (SERVER_MODE)
     packing_unpacker unpacker;
     unpacker.set_buffer (blk.ptr, blk.dim);
     
-    int code;
-    std::string sql;
-    int flag;
+    int code, handlerId, executeFlag, maxField, isForwardOnly, hasParam;
 
     unpacker.unpack_int (code);
-    unpacker.unpack_string (sql);
-    unpacker.unpack_int (flag);
-    
+    unpacker.unpack_int (handlerId);
+    unpacker.unpack_int (executeFlag);
+    unpacker.unpack_int (maxField);
+    unpacker.unpack_int (isForwardOnly);
+    unpacker.unpack_int (hasParam);
+
     packing_packer packer;
     cubmem::extensible_block eb;
 
     INT64 id = (INT64) this;
     cubmethod::header header (METHOD_REQUEST_CALLBACK /* default */, id);
-    packer.set_buffer_and_pack_all (eb, header, blk);
+
+    packer.set_buffer_and_pack_all (eb, header, code, handlerId, executeFlag, maxField, isForwardOnly, hasParam);
 
     cubmem::block b (packer.get_current_size (), eb.get_ptr ());
-    error = xs_send (m_group->get_thread_entry(), b);
+    error = xs_send (&thread_ref, b);
+
+    auto get_execute_info = [&] (cubmem::block & b)
+    {
+      packing_unpacker unpacker (b.ptr, (size_t) b.dim);
+
+      assert (false);
+
+      execute_info info;
+      info.unpack (unpacker);
+      // info.dump ();
+
+	    OR_ALIGNED_BUF (OR_INT_SIZE) a_request;
+	    char *request = OR_ALIGNED_BUF_START (a_request);
+
+	    int request_size = (int) b.dim;
+	    or_pack_int (request, request_size);
+
+	    int nbytes = jsp_writen (m_group->get_socket (), request, OR_INT_SIZE);
+	    if (nbytes != OR_INT_SIZE)
+	      {
+		er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_NETWORK_ERROR, 1, nbytes);
+		error = er_errid ();
+    return error;
+	      }
+
+      nbytes = jsp_writen (m_group->get_socket (), b.ptr, b.dim);
+	    if (nbytes != (int) b.dim)
+	      {
+		er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_NETWORK_ERROR, 1, nbytes);
+		error = er_errid ();
+    return error;
+	      }
+
+      return NO_ERROR;
+    };
+    error = xs_receive (&thread_ref, get_execute_info);
 #endif
     return error;
   }

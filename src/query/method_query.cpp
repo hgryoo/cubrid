@@ -32,7 +32,9 @@
 	} while (0)
 
 #if defined (CS_MODE)
+#include "db.h"
 #include "dbi.h"
+#include "dbtype.h"
 #include "method_query_util.hpp"
 #include "object_primitive.h"
 #endif
@@ -75,7 +77,9 @@ namespace cubmethod
   prepare_call_info::set_prepare_call_info (int num_args)
   {
     db_make_null (&dbval_ret);
-    if (num_args)
+    
+    this->num_args = num_args;
+    if (num_args > 0)
       {
 	param_mode.resize (num_args);
 	for (int i = 0; i < param_mode.size(); i++)
@@ -120,7 +124,11 @@ namespace cubmethod
 
     if (error == NO_ERROR)
       {
-	error = set_prepare_column_list_info (info.column_infos, m_q_result[0]);
+  query_result& qresult = m_q_result[0]; /* only one result */
+  info.stmt_type = qresult.stmt_type;
+  
+	info.num_markers = m_num_markers;
+	error = set_prepare_column_list_info (info.column_infos, qresult);
       }
     else
       {
@@ -132,7 +140,7 @@ namespace cubmethod
   }
 
   execute_info
-  query_handler::execute (std::vector<DB_VALUE> bind_values, int flag, int max_col_size, int max_row)
+  query_handler::execute (std::vector<DB_VALUE> &bind_values, int flag, int max_col_size, int max_row)
   {
     int error = NO_ERROR;
 
@@ -144,11 +152,25 @@ namespace cubmethod
       }
     else if (flag & EXEC_QUERY_ALL)
       {
-	// error = execute_internal_all ();
+        bool is_savepoint = false;
+        error = execute_internal_all (info, flag, max_col_size, max_row, bind_values);
+        if (error != NO_ERROR)
+        {
+          if (m_prepare_flag & PREPARE_XASL_CACHE_PINNED)
+          {
+            db_session_set_xasl_cache_pinned (m_session, false, false);
+            m_prepare_flag &= ~PREPARE_XASL_CACHE_PINNED;
+          }
+
+          if (is_savepoint)
+          {
+            // TODO: db_abort_to_savepoint (savepoint);
+          }
+        }
       }
     else
       {
-	error = execute_internal (info, flag, max_col_size, max_row);
+        error = execute_internal (info, flag, max_col_size, max_row, bind_values);
       }
 
     if (error != NO_ERROR)
@@ -159,8 +181,260 @@ namespace cubmethod
     return info;
   }
 
+  int 
+  query_handler::set_qresult_info (std::vector<query_result_info>& qinfo)
+  {
+    int error = NO_ERROR;
+    int num_q_result = m_q_result.size();
+    OID ins_oid;
+    DB_OBJECT *ins_obj_p;
+
+    qinfo.resize (num_q_result);
+    for (int i = 0; i < num_q_result; i++) 
+    {
+      query_result& qresult = m_q_result[i];
+      memset (&ins_oid, 0, sizeof (OID));
+
+      if (qresult.stmt_type == CUBRID_STMT_INSERT && qresult.result != NULL)
+      {
+        DB_QUERY_RESULT *qres = (DB_QUERY_RESULT *) qresult.result;
+        DB_VALUE val;
+        if (qres->type != T_SELECT)
+        {
+          error = db_query_get_tuple_value ((DB_QUERY_RESULT *) qresult.result, 0, &val);
+          if (error >= 0)
+          {
+            if (DB_VALUE_DOMAIN_TYPE (&val) == DB_TYPE_OBJECT)
+            {
+              ins_obj_p = db_get_object (&val);
+              set_dbobj_to_oid (ins_obj_p, &ins_oid);
+              db_value_clear (&val);
+            }
+            else if (DB_VALUE_DOMAIN_TYPE (&val) == DB_TYPE_SEQUENCE)
+            {
+              /* result of a GET_GENERATED_KEYS request, client insert */
+              DB_VALUE value;
+              DB_SEQ *seq = db_get_set (&val);
+              if (seq != NULL && db_col_size (seq) == 1)
+              {
+                db_col_get (seq, 0, &value);
+                ins_obj_p = db_get_object (&value);
+                set_dbobj_to_oid (ins_obj_p, &ins_oid);
+                db_value_clear (&value);
+              }
+              db_value_clear (&val);
+            }
+          }
+        }
+      }
+      
+      query_result_info& result_info = qinfo[i];
+      result_info.ins_oid = ins_oid;
+      result_info.stmt_type = qresult.stmt_type;
+      result_info.tuple_count = qresult.tuple_count;
+    }
+    return error;
+  }
+
   int
-  query_handler::execute_internal_call (int flag, int max_col_size, int max_row)
+  query_handler::execute_internal_all (execute_info &info, int flag, int max_col_size, int max_row, std::vector<DB_VALUE> &bind_values)
+  {
+    int error = NO_ERROR;
+
+    bool recompile = false;
+    bool is_first_stmt = true;
+    bool is_prepare = m_is_prepared;
+
+    // 1) check is prepared
+    int stmt_id, stmt_type;
+    if (is_prepare == true)
+    {
+      stmt_id = m_q_result[0].stmt_id;
+      stmt_type = m_q_result[0].stmt_type;
+    }
+    else
+    {
+      close_and_free_session ();
+      m_session = db_open_buffer (m_sql_stmt.c_str ());
+      if (!m_session)
+      {
+        // TODO: error handling
+        error = db_error_code ();
+        return error;
+        //goto execute_error;
+      }
+    }
+
+    // 2) bind host variables
+    DB_VALUE *value_list = NULL;
+    int num_bind = m_num_markers;
+    if (num_bind > 0)
+    {
+      error = make_bind_value (num_bind, &value_list, DB_TYPE_NULL);
+      if (error < 0)
+      {
+        // TODO: error handling
+        return error;
+      }
+
+	    error = set_host_variables (num_bind, value_list);
+      if (error != NO_ERROR)
+      {
+        // TODO: error handling
+        //err_code = ERROR_INFO_SET (err_code, DBMS_ERROR_INDICATOR);
+        //goto execute_error;
+      }
+    }
+
+    int q_res_idx = 0;
+    db_rewind_statement (m_session);
+
+    // always auto_commit_mode == false
+    char savepoint[PATH_MAX];
+    bool is_savepoint = false;
+    if (db_statement_count (m_session) > 1)
+    {
+      static unsigned long long savepoint_count = 0;
+
+      // snprintf (savepoint, BROKER_PATH_MAX, "__MSS$%20lld__", savepoint_count++);
+      db_savepoint_transaction (savepoint);
+      is_savepoint = true;
+    }
+
+    while (1)
+    {
+      if (flag & EXEC_RETURN_GENERATED_KEYS)
+        {
+    db_session_set_return_generated_keys ((DB_SESSION *) m_session, true);
+        }
+      else
+        {
+    db_session_set_return_generated_keys ((DB_SESSION *) m_session, false);
+        }
+
+      if (is_prepare == false)
+      {
+        if (m_prepare_flag & PREPARE_XASL_CACHE_PINNED)
+        {
+          db_session_set_xasl_cache_pinned (m_session, true, recompile);
+        }
+
+        int stmt_id = db_compile_statement (m_session);
+        if (stmt_id == 0)
+        {
+          break;
+        }
+        else if (stmt_id < 0)
+        {
+          // TODO: error handling
+          error = stmt_id;
+          return error;
+        }
+
+        stmt_type = db_get_statement_type (m_session, stmt_id);
+        if (stmt_type < 0)
+        {
+          // TODO: error handling
+          error = stmt_id;
+          return error;
+        }
+      }
+
+      DB_QUERY_RESULT *result = NULL;
+      int n = db_execute_and_keep_statement (m_session, stmt_id, &result);
+      if (n < 0)
+          {
+      // TODO: error handling
+      error = n;
+          }
+      else if (result != NULL)
+          {
+      /* success; peek the values in tuples */
+      (void) db_query_set_copy_tplvalue (result, 0 /* peek */ );
+          }
+
+      if (max_row > 0 && db_get_statement_type (m_session, stmt_id) == CUBRID_STMT_SELECT)
+        {
+    // TODO: max_row
+        }
+
+      if (is_first_stmt == true)
+      {
+        info.num_affected = n;
+        q_res_idx = 0;
+        m_q_result.clear ();
+        is_first_stmt = false;
+      }
+
+      m_q_result.resize (m_q_result.size() + 1);
+
+      q_res_idx = m_q_result.size() - 1;
+
+      query_result& qresult = m_q_result[q_res_idx];
+      if (m_is_prepared == false)
+      {
+        qresult.clear ();
+        qresult.stmt_id = stmt_id;
+        qresult.stmt_type = stmt_type;
+      }
+
+      qresult.result = result;
+      qresult.tuple_count = n;
+      is_prepare = false;
+
+      db_get_cacheinfo (m_session, stmt_id, &m_use_plan_cache, NULL);
+
+      if (has_stmt_result_set (stmt_type))
+      {
+        m_has_result_set = true;
+      }
+    }
+
+    if (m_prepare_flag & PREPARE_XASL_CACHE_PINNED)
+      {
+        db_session_set_xasl_cache_pinned (m_session, false, false);
+        m_prepare_flag &= ~PREPARE_XASL_CACHE_PINNED;
+      }
+
+      m_max_row = max_row;
+      m_max_col_size = max_col_size;
+      m_current_result_index = 0;
+      m_current_result = &m_q_result[m_current_result_index];
+    
+    if (value_list)
+      {
+	for (int i = 0; i < num_bind; i++)
+	  {
+	    db_value_clear (& (value_list[i]));
+	  }
+	FREE_MEM (value_list);
+      } 
+      
+    error = set_qresult_info (info.qresult_infos);
+    if (error != NO_ERROR)
+      {
+	// TODO : error handling
+	// goto execute_error;
+      }
+
+    char include_column_info = 0;
+    if (db_check_single_query (m_session) != NO_ERROR) /* ER_IT_MULTIPLE_STATEMENT */
+      {
+	include_column_info = 1;
+
+	error = set_prepare_column_list_info (info.column_infos, *m_current_result);
+
+	if (error != NO_ERROR)
+	  {
+	    // TODO : error handling
+	    return error;
+	  }
+      }
+    }
+
+
+  int
+  query_handler::execute_internal_call (execute_info &info, int flag, int max_col_size, int max_row, std::vector<DB_VALUE> &bind_values)
   {
     int error = NO_ERROR;
 
@@ -204,9 +478,25 @@ namespace cubmethod
 
     if (result != NULL)
       {
-	/* success */
+      /* success; copy the values in tuples */
+      (void) db_query_set_copy_tplvalue (result, 1 /* copy */ );
       }
 
+      int i = 0;
+  if (call_info.is_first_out)
+    {
+      if (result != NULL)
+	{
+	  db_query_get_tuple_value (result, 0, &call_info.dbval_args[0]);
+	}
+      i++;
+    }
+
+    DB_VALUE* out_vals = db_get_hostvars (m_session);
+      for (int j = 0; i < call_info.num_args; i++, j++)
+    {
+      call_info.dbval_args[i] = out_vals[j];
+    }
     // TODO
   }
 
@@ -238,7 +528,7 @@ namespace cubmethod
   }
 
   int
-  query_handler::execute_internal (execute_info &info, int flag, int max_col_size, int max_row)
+  query_handler::execute_internal (execute_info &info, int flag, int max_col_size, int max_row, std::vector<DB_VALUE> &bind_values)
   {
     int error = NO_ERROR;
 
@@ -246,6 +536,7 @@ namespace cubmethod
     bool recompile = false;
     // TODO: end_result (false);
 
+    // 1) check is prepared
     if (m_is_prepared == true && m_query_info_flag == false && (flag & EXEC_QUERY_INFO))
       {
 	m_is_prepared = false;
@@ -265,6 +556,7 @@ namespace cubmethod
 	  }
       }
 
+    // 2) bind host variables
     DB_VALUE *value_list = NULL;
     int num_bind = m_num_markers;
     if (num_bind > 0)
@@ -379,8 +671,7 @@ namespace cubmethod
     */
 
     db_get_cacheinfo (m_session, stmt_id, &m_use_plan_cache, NULL);
-
-    // error = execute_info_set (srv_handle, net_buf, client_version, flag);
+    error = set_qresult_info (info.qresult_infos);
     if (error != NO_ERROR)
       {
 	// TODO : error handling
@@ -409,128 +700,6 @@ namespace cubmethod
 	  }
 	FREE_MEM (value_list);
       }
-    return error;
-  }
-
-  int
-  query_handler::oid_cmd (char cmd, OID oid)
-  {
-    // TODO
-    int error = NO_ERROR;
-    DB_OBJECT *obj = db_object (&oid);
-
-    if (cmd != OID_IS_INSTANCE)
-      {
-	error = check_object (obj);
-	if (error < 0)
-	  {
-	    // TODO : error handling
-	  }
-      }
-
-    if (cmd == OID_DROP)
-      {
-
-      }
-    else if (cmd == OID_IS_INSTANCE)
-      {
-
-      }
-    else if (cmd == OID_LOCK_READ)
-      {
-
-      }
-    else if (cmd == OID_LOCK_WRITE)
-      {
-
-      }
-    else if (cmd == OID_CLASS_NAME)
-      {
-
-      }
-    else
-      {
-
-      }
-
-    if (error < 0)
-      {
-
-      }
-    else
-      {
-	if (cmd == OID_CLASS_NAME)
-	  {
-
-	  }
-      }
-  }
-
-  int
-  query_handler::oid_put (OID oid)
-  {
-    int error = NO_ERROR;
-
-    DB_OBJECT *obj = db_object (&oid);
-    error = check_object (obj);
-    if (error < 0)
-      {
-	// TODO : error handling
-      }
-
-    DB_OTMPL *otmpl = dbt_edit_object (obj);
-    if (otmpl == NULL)
-      {
-	// TODO : error handling
-	error = db_error_code ();
-      }
-
-    /* TODO */
-
-    obj = dbt_finish_object (otmpl);
-    if (obj == NULL)
-      {
-	// TODO : error handling
-	error = db_error_code ();
-      }
-
-
-  }
-
-  int
-  query_handler::oid_get (OID oid)
-  {
-    int error = NO_ERROR;
-
-    DB_OBJECT *obj = db_object (&oid);
-    error = check_object (obj);
-    if (error < 0)
-      {
-	// TODO : error handling
-      }
-
-    // get attr name
-    std::string class_name;
-    std::vector<std::string> attr_names;
-
-    const char *cname = db_get_class_name (obj);
-    if (cname != NULL)
-      {
-	class_name.assign (cname);
-      }
-
-    // error = oid_attr_info_set (net_buf, obj, attr_num, attr_name);
-    if (error < 0)
-      {
-
-      }
-    /*
-    if (oid_data_set (obj, attr_num, attr_name) < 0)
-    {
-
-    }
-    */
-
     return error;
   }
 
@@ -595,86 +764,6 @@ namespace cubmethod
 	  }
       }
     return NO_ERROR;
-  }
-
-  int
-  query_handler::lob_new (DB_TYPE lob_type)
-  {
-    int error = NO_ERROR;
-
-    DB_VALUE lob_dbval;
-    error = db_create_fbo (&lob_dbval, lob_type);
-    if (error < 0)
-      {
-	// TODO : error handling
-	return error;
-      }
-
-    lob_handle lhandle;
-    DB_ELO *elo = db_get_elo (&lob_dbval);
-    if (elo == NULL)
-      {
-	lhandle.lob_size = -1;
-	lhandle.locator_size = 0;
-	lhandle.locator = NULL;
-      }
-    else
-      {
-	lhandle.lob_size = elo->size;
-	lhandle.locator_size = elo->locator ? strlen (elo->locator) + 1 : 0;
-	/* including null character */
-	lhandle.locator = elo->locator;
-      }
-
-    // TODO
-    db_value_clear (&lob_dbval);
-    return error;
-  }
-
-  int
-  query_handler::lob_write (DB_VALUE *lob_dbval, int64_t offset, int size, char *data)
-  {
-    int error = NO_ERROR;
-
-    DB_ELO *elo = db_get_elo (lob_dbval);
-    DB_BIGINT size_written;
-    error = db_elo_write (elo, offset, data, size, &size_written);
-    if (error < 0)
-      {
-	// TODO : error handling
-	return error;
-      }
-
-    /* set result: on success, bytes written */
-    // net_buf_cp_int (net_buf, (int) size_written, NULL);
-
-    return error;
-  }
-
-  int
-  query_handler::lob_read (DB_TYPE lob_type)
-  {
-    int error = NO_ERROR;
-    // TODO
-
-    DB_VALUE lob_dbval;
-    DB_ELO *elo = db_get_elo (&lob_dbval);
-
-    /*
-    DB_BIGINT size_read;
-    error = db_elo_read (elo, offset, data, size, &size_read);
-    if (error < 0)
-    {
-        // TODO : error handling
-        return error;
-    }
-    */
-
-    /* set result: on success, bytes read */
-    // net_buf_cp_int (net_buf, (int) size_read, NULL);
-    // net_buf->data_size += (int) size_read;
-
-    return error;
   }
 
   int
@@ -819,12 +908,8 @@ namespace cubmethod
     m_current_result_index = 0;
 
     m_q_result.push_back (q_result);
-  }
 
-  void
-  query_handler::clear_qresult ()
-  {
-    // memset (m_q_result, 0, sizeof (query_result));
+    return error;
   }
 
   int
@@ -940,6 +1025,12 @@ namespace cubmethod
 	int num_cols = 0;
 	char *col_name = NULL, *class_name = NULL, *attr_name = NULL;
 
+
+	char set_type;
+	int precision = 0;
+	short scale = 0;
+	char charset;
+
 	DB_QUERY_TYPE *col;
 	for (col = db_column_info; col != NULL; col = db_query_format_next (col))
 	  {
@@ -966,21 +1057,14 @@ namespace cubmethod
 	    DB_DOMAIN *domain = db_query_format_domain (col);
 	    DB_TYPE db_type = TP_DOMAIN_TYPE (domain);
 
-	    char set_type;
-	    int precision;
-	    int scale;
-	    char charset;
-
 	    if (TP_IS_SET_TYPE (db_type))
 	      {
 		// TODO: set type
-		// set_type = get_set_domain (domain, NULL, NULL, NULL, &charset);
-		precision = 0;
-		scale = 0;
-		assert (false);
+		set_type = get_set_domain (domain, precision, scale, charset);
 	      }
 	    else
 	      {
+		set_type = DB_TYPE_NULL;
 		precision = db_domain_precision (domain);
 		scale = (short) db_domain_scale (domain);
 		charset = db_domain_codeset (domain);
@@ -995,7 +1079,7 @@ namespace cubmethod
 		qresult.null_type_column.push_back (0);
 	      }
 
-	    column_info info = set_column_info (scale, precision, charset, col_name, attr_name, class_name,
+	    column_info info = set_column_info ((int) db_type, set_type, scale, precision, charset, col_name, attr_name, class_name,
 						(char) db_query_format_is_non_null (col));
 	    infos.push_back (info);
 	    num_cols++;
@@ -1026,7 +1110,8 @@ namespace cubmethod
   }
 
   column_info
-  query_handler::set_column_info (short scale, int prec, char charset, const char *col_name, const char *attr_name,
+  query_handler::set_column_info (int dbType, int setType, short scale, int prec, char charset, const char *col_name,
+				  const char *attr_name,
 				  const char *class_name, char is_non_null)
   {
     DB_OBJECT *class_obj = db_find_class (class_name);
@@ -1046,7 +1131,7 @@ namespace cubmethod
 
     std::string default_value_string = get_column_default_as_string (attr);
 
-    column_info info (scale, prec, charset,
+    column_info info (dbType, setType, scale, prec, charset,
 		      col_name_string, default_value_string,
 		      auto_increment, unique_key, primary_key, reverse_index, reverse_unique, foreign_key, shared,
 		      attr_name_string, class_name_string, is_non_null);
@@ -1112,6 +1197,40 @@ namespace cubmethod
       }
 
     return err_code;
+  }
+
+  void query_result::clear()
+  {
+    column_info = NULL;
+    result = NULL;
+    stmt_id = 0;
+    stmt_type = 0;
+    num_column = 0;
+    tuple_count = 0;
+
+    include_oid = false;
+    copied = false;
+  }
+
+  void query_handler::set_dbobj_to_oid (DB_OBJECT *obj, OID *oid)
+  {
+    OID *objs_oid;
+    objs_oid = db_identifier (obj);
+
+    assert (oid != NULL);
+
+    if (objs_oid == NULL)
+      {
+        oid->pageid = 0;
+        oid->volid = 0;
+        oid->slotid = 0;
+      }
+    else
+      {
+        oid->pageid = objs_oid->pageid;
+        oid->volid = objs_oid->volid;
+        oid->slotid = objs_oid->slotid;
+      }
   }
 
 #endif

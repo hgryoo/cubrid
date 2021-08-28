@@ -27,8 +27,8 @@
 
 namespace cubmethod
 {
-  std::string convert_db_value_to_string (DB_VALUE *value, DB_VALUE *value_string);
   void stmt_trim (std::string &sql);
+  std::string convert_db_value_to_string (DB_VALUE *value, DB_VALUE *value_string);
 
 #if !defined(SERVER_MODE)
   typedef enum
@@ -41,13 +41,13 @@ namespace cubmethod
     DOUBLE_QUOTED_STRING
   } STATEMENT_STATUS;
 
-
   char get_stmt_type (std::string sql);
   int get_num_markers (std::string sql);
   int consume_tokens (std::string sql, int index, STATEMENT_STATUS stmt_status);
 
   std::string get_column_default_as_string (DB_ATTRIBUTE *attr);
   void serialize_collection_as_string (DB_VALUE *col, std::string &out);
+  char get_set_domain (DB_DOMAIN *set_domain, int &precision, short &scale, char &charset);
 #endif
 }
 

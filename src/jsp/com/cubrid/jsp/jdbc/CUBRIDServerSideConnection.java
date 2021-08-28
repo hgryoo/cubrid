@@ -31,6 +31,7 @@
 
 package com.cubrid.jsp.jdbc;
 
+import com.cubrid.jsp.io.SUConnection;
 import cubrid.jdbc.jci.UJCIUtil;
 import java.util.logging.Logger;
 
@@ -38,6 +39,7 @@ import com.cubrid.jsp.ExecuteThread;
 
 import com.cubrid.jsp.data.CUBRIDPacker;
 import com.cubrid.jsp.data.CUBRIDUnpacker;
+import com.cubrid.jsp.data.PrepareInfo;
 
 import cubrid.jdbc.jci.CUBRIDIsolationLevel;
 
@@ -63,7 +65,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executor;
-
+import java.io.IOException;
 import java.net.Socket;
 
 /**
@@ -96,17 +98,23 @@ public class CUBRIDServerSideConnection implements Connection {
     int holdability;
     protected CUBRIDServerSideDatabaseMetaData mdata = null;
     protected List<Statement> statements = null;
+    private SUConnection suConn = null;
+    private ExecuteThread thread = null;
 
-    public CUBRIDServerSideConnection() {
+    public CUBRIDServerSideConnection(ExecuteThread thread) {
+        this.thread = thread;
+
         holdability = ResultSet.HOLD_CURSORS_OVER_COMMIT; // there is no meaning for the holdable cursor on server-side
         transactionIsolation = TRANSACTION_NONE;
 
         statements = new ArrayList<Statement> ();
     }
 
-    ExecuteThread thread = null;
-    public void setThread (ExecuteThread t) {
-        thread = t;
+    public SUConnection getSUConnection () {
+        if (suConn == null) {
+            suConn = new SUConnection (thread);
+        }
+        return suConn;
     }
     
     public int requestDBParameter () {
@@ -126,45 +134,24 @@ public class CUBRIDServerSideConnection implements Connection {
         return isolation;
     }
 
-    public boolean requestPrepare (CUBRIDServerSideStatement statement, String sql, int flag) {
-        try {
-            ByteBuffer buffer = ByteBuffer.allocate(sql.length() + 1 + Integer.BYTES + Integer.BYTES);
-            CUBRIDPacker packer = new CUBRIDPacker (buffer);
+    public PrepareInfo requestPrepare (CUBRIDServerSideStatement statement, String sql, int flag) throws IOException {
+        ByteBuffer buffer = ByteBuffer.allocate(sql.length() + 1 + Integer.BYTES + Integer.BYTES);
+        CUBRIDPacker packer = new CUBRIDPacker (buffer);
 
-            packer.packInt (REQ_FUNCTION_PREPARE);
-            packer.packString (sql);
-            packer.packInt (flag);
+        packer.packInt (REQ_FUNCTION_PREPARE);
+        packer.packString (sql);
+        packer.packInt (flag);
 
-            thread.sendCommand(packer.getBuffer());
-            CUBRIDUnpacker unpacker = thread.receiveBuffer();
+        thread.sendCommand(packer.getBuffer());
+        CUBRIDUnpacker unpacker = thread.receiveBuffer();
 
-            int handleId = unpacker.unpackInt();
-            int commandType = unpacker.unpackInt();
-            int parameterCnt = unpacker.unpackInt();
-            int columnCnt = unpacker.unpackInt();
-
-            } catch (Exception e) {
-                return false;
-            }
-        return true;
+        PrepareInfo info = new PrepareInfo (unpacker);
+        return info;
     }
 
-    public boolean requestExecute (CUBRIDServerSideStatement statement, String sql, int flag) {
+    public boolean requestExecute (CUBRIDServerSideStatement statement) {
         try {
-            ByteBuffer buffer = ByteBuffer.allocate(sql.length() + Integer.BYTES + Integer.BYTES);
-            CUBRIDPacker packer = new CUBRIDPacker (buffer);
-
-            packer.packInt (REQ_FUNCTION_PREPARE);
-            packer.packString (sql);
-            packer.packInt (flag);
-
-            thread.sendCommand(packer.getBuffer());
-            CUBRIDUnpacker unpacker = thread.receiveBuffer();
-
-            int handleId = unpacker.unpackInt();
-            int commandType = unpacker.unpackInt();
-            int parameterCnt = unpacker.unpackInt();
-            int columnCnt = unpacker.unpackInt();
+            
 
             } catch (Exception e) {
                 return false;

@@ -77,30 +77,6 @@ static int method_callback (packing_unpacker &unpacker, method_server_conn_info 
 #endif
 
 /*
- * method_send_buffer_to_server () - Send an buffer indication to the server
- *   return:
- *   rc(in)     : enquiry return code
- *   host(in)   : host name
- *   server_name(in)    : server name
- */
-int
-method_send_buffer_to_server (unsigned int rc, char *host_p, char *server_name_p, cubmem::block &buffer)
-{
-  packing_packer packer;
-  cubmem::extensible_block ext_blk;
-  int code = METHOD_SUCCESS;
-  packer.set_buffer_and_pack_all (ext_blk, code, buffer);
-
-  int error = net_client_send_data (host_p, rc, ext_blk.get_ptr (), packer.get_current_size ());
-  if (error != NO_ERROR)
-    {
-      return ER_FAILED;
-    }
-
-  return NO_ERROR;
-}
-
-/*
  * method_send_value_to_server () - Send an error indication to the server
  *   return:
  *   rc(in)     : enquiry return code
@@ -281,17 +257,11 @@ static int
 method_callback (packing_unpacker &unpacker, method_server_conn_info &conn_info)
 {
   int error = NO_ERROR;
-
-  UINT64 id;
-  unpacker.unpack_bigint (id);
-
-  int code;
-  unpacker.unpack_int (code);
-
+  
   /* CAS is on single-thread now, */
   static cubmethod::callback_handler handler (100);
-  cubmem::block response = std::move (handler.callback_dispatch (unpacker));
-  method_send_buffer_to_server (conn_info.rc, conn_info.host, conn_info.server_name, response);
+  handler.set_server_info (conn_info.rc, conn_info.host);
+  error = handler.callback_dispatch (unpacker);
   return error;
 }
 #endif

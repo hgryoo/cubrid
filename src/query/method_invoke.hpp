@@ -84,7 +84,7 @@ namespace cubmethod
 
       int callback_get_db_parameter (cubmem::block &blk);
       int callback_prepare (cubthread::entry &thread_ref, cubmem::block &blk);
-      int callback_execute (cubmem::block &blk);
+      int callback_execute (cubthread::entry &thread_ref, cubmem::block &blk);
 
       int callback_fetch (cubmem::block &blk);
 

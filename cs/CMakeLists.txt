@@ -229,10 +229,12 @@ set(QUERY_SOURCES
   ${QUERY_DIR}/execute_schema.c
   ${QUERY_DIR}/execute_statement.c
   ${QUERY_DIR}/numeric_opfunc.c
+  ${QUERY_DIR}/method_callback.cpp
   ${QUERY_DIR}/method_def.cpp
   ${QUERY_DIR}/method_query.cpp
   ${QUERY_DIR}/method_query_struct.cpp
   ${QUERY_DIR}/method_query_util.cpp
+  ${QUERY_DIR}/method_callback.cpp
   ${QUERY_DIR}/query_cl.c
   ${QUERY_DIR}/query_dump.c
   ${QUERY_DIR}/query_method.cpp

@@ -17,7 +17,7 @@
  */
 
 //
-// method_query_cursor.hpp: implement callback for server-side driver's request
+// method_callback.hpp: implement callback for server-side driver's request
 //
 
 #ifndef _METHOD_CALLBACK_HPP_
@@ -29,10 +29,25 @@
 
 #include "method_query.hpp"
 #include "method_query_struct.hpp"
+
 #include "packer.hpp"
+#include "packable_object.hpp"
 
 namespace cubmethod
 {
+  enum OID_CMD
+  {
+    OID_CMD_FIRST = 1,
+
+    OID_DROP = 1,
+    OID_IS_INSTANCE = 2,
+    OID_LOCK_READ = 3,
+    OID_LOCK_WRITE = 4,
+    OID_CLASS_NAME = 5,
+
+    OID_CMD_LAST = OID_CLASS_NAME
+  };
+
   class log_handler
   {
 
@@ -54,18 +69,18 @@ namespace cubmethod
       int err_line;
   };
 
-
-
   class callback_handler
   {
     public:
       callback_handler (int max_query_handler);
 
-      cubmem::block callback_dispatch (packing_unpacker &unpacker);
+      void set_server_info (int rc, char *host);
+
+      int callback_dispatch (packing_unpacker &unpacker);
 
       /* query handler required */
-      cubmem::block prepare (packing_unpacker &unpacker);
-      cubmem::block execute (packing_unpacker &unpacker);
+      int prepare (packing_unpacker &unpacker);
+      int execute (packing_unpacker &unpacker);
 
       int oid_get (OID oid);
       int oid_put (OID oid);
@@ -81,12 +96,19 @@ namespace cubmethod
       int lob_read (DB_TYPE lob_type);
 
     private:
+      int check_object (DB_OBJECT *obj);
+
       /* ported from cas_handle */
       int new_query_handler ();
       query_handler *find_query_handler (int id);
       void free_query_handle (int id);
       void free_query_handle_all ();
 
+      int send_packable_object_to_server (cubpacking::packable_object &object);
+
+      /* server info */
+      int m_rid; // method callback's rid
+      char *m_host;
 
       error_context m_error_ctx;
       std::vector<query_handler *> m_query_handlers;

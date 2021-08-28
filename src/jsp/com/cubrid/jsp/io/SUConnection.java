@@ -30,9 +30,134 @@
  */
 
 package com.cubrid.jsp.io;
+import com.cubrid.jsp.data.PrepareInfo;
+import com.cubrid.jsp.ExecuteThread;
+import com.cubrid.jsp.data.CUBRIDPacker;
+import com.cubrid.jsp.data.CUBRIDUnpacker;
+import com.cubrid.jsp.data.ExecuteInfo;
+import com.cubrid.jsp.data.GetByOIDInfo;
+import com.cubrid.jsp.data.GetSchemaInfo;
+import com.cubrid.jsp.data.SOID;
+import com.cubrid.jsp.io.SUFunctionCode;
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
+
 import cubrid.jdbc.jci.UError;
 
 public class SUConnection {
+
+    List<SUStatement> stmts = null;
+    ExecuteThread thread = null;
+    ByteBuffer outputBuffer = ByteBuffer.allocate(4096);
+
+    public SUConnection (ExecuteThread t) {
+        thread = t;
+        stmts = new ArrayList<SUStatement> ();
+    }
+
+    public CUBRIDUnpacker request (ByteBuffer buffer) throws IOException
+    {
+        thread.sendCommand(buffer);
+        buffer.clear();
+        return thread.receiveBuffer();
+    }
+
+    // UFunctionCode.PREPARE
+    public SUStatement prepare (String sql, byte flag, boolean recompile) throws IOException {
+        CUBRIDPacker packer = new CUBRIDPacker (outputBuffer);
+        packer.packInt (SUFunctionCode.PREPARE.getCode());
+        packer.packString (sql);
+        packer.packInt (flag);
+        
+        CUBRIDUnpacker unpacker = request (outputBuffer);
+        PrepareInfo info = new PrepareInfo (unpacker);
+
+        SUStatement stmt = null;
+        if (recompile) {
+            stmt = new SUStatement (this, info, true, sql, flag);
+        } else {
+            stmt = new SUStatement (this, info, false, sql, flag);
+        }
+
+        stmts.add(stmt);
+        return stmt;
+    }
+
+    // UFunctionCode.GET_BY_OID
+    public SUStatement getByOID(SOID oid, String[] attributeName) throws IOException {
+        CUBRIDPacker packer = new CUBRIDPacker (outputBuffer);
+        packer.packInt (SUFunctionCode.GET_BY_OID.getCode());
+        packer.packOID (oid);
+        packer.packInt (attributeName.length);
+        if (attributeName != null) {
+            for (int i = 0; i < attributeName.length; i++)
+            {
+                packer.packString(attributeName[i]);
+            }
+        }
+
+        CUBRIDUnpacker unpacker = request (outputBuffer);
+        GetByOIDInfo info = new GetByOIDInfo (unpacker);
+        SUStatement stmt = new SUStatement(this, info, attributeName);
+        return stmt;
+    }
+
+    // UFunctionCode.GET_SCHEMA_INFO
+    public SUStatement getSchemaInfo(int type, String arg1, String arg2, byte flag) throws IOException {
+        CUBRIDPacker packer = new CUBRIDPacker (outputBuffer);
+        packer.packInt (SUFunctionCode.GET_SCHEMA_INFO.getCode());
+        packer.packInt (type);
+        packer.packString (arg1);
+        packer.packString (arg2);
+        packer.packInt(flag);
+
+        CUBRIDUnpacker unpacker = request (outputBuffer);
+        GetSchemaInfo info = new GetSchemaInfo (unpacker);
+        SUStatement stmt = new SUStatement(this, info, arg1, arg2, type);
+        return stmt;
+    }
+
+    // UFunctionCode.EXECUTE
+    public ExecuteInfo execute (
+        int handlerId, 
+        byte executeFlag, 
+        boolean isScrollable, 
+        int maxField, 
+        SUBindParameter bindParameter) throws IOException {
+            CUBRIDPacker packer = new CUBRIDPacker (outputBuffer);
+            packer.packInt (SUFunctionCode.EXECUTE.getCode());
+            packer.packInt (handlerId);
+            packer.packInt (executeFlag);
+            packer.packInt (maxField < 0 ? 0 : maxField);
+
+            if (isScrollable == false) {
+                packer.packInt (1); // isForwardOnly = true
+            } else {
+                packer.packInt (0); // isForwardOnly = false
+            }
+
+            int hasParam = (bindParameter != null) ? 1 : 0;
+            packer.packInt (hasParam);
+            if (bindParameter != null) {
+                bindParameter.pack(packer);
+            }
+
+        CUBRIDUnpacker unpacker = request (outputBuffer);
+        ExecuteInfo info = new ExecuteInfo (unpacker);
+        return info;
+    }
+
+    // UFunctionCode.NEW_LOB
+    // UFunctionCode.WRITE_LOB
+    // UFunctionCode.READ_LOB
+
+    // UFunctionCode.RELATED_TO_COLLECTION
+
+
+    
 
     /*
     protected UError errorHandler;

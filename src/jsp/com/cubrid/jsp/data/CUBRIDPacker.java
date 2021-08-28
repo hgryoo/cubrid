@@ -98,6 +98,15 @@ public class CUBRIDPacker {
         packCString(value.getBytes(charset));
     }
 
+    private static final int OID_SIZE = Integer.BYTES + Short.BYTES * 2;
+    public void packOID (SOID oid) {
+        align(DataUtilities.INT_ALIGNMENT);
+        ensureSpace (OID_SIZE);
+        buffer.putInt(oid.pageId);
+        buffer.putShort(oid.slotId);
+        buffer.putShort(oid.volId);
+    }
+
     public void packCString(byte[] value) {
         int len = value.length;
         if (len < DataUtilities.MAX_SMALL_STRING_SIZE) {

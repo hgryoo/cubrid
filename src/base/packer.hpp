@@ -109,10 +109,10 @@ namespace cubpacking
       size_t get_packed_size_overloaded (const OID &oid, size_t curr_offset);
       void pack_overloaded (const OID &oid);
 
+      void pack_overloaded (const cubmem::block &blk);
       size_t get_packed_block_size (const cubmem::block &blk, const size_t curr_offset);
       void pack_block (const cubmem::block &blk);
       size_t get_packed_size_overloaded (const cubmem::block &blk, size_t curr_offset);
-      void pack_overloaded (const cubmem::block &blk);
 
       // packer should gradually replace OR_BUF, but they will coexist for a while. there will be functionality
       // strictly dependent on or_buf, so packer will have to cede at least some of the packing to or_buf
@@ -224,6 +224,9 @@ namespace cubpacking
 
       void unpack_oid (OID &oid);
       void unpack_overloaded (OID &oid);
+
+      void unpack_block (cubmem::block &blk);
+      void unpack_overloaded (cubmem::block &blk);
 
       const char *get_curr_ptr (void);
       void align (const size_t req_alignment);

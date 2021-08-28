@@ -793,6 +793,23 @@ namespace cubpacking
     pack_oid (oid);
   }
 
+  void
+  unpacker::unpack_oid (OID &oid)
+  {
+    align (INT_ALIGNMENT);
+    check_range (m_ptr, m_end_ptr, OR_OID_SIZE);
+
+    OR_GET_OID (m_ptr, &oid);
+    m_ptr += OR_OID_SIZE;
+  }
+
+  void
+  unpacker::unpack_overloaded (OID &oid)
+  {
+    return unpack_oid (oid);
+  }
+
+
   size_t
   packer::get_packed_block_size (const cubmem::block &blk, const size_t curr_offset)
   {
@@ -811,7 +828,7 @@ namespace cubpacking
   void
   packer::pack_block (const cubmem::block &blk)
   {
-    align (INT_ALIGNMENT);
+    align (MAX_ALIGNMENT);
 
     check_range (m_ptr, m_end_ptr, blk.dim + OR_INT_SIZE);
 
@@ -823,7 +840,7 @@ namespace cubpacking
 	std::memcpy (m_ptr, blk.ptr, blk.dim);
 	m_ptr += blk.dim;
 
-	align (INT_ALIGNMENT);
+	align (MAX_ALIGNMENT);
       }
   }
 
@@ -840,19 +857,40 @@ namespace cubpacking
   }
 
   void
-  unpacker::unpack_oid (OID &oid)
+  unpacker::unpack_block (cubmem::block &b)
   {
-    align (INT_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, OR_OID_SIZE);
+    align (MAX_ALIGNMENT);
 
-    OR_GET_OID (m_ptr, &oid);
-    m_ptr += OR_OID_SIZE;
+    check_range (m_ptr, m_end_ptr, OR_INT_SIZE);
+
+    int dim = OR_GET_INT (m_ptr);
+    m_ptr += OR_INT_SIZE;
+
+    check_range (m_ptr, m_end_ptr, dim);
+
+    if (dim > 0)
+      {
+	cubmem::extensible_block eb;
+	eb.extend_to (dim);
+	std::memcpy (eb.get_ptr (), m_ptr, dim);
+	m_ptr += dim;
+
+	b.dim = dim;
+	b.ptr = eb.release_ptr ();
+      }
+    else
+      {
+	b.dim = 0;
+	b.ptr = nullptr;
+      }
+
+    align (MAX_ALIGNMENT);
   }
 
   void
-  unpacker::unpack_overloaded (OID &oid)
+  unpacker::unpack_overloaded (cubmem::block &blk)
   {
-    return unpack_oid (oid);
+    return unpack_block (blk);
   }
 
   const char *

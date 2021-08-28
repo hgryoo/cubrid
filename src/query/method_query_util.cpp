@@ -25,6 +25,7 @@
 #if !defined(SERVER_MODE)
 #include "dbi.h"
 #include "object_domain.h"
+#include "object_primitive.h"
 #endif
 
 namespace cubmethod
@@ -199,6 +200,7 @@ namespace cubmethod
 
     return index;
   }
+
   std::string
   get_column_default_as_string (DB_ATTRIBUTE *attr)
   {
@@ -339,6 +341,30 @@ namespace cubmethod
 	db_value_clear (&value);
       }
     out.push_back ('}');
+  }
+
+  char
+  get_set_domain (DB_DOMAIN *set_domain, int &precision, short &scale, char &charset)
+  {
+    int set_domain_count = 0;
+    int set_type = DB_TYPE_NULL;
+
+    precision = 0;
+    scale = 0;
+    charset = lang_charset ();
+
+    DB_DOMAIN *ele_domain = db_domain_set (set_domain);
+    for (; ele_domain; ele_domain = db_domain_next (ele_domain))
+      {
+	set_domain_count++;
+	set_type = TP_DOMAIN_TYPE (ele_domain);
+
+	precision = db_domain_precision (ele_domain);
+	scale = (short) db_domain_scale (ele_domain);
+	charset = db_domain_codeset (ele_domain);
+      }
+
+    return (set_domain_count != 1) ? DB_TYPE_NULL : set_type;
   }
 #endif
 }

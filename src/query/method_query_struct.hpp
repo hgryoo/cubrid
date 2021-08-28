@@ -35,7 +35,7 @@ namespace cubmethod
   struct column_info : public cubpacking::packable_object
   {
     column_info ();
-    column_info (short scale, int prec, char charset,
+    column_info (int db_type, int set_type, short scale, int prec, char charset,
 		 std::string col_name, std::string default_value, char auto_increment,
 		 char unique_key, char primary_key, char reverse_index, char reverse_unique,
 		 char foreign_key, char shared, std::string attr_name, std::string class_name,
@@ -43,6 +43,9 @@ namespace cubmethod
 
     std::string class_name;
     std::string attr_name;
+
+    int db_type;
+    int set_type;
 
     short scale;
     int prec;
@@ -62,6 +65,8 @@ namespace cubmethod
     void pack (cubpacking::packer &serializator) const override;
     void unpack (cubpacking::unpacker &deserializator) override;
     size_t get_packed_size (cubpacking::packer &serializator, std::size_t start_offset) const override;
+
+    void dump ();
   };
 
   struct prepare_info : public cubpacking::packable_object
@@ -74,27 +79,36 @@ namespace cubmethod
     void pack (cubpacking::packer &serializator) const override;
     void unpack (cubpacking::unpacker &deserializator) override;
     size_t get_packed_size (cubpacking::packer &serializator, std::size_t start_offset) const override;
+
+    void dump ();
   };
 
   struct query_result_info
   {
-
+    int stmt_type;
+    int tuple_count;
+    OID ins_oid;
   };
 
-  struct execute_info
+  struct execute_info : public cubpacking::packable_object
   {
-    int num_affected;
-    int num_q_result;
-    std::vector<query_result_info> query_result_infos;
+    execute_info () = default; // default constructor
 
-    char stmt_type;
+    int num_affected;
+    std::vector<query_result_info> qresult_infos;
+
+    int stmt_type;
     int num_markers;
 
     bool include_column_info;
     std::vector<column_info> column_infos;
-  };
 
-  int make_prepare_column_list_info (query_result &qresult);
+    void pack (cubpacking::packer &serializator) const override;
+    void unpack (cubpacking::unpacker &deserializator) override;
+    size_t get_packed_size (cubpacking::packer &serializator, std::size_t start_offset) const override;
+
+    void dump ();
+  };
 }
 
 #endif

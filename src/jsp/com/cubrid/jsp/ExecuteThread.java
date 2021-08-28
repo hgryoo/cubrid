@@ -54,7 +54,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ExecuteThread extends Thread {
-    private String charSet = System.getProperty("file.encoding");
+    public static String charSet = System.getProperty("file.encoding");
 
     private static final int REQ_CODE_INVOKE_SP = 0x01;
     private static final int REQ_CODE_RESULT = 0x02;
@@ -127,12 +127,12 @@ public class ExecuteThread extends Thread {
     }
 
     public Connection createConnection() {
-        return new CUBRIDServerSideConnection();
+        this.connection = new CUBRIDServerSideConnection(this);
+        return this.connection;
     }
     
     public void setJdbcConnection(Connection con) throws IOException {
         this.connection = (CUBRIDServerSideConnection) con;
-        this.connection.setThread (this);
         // sendCommand(null);
     }
 
@@ -159,8 +159,6 @@ public class ExecuteThread extends Thread {
     public void setCharSet(String conCharsetName) {
         this.charSet = conCharsetName;
     }
-
-
 
     @Override
     public void run() {
