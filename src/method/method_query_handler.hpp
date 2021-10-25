@@ -63,7 +63,8 @@ namespace cubmethod
 
   struct prepare_call_info
   {
-    prepare_call_info () = default;
+    prepare_call_info ();
+    ~prepare_call_info ();
 
     DB_VALUE dbval_ret;
     int num_args;
@@ -73,6 +74,7 @@ namespace cubmethod
 
     int set_is_first_out (std::string &sql_stmt);
     int set_prepare_call_info (int num_args);
+    void clear ();
   };
 
   /*
