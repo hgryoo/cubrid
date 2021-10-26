@@ -35,7 +35,7 @@
 #include "log_impl.h"
 
 #if defined (SERVER_MODE)
-#include "server_support.h"
+#include "xserver_interface.h"
 #endif // SERVER_MODE
 
 namespace cubmethod
