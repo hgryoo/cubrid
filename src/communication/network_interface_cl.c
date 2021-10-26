@@ -10580,7 +10580,7 @@ cleanup:
 
   if (data_reply != NULL)
     {
-      free_and_init (data_reply);
+      db_private_free_and_init (NULL, data_reply);
     }
 
   return req_error;

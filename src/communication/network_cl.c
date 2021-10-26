@@ -2268,7 +2268,7 @@ net_client_request_method_callback (int request, char *argbuf, int argsize, char
 	    or_unpack_int (ptr, &methoddata_size);
 	    COMPARE_AND_FREE_BUFFER (replybuf, reply);
 
-	    methoddata = (char *) malloc (methoddata_size);
+	    methoddata = (char *) db_private_alloc (NULL, methoddata_size);
 	    if (methoddata != NULL)
 	      {
 		css_queue_receive_data_buffer (rc, methoddata, methoddata_size);
@@ -2276,7 +2276,7 @@ net_client_request_method_callback (int request, char *argbuf, int argsize, char
 		if (error != NO_ERROR)
 		  {
 		    COMPARE_AND_FREE_BUFFER (methoddata, reply);
-		    free_and_init (methoddata);
+		    db_private_free_and_init (NULL, methoddata);
 		    return set_server_error (error);
 		  }
 		else
@@ -2292,7 +2292,7 @@ net_client_request_method_callback (int request, char *argbuf, int argsize, char
 		    error = COMPARE_SIZE_AND_BUFFER (&methoddata_size, size, &methoddata, reply);
 		    COMPARE_AND_FREE_BUFFER (methoddata, reply);
 		    error = method_dispatch (rc, net_Server_host, net_Server_name, methoddata, methoddata_size);
-		    free_and_init (methoddata);
+		    db_private_free_and_init (NULL, methoddata);
 		    if (error != NO_ERROR)
 		      {
 			assert (er_errid () != NO_ERROR);
@@ -2343,7 +2343,7 @@ net_client_request_method_callback (int request, char *argbuf, int argsize, char
 	      }
 	    else if (replydata_size > 0)
 	      {
-		replydata = (char *) malloc (replydata_size);
+		replydata = (char *) db_private_alloc (NULL, replydata_size);
 		if (replydata == NULL)
 		  {
 		    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, (size_t) replydata_size);
@@ -2355,7 +2355,7 @@ net_client_request_method_callback (int request, char *argbuf, int argsize, char
 		if (error != NO_ERROR)
 		  {
 		    COMPARE_AND_FREE_BUFFER (replydata, reply);
-		    free_and_init (replydata);
+		    db_private_free_and_init (NULL, replydata);
 		    return set_server_error (error);
 		  }
 		else
