@@ -121,9 +121,13 @@ namespace cubmethod
 
       case DB_TYPE_BIT:
       case DB_TYPE_VARBIT:
-	// NOTE: This type was not implemented at the previous version
-	assert (false);
-	break;
+      {
+	int length = 0;
+	DB_CONST_C_BIT bit = db_get_bit (&v, &length);
+	length = (length + 7) / 8;
+	serializator.pack_c_string (bit, length);
+      }
+      break;
 
       case DB_TYPE_DATE:
       {
@@ -328,9 +332,15 @@ namespace cubmethod
 
       case DB_TYPE_BIT:
       case DB_TYPE_VARBIT:
-	// NOTE: This type was not implemented at the previous version
-	assert (false);
-	break;
+      {
+	int length = 0;
+	DB_CONST_C_BIT bit = db_get_bit (&v, &length);
+	length = (length + 7) / 8;
+
+	size += serializator.get_packed_int_size (size); /* dummy size */
+	size += serializator.get_packed_c_string_size (bit, length, size);
+      }
+      break;
 
       case DB_TYPE_OID:
       {
@@ -341,7 +351,6 @@ namespace cubmethod
 
       case DB_TYPE_OBJECT:
 #if !defined (SERVER_MODE)
-
 	size += serializator.get_packed_oid_size (size);
 #else
 	// TODO: Implement a way to pack DB_TYPE_OBJECT value on Server
@@ -562,9 +571,13 @@ namespace cubmethod
 
       case DB_TYPE_BIT:
       case DB_TYPE_VARBIT:
-	// NOTE: This type was not implemented at the previous version
-	assert (false);
-	break;
+      {
+	cubmem::extensible_block blk { cubmem::PRIVATE_BLOCK_ALLOCATOR };
+	deserializator.unpack_string_to_memblock (blk);
+	int length = blk.get_size() * 8;
+	db_make_bit (v, length, blk.release_ptr(), length);
+      }
+      break;
 
       case DB_TYPE_DATE:
       {
