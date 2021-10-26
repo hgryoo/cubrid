@@ -94,6 +94,7 @@ namespace cubmethod
   {
     end_qresult (true);
     close_and_free_session ();
+    m_prepare_call_info.clear ();
   }
 
   /* called after 1 iteration on method scan */
