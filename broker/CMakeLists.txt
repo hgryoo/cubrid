@@ -213,6 +213,7 @@ set(CUB_CAS_SOURCES
   ${BROKER_DIR}/cas_xa.c
   ${BROKER_DIR}/cas_schema_info.c
   ${BROKER_DIR}/cas_log.c
+  ${BROKER_DIR}/cas_info.c
   ${BROKER_DIR}/broker_shm.c
   ${BROKER_DIR}/cas_sql_log2.c
   ${BROKER_DIR}/broker_filename.c

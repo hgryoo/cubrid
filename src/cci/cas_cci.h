@@ -403,7 +403,8 @@ typedef enum
   CCI_PARAM_LAST = CCI_PARAM_AUTO_COMMIT,
 
   /* below parameters are used internally */
-  CCI_PARAM_NO_BACKSLASH_ESCAPES = 5
+  CCI_PARAM_NO_BACKSLASH_ESCAPES = 5,
+  CCI_PARAM_USER_INFO = 6
 } T_CCI_DB_PARAM;
 
 typedef enum

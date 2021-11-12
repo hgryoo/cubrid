@@ -81,6 +81,7 @@
 #endif /* !CAS_FOR_ORACLE && !CAS_FOR_MYSQL */
 #include "error_manager.h"
 #include "ddl_log.h"
+#include "cas_info.h"
 
 static const int DEFAULT_CHECK_INTERVAL = 1;
 
@@ -96,8 +97,16 @@ static const int DEFAULT_CHECK_INTERVAL = 1;
 
 static FN_RETURN process_request (SOCKET sock_fd, T_NET_BUF * net_buf, T_REQ_INFO * req_info);
 
+static T_USER_INFO user_info;
+
+T_USER_INFO *
+get_user_info ()
+{
+  return &user_info;
+}
+
 #if defined(WINDOWS)
-LONG WINAPI CreateMiniDump (struct _EXCEPTION_POINTERS *pException);
+LONG WINAPI CreateMiniDump (struct _EXCEPTION_POINTERS * pException);
 #endif /* WINDOWS */
 
 #ifndef LIBCAS_FOR_JSP
@@ -1222,6 +1231,12 @@ cas_main (void)
 	    logddl_set_user_name (db_user);
 	    logddl_set_ip (client_ip_str);
 	    logddl_set_pid (getpid ());
+
+	    user_info.broker_name.assign (shm_appl->broker_name);
+	    user_info.cas_name.assign (shm_appl->appl_server_name);
+	    user_info.db_name.assign (db_name);
+	    user_info.db_user.assign (db_user);
+	    user_info.client_ip.assign (client_ip_str);
 
 	    set_hang_check_time ();
 
