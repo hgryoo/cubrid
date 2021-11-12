@@ -35,6 +35,8 @@
 #include "cas_cci.h"
 #include "cas_common.h"
 
+#include <string>
+
 #define ERROR_INDICATOR_UNSET	0
 #define CAS_ERROR_INDICATOR	-1
 #define DBMS_ERROR_INDICATOR	-2

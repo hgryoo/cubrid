@@ -60,6 +60,7 @@
 #include "dbtype.h"
 #include "object_primitive.h"
 #include "ddl_log.h"
+#include "cas_info.h"
 
 static FN_RETURN fn_prepare_internal (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf, T_REQ_INFO * req_info,
 				      int *ret_srv_h_id);
@@ -880,6 +881,13 @@ fn_get_db_parameter (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf,
 
       net_buf_cp_int (net_buf, 0, NULL);
       net_buf_cp_int (net_buf, no_backslash_escapes, NULL);
+    }
+  else if (param_name == CCI_PARAM_USER_INFO
+	   && req_info->driver_info[DRIVER_INFO_CLIENT_TYPE] == CAS_CLIENT_SERVER_SIDE_JDBC)
+    {
+      T_USER_INFO *info = get_user_info ();
+      net_buf_cp_int (net_buf, 0, NULL);	/* res code */
+      pack_user_info (net_buf, info);
     }
   else
     {

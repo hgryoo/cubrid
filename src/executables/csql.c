@@ -67,6 +67,7 @@
 #include "api_compat.h"
 #include "cas_log.h"
 #include "ddl_log.h"
+#include "cas_info.h"
 
 #if defined(WINDOWS)
 #include "file_io.h"		/* needed for _wyield() */
@@ -2879,6 +2880,15 @@ csql (const char *argv0, CSQL_ARGUMENT * csql_arg)
       logddl_set_ip ((char *) ip_addr);
     }
   logddl_set_pid (getpid ());
+
+  {
+    T_USER_INFO *user_info = get_user_info ();
+    user_info->broker_name.assign ("none");
+    user_info->cas_name.assign ("csql");
+    user_info->db_name.assign (csql_arg->db_name);
+    user_info->db_user.assign (csql_arg->user_name);
+    user_info->client_ip.assign ((char *) ip_addr);
+  }
 
   if (csql_arg->trigger_action_flag == false)
     {

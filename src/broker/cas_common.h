@@ -31,6 +31,8 @@
 #include <sys/socket.h>
 #endif
 
+#include <string>
+
 #include "porting.h"
 #define makestring1(x) #x
 #define makestring(x) makestring1(x)
@@ -171,7 +173,6 @@ enum
 #else
 #define CAS_SCHEMA_DEFAULT_CHARSET 0
 #endif
-
 
 extern int uts_key_check_local_host (void);
 
