@@ -4,5 +4,5 @@
 	branch = develop
 [submodule "cubrid-jdbc"]
 	path = cubrid-jdbc
-	url = https://github.com/cubrid/cubrid-jdbc
-	branch = develop
+	url = https://github.com/hgryoo/cubrid-jdbc
+	branch = RND-1482
