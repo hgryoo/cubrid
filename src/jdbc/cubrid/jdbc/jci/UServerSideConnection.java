@@ -47,9 +47,11 @@ public class UServerSideConnection extends UConnection {
 	public final static int INVOKE = 2;
 
 	private final static byte CAS_CLIENT_SERVER_SIDE_JDBC = 6;
+	private static final int DB_PARAM_USER_INFO = 6;
 
 	private Thread curThread;
 	private UStatementHandlerCache stmtHandlerCache;
+	private UUserInfo userInfo = null;
 
 	public UServerSideConnection(Socket socket, Thread curThread) throws CUBRIDException {
 		errorHandler = new UError(this);
@@ -73,6 +75,7 @@ public class UServerSideConnection extends UConnection {
 					new Object[] { connectionProperties.getCharSet() });
 
 			stmtHandlerCache = new UStatementHandlerCache();
+			userInfo = null;
 		} catch (IOException e) {
 			UJciException je = new UJciException(UErrorCode.ER_CONNECTION);
 			je.toUError(errorHandler);
@@ -172,23 +175,61 @@ public class UServerSideConnection extends UConnection {
 	protected void closeInternal() {
 		if (client != null) {
 			stmtHandlerCache.clearStatus();
-            int currentStatus =
-                    (Integer)
-                            UJCIUtil.invoke(
-                                    "com.cubrid.jsp.ExecuteThread",
-                                    "getStatus",
-                                    new Class[] {},
-                                    this.curThread,
-                                    new Object[] {});
-            if (currentStatus != INVOKE) {
-                disconnect();
-                UJCIUtil.invoke(
-                        "com.cubrid.jsp.ExecuteThread",
-                        "setStatus",
-                        new Class[] {Integer.class},
-                        this.curThread,
-                        new Object[] {INVOKE});
-            }
+			int currentStatus = (Integer) UJCIUtil.invoke("com.cubrid.jsp.ExecuteThread", "getStatus", new Class[] {},
+					this.curThread, new Object[] {});
+			if (currentStatus != INVOKE) {
+				disconnect();
+				UJCIUtil.invoke("com.cubrid.jsp.ExecuteThread", "setStatus", new Class[] { Integer.class },
+						this.curThread, new Object[] { INVOKE });
+			}
+		}
+	}
+
+	public synchronized UUserInfo getUserInfo() {
+		errorHandler = new UError(this);
+
+		if (isClosed == true) {
+			errorHandler.setErrorCode(UErrorCode.ER_IS_CLOSED);
+			return null;
+		}
+
+		if (userInfo == null) {
+			try {
+				if (errorHandler.getErrorCode() != UErrorCode.ER_NO_ERROR) {
+					return null;
+				}
+
+				checkReconnect();
+
+				outBuffer.newRequest(output, UFunctionCode.GET_DB_PARAMETER);
+				outBuffer.addInt(DB_PARAM_USER_INFO);
+
+				UInputBuffer inBuffer;
+				inBuffer = send_recv_msg();
+
+				String charSet = connectionProperties.getCharSet();
+				String brokerName = inBuffer.readString(inBuffer.readInt(), charSet);
+				String casName = inBuffer.readString(inBuffer.readInt(), charSet);
+				String dbName = inBuffer.readString(inBuffer.readInt(), charSet);
+				String dbUser = inBuffer.readString(inBuffer.readInt(), charSet);
+				String ip = inBuffer.readString(inBuffer.readInt(), charSet);
+
+				userInfo = new UUserInfo(brokerName, casName, dbName, dbUser, ip);
+				return userInfo;
+			} catch (UJciException e) {
+				logException(e);
+				e.toUError(errorHandler);
+				e.printStackTrace();
+			} catch (IOException e2) {
+				logException(e2);
+				errorHandler.setErrorCode(UErrorCode.ER_COMMUNICATION);
+
+				e2.printStackTrace();
+			}
+
+			return null;
+		} else {
+			return userInfo;
 		}
 	}
 
