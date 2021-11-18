@@ -30,7 +30,6 @@
  */
 
 import java.sql.*;
-import java.util.Enumeration;
 import java.util.Properties;
 
 /*
@@ -51,12 +50,17 @@ public class SpTest {
 
             Properties props = conn.getClientInfo();
 
-            Enumeration keys = props.keys();
-            while (keys.hasMoreElements()) {
-                String key = (String) keys.nextElement();
-                String value = (String) props.get(key);
-                result += "(" + key + ": " + value + ") \n";
-            }
+            String broker = props.getProperty("broker");
+            String client = props.getProperty("client");
+            String db = props.getProperty("db");
+            String user = props.getProperty("user");
+            String ip = props.getProperty("ip");
+
+            result += "( broker: " + broker + ") \n";
+            result += "( client: " + client + ") \n";
+            result += "( db: " + db + ") \n";
+            result += "( user: " + user + ") \n";
+            result += "( ip: " + ip + ")";
 
             conn.close();
             return result;
