@@ -29,6 +29,8 @@
 #include "jsp_sr.h" /* jsp_server_port(), jsp_connect_server() */
 #include "method_connection_sr.hpp"
 
+#include "boot_sr.h"
+
 #if defined (SA_MODE)
 #include "query_method.hpp"
 #endif
@@ -133,7 +135,7 @@ namespace cubmethod
 	    if (m_socket == INVALID_SOCKET)
 	      {
 		int server_port = jsp_server_port ();
-		m_socket = jsp_connect_server (server_port);
+		  m_socket = jsp_connect_server (boot_db_name (), server_port);
 	      }
 	    break;
 	  }

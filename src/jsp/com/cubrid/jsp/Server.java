@@ -36,12 +36,17 @@ import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.lang.management.RuntimeMXBean;
 import java.net.ServerSocket;
+import java.net.SocketAddress;
 import java.net.Socket;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import org.newsclub.net.unix.AFUNIXSocketAddress;
+import org.newsclub.net.unix.AFUNIXServerSocket;
+import java.net.InetSocketAddress;
 
 public class Server {
     private static final Logger logger = Logger.getLogger("com.cubrid.jsp");
@@ -58,59 +63,78 @@ public class Server {
     private AtomicBoolean shutdown;
 
     private static Server serverInstance = null;
+    private static boolean isUDS = false;
+
+    private UDSServer udsInstance = null;
 
     private Server(String name, String path, String version, String rPath, String port)
-            throws IOException {
+            throws IOException, ClassNotFoundException {
         serverName = name;
         spPath = path;
         rootPath = rPath;
         shutdown = new AtomicBoolean(false);
 
-        try {
-            int port_number = Integer.parseInt(port);
-            serverSocket = new ServerSocket(port_number);
+        int port_number = Integer.parseInt(port);
+        if (port_number == -1000) {
+            isUDS = true;
+            String socketName = rPath + "/tmp/junixsocket-" + name + ".sock";
+            final File socketFile = new File (socketName);
+            System.out.println (socketFile);
 
-            Class.forName("cubrid.jdbc.driver.CUBRIDDriver");
-            System.setSecurityManager(new SpSecurityManager());
-            System.setProperty("cubrid.server.version", version);
-
-            getJVMArguments(); /* store jvm options */
-        } catch (Exception e) {
-            log(e);
-            e.printStackTrace();
+            try {
+                serverSocket = AFUNIXServerSocket.newInstance();
+                serverSocket.bind(AFUNIXSocketAddress.of(socketFile));
+            } catch (Exception e) {
+                log(e);
+                e.printStackTrace();
+            }
+        } else {
+            try {
+                serverSocket = new ServerSocket(port_number);
+            } catch (Exception e) {
+                log(e);
+                e.printStackTrace();
+            }
         }
 
+        Class.forName("cubrid.jdbc.driver.CUBRIDDriver");
+        System.setSecurityManager(new SpSecurityManager());
+        System.setProperty("cubrid.server.version", version);
+
+        getJVMArguments(); /* store jvm options */
+        
         socketListener =
-                new Thread(
-                        new Runnable() {
-                            public void run() {
-                                Socket client = null;
-                                while (true) {
-                                    try {
-                                        client = serverSocket.accept();
-                                        client.setTcpNoDelay(true);
-                                        new ExecuteThread(client).start();
-                                    } catch (IOException e) {
-                                        log(e);
-                                        break;
-                                    }
-                                }
+        new Thread(
+                new Runnable() {
+                    public void run() {
+                        Socket client = null;
+                        while (true) {
+                            try {
+                                client = serverSocket.accept();
+                                client.setTcpNoDelay(true);
+                                new ExecuteThread(client).start();
+                            } catch (IOException e) {
+                                log(e);
+                                break;
                             }
-                        });
+                        }
+                    }
+                });
+
     }
 
     private void startSocketListener() {
-        socketListener.setDaemon(true);
-        socketListener.start();
+            socketListener.setDaemon(true);
+            socketListener.start();
     }
 
     private void stopSocketListener() {
-        try {
-            serverSocket.close();
-            serverSocket = null;
-        } catch (IOException e) {
-            log(e);
-        }
+            try {
+                serverSocket.close();
+                serverSocket = null;
+            } catch (IOException e) {
+                log(e);
+            }
     }
 
     public ServerSocket getServerSocket() {
@@ -126,10 +150,15 @@ public class Server {
     }
 
     public static int getServerPort() {
-        try {
-            return getServer().getServerSocket().getLocalPort();
-        } catch (Exception e) {
-            return -1;
+        if (isUDS == false) {
+            try {
+                return getServer().getServerSocket().getLocalPort();
+            } catch (Exception e) {
+                return -1;
+            }
+        }
+        else {
+            return -1000;
         }
     }
 
@@ -150,7 +179,14 @@ public class Server {
         try {
             serverInstance = new Server(args[0], args[1], args[2], args[3], args[4]);
             serverInstance.startSocketListener();
-            return serverInstance.getServerSocket().getLocalPort();
+            if (isUDS)
+            {
+                return -1000;
+            }
+            else
+            {
+                return serverInstance.getServerSocket().getLocalPort();
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -202,4 +238,23 @@ public class Server {
     public boolean getShutdown() {
         return shutdown.get();
     }
+
+    public static SocketAddress socketAddress(String socketName) throws IOException {
+        int colon = socketName.lastIndexOf(':');
+        int slashOrBackslash = Math.max(socketName.lastIndexOf('/'), socketName.lastIndexOf('\\'));
+    
+        if (socketName.startsWith("@")) {
+          // abstract namespace (Linux only!)
+          return AFUNIXSocketAddress.inAbstractNamespace(socketName.substring(1));
+        } else if (colon > 0 && slashOrBackslash < colon && !socketName.startsWith("/")) {
+          // assume TCP socket
+          String hostname = socketName.substring(0, colon);
+          int port = Integer.parseInt(socketName.substring(colon + 1));
+          return new InetSocketAddress(hostname, port);
+        } else {
+          // assume unix socket file name
+          return AFUNIXSocketAddress.of(new File(socketName));
+        }
+      }
+
 }

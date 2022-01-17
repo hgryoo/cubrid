@@ -2315,7 +2315,7 @@ static unsigned int prm_java_stored_procedure_flag = 0;
 int PRM_JAVA_STORED_PROCEDURE_PORT = 0;
 static int prm_java_stored_procedure_port_default = 0;
 static int prm_java_stored_procedure_port_upper = 65535;
-static int prm_java_stored_procedure_port_lower = 0;
+static int prm_java_stored_procedure_port_lower = -1000;
 static unsigned int prm_java_stored_procedure_port_flag = 0;
 
 const char *PRM_JAVA_STORED_PROCEDURE_JVM_OPTIONS = "";

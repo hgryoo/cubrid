@@ -31,6 +31,8 @@
 #include <sys/param.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/uio.h>
+#include <sys/un.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <errno.h>
@@ -45,10 +47,64 @@
 
 #include "porting.h"
 #include "error_manager.h"
+#include "environment_variable.h"
 
-#if defined(CS_MODE)
+#if defined (CS_MODE)
 #include "network_interface_cl.h"
+#else
+#include "boot_sr.h"
 #endif
+
+static char *
+jsp_get_socket_file_path (const char* db_name)
+{
+  static char path[PATH_MAX];
+  static bool need_init = true;
+
+  if (need_init)
+    {
+      const char *cubrid_tmp = envvar_get ("TMP");
+
+      if (cubrid_tmp == NULL || cubrid_tmp[0] == '\0')
+	{
+	  cubrid_tmp = "/tmp";
+	}
+
+      snprintf (path, PATH_MAX, "%s%s/%s%s%s", envvar_root (), cubrid_tmp, "junixsocket-", db_name, ".sock");
+      need_init = false;
+    }
+
+  return path;
+}
+
+SOCKET
+jsp_connect_server_uds (const char* db_name)
+{
+  struct sockaddr_un sock_addr;
+  SOCKET sockfd = INVALID_SOCKET;
+
+  sockfd = socket (AF_UNIX, SOCK_STREAM, 0);
+  if (IS_INVALID_SOCKET (sockfd))
+  {
+    return INVALID_SOCKET;
+  }
+
+  int slen = sizeof (sock_addr);
+  memset (&sock_addr, 0, slen);
+  sock_addr.sun_family = AF_UNIX;
+  snprintf (sock_addr.sun_path, sizeof (sock_addr.sun_path), "%s", jsp_get_socket_file_path (db_name));
+
+  int success = connect (sockfd, (struct sockaddr *) &sock_addr, slen);
+  if (success < 0)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_CANNOT_CONNECT_JVM, 1, "connect()");
+      return INVALID_SOCKET;
+    }
+
+    int one = 1;
+    setsockopt (sockfd, IPPROTO_TCP, TCP_NODELAY, (char *) &one, sizeof (one));
+    return sockfd;
+}
 
 /*
  * jsp_connect_server
@@ -59,9 +115,10 @@
  */
 
 SOCKET
-jsp_connect_server (int server_port)
+jsp_connect_server_tcp (int server_port)
 {
   struct sockaddr_in tcp_srv_addr;
+
   SOCKET sockfd = INVALID_SOCKET;
   int success = -1;
   unsigned int inaddr;
@@ -120,7 +177,7 @@ jsp_connect_server (int server_port)
       b = 1;
       setsockopt (sockfd, IPPROTO_TCP, TCP_NODELAY, (char *) &b, sizeof (b));
     }
-
+    
   success = connect (sockfd, saddr, slen);
   if (success < 0)
     {
@@ -131,6 +188,29 @@ jsp_connect_server (int server_port)
   return sockfd;
 }
 
+/*
+ * jsp_connect_server
+ *   return: connect fail - return Error Code
+ *           connection success - return socket fd
+ *
+ * Note:
+ */
+
+SOCKET
+jsp_connect_server (const char* db_name, int server_port)
+{
+#if defined (WINDOWS)
+  server_port = 0;
+#endif
+  if (server_port == -1000)
+  {
+    return jsp_connect_server_uds (db_name);
+  }
+  else
+  {
+    return jsp_connect_server_tcp (server_port);
+  }
+}
 
 /*
  * jsp_disconnect_server -
