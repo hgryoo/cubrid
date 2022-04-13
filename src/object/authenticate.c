@@ -58,6 +58,7 @@
 #include "locator_cl.h"
 #include "virtual_object.h"
 #include "db.h"
+#include "dbi.h"
 #include "trigger_manager.h"
 #include "transform.h"
 #include "environment_variable.h"
@@ -6752,6 +6753,7 @@ au_login_method (MOP class_mop, DB_VALUE * returnval, DB_VALUE * user, DB_VALUE 
   if (error == NO_ERROR)
     {
       user_name = db_get_user_name ();
+      db_invalidate_mvcc_snapshot_before_statement ();
       error = clogin_user (user_name);
 
       if (error == NO_ERROR)
