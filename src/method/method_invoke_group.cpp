@@ -240,6 +240,21 @@ namespace cubmethod
 	if (m_connection == nullptr)
 	  {
 	    m_connection = get_connection_pool ()->claim();
+	    if (m_connection->get_socket () == INVALID_SOCKET)
+	      {
+		if (m_connection->is_jvm_running ())
+		  {
+		    m_rctx->set_interrupt_by_reason (ER_SP_CANNOT_CONNECT_JVM);
+		    er_msg () ? set_error_msg (std::string (er_msg ())) : set_error_msg ("unknown");
+		    er_clear ();
+		  }
+		else
+		  {
+		    m_rctx->set_interrupt_by_reason (ER_SP_NOT_RUNNING_JVM);
+		  }
+		int error_reason = m_connection->is_jvm_running () ? ER_SP_CANNOT_CONNECT_JVM : ER_SP_NOT_RUNNING_JVM;
+		m_rctx->set_interrupt_by_reason (error_reason);
+	      }
 	  }
       }
 

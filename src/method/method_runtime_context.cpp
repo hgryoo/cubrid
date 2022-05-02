@@ -159,6 +159,8 @@ namespace cubmethod
       case ER_INTERRUPTED:
       case ER_SP_TOO_MANY_NESTED_CALL:
       case ER_NET_SERVER_SHUTDOWN:
+      case ER_SP_NOT_RUNNING_JVM:
+      case ER_SP_CANNOT_CONNECT_JVM:
 	m_is_interrupted = true;
 	m_interrupt_reason = reason;
 	break;
