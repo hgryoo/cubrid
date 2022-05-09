@@ -451,7 +451,8 @@ public class CUBRIDServerSideStatement implements Statement {
             getMoreResults();
             return updateCount;
         } catch (IOException e) {
-            e.printStackTrace();
+            throw CUBRIDServerSideJDBCErrorManager.createCUBRIDException(
+                    CUBRIDServerSideJDBCErrorCode.ER_COMMUNICATION, e);
         }
 
         return 0;
