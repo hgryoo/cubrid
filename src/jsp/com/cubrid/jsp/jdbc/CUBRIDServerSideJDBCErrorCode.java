@@ -85,7 +85,7 @@ public class CUBRIDServerSideJDBCErrorCode {
             setMessageHash();
         }
 
-        if (index == ER_DBMS && msg != null) {
+        if (msg != null) {
             // received error message from DB server
             return msg;
         } else {

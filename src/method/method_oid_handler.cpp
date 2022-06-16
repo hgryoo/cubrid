@@ -46,7 +46,7 @@ namespace cubmethod
 
     if (obj == NULL)
       {
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_OBJECT, NULL, __FILE__, __LINE__);
+  m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_OBJECT);
 	return ER_FAILED;
       }
 
@@ -54,7 +54,7 @@ namespace cubmethod
     error = db_is_instance (obj);
     if (error < 0)
       {
-	m_error_ctx.set_error (error, NULL, __FILE__, __LINE__);
+	m_error_handler.set_error_dbms ();
 	return ER_FAILED;
       }
     else if (error > 0)
@@ -65,11 +65,11 @@ namespace cubmethod
     error = db_error_code ();
     if (error < 0)
       {
-	m_error_ctx.set_error (db_error_code(), db_error_string (1), __FILE__, __LINE__);
+	m_error_handler.set_error_dbms ();
 	return ER_FAILED;
       }
 
-    m_error_ctx.set_error (METHOD_CALLBACK_ER_OBJECT, NULL, __FILE__, __LINE__);
+    m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_OBJECT);
     return ER_FAILED;
   }
 
@@ -82,7 +82,7 @@ namespace cubmethod
     DB_OBJECT *obj = db_object (&oid);
     if (obj == NULL)
       {
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_OBJECT, NULL, __FILE__, __LINE__);
+	m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_OBJECT);
 	return info;
       }
 
@@ -114,7 +114,7 @@ namespace cubmethod
 	    attr = db_get_attribute (obj, attr_name.c_str ());
 	    if (attr == NULL)
 	      {
-		m_error_ctx.set_error (db_error_code (), db_error_string (1), __FILE__, __LINE__);
+		m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 		return info;
 	      }
 	  }
@@ -133,7 +133,7 @@ namespace cubmethod
 		attr = db_get_attribute (path_obj, p + 1);
 		if (attr == NULL)
 		  {
-		    m_error_ctx.set_error (db_error_code (), db_error_string (1), __FILE__, __LINE__);
+		    m_error_handler.set_error_dbms ();
 		    return info;
 		  }
 	      }
@@ -196,7 +196,7 @@ namespace cubmethod
     DB_OBJECT *obj = db_object (&oid);
     if (obj == NULL)
       {
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_OBJECT, NULL, __FILE__, __LINE__);
+	m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_OBJECT);
 	return ER_FAILED;
       }
 
@@ -209,7 +209,7 @@ namespace cubmethod
     DB_OTMPL *otmpl = dbt_edit_object (obj);
     if (otmpl == NULL)
       {
-	m_error_ctx.set_error (db_error_code (), db_error_string (1), __FILE__, __LINE__);
+	m_error_handler.set_error_dbms ();
 	return ER_FAILED;
       }
 
@@ -227,7 +227,7 @@ namespace cubmethod
 	error = dbt_put (otmpl, attr_name, attr_val);
 	if (error < 0)
 	  {
-	    m_error_ctx.set_error (error, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_dbms ();
 	    db_value_clear (attr_val);
 	    dbt_abort_object (otmpl);
 	    return error;
@@ -239,7 +239,7 @@ namespace cubmethod
     obj = dbt_finish_object (otmpl);
     if (obj == NULL)
       {
-	m_error_ctx.set_error (db_error_code (), db_error_string (1), __FILE__, __LINE__);
+	m_error_handler.set_error_dbms ();
 	return ER_FAILED;
       }
 
@@ -254,7 +254,7 @@ namespace cubmethod
     DB_OBJECT *obj = db_object (&oid);
     if (obj == NULL)
       {
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_OBJECT, NULL, __FILE__, __LINE__);
+	m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_OBJECT);
 	return ER_FAILED;
       }
 
@@ -298,7 +298,7 @@ namespace cubmethod
       {
 	if (obj == NULL)
 	  {
-	    m_error_ctx.set_error (METHOD_CALLBACK_ER_OBJECT, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_OBJECT);
 	    return ER_FAILED;
 	  }
 	error = db_lock_read (obj);
@@ -307,7 +307,7 @@ namespace cubmethod
       {
 	if (obj == NULL)
 	  {
-	    m_error_ctx.set_error (METHOD_CALLBACK_ER_OBJECT, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_OBJECT);
 	    return ER_FAILED;
 	  }
 	error = db_lock_write (obj);
@@ -316,7 +316,7 @@ namespace cubmethod
       {
 	if (obj == NULL)
 	  {
-	    m_error_ctx.set_error (METHOD_CALLBACK_ER_OBJECT, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_OBJECT);
 	    return ER_FAILED;
 	  }
 	char *class_name = (char *) db_get_class_name (obj);
@@ -333,7 +333,7 @@ namespace cubmethod
       }
     else
       {
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_INTERNAL, NULL, __FILE__, __LINE__);
+	m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 	return ER_FAILED;
       }
 
@@ -352,7 +352,7 @@ namespace cubmethod
     DB_OBJECT *obj = db_object (&oid);
     if (obj == NULL)
       {
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_OBJECT, NULL, __FILE__, __LINE__);
+	m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_OBJECT);
 	return ER_FAILED;
       }
 
@@ -368,7 +368,7 @@ namespace cubmethod
     DB_ATTRIBUTE *attr = db_get_attribute (obj, name);
     if (attr == NULL)
       {
-	m_error_ctx.set_error (db_error_code (), db_error_string (1), __FILE__, __LINE__);
+	m_error_handler.set_error_dbms ();
 	return ER_FAILED;
       }
 
@@ -376,7 +376,8 @@ namespace cubmethod
     DB_TYPE type = TP_DOMAIN_TYPE (domain);
     if (type != DB_TYPE_SET && type != DB_TYPE_MULTISET && type != DB_TYPE_SEQUENCE)
       {
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_NOT_COLLECTION, NULL, __FILE__, __LINE__);
+  // TODO: proper error, hoply will not happen
+	m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 	return ER_FAILED;
       }
 
@@ -387,7 +388,8 @@ namespace cubmethod
     DB_DOMAIN *elem_domain = db_domain_set (domain);
     if (elem_type <= 0)
       {
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_COLLECTION_DOMAIN, NULL, __FILE__, __LINE__);
+  // TODO: proper error, hoply will not happen
+	m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 	return ER_FAILED;
       }
 
@@ -395,7 +397,7 @@ namespace cubmethod
     error = db_get (obj, name, &val);
     if (error < 0)
       {
-	m_error_ctx.set_error (error, NULL, __FILE__, __LINE__);
+	m_error_handler.set_error_dbms ();
 	return ER_FAILED;
       }
 
@@ -411,7 +413,7 @@ namespace cubmethod
       {
       case COL_GET:
 	/* TODO: not implemented at Server-Side JDBC */
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_NOT_IMPLEMENTED, NULL, __FILE__, __LINE__);
+	m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 	error = ER_FAILED;
 	break;
       case COL_SIZE:
@@ -471,7 +473,7 @@ namespace cubmethod
 	int error = db_set_drop (col, ele_val);
 	if (error < 0)
 	  {
-	    m_error_ctx.set_error (error, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_dbms ();
 	    return ER_FAILED;
 	  }
       }
@@ -488,7 +490,7 @@ namespace cubmethod
 	error = db_set_add (col, ele_val);
 	if (error < 0)
 	  {
-	    m_error_ctx.set_error (error, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_dbms ();
 	    return ER_FAILED;
 	  }
       }
@@ -504,7 +506,7 @@ namespace cubmethod
 	int error = db_seq_drop (col, seq_index - 1);
 	if (error < 0)
 	  {
-	    m_error_ctx.set_error (error, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_dbms ();
 	    return ER_FAILED;
 	  }
       }
@@ -521,7 +523,7 @@ namespace cubmethod
 	error = db_seq_insert (col, seq_index - 1, ele_val);
 	if (error < 0)
 	  {
-	    m_error_ctx.set_error (error, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_dbms ();
 	    return ER_FAILED;
 	  }
       }
@@ -539,7 +541,7 @@ namespace cubmethod
 	error = db_seq_put (col, seq_index - 1, ele_val);
 	if (error < 0)
 	  {
-	    m_error_ctx.set_error (error, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_dbms ();
 	    return ER_FAILED;
 	  }
       }

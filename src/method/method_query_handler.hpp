@@ -31,7 +31,7 @@
 
 #include "dbtype.h"
 #include "mem_block.hpp"
-#include "method_error.hpp"
+#include "method_error_handler.hpp"
 #include "method_query_result.hpp"
 #include "method_struct_query.hpp"
 
@@ -72,7 +72,7 @@ namespace cubmethod
   class query_handler
   {
     public:
-      query_handler (error_context &ctx, int id);
+      query_handler (error_handler &err_handler, int id);
       ~query_handler ();
 
       /* request */
@@ -147,7 +147,7 @@ namespace cubmethod
 
       /* stats error, log */
       int m_num_errors;
-      error_context &m_error_ctx;
+      error_handler &m_error_handler;
 
       /* prepare info */
       std::string m_sql_stmt; /* sql statement literal */

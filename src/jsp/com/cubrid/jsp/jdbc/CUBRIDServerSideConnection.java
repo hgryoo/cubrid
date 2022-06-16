@@ -141,42 +141,51 @@ public class CUBRIDServerSideConnection implements Connection {
     // The following are JDBC Interface Implementations
     // ==============================================================
 
+    @Override
     public Statement createStatement() throws SQLException {
         return createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
     }
 
+    @Override
     public PreparedStatement prepareStatement(String sql) throws SQLException {
         return prepareStatement(
                 sql, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY, holdability);
     }
 
+    @Override
     public CallableStatement prepareCall(String sql) throws SQLException {
         CallableStatement cstmt = new CUBRIDServerSideCallableStatement(this, sql);
         addStatement(cstmt);
         return cstmt;
     }
 
+    @Override
     public String nativeSQL(String sql) throws SQLException {
         throw new SQLException(new UnsupportedOperationException());
     }
 
+    @Override
     public void setAutoCommit(boolean autoCmmit) {
         /* do nothing */
     }
 
+    @Override
     public boolean getAutoCommit() throws SQLException {
         /* always false */
         return false;
     }
 
+    @Override
     public void commit() throws SQLException {
         /* do nothing */
     }
 
+    @Override
     public void rollback() throws SQLException {
         /* do nothing */
     }
 
+    @Override
     public void close() throws SQLException {
         /* Becuase It is assume that Java SP Server always connecting with DB Server directly, It should not be closed */
         /* Here, only the JDBC resources are cleaned up */
@@ -189,11 +198,13 @@ public class CUBRIDServerSideConnection implements Connection {
         }
     }
 
+    @Override
     public boolean isClosed() throws SQLException {
         /* always false */
         return false;
     }
 
+    @Override
     public DatabaseMetaData getMetaData() throws SQLException {
         if (mdata == null) {
             mdata = new CUBRIDServerSideDatabaseMetaData(this);
@@ -201,29 +212,35 @@ public class CUBRIDServerSideConnection implements Connection {
         return mdata;
     }
 
+    @Override
     public void setReadOnly(boolean arg0) throws SQLException {
         /* do nothing */
     }
 
+    @Override
     public boolean isReadOnly() throws SQLException {
         /* do nothing */
         return false;
     }
 
+    @Override
     public void setCatalog(String catalog) throws SQLException {
         /* do nothing */
     }
 
+    @Override
     public String getCatalog() throws SQLException {
         /* do nothing */
         return "";
     }
 
+    @Override
     public void setTransactionIsolation(int level) throws SQLException {
         /* do nothing */
         /* transaction isolation should not be set by server-side connection */
     }
 
+    @Override
     public int getTransactionIsolation() throws SQLException {
         if (transactionIsolation == TRANSACTION_NONE) {
             try {
@@ -237,15 +254,18 @@ public class CUBRIDServerSideConnection implements Connection {
         return transactionIsolation;
     }
 
+    @Override
     public SQLWarning getWarnings() throws SQLException {
         /* do nothing */
         return null;
     }
 
+    @Override
     public void clearWarnings() throws SQLException {
         /* do nothing */
     }
 
+    @Override
     public Statement createStatement(int resultSetType, int resultSetConcurrency)
             throws SQLException {
         Statement stmt =
@@ -255,49 +275,60 @@ public class CUBRIDServerSideConnection implements Connection {
         return stmt;
     }
 
+    @Override
     public PreparedStatement prepareStatement(
             String sql, int resultSetType, int resultSetConcurrency) throws SQLException {
         return prepareStatement(sql, resultSetType, resultSetConcurrency, holdability);
     }
 
+    @Override
     public CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency)
             throws SQLException {
         return prepareCall(sql);
     }
 
+    @Override
     public Map<String, Class<?>> getTypeMap() throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
+    @Override
     public void setTypeMap(Map<String, Class<?>> map) throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
+    @Override
     public void setHoldability(int holdable) throws SQLException {
         /* do nothing */
     }
 
+    @Override
     public int getHoldability() throws SQLException {
         /* do nothing, return default value */
         return holdability;
     }
 
+    @Override
     public Savepoint setSavepoint() throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
+    @Override
     public Savepoint setSavepoint(String name) throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
+    @Override
     public void rollback(Savepoint savepoint) throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
+    @Override
     public void releaseSavepoint(Savepoint savepoint) throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
+    @Override
     public Statement createStatement(int resultSetType, int resultSetConcurrency, int holdable)
             throws SQLException {
         if (holdable == ResultSet.HOLD_CURSORS_OVER_COMMIT) {
@@ -312,6 +343,7 @@ public class CUBRIDServerSideConnection implements Connection {
         return stmt;
     }
 
+    @Override
     public PreparedStatement prepareStatement(String sql, int type, int concur, int holdable)
             throws SQLException {
         if (holdable == ResultSet.HOLD_CURSORS_OVER_COMMIT) {
@@ -328,11 +360,13 @@ public class CUBRIDServerSideConnection implements Connection {
         return stmt;
     }
 
+    @Override
     public CallableStatement prepareCall(String sql, int type, int concur, int holdable)
             throws SQLException {
         return prepareCall(sql);
     }
 
+    @Override
     public PreparedStatement prepareStatement(String sql, int autoGeneratedKeys)
             throws SQLException {
         PreparedStatement stmt =
@@ -347,15 +381,18 @@ public class CUBRIDServerSideConnection implements Connection {
         return stmt;
     }
 
+    @Override
     public PreparedStatement prepareStatement(String sql, int[] indexes) throws SQLException {
         return prepareStatement(sql);
     }
 
+    @Override
     public PreparedStatement prepareStatement(String sql, String[] colName) throws SQLException {
         return prepareStatement(sql);
     }
 
     /* JDK 1.6 */
+    @Override
     public Clob createClob() throws SQLException {
         // TODO: not implemented yet
         // Clob clob = new CUBRIDClob(this, getUConnection().getCharset());
@@ -363,6 +400,7 @@ public class CUBRIDServerSideConnection implements Connection {
     }
 
     /* JDK 1.6 */
+    @Override
     public Blob createBlob() throws SQLException {
         // TODO: not implemented yet
         // Blob blob = new CUBRIDBlob(this);
@@ -370,16 +408,19 @@ public class CUBRIDServerSideConnection implements Connection {
     }
 
     /* JDK 1.6 */
+    @Override
     public NClob createNClob() throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
     /* JDK 1.6 */
+    @Override
     public SQLXML createSQLXML() throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
     /* JDK 1.6 */
+    @Override
     public boolean isValid(int timeout) throws SQLException {
         if (timeout < 0) {
             throw new SQLException();
@@ -390,6 +431,7 @@ public class CUBRIDServerSideConnection implements Connection {
     }
 
     /* JDK 1.6 */
+    @Override
     public void setClientInfo(Properties arg0) throws SQLClientInfoException {
         SQLClientInfoException clientEx = new SQLClientInfoException();
         clientEx.initCause(new java.lang.UnsupportedOperationException());
@@ -397,6 +439,7 @@ public class CUBRIDServerSideConnection implements Connection {
     }
 
     /* JDK 1.6 */
+    @Override
     public void setClientInfo(String arg0, String arg1) throws SQLClientInfoException {
         SQLClientInfoException clientEx = new SQLClientInfoException();
         clientEx.initCause(new java.lang.UnsupportedOperationException());
@@ -404,6 +447,7 @@ public class CUBRIDServerSideConnection implements Connection {
     }
 
     /* JDK 1.6 */
+    @Override
     public Properties getClientInfo() throws SQLException {
         if (clientInfo == null) {
             try {
@@ -418,41 +462,49 @@ public class CUBRIDServerSideConnection implements Connection {
     }
 
     /* JDK 1.6 */
+    @Override
     public String getClientInfo(String arg0) throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
     /* JDK 1.6 */
+    @Override
     public Array createArrayOf(String arg0, Object[] arg1) throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
     /* JDK 1.6 */
+    @Override
     public Struct createStruct(String arg0, Object[] arg1) throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
     /* JDK 1.7 */
+    @Override
     public void setSchema(String schema) throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
     /* JDK 1.7 */
+    @Override
     public String getSchema() throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
     /* JDK 1.7 */
+    @Override
     public void abort(Executor executor) throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
     /* JDK 1.7 */
+    @Override
     public void setNetworkTimeout(Executor executor, int milliseconds) throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }
 
     /* JDK 1.7 */
+    @Override
     public int getNetworkTimeout() throws SQLException {
         throw new SQLException(new java.lang.UnsupportedOperationException());
     }

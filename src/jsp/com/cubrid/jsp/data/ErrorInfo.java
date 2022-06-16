@@ -30,17 +30,25 @@
  */
 
 package com.cubrid.jsp.data;
+import com.cubrid.jsp.jdbc.CUBRIDServerSideJDBCErrorCode;
 
 public class ErrorInfo {
+    public int errorType; // refer to "error_type" (enum class) in method_error_handler.hpp
     public int errorCode;
     public String errorString;
     public String errorFile;
     public int errorLine;
 
     public ErrorInfo(CUBRIDUnpacker unpacker) {
+        errorType = unpacker.unpackInt();
         errorCode = unpacker.unpackInt();
         errorString = unpacker.unpackCString();
         errorFile = unpacker.unpackCString();
         errorLine = unpacker.unpackInt();
+
+        if (errorType == 1)
+        {
+            errorString = CUBRIDServerSideJDBCErrorCode.codeToMessage(errorCode);
+        }
     }
 }

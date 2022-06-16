@@ -42,13 +42,39 @@ namespace cubmethod
 //////////////////////////////////////////////////////////////////////////
   method_invoke_group::method_invoke_group (cubthread::entry *thread_p, const method_sig_list &sig_list,
       bool is_for_scan = false)
-    : m_id ((std::uint64_t) this), m_thread_p (thread_p), m_connection (nullptr)
+    : m_id ((std::uint64_t) this)
+    , m_thread_p (thread_p)
+    , m_connection (nullptr)
   {
     assert (sig_list.num_methods > 0);
 
     // init runtime context
     session_get_method_runtime_context (thread_p, m_rctx);
 
+    initialize_methods (sig_list);
+
+    m_parameter_info = nullptr;
+    m_status = status::IGS_IDLE;
+    m_type = is_for_scan ? type::IGT_SCAN : type::IGT_FOLD_CONSTANT;
+  }
+
+  method_invoke_group::~method_invoke_group ()
+  {
+    end ();
+    for (method_invoke *method: m_method_vector)
+      {
+	delete method;
+      }
+    m_method_vector.clear ();
+    if (m_parameter_info)
+      {
+	delete m_parameter_info;
+      }
+  }
+
+  void
+  method_invoke_group::initialize_methods (const method_sig_list &sig_list)
+  {
     method_sig_node *sig = sig_list.method_sig;
     while (sig)
       {
@@ -78,23 +104,6 @@ namespace cubmethod
     DB_VALUE v;
     db_make_null (&v);
     m_result_vector.resize (sig_list.num_methods, v);
-    m_is_running = false;
-    m_parameter_info = nullptr;
-    m_is_for_scan = is_for_scan;
-  }
-
-  method_invoke_group::~method_invoke_group ()
-  {
-    end ();
-    for (method_invoke *method: m_method_vector)
-      {
-	delete method;
-      }
-    m_method_vector.clear ();
-    if (m_parameter_info)
-      {
-	delete m_parameter_info;
-      }
   }
 
   DB_VALUE &
@@ -137,13 +146,13 @@ namespace cubmethod
   bool
   method_invoke_group::is_running () const
   {
-    return m_is_running;
+    return m_status != status::IGS_IDLE;
   }
 
   bool
   method_invoke_group::is_for_scan () const
   {
-    return m_is_for_scan;
+    return m_type == type::IGT_SCAN;
   }
 
   db_parameter_info *
@@ -213,19 +222,22 @@ namespace cubmethod
 
 	if (error != NO_ERROR)
 	  {
-	    // if error is not interrupt reason, interrupt is not set
-	    m_rctx->set_interrupt_by_reason (error);
 	    break;
 	  }
       }
 
-    return error;
+    // check interrupt error
+    if (error != NO_ERROR )
+
+      {
+	return error;
+      }
   }
 
   void
   method_invoke_group::begin ()
   {
-    if (m_is_running == true)
+    if (m_status != status::IGS_IDLE)
       {
 	return;
       }
@@ -247,20 +259,16 @@ namespace cubmethod
 	  {
 	    if (m_connection->is_jvm_running ())
 	      {
-		m_rctx->set_interrupt_by_reason (ER_SP_CANNOT_CONNECT_JVM);
-		er_msg () ? set_error_msg (std::string (er_msg ())) : set_error_msg ("unknown");
-		er_clear ();
+		m_rctx->set_interrupt_error (ARG_FILE_LINE, ER_SP_CANNOT_CONNECT_JVM, 1, "connect ()");
 	      }
 	    else
 	      {
-		m_rctx->set_interrupt_by_reason (ER_SP_NOT_RUNNING_JVM);
+		m_rctx->set_interrupt_error (ARG_FILE_LINE, ER_SP_NOT_RUNNING_JVM, 0);
 	      }
-	    int error_reason = m_connection->is_jvm_running () ? ER_SP_CANNOT_CONNECT_JVM : ER_SP_NOT_RUNNING_JVM;
-	    m_rctx->set_interrupt_by_reason (error_reason);
 	  }
       }
 
-    m_is_running = true;
+    m_status = status::IGS_RUN;
   }
 
   int method_invoke_group::reset (bool is_end_query)
@@ -281,7 +289,7 @@ namespace cubmethod
   void
   method_invoke_group::end ()
   {
-    if (m_is_running == false)
+    if (m_status == status::IGS_IDLE)
       {
 	return;
       }
@@ -294,7 +302,7 @@ namespace cubmethod
     m_connection = nullptr;
 
     m_rctx->pop_stack (m_thread_p, this);
-    m_is_running = false;
+    m_status = status::IGS_IDLE;
   }
 
   query_cursor *
@@ -331,6 +339,12 @@ namespace cubmethod
     m_cursor_set.clear ();
   }
 
+  void
+  method_invoke_group::register_client_handler (int handler_id)
+  {
+    m_handler_set.insert (handler_id);
+  }
+
   std::string
   method_invoke_group::get_error_msg ()
   {
@@ -342,4 +356,17 @@ namespace cubmethod
   {
     m_err_msg = msg;
   }
+
+  runtime_context &
+  method_invoke_group::get_runtime_context ()
+  {
+    return *m_rctx;
+  }
+
+  error_handler &
+  method_invoke_group::get_error_handler ()
+  {
+    return m_err_handler;
+  }
+
 }	// namespace cubmethod

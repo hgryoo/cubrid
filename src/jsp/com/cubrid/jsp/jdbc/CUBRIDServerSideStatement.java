@@ -454,8 +454,6 @@ public class CUBRIDServerSideStatement implements Statement {
             throw CUBRIDServerSideJDBCErrorManager.createCUBRIDException(
                     CUBRIDServerSideJDBCErrorCode.ER_COMMUNICATION, e);
         }
-
-        return 0;
     }
 
     @Override

@@ -81,10 +81,10 @@ namespace cubmethod
 	do
 	  {
 	    // to check interrupt
-	    cubmethod::runtime_context *rctx = cubmethod::get_rctx (thread_p);
-	    if (rctx && rctx->is_interrupted ())
+	    runtime_context &rctx = m_group->get_runtime_context ();
+	    if (rctx.is_interrupted ())
 	      {
-		return rctx->get_interrupt_reason ();
+		return rctx.get_interrupt_reason ();
 	      }
 
 	    nbytes = jsp_readn (m_group->get_socket(), (char *) &start_code, (int) sizeof (int));
@@ -149,10 +149,10 @@ namespace cubmethod
     do
       {
 	// to check interrupt
-	cubmethod::runtime_context *rctx = cubmethod::get_rctx (thread_p);
-	if (rctx && rctx->is_interrupted ())
+	runtime_context &rctx = m_group->get_runtime_context ();
+	if (rctx.is_interrupted ())
 	  {
-	    return rctx->get_interrupt_reason ();
+	    return rctx.get_interrupt_reason ();
 	  }
 
 	nbytes = jsp_readn (m_group->get_socket(), (char *) &res_size, (int) sizeof (int));
@@ -267,7 +267,7 @@ namespace cubmethod
     value_unpacker.unpack (unpacker);
 
     const char *error_str = db_get_string (&error_msg);
-    m_group->set_error_msg (error_str ? std::string (error_str) : "");
+    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_EXECUTE_ERROR, 1, error_str ? error_str : "unknown error");
 
     db_value_clear (&error_value);
     db_value_clear (&error_msg);
@@ -358,13 +358,20 @@ namespace cubmethod
     if (m_group->get_db_parameter_info () == nullptr)
       {
 	int tran_index = LOG_FIND_THREAD_TRAN_INDEX (m_group->get_thread_entry());
-	db_parameter_info *parameter_info = new db_parameter_info ();
-
+	db_parameter_info *parameter_info = new (std::nothrow) db_parameter_info ();
+  if (parameter_info)
+  {
 	parameter_info->tran_isolation = logtb_find_isolation (tran_index);
 	parameter_info->wait_msec = logtb_find_wait_msecs (tran_index);
 	logtb_get_client_ids (tran_index, &parameter_info->client_ids);
 
 	m_group->set_db_parameter_info (parameter_info);
+  }
+  else
+  {
+    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, sizeof (db_parameter_info));
+    m_group->get_error_handler().set_error_dbms ();
+  }
       }
 
     db_parameter_info *parameter_info = m_group->get_db_parameter_info ();
@@ -374,7 +381,8 @@ namespace cubmethod
       }
     else
       {
-	error = mcon_send_data_to_java (m_group->get_socket(), METHOD_RESPONSE_ERROR, ER_FAILED, "unknown error");
+  // expected ER_OUT_OF_VIRTUAL_MEMORY
+	error = mcon_send_data_to_java (m_group->get_socket(), METHOD_RESPONSE_ERROR, m_group->get_error_handler().get_packable_error ());
       }
     return error;
   }
@@ -390,9 +398,29 @@ namespace cubmethod
     unpacker.unpack_all (sql, flag);
 
     error = method_send_data_to_client (&thread_ref, *m_header, code, sql, flag);
+
+    auto get_prepare_info = [&] (cubmem::block & b)
+    {
+      packing_unpacker unpacker (b.ptr, (size_t) b.dim);
+
+      int res_code;
+      unpacker.unpack_int (res_code);
+
+      if (res_code == METHOD_RESPONSE_SUCCESS)
+	{
+    prepare_info info;
+    info.unpack (unpacker);
+
+    m_group->register_client_handler (info.handle_id);
+	}
+
+        error = mcon_send_buffer_to_java (m_group->get_socket(), b);
+      return error;
+    };
+
     if (error == NO_ERROR)
       {
-	error = xs_receive (&thread_ref, m_group->get_socket (), bypass_block);
+	error = xs_receive (&thread_ref, get_prepare_info);
       }
     return error;
   }
@@ -459,7 +487,10 @@ namespace cubmethod
     query_cursor *cursor = m_group->get_cursor (qid);
     if (cursor == nullptr)
       {
-	error = mcon_send_data_to_java (m_group->get_socket (), METHOD_RESPONSE_ERROR, ER_FAILED, "unknown error");
+  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QPROC_UNKNOWN_QUERYID, 1, qid);
+  error_handler& err_handler = m_group->get_error_handler();
+  err_handler.set_error_dbms ();
+	error = mcon_send_data_to_java (m_group->get_socket (), METHOD_RESPONSE_ERROR, err_handler.get_packable_error ());
 	return error;
       }
 

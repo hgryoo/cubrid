@@ -54,7 +54,7 @@ namespace cubmethod
     int code;
     unpacker.unpack_all (id, code);
 
-    m_error_ctx.clear ();
+    m_error_handler.clear ();
 
     int error = NO_ERROR;
     switch (code)
@@ -89,6 +89,15 @@ namespace cubmethod
 	break;
       }
 
+  // set DBMS error, CAS error may overwritten
+  m_error_handler.set_error_dbms (false);
+  if (m_error_handler.has_error ())
+  {
+    mcon_clear_queue ();
+    error_packable packed_error = m_error_handler.get_packable_error ();
+    mcon_pack_and_queue (METHOD_RESPONSE_ERROR, packed_error);
+  }
+
 #if defined (CS_MODE)
     mcon_send_queue_data_to_server ();
 #else
@@ -122,8 +131,9 @@ namespace cubmethod
 	handler = new_query_handler ();
 	if (handler == nullptr)
 	  {
-	    // TODO: proper error code
-	    m_error_ctx.set_error (METHOD_CALLBACK_ER_NO_MORE_MEMORY, NULL, __FILE__, __LINE__);
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, sizeof (query_handler));
+      m_error_handler.set_error_dbms ();
+      return ER_FAILED;
 	  }
 	else
 	  {
@@ -131,21 +141,21 @@ namespace cubmethod
 	  }
       }
 
-    if (m_error_ctx.has_error())
-      {
-	return mcon_pack_and_queue (METHOD_RESPONSE_ERROR, m_error_ctx);
-      }
+    if (m_error_handler.has_error())
+     {
+  return ER_FAILED;
+     }
     else
-      {
+     {
 	// add to statement handler cache
 	if (is_cache_used == false)
 	  {
 	    m_sql_handler_map.emplace (sql, info.handle_id);
 	  }
 	info.handle_id = handler->get_id ();
-
-	return mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, info);
-      }
+  mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, info);
+	return NO_ERROR;
+     }
   }
 
   int
@@ -157,8 +167,7 @@ namespace cubmethod
     query_handler *handler = get_query_handler_by_id (request.handler_id);
     if (handler == nullptr)
       {
-	// TODO: proper error code
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_NO_MORE_MEMORY, NULL, __FILE__, __LINE__);
+	m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 	return ER_FAILED;
       }
 
@@ -172,13 +181,14 @@ namespace cubmethod
 	m_qid_handler_map[qid] = request.handler_id;
       }
 
-    if (m_error_ctx.has_error())
+    if (m_error_handler.has_error())
       {
-	return mcon_pack_and_queue (METHOD_RESPONSE_ERROR, m_error_ctx);
+	return ER_FAILED;
       }
     else
       {
-	return mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, info);
+  mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, info);
+	return NO_ERROR;
       }
   }
 
@@ -196,12 +206,13 @@ namespace cubmethod
 	make_outresult_info info;
 	query_handler->set_prepare_column_list_info (info.column_infos);
 	query_handler->set_qresult_info (info.qresult_info);
-	return mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, info);
+  mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, info);
+	return NO_ERROR;
       }
 
     /* unexpected error, should not be here */
-    m_error_ctx.set_error (METHOD_CALLBACK_ER_INTERNAL, NULL, __FILE__, __LINE__);
-    return mcon_pack_and_queue (METHOD_RESPONSE_ERROR, m_error_ctx);
+    m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
+    return ER_FAILED;
   }
 
   int
@@ -213,19 +224,19 @@ namespace cubmethod
     query_handler *handler = get_query_handler_by_id (handler_id);
     if (handler == nullptr)
       {
-	// TODO: proper error code
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_NO_MORE_MEMORY, NULL, __FILE__, __LINE__);
+	m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 	return ER_FAILED;
       }
 
     get_generated_keys_info info = handler->generated_keys ();
-    if (m_error_ctx.has_error())
+    if (m_error_handler.has_error())
       {
-	return mcon_pack_and_queue (METHOD_RESPONSE_ERROR, m_error_ctx);
+    return ER_FAILED;
       }
     else
       {
-	return mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, info);
+  mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, info);
+	return NO_ERROR;
       }
   }
 
@@ -238,11 +249,11 @@ namespace cubmethod
   {
     if (m_oid_handler == nullptr)
       {
-	m_oid_handler = new (std::nothrow) oid_handler (m_error_ctx);
+	m_oid_handler = new (std::nothrow) oid_handler (m_error_handler);
 	if (m_oid_handler == nullptr)
 	  {
-	    assert (false);
-	    m_error_ctx.set_error (METHOD_CALLBACK_ER_NO_MORE_MEMORY, NULL, __FILE__, __LINE__);
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, sizeof (oid_handler));
+      m_error_handler.set_error_dbms ();
 	  }
       }
 
@@ -252,19 +263,18 @@ namespace cubmethod
   int
   callback_handler::oid_get (packing_unpacker &unpacker)
   {
-    int error = NO_ERROR;
-
     oid_get_request request;
     request.unpack (unpacker);
 
     oid_get_info info = get_oid_handler()->oid_get (request.oid, request.attr_names);
-    if (m_error_ctx.has_error())
+    if (m_error_handler.has_error())
       {
-	return mcon_pack_and_queue (METHOD_RESPONSE_ERROR, m_error_ctx);
+	return ER_FAILED;
       }
     else
       {
-	return mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, info);
+  mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, info);
+	return NO_ERROR;
       }
   }
 
@@ -275,13 +285,14 @@ namespace cubmethod
     request.unpack (unpacker);
 
     int result = get_oid_handler()->oid_put (request.oid, request.attr_names, request.db_values);
-    if (m_error_ctx.has_error())
+    if (m_error_handler.has_error())
       {
-	return mcon_pack_and_queue (METHOD_RESPONSE_ERROR, m_error_ctx);
+	return ER_FAILED;
       }
     else
       {
-	return mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, result);
+  mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, result);
+	return NO_ERROR;
       }
   }
 
@@ -297,13 +308,14 @@ namespace cubmethod
     std::string res; // result for OID_CLASS_NAME
 
     int res_code = get_oid_handler()->oid_cmd (oid, cmd, res);
-    if (m_error_ctx.has_error())
+    if (m_error_handler.has_error())
       {
-	return mcon_pack_and_queue (METHOD_RESPONSE_ERROR, m_error_ctx);
+	return ER_FAILED;
       }
     else
       {
-	return mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, res_code, res);
+	mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, res_code, res);
+  return NO_ERROR;
       }
   }
 
@@ -321,13 +333,14 @@ namespace cubmethod
     int result = m_oid_handler->collection_cmd (request.oid, request.command, request.index, request.attr_name,
 		 request.value);
 
-    if (m_error_ctx.has_error())
+    if (m_error_handler.has_error())
       {
-	return mcon_pack_and_queue (METHOD_RESPONSE_ERROR, m_error_ctx);
+	return ER_FAILED;
       }
     else
       {
-	return mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, result);
+  mcon_pack_and_queue (METHOD_RESPONSE_SUCCESS, result);
+	return NO_ERROR;
       }
   }
 
@@ -349,7 +362,7 @@ namespace cubmethod
 	  }
       }
 
-    query_handler *handler = new query_handler (m_error_ctx, idx);
+    query_handler *handler = new query_handler (m_error_handler, idx);
     if (handler == nullptr)
       {
 	assert (false);
@@ -437,6 +450,16 @@ namespace cubmethod
       }
 
     return nullptr;
+  }
+
+//////////////////////////////////////////////////////////////////////////
+// Global method callback handler interface
+//////////////////////////////////////////////////////////////////////////
+
+  error_handler *
+  callback_handler::get_error_handler ()
+  {
+    return &m_error_handler;
   }
 
   //////////////////////////////////////////////////////////////////////////

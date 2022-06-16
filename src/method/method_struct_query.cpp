@@ -23,9 +23,6 @@
 #include "method_struct_invoke.hpp"
 #include "method_struct_value.hpp"
 #include "method_query_util.hpp"
-#if defined (CS_MODE)
-#include "method_schema_info.hpp"
-#endif
 
 namespace cubmethod
 {

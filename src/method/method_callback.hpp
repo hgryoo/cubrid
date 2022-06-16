@@ -32,7 +32,7 @@
 
 #include "method_connection_cl.hpp"
 #include "method_def.hpp"
-#include "method_error.hpp"
+#include "method_error_handler.hpp"
 #include "method_oid_handler.hpp"
 #include "method_query_handler.hpp"
 #include "method_struct_query.hpp"
@@ -77,6 +77,7 @@ namespace cubmethod
       query_handler *get_query_handler_by_sql (const std::string &sql); /* used for statement handler cache */
 
       oid_handler *get_oid_handler ();
+      error_handler *get_error_handler ();
 
     private:
       /* handle related to query */
@@ -98,7 +99,7 @@ namespace cubmethod
       std::multimap <std::string, int> m_sql_handler_map;
       std::unordered_map <uint64_t, int> m_qid_handler_map;
 
-      error_context m_error_ctx;
+      error_handler m_error_handler;
 
       std::vector<query_handler *> m_query_handlers;
       oid_handler *m_oid_handler;

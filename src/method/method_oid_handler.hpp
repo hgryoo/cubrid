@@ -28,7 +28,7 @@
 #include <vector>
 
 #include "dbtype_def.h"
-#include "method_error.hpp"
+#include "method_error_handler.hpp"
 #include "method_struct_oid_info.hpp"
 
 namespace cubmethod
@@ -70,8 +70,8 @@ namespace cubmethod
   class oid_handler
   {
     public:
-      oid_handler (error_context &ctx)
-	: m_error_ctx (ctx)
+      oid_handler (error_handler &err_handler)
+	: m_error_handler (err_handler)
       {
 	//
       }
@@ -96,7 +96,7 @@ namespace cubmethod
       int col_seq_put (DB_COLLECTION *col, int seq_index, DB_VALUE *ele_val);
 
     private:
-      error_context &m_error_ctx;
+      error_handler &m_error_handler;
   };
 
 } // namespace cubmethod

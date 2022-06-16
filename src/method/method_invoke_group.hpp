@@ -39,6 +39,7 @@
 
 #include "method_connection_pool.hpp" /* cubmethod::connection */
 #include "method_def.hpp"	/* method_sig_node */
+#include "method_error_handler.hpp"
 #include "method_runtime_context.hpp" /* cubmethod::runtime_context */
 #include "method_struct_parameter_info.hpp" /* db_parameter_info */
 #include "mem_block.hpp"	/* cubmem::block, cubmem::extensible_block */
@@ -72,6 +73,19 @@ namespace cubmethod
 
       ~method_invoke_group ();
 
+      enum class status
+      {
+	IGS_IDLE,
+	IGS_WAIT,
+	IGS_RUN
+      };
+
+      enum class type
+      {
+  IGT_FOLD_CONSTANT,
+  IGT_SCAN
+      };
+
       void begin ();
       int prepare (std::vector<std::reference_wrapper<DB_VALUE>> &arg_base);
       int execute (std::vector<std::reference_wrapper<DB_VALUE>> &arg_base);
@@ -95,27 +109,41 @@ namespace cubmethod
       void register_returning_cursor (QUERY_ID query_id);
       void deregister_returning_cursor (QUERY_ID query_id);
 
-      // error
+      // client query handler
+      void register_client_handler (int handler_id);
+
+      // error handling
+      template<typename... Args>
+      void on_error (const char *file_name, const int line_no, int err_id, int num_args, Args &&... args);
+
       std::string get_error_msg ();
       void set_error_msg (const std::string &msg);
       db_parameter_info *get_db_parameter_info () const;
 
       void set_db_parameter_info (db_parameter_info *param_info);
 
+      runtime_context& get_runtime_context ();
+      error_handler &get_error_handler ();
+
     private:
+      void initialize_methods (const method_sig_list &sig_list);
       void destory_all_cursors ();
 
       runtime_context *m_rctx;
-      bool m_is_running;
-      bool m_is_for_scan;
+
+      METHOD_GROUP_ID m_id;
+      status m_status;
+      type m_type;
 
       connection *m_connection;
       std::queue<cubmem::extensible_block> m_data_queue;
 
       std::unordered_set <std::uint64_t> m_cursor_set;
+      std::unordered_set <int> m_handler_set;
+
       std::string m_err_msg;
 
-      METHOD_GROUP_ID m_id;
+      error_handler m_err_handler;
 
       db_parameter_info *m_parameter_info;
       cubthread::entry *m_thread_p;

@@ -325,7 +325,7 @@ set(METHOD_SOURCES
   ${METHOD_DIR}/method_connection_sr.cpp
   ${METHOD_DIR}/method_connection_pool.cpp
   ${METHOD_DIR}/method_def.cpp
-  ${METHOD_DIR}/method_error.cpp
+  ${METHOD_DIR}/method_error_handler.cpp
   ${METHOD_DIR}/method_scan.cpp
   ${METHOD_DIR}/method_invoke_builtin.cpp
   ${METHOD_DIR}/method_invoke_java.cpp

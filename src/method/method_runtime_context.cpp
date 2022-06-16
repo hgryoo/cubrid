@@ -29,11 +29,11 @@ namespace cubmethod
 // Global interface
 //////////////////////////////////////////////////////////////////////////
 
-  runtime_context *get_rctx (cubthread::entry *thread_p)
+  runtime_context& get_rctx (cubthread::entry *thread_p)
   {
     method_runtime_context *rctx = nullptr;
     session_get_method_runtime_context (thread_p, rctx);
-    return rctx;
+    return *rctx;
   }
 
 //////////////////////////////////////////////////////////////////////////
@@ -42,13 +42,13 @@ namespace cubmethod
 
   runtime_context::runtime_context ()
     : m_mutex ()
+    , m_level (-1)
     , m_group_stack {}
     , m_returning_cursors {}
     , m_group_map {}
     , m_cursor_map {}
-    , m_is_interrupted (false)
     , m_interrupt_reason (NO_ERROR)
-    , m_is_running (false)
+    , m_status (status::RCS_IDLE)
   {
     //
   }
@@ -77,8 +77,13 @@ namespace cubmethod
   {
     std::unique_lock<std::mutex> ulock (m_mutex);
 
-    m_is_running = true;
+    if (m_group_stack.empty ())
+      {
+	m_status = status::RCS_RUN;
+      }
+
     m_group_stack.push_back (group->get_id ());
+    ++m_level;
   }
 
   void
@@ -86,6 +91,7 @@ namespace cubmethod
   {
     std::unique_lock<std::mutex> ulock (m_mutex);
 
+    m_level--;
     if (claimed->is_for_scan () && m_group_stack.back() != claimed->get_id ())
       {
 	// push deferred
@@ -119,10 +125,9 @@ namespace cubmethod
 
     if (m_group_stack.empty())
       {
-	// reset interrupt state
-	m_is_interrupted = false;
+	// reset state
 	m_interrupt_reason = NO_ERROR;
-	m_is_running = false;
+	m_status = status::RCS_IDLE;
 
 	// notify m_group_stack becomes empty ();
 	ulock.unlock ();
@@ -152,17 +157,27 @@ namespace cubmethod
   }
 
   void
-  runtime_context::set_interrupt_by_reason (int reason)
+  runtime_context::set_interrupt_error (const char *file_name, const int line_no, int err_id, int num_args, ...)
   {
-    switch (reason)
+    switch (err_id)
       {
+      /* no arg */
       case ER_INTERRUPTED:
       case ER_SP_TOO_MANY_NESTED_CALL:
       case ER_NET_SERVER_SHUTDOWN:
       case ER_SP_NOT_RUNNING_JVM:
+
+      /* 1 arg */
       case ER_SP_CANNOT_CONNECT_JVM:
-	m_is_interrupted = true;
-	m_interrupt_reason = reason;
+      case ER_SP_NETWORK_ERROR:
+      case ER_OUT_OF_VIRTUAL_MEMORY:
+      {
+  va_list ap;
+  va_start (ap, num_args);
+  m_status = status::RCS_INTERRUPT;
+  m_interrupt_error_handler.set_error_dbms (file_name, line_no, err_id, num_args, ap);
+  va_end (ap);
+      }
 	break;
       default:
 	/* do nothing */
@@ -171,15 +186,22 @@ namespace cubmethod
   }
 
   bool
-  runtime_context::is_interrupted ()
+  runtime_context::is_interrupted () const
   {
-    return m_is_interrupted;
+    return m_status == status::RCS_INTERRUPT;
   }
 
   int
   runtime_context::get_interrupt_reason ()
   {
-    return m_interrupt_reason;
+    if (m_interrupt_error_handler.has_error ())
+    {
+      return m_interrupt_error_handler.get_error ().err_id;
+    }
+    else
+    {
+      return NO_ERROR;
+    }
   }
 
   void
@@ -201,9 +223,9 @@ namespace cubmethod
   }
 
   bool
-  runtime_context::is_running ()
+  runtime_context::is_running () const
   {
-    return m_is_running;
+    return m_status == status::RCS_RUN;
   }
 
   query_cursor *
@@ -344,4 +366,19 @@ namespace cubmethod
     m_cursor_map.clear ();
     m_returning_cursors.clear ();
   }
+
+  void 
+  runtime_context::handle_error ()
+  {
+    // interrupt error code is already set
+    if (is_interrupted ())
+    {
+
+    }
+
+    method_invoke_group *current_top = top_stack ();
+
+
+  }
+
 } // cubmethod

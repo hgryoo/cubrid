@@ -28,6 +28,14 @@ namespace cubmethod
     return s_data_queue;
   }
 
+  int 
+  mcon_clear_queue ()
+  {
+    while (mcon_get_data_queue().empty () == false)
+    {
+      mcon_get_data_queue().pop ();
+    }
+  }
 #if defined (CS_MODE)
   static method_server_conn_info s_conn_info [METHOD_MAX_RECURSION_DEPTH + 1];
 

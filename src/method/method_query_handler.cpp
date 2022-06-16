@@ -21,8 +21,8 @@
 #include "db.h"
 #include "dbi.h"
 #include "dbtype.h"
+
 #include "method_query_util.hpp"
-#include "method_schema_info.hpp"
 #include "object_primitive.h"
 
 /* from jsp_cl.c */
@@ -31,8 +31,8 @@ extern void jsp_unset_prepare_call ();
 
 namespace cubmethod
 {
-  query_handler::query_handler (error_context &ctx, int id)
-    : m_id (id), m_error_ctx (ctx)
+  query_handler::query_handler (error_handler &err_handler, int id)
+    : m_id (id), m_error_handler (err_handler)
   {
     m_is_prepared = false;
     m_use_plan_cache = false;
@@ -249,7 +249,7 @@ namespace cubmethod
     if (qres == NULL)
       {
 	// TODO: proper error code
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_INTERNAL, NULL, __FILE__, __LINE__);
+	m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 	error = ER_FAILED;
       }
     else
@@ -267,7 +267,7 @@ namespace cubmethod
 	else
 	  {
 	    // TODO: proper error code
-	    m_error_ctx.set_error (METHOD_CALLBACK_ER_INTERNAL, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 	    error = ER_FAILED;
 	  }
       }
@@ -302,7 +302,7 @@ namespace cubmethod
 	if (seq == NULL)
 	  {
 	    // TODO: proper error code
-	    m_error_ctx.set_error (METHOD_CALLBACK_ER_INTERNAL, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 	    return ER_FAILED;
 	  }
 	tuple_count = db_col_size (seq);
@@ -315,7 +315,7 @@ namespace cubmethod
     else
       {
 	// TODO: proper error code
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_INTERNAL, NULL, __FILE__, __LINE__);
+	m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 	return ER_FAILED;
       }
 
@@ -327,7 +327,7 @@ namespace cubmethod
 	    if (error < 0)
 	      {
 		// TODO: proper error code
-		m_error_ctx.set_error (METHOD_CALLBACK_ER_INTERNAL, NULL, __FILE__, __LINE__);
+		m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 		return ER_FAILED;
 	      }
 	  }
@@ -336,7 +336,7 @@ namespace cubmethod
 	if (error < 0)
 	  {
 	    // TODO: proper error code
-	    m_error_ctx.set_error (METHOD_CALLBACK_ER_INTERNAL, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 	    return ER_FAILED;
 	  }
       }
@@ -354,7 +354,7 @@ namespace cubmethod
     if (error < 0)
       {
 	// TODO: proper error code
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_INTERNAL, NULL, __FILE__, __LINE__);
+	m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 	return ER_FAILED;
       }
 
@@ -368,7 +368,7 @@ namespace cubmethod
 	if (error < 0)
 	  {
 	    // TODO: proper error code
-	    m_error_ctx.set_error (METHOD_CALLBACK_ER_INTERNAL, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 	    return ER_FAILED;
 	  }
 
@@ -376,7 +376,7 @@ namespace cubmethod
 	if (error < 0)
 	  {
 	    // TODO: proper error code
-	    m_error_ctx.set_error (METHOD_CALLBACK_ER_INTERNAL, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 	    return ER_FAILED;
 	  }
 
@@ -384,7 +384,7 @@ namespace cubmethod
 	if (error < 0)
 	  {
 	    // TODO: proper error code
-	    m_error_ctx.set_error (METHOD_CALLBACK_ER_INTERNAL, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INTERNAL);
 	    return ER_FAILED;
 	  }
       }
@@ -532,7 +532,7 @@ namespace cubmethod
 
 	if (error != NO_ERROR)
 	  {
-	    m_error_ctx.set_error (error, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_dbms ();
 	    return ER_FAILED;
 	  }
       }
@@ -544,7 +544,7 @@ namespace cubmethod
     jsp_unset_prepare_call ();
     if (n < 0)
       {
-	m_error_ctx.set_error (n, NULL, __FILE__, __LINE__);
+	m_error_handler.set_error_dbms ();
 	return ER_FAILED;
       }
 
@@ -624,7 +624,7 @@ namespace cubmethod
 	m_session = db_open_buffer (m_sql_stmt.c_str ());
 	if (!m_session)
 	  {
-	    m_error_ctx.set_error (db_error_code (), db_error_string (1), __FILE__, __LINE__);
+	    m_error_handler.set_error_dbms ();
 	    return ER_FAILED;
 	  }
       }
@@ -660,7 +660,7 @@ namespace cubmethod
 	stmt_id = db_compile_statement (m_session);
 	if (stmt_id < 0)
 	  {
-	    m_error_ctx.set_error (stmt_id, NULL, __FILE__, __LINE__);
+	    m_error_handler.set_error_dbms ();
 	    return ER_FAILED;
 	  }
       }
@@ -677,7 +677,7 @@ namespace cubmethod
     int n = db_execute_and_keep_statement (m_session, stmt_id, &result);
     if (n < 0)
       {
-	m_error_ctx.set_error (n, NULL, __FILE__, __LINE__);
+	m_error_handler.set_error_dbms ();
 	return ER_FAILED;
       }
     else if (result != NULL)
@@ -739,14 +739,14 @@ namespace cubmethod
     m_session = db_open_buffer (m_sql_stmt.c_str());
     if (!m_session)
       {
-	m_error_ctx.set_error (db_error_code (), db_error_string (1), __FILE__, __LINE__);
+	m_error_handler.set_error_dbms ();
 	return ER_FAILED;
       }
 
     if (db_check_single_query (m_session) == ER_IT_MULTIPLE_STATEMENT)
       {
 	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_IT_MULTIPLE_STATEMENT, 0);
-	m_error_ctx.set_error (db_error_code (), db_error_string (1), __FILE__, __LINE__);
+	m_error_handler.set_error_dbms ();
 	er_clear ();
 	return ER_IT_MULTIPLE_STATEMENT;
       }
@@ -763,7 +763,6 @@ namespace cubmethod
       }
 
     char stmt_type = CUBRID_STMT_NONE;
-    int num_markers = 0;
     int stmt_id = db_compile_statement (m_session);
     if (stmt_id < 0)
       {
@@ -774,7 +773,7 @@ namespace cubmethod
 	  }
 	else
 	  {
-	    m_error_ctx.set_error (stmt_id, db_error_string (1), __FILE__, __LINE__);
+	    m_error_handler.set_error_dbms ();
 	    return ER_FAILED;
 	  }
 	m_is_prepared = false;
@@ -805,7 +804,7 @@ namespace cubmethod
     int error = m_prepare_call_info.set_is_first_out (sql_stmt_copy);
     if (error != NO_ERROR)
       {
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_INVALID_CALL_STMT, NULL, __FILE__, __LINE__);
+  m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INVALID_CALL_STMT);
 	return error;
       }
 
@@ -813,21 +812,22 @@ namespace cubmethod
     char stmt_type = get_stmt_type (sql_stmt_copy);
     if (stmt_type != CUBRID_STMT_CALL)
       {
-	m_error_ctx.set_error (METHOD_CALLBACK_ER_INVALID_CALL_STMT, NULL, __FILE__, __LINE__);
-	return ER_FAILED;
+
+  m_error_handler.set_error_cas (ARG_FILE_LINE, error_code_cas::METHOD_ER_INVALID_CALL_STMT);
+  return ER_FAILED;
       }
 
     m_session = db_open_buffer (sql_stmt_copy.c_str());
     if (!m_session)
       {
-	m_error_ctx.set_error (db_error_code(), db_error_string (1), __FILE__, __LINE__);
+	m_error_handler.set_error_dbms ();
 	return ER_FAILED;
       }
 
     if (db_check_single_query (m_session) == ER_IT_MULTIPLE_STATEMENT)
       {
 	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_IT_MULTIPLE_STATEMENT, 0);
-	m_error_ctx.set_error (db_error_code (), db_error_string (1), __FILE__, __LINE__);
+	m_error_handler.set_error_dbms ();
 	er_clear ();
 	return ER_IT_MULTIPLE_STATEMENT;
       }
@@ -835,7 +835,7 @@ namespace cubmethod
     int stmt_id = db_compile_statement (m_session);
     if (stmt_id < 0)
       {
-	m_error_ctx.set_error (stmt_id, db_error_string (1), __FILE__, __LINE__);
+	m_error_handler.set_error_dbms ();
 	return ER_FAILED;
       }
 
@@ -897,7 +897,7 @@ namespace cubmethod
 	DB_QUERY_TYPE *db_column_info = db_get_query_type_list (m_session, stmt_id);
 	if (db_column_info == NULL)
 	  {
-	    m_error_ctx.set_error (db_error_code(), db_error_string (1), __FILE__, __LINE__);
+	    m_error_handler.set_error_dbms ();
 	  }
 
 	int num_cols = 0;
@@ -1038,7 +1038,7 @@ namespace cubmethod
 	    cls_status = db_has_modified_class (m_session, stmt_id);
 	    if (cls_status == DB_CLASS_MODIFIED)
 	      {
-		m_error_ctx.set_error (METHOD_CALLBACK_ER_STMT_POOLING, NULL, __FILE__, __LINE__);
+    assert (false); // should not be reach here
 		return err_code;
 	      }
 	    else if (cls_status == DB_CLASS_ERROR)
@@ -1049,11 +1049,9 @@ namespace cubmethod
 		  {
 		    err_code = ER_FAILED;
 		  }
-		m_error_ctx.set_error (err_code, NULL, __FILE__, __LINE__);
 		return err_code;
 	      }
 	  }
-	m_error_ctx.set_error (err_code, NULL, __FILE__, __LINE__);
       }
 
     return err_code;

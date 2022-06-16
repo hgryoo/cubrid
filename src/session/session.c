@@ -3220,7 +3220,8 @@ session_stop_attached_threads (void *session_arg)
     {
       if (er_has_error ())
 	{
-	  session->method_rctx_p->set_interrupt_by_reason (er_errid ());
+    // Assuming that ER_NET_SERVER_SHUTDOWN
+	  session->method_rctx_p->set_interrupt_error (ARG_FILE_LINE, er_errid (), 0);
 	}
       session->method_rctx_p->wait_for_interrupt ();
 

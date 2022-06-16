@@ -60,6 +60,8 @@ namespace cubmethod
     return NO_ERROR;
   }
 
+  int mcon_clear_queue ();
+
 #if defined (CS_MODE)
   //////////////////////////////////////////////////////////////////////////
   // Interface to communicate with DB Server

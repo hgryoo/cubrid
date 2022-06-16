@@ -2832,11 +2832,8 @@ logtb_is_interrupted_tdes (THREAD_ENTRY * thread_p, LOG_TDES * tdes, bool clear,
 #endif
 	}
 
-      cubmethod::runtime_context * rctx = cubmethod::get_rctx (thread_p);
-      if (rctx)
-	{
-	  rctx->set_interrupt_by_reason (ER_INTERRUPTED);
-	}
+    cubmethod::runtime_context& rctx = cubmethod::get_rctx (thread_p);
+	  rctx.set_interrupt_error (ARG_FILE_LINE, ER_INTERRUPTED, 0);
     }
   else if (interrupt == false && tdes->query_timeout > 0)
     {

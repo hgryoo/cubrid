@@ -10368,14 +10368,10 @@ smethod_invoke_fold_constants (THREAD_ENTRY * thread_p, unsigned int rid, char *
   db_make_null (&ret_value);
   int error_code = xmethod_invoke_fold_constants (thread_p, sig_list, ref_args, ret_value);
 
-  cubmethod::runtime_context * rctx = cubmethod::get_rctx (thread_p);
-  cubmethod::method_invoke_group * top_on_stack = NULL;
-  if (rctx)
-    {
-      top_on_stack = rctx->top_stack ();
-    }
+  cubmethod::runtime_context& rctx = cubmethod::get_rctx (thread_p);
+  cubmethod::method_invoke_group * top_on_stack = rctx.top_stack ();
 
-  if (rctx == NULL || top_on_stack == NULL)
+  if (top_on_stack == NULL)
     {
       /* might be interrupted and session is already freed */
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERRUPTED, 0);
@@ -10414,9 +10410,9 @@ smethod_invoke_fold_constants (THREAD_ENTRY * thread_p, unsigned int rid, char *
 	{
 	  err_msg.assign (top_on_stack->get_error_msg ());
 	}
-      if (rctx->is_interrupted ())
+      if (rctx.is_interrupted ())
 	{
-	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, rctx->get_interrupt_reason (), 0);
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, rctx.get_interrupt_reason (), 0);
 	}
       else
 	{

@@ -32,8 +32,11 @@
 #include <deque>
 #include <condition_variable>
 
+#include "error_context.hpp"
+
 #include "method_connection_pool.hpp"
 #include "method_def.hpp"
+#include "method_error_handler.hpp"
 
 // thread_entry.hpp
 namespace cubthread
@@ -58,6 +61,19 @@ namespace cubmethod
       runtime_context ();
       ~runtime_context ();
 
+      runtime_context (runtime_context &&other) = delete; // Not MoveConstructible
+      runtime_context (const runtime_context &copy) = delete; // Not CopyConstructible
+
+      runtime_context &operator= (runtime_context &&other) = delete; // Not MoveAssignable
+      runtime_context &operator= (const runtime_context &copy) = delete; // Not CopyAssignable
+
+      enum class status
+      {
+	RCS_IDLE,
+	RCS_RUN,
+	RCS_INTERRUPT
+      };
+
       query_cursor *create_cursor (cubthread::entry *thread_p, QUERY_ID query_id, bool oid_included = false);
       query_cursor *get_cursor (cubthread::entry *thread_p, QUERY_ID query_id);
       void destroy_cursor (cubthread::entry *thread_p, QUERY_ID query_id);
@@ -74,11 +90,16 @@ namespace cubmethod
       void pop_stack (cubthread::entry *thread_p, method_invoke_group *claimed);
       method_invoke_group *top_stack ();
 
-      void set_interrupt_by_reason (int reason);
-      bool is_interrupted ();
+      void set_interrupt_error (const char *file_name, const int line_no, int err_id, int num_args, ...);
       int get_interrupt_reason ();
       void wait_for_interrupt ();
-      bool is_running ();
+
+      // status
+      bool is_interrupted () const;
+      bool is_running () const;
+
+      // error handling
+      void handle_error ();
 
     private:
       void destroy_all_groups ();
@@ -87,6 +108,7 @@ namespace cubmethod
       std::mutex m_mutex;
       std::condition_variable m_cond_var;
 
+      int m_level;
       std::deque <METHOD_GROUP_ID> m_group_stack; // runtime stack
       std::unordered_set <QUERY_ID> m_returning_cursors;
 
@@ -95,13 +117,15 @@ namespace cubmethod
 
       std::deque <METHOD_GROUP_ID> m_deferred_free_stack;
 
-      bool m_is_interrupted;
       int m_interrupt_reason;
-      bool m_is_running;
+      std::vector <std::string> m_interrupt_reason_msg;
+
+      error_handler m_interrupt_error_handler;
+      status m_status;
   };
 
   /* global interface */
-  runtime_context *get_rctx (cubthread::entry *thread_p);
+  runtime_context& get_rctx (cubthread::entry *thread_p);
 } // cubmethod
 
 // alias declaration for legacy C files

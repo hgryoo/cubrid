@@ -47,7 +47,7 @@ namespace cubscan
 
       if (m_method_group == nullptr) // signature is not initialized
 	{
-	  m_method_group = cubmethod::get_rctx (thread_p)->create_invoke_group (thread_p, *sig_list, true);
+	  m_method_group = cubmethod::get_rctx (thread_p).create_invoke_group (thread_p, *sig_list, true);
 	}
 
       if (m_list_id == nullptr)
@@ -163,19 +163,19 @@ namespace cubscan
       else if (scan_code == S_ERROR)
 	{
 	  // handle error
-	  cubmethod::runtime_context *rctx = cubmethod::get_rctx (m_thread_p);
-	  if (rctx->is_interrupted ())
+	  cubmethod::runtime_context &rctx = cubmethod::get_rctx (m_thread_p);
+	  if (rctx.is_interrupted ())
 	    {
-	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, rctx->get_interrupt_reason (), 0);
+	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, rctx.get_interrupt_reason (), 0);
 	    }
 	  else
 	    {
-	      cubmethod::method_invoke_group *top_on_stack = rctx->top_stack ();
+	      cubmethod::method_invoke_group *top_on_stack = rctx.top_stack ();
 	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_EXECUTE_ERROR, 1, top_on_stack->get_error_msg ().c_str ());
 	    }
 	}
 
-      // clear
+      // clear 
       pr_clear_value_vector (m_arg_vector);
 
       return scan_code;
