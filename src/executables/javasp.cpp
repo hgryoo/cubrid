@@ -95,25 +95,6 @@ static int javasp_get_server_info (const std::string &db_name, JAVASP_SERVER_INF
 static int javasp_check_argument (int argc, char *argv[], std::string &command, std::string &db_name);
 static int javasp_check_database (const std::string &db_name, std::string &db_path);
 
-static JAVASP_SERVER_INFO current_jsp_info = {-1, -1};
-static FILE *locked_f = NULL;
-
-void
-jvm_cleanup (int sig)
-{
-  if (current_jsp_info.pid != -1 && !javasp_is_terminated_process (current_jsp_info.pid))
-    {
-      javasp_terminate_process (current_jsp_info.pid);
-    }
-
-  if (locked_f)
-    {
-      fclose (locked_f);
-    }
-
-  exit (1);
-}
-
 /*
  * main() - javasp main function
  */
@@ -129,13 +110,6 @@ main (int argc, char *argv[])
   FARPROC jsp_old_hook = NULL;
 #else
   if (os_set_signal_handler (SIGPIPE, SIG_IGN) == SIG_ERR)
-    {
-      return ER_GENERIC_ERROR;
-    }
-
-  if (os_set_signal_handler (SIGABRT, jvm_cleanup) == SIG_ERR
-      || os_set_signal_handler (SIGINT, jvm_cleanup) == SIG_ERR
-      || os_set_signal_handler (SIGTERM, jvm_cleanup) == SIG_ERR)
     {
       return ER_GENERIC_ERROR;
     }
@@ -340,20 +314,12 @@ javasp_start_server (const JAVASP_SERVER_INFO jsp_info, const std::string &db_na
 
       if (status == NO_ERROR)
 	{
-	  current_jsp_info.pid = getpid();
-	  current_jsp_info.port = jsp_server_port ();
+	  JAVASP_SERVER_INFO jsp_new_info { getpid(), jsp_server_port () };
 
 	  javasp_unlink_info (db_name.c_str ());
-	  if ((javasp_open_info_dir () && javasp_write_info (db_name.c_str (), current_jsp_info, true)))
+	  if ((javasp_open_info_dir () && javasp_write_info (db_name.c_str (), jsp_new_info, true)))
 	    {
 	      /* succeed */
-
-	      /*
-	      locked_f = javasp_open_info (db_name.c_str (), "w+");
-	      #if !defined (WINDOWS)
-	      flock (fileno (locked_f), LOCK_SH);
-	      #endif
-	      */
 	    }
 	  else
 	    {
