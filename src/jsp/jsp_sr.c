@@ -516,7 +516,7 @@ jsp_start_server (const char *db_name, const char *path, int port)
   char classpath[PATH_MAX + 32] = { 0 };
   char logging_prop[PATH_MAX + 32] = { 0 };
   char option_debug[70];
-  char debug_flag[] = "-Xdebug";
+  char debug_flag[] = "-Xrs -Xdebug";
   char debug_jdwp[] = "-agentlib:jdwp=transport=dt_socket,server=y,address=%d,suspend=n";
   const char *envroot;
   const char *envtmp;
