@@ -193,8 +193,8 @@ public class ExecuteThread extends Thread {
                         /* the following request codes are for javasp utility */
                     case REQ_CODE_UTIL_PING:
                         {
-                            String ping = Server.getServerName();
-                            output.writeInt(ping.length());
+                            byte[] ping = Server.getServerName().getBytes();
+                            output.writeInt(ping.length);
                             output.writeBytes(ping);
                             output.flush();
                             break;
