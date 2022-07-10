@@ -195,7 +195,7 @@ public class ExecuteThread extends Thread {
                         {
                             byte[] ping = Server.getServerName().getBytes();
                             output.writeInt(ping.length);
-                            output.writeBytes(ping, 0, ping.length);
+                            output.write(ping, 0, ping.length);
                             output.flush();
                             break;
                         }
