@@ -197,6 +197,7 @@ public class ExecuteThread extends Thread {
                             output.writeInt(ping.length);
                             output.write(ping, 0, ping.length);
                             output.flush();
+                            Thread.currentThread().interrupt();
                             break;
                         }
                     case REQ_CODE_UTIL_STATUS:
