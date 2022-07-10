@@ -180,9 +180,11 @@ main (int argc, char *argv[])
 	  }
 
 	// check process is running
-	if (jsp_info.pid == -1 || javasp_is_terminated_process (jsp_info.pid) == false)
+	if (jsp_info.pid == -1 || javasp_is_terminated_process (jsp_info.pid) == true)
 	  {
-	    status = ER_GENERIC_ERROR;
+	    // NO_CONNECTION
+	    javasp_reset_info (db_name.c_str ());
+	    goto exit;
 	  }
 
 	char buffer[JAVASP_PING_LEN] = {0};
@@ -197,7 +199,7 @@ main (int argc, char *argv[])
 	  }
 	else
 	  {
-	    fprintf (stdout, "NO_CONNECTION");
+	    goto exit;
 	  }
 
 	return status;
