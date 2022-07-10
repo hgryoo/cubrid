@@ -120,6 +120,7 @@ public class ExecuteThread extends Thread {
             output.close();
             client.close();
         } catch (IOException e) {
+            e.printStackTrace();
         }
 
         client = null;
