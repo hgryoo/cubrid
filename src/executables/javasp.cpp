@@ -35,7 +35,6 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/socket.h>
-#include <sys/file.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
@@ -455,7 +454,7 @@ exit:
 static int
 javasp_ping_server (const int server_port, const char *db_name, char *buf)
 {
-  OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_request;
+  OR_ALIGNED_BUF (OR_INT_SIZE * 4) a_request;
   char *request = OR_ALIGNED_BUF_START (a_request);
   char *ptr = NULL;
   SOCKET socket = INVALID_SOCKET;
@@ -465,9 +464,11 @@ javasp_ping_server (const int server_port, const char *db_name, char *buf)
     {
       ptr = or_pack_int (request, OR_INT_SIZE);
       ptr = or_pack_int (ptr, SP_CODE_UTIL_PING);
+      ptr = or_pack_int (ptr, OR_INT_SIZE);
+      ptr = or_pack_int (ptr, SP_CODE_UTIL_TERMINATE_THREAD);
 
-      int nbytes = jsp_writen (socket, request, OR_INT_SIZE * 2);
-      if (nbytes != OR_INT_SIZE * 2)
+      int nbytes = jsp_writen (socket, request, OR_INT_SIZE * 4);
+      if (nbytes != OR_INT_SIZE * 4)
 	{
 	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_NETWORK_ERROR, 1, nbytes);
 	  goto exit;

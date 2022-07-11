@@ -139,8 +139,6 @@ typedef jint (*CREATE_VM_FUNC) (JavaVM **, void **, void *);
 	(ENV)->ReleaseStringUTFChars(JSTRING, CSTRING)
 #define JVM_GetStringUTFLength(ENV, STRING)	\
 	(ENV)->GetStringUTFLength(STRING)
-#define JVM_GetJavaVM(ENV, JVM)	\
-	(ENV)->GetJavaVM(JVM)
 
 static JavaVM *jvm = NULL;
 static jint sp_port = -1;
