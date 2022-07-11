@@ -272,7 +272,6 @@ public class ExecuteThread extends Thread {
                 }
             }
         }
-        closeSocket();
     }
 
     private int listenCommand() throws Exception {
