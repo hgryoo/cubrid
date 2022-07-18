@@ -210,6 +210,7 @@ main (int argc, char *argv[])
 	status = javasp_start_server (jsp_info, db_name, pathname);
 	if (status == NO_ERROR)
 	  {
+      
 	    while (true)
 	      {
 		SLEEP_MILISEC (0, 100);

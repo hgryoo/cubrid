@@ -80,6 +80,7 @@ public class Server {
                 udsSocketListener = new ListenerThread(udsServerSocket);
             } catch (Exception e) {
                 log(e);
+                System.exit (0);
             }
         }
 
@@ -91,6 +92,7 @@ public class Server {
         } catch (Exception e) {
             log(e);
             e.printStackTrace();
+            System.exit (0);
         }
 
         Class.forName("cubrid.jdbc.driver.CUBRIDDriver");
