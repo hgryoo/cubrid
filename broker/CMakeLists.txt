@@ -43,7 +43,6 @@ else(UNIX)
   list(APPEND CUB_BROKER_SOURCES ${BROKER_DIR}/broker_list.c)
   list(APPEND CUB_BROKER_SOURCES ${BROKER_DIR}/broker_wsa_init.c)
   list(APPEND CUB_BROKER_SOURCES ${BROKER_DIR}/cas_meta.c)
-  list(APPEND CUB_BROKER_SOURCES ${BASE_DIR}/porting.c)
   SET_SOURCE_FILES_PROPERTIES(
     ${CUB_BROKER_SOURCES}
     PROPERTIES LANGUAGE CXX
@@ -93,13 +92,11 @@ SET_SOURCE_FILES_PROPERTIES(
   PROPERTIES LANGUAGE CXX
   )
 if(WIN32)
-  list(APPEND BROKER_MONITOR_SOURCES ${BASE_DIR}/porting.c)
   list(APPEND BROKER_MONITOR_SOURCES ${BASE_DIR}/rand.c)
   list(APPEND BROKER_MONITOR_SOURCES ${BROKER_DIR}/broker_list.c)
   list(APPEND BROKER_MONITOR_SOURCES ${BROKER_DIR}/broker_proxy_conn.c)
   
   SET_SOURCE_FILES_PROPERTIES(
-    ${BASE_DIR}/porting.c
     ${BASE_DIR}/rand.c
     ${BROKER_DIR}/broker_list.c
     ${BROKER_DIR}/broker_proxy_conn.c
@@ -138,7 +135,6 @@ set(BROKER_CHANGER_SOURCES
   ${BROKER_DIR}/shard_key_func.c
   )
 if(WIN32)
-  list(APPEND BROKER_CHANGER_SOURCES ${BASE_DIR}/porting.c)
   list(APPEND BROKER_CHANGER_SOURCES ${BROKER_DIR}/broker_list.c)
   list(APPEND BROKER_CHANGER_SOURCES ${BROKER_DIR}/broker_wsa_init.c)
   SET_SOURCE_FILES_PROPERTIES(
@@ -154,7 +150,7 @@ else(WIN32)
 endif(WIN32)
 add_executable(broker_changer ${BROKER_CHANGER_SOURCES})
 target_compile_definitions(broker_changer PRIVATE ${BROKER_DEFS})
-target_link_libraries(broker_changer LINK_PRIVATE cubridcs)
+target_link_libraries(broker_changer LINK_PRIVATE cubridcs cascci)
 if(UNIX)
   target_link_libraries(broker_changer LINK_PRIVATE rt)
   target_link_libraries(broker_changer LINK_PRIVATE m)
@@ -170,7 +166,6 @@ endif(UNIX)
 
 
 set(CUBRID_BROKER_SOURCES
-  ${BASE_DIR}/porting.c
   ${BROKER_DIR}/broker_config.c
   ${BROKER_DIR}/broker_admin.c
   ${BROKER_DIR}/broker_shm.c
@@ -271,13 +266,11 @@ else(UNIX)
     PROPERTIES LANGUAGE CXX
   )
   list(APPEND CUB_CAS_SOURCES ${BASE_DIR}/chartype.c)
-  list(APPEND CUB_CAS_SOURCES ${BASE_DIR}/porting.c)
   list(APPEND CUB_CAS_SOURCES ${BROKER_DIR}/broker_list.c)
   list(APPEND CUB_CAS_SOURCES ${BROKER_DIR}/broker_wsa_init.c)
   list(APPEND CUB_CAS_SOURCES ${BROKER_DIR}/cas_util.c)
   
   SET_SOURCE_FILES_PROPERTIES(
-    ${BASE_DIR}/porting.c
     ${BROKER_DIR}/broker_list.c
     ${BROKER_DIR}/broker_wsa_init.c
     ${BROKER_DIR}/cas_util.c
@@ -334,13 +327,11 @@ else(UNIX)
     PROPERTIES LANGUAGE CXX
   )
   list(APPEND CUB_CAS_CGW_SOURCES ${BASE_DIR}/chartype.c)
-  list(APPEND CUB_CAS_CGW_SOURCES ${BASE_DIR}/porting.c)
   list(APPEND CUB_CAS_CGW_SOURCES ${BROKER_DIR}/broker_list.c)
   list(APPEND CUB_CAS_CGW_SOURCES ${BROKER_DIR}/broker_wsa_init.c)
   list(APPEND CUB_CAS_CGW_SOURCES ${BROKER_DIR}/cas_util.c)
   
   SET_SOURCE_FILES_PROPERTIES(
-    ${BASE_DIR}/porting.c
     ${BROKER_DIR}/broker_list.c
     ${BROKER_DIR}/broker_wsa_init.c
     ${BROKER_DIR}/cas_util.c
@@ -387,7 +378,6 @@ if(UNIX)
     PROPERTIES LANGUAGE CXX
   )
 else(UNIX)
-  list(APPEND CUB_PROXY_SOURCES ${BASE_DIR}/porting.c)
   list(APPEND CUB_PROXY_SOURCES ${BROKER_DIR}/broker_filename.c)
   list(APPEND CUB_PROXY_SOURCES ${BROKER_DIR}/broker_list.c)
   list(APPEND CUB_PROXY_SOURCES ${BROKER_DIR}/broker_wsa_init.c)
@@ -426,7 +416,7 @@ if(WITH_CCI)
   endif(WIN32)
   add_executable(broker_log_converter ${BROKER_LOG_CONVERTER_SOURCES})
   target_compile_definitions(broker_log_converter PRIVATE ${BROKER_DEFS} BROKER_LOG_CONVERTER)
-  target_link_libraries(broker_log_converter LINK_PRIVATE cubridcs)
+  target_link_libraries(broker_log_converter LINK_PRIVATE cubridcs cascci)
   if(WIN32)
     target_link_libraries(broker_log_converter LINK_PRIVATE ws2_32)
   endif(WIN32)
@@ -437,7 +427,6 @@ if(WITH_CCI)
     ${BROKER_DIR}/log_top_string.c
     )
   if(WIN32)
-    list(APPEND BROKER_LOG_RUNNER_SOURCES ${BASE_DIR}/porting.c)
     SET_SOURCE_FILES_PROPERTIES(
       ${BROKER_LOG_RUNNER_SOURCES}
       PROPERTIES LANGUAGE CXX
@@ -469,7 +458,6 @@ if(WITH_CCI)
     ${BROKER_DIR}/shard_shm.c
     )
   if(WIN32)
-    list(APPEND BROKER_TESTER_SOURCES ${BASE_DIR}/porting.c)
     list(APPEND BROKER_TESTER_SOURCES ${BROKER_DIR}/broker_filename.c)
     list(APPEND BROKER_TESTER_SOURCES ${BROKER_DIR}/broker_list.c)
     list(APPEND BROKER_TESTER_SOURCES ${BROKER_DIR}/broker_util.c)
@@ -523,11 +511,6 @@ if(WITH_CCI)
       PROPERTIES LANGUAGE CXX
     )
   if(WIN32)
-    list(APPEND CUBRID_REPLAY_SOURCES ${BASE_DIR}/porting.c)
-    SET_SOURCE_FILES_PROPERTIES(
-      ${BASE_DIR}/porting.c
-      PROPERTIES LANGUAGE CXX
-    )
     list(APPEND CUBRID_REPLAY_SOURCES ${CMAKE_BINARY_DIR}/version.rc)
   endif(WIN32)
   add_executable(cubrid_replay ${CUBRID_REPLAY_SOURCES})
@@ -559,11 +542,9 @@ SET_SOURCE_FILES_PROPERTIES(
   PROPERTIES LANGUAGE CXX
   )
 if(WIN32)
-  list(APPEND BROKERADMIN_SOURCES ${BASE_DIR}/porting.c)
   list(APPEND BROKERADMIN_SOURCES ${BROKER_DIR}/broker_list.c)
   list(APPEND BROKERADMIN_SOURCES ${BROKER_DIR}/broker_wsa_init.c)
   SET_SOURCE_FILES_PROPERTIES(
-    ${BASE_DIR}/porting.c
     ${BROKER_DIR}/broker_list.c
     ${BROKER_DIR}/broker_wsa_init.c
     PROPERTIES LANGUAGE CXX
