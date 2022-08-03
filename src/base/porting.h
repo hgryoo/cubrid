@@ -43,12 +43,14 @@
 #endif
 
 #if defined (WINDOWS)
-#define IMPORT_VAR 	__declspec(dllimport)
-#define EXPORT_VAR 	__declspec(dllexport)
+#ifdef _EXPORTING
+  #define EXPORT_IMPORT __declspec(dllexport)
+#else
+  #define EXPORT_IMPORT __declspec(dllimport)
+#endif
 #include <WinBase.h>
 #else
-#define IMPORT_VAR 	extern
-#define EXPORT_VAR
+  #define EXPORT_IMPORT
 #endif
 
 #if defined (WINDOWS)
@@ -120,7 +122,7 @@
 #if !defined (_MSC_VER) || _MSC_VER < 1700 || (defined __cplusplus && _MSC_VER == 1700)
 #define log2(x)                 (log ((double) x) / log ((double) 2))
 #endif /* !_MSC_VER or c before _MSC_VER 1700 or c++ at 1700 */
-extern char *realpath (const char *path, char *resolved_path);
+EXPORT_IMPORT extern char *realpath (const char *path, char *resolved_path);
 #define sleep(sec) Sleep(1000*(sec))
 #define usleep(usec) Sleep((usec)/1000)
 
@@ -179,7 +181,7 @@ struct pollfd
 #endif /* (_WIN32_WINNT < 0x0600) */
 
 typedef unsigned long int nfds_t;
-extern int poll (struct pollfd *fds, nfds_t nfds, int timeout);
+EXPORT_IMPORT extern int poll (struct pollfd *fds, nfds_t nfds, int timeout);
 
 #if 0
 #define O_RDONLY                _O_RDONLY
@@ -252,17 +254,17 @@ struct stat
 extern int stat (const char *path, struct stat *buf);
 #endif
 
-extern int gettimeofday (struct timeval *tp, void *tzp);
+EXPORT_IMPORT extern int gettimeofday (struct timeval *tp, void *tzp);
 
-extern int lockf (int fd, int cmd, long size);
+EXPORT_IMPORT extern int lockf (int fd, int cmd, long size);
 
-extern char *cuserid (char *string);
+EXPORT_IMPORT extern char *cuserid (char *string);
 
-extern int getlogin_r (char *buf, size_t bufsize);
+EXPORT_IMPORT extern int getlogin_r (char *buf, size_t bufsize);
 
-extern struct tm *localtime_r (const time_t * time, struct tm *tm_val);
+EXPORT_IMPORT extern struct tm *localtime_r (const time_t * time, struct tm *tm_val);
 
-extern char *ctime_r (const time_t * time, char *time_buf);
+EXPORT_IMPORT extern char *ctime_r (const time_t * time, char *time_buf);
 
 #if 0
 extern int umask (int mask);
@@ -612,11 +614,30 @@ struct timespec
 
 extern pthread_mutex_t css_Internal_mutex_for_mutex_initialize;
 
-int pthread_mutex_init (pthread_mutex_t * mutex, pthread_mutexattr_t * attr);
-int pthread_mutex_destroy (pthread_mutex_t * mutex);
 
-void port_win_mutex_init_and_lock (pthread_mutex_t * mutex);
-int port_win_mutex_init_and_trylock (pthread_mutex_t * mutex);
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+  EXPORT_IMPORT extern int pthread_mutex_init (pthread_mutex_t * mutex, pthread_mutexattr_t * attr);
+  EXPORT_IMPORT extern int pthread_mutex_destroy (pthread_mutex_t * mutex);
+
+  EXPORT_IMPORT extern int pthread_mutexattr_init (pthread_mutexattr_t * attr);
+  EXPORT_IMPORT extern int pthread_mutexattr_settype (pthread_mutexattr_t * attr, int type);
+  EXPORT_IMPORT extern int pthread_mutexattr_destroy (pthread_mutexattr_t * attr);
+
+  EXPORT_IMPORT extern int pthread_cond_init (pthread_cond_t * cond, const pthread_condattr_t * attr);
+  EXPORT_IMPORT extern int pthread_cond_wait (pthread_cond_t * cond, pthread_mutex_t * mutex);
+  EXPORT_IMPORT extern int pthread_cond_timedwait (pthread_cond_t * cond, pthread_mutex_t * mutex, struct timespec *ts);
+  EXPORT_IMPORT extern int pthread_cond_destroy (pthread_cond_t * cond);
+  EXPORT_IMPORT extern int pthread_cond_signal (pthread_cond_t * cond);
+  EXPORT_IMPORT extern int pthread_cond_broadcast (pthread_cond_t * cond);
+
+  EXPORT_IMPORT extern void port_win_mutex_init_and_lock (pthread_mutex_t * mutex);
+  EXPORT_IMPORT extern int port_win_mutex_init_and_trylock (pthread_mutex_t * mutex);
+#ifdef __cplusplus
+}
+#endif
 
 __inline int
 pthread_mutex_lock (pthread_mutex_t * mutex)
@@ -672,19 +693,6 @@ pthread_mutex_trylock (pthread_mutex_t * mutex)
 
   return 0;
 }
-
-int pthread_mutexattr_init (pthread_mutexattr_t * attr);
-int pthread_mutexattr_settype (pthread_mutexattr_t * attr, int type);
-int pthread_mutexattr_destroy (pthread_mutexattr_t * attr);
-
-int pthread_cond_init (pthread_cond_t * cond, const pthread_condattr_t * attr);
-int pthread_cond_wait (pthread_cond_t * cond, pthread_mutex_t * mutex);
-int pthread_cond_timedwait (pthread_cond_t * cond, pthread_mutex_t * mutex, struct timespec *ts);
-int pthread_cond_destroy (pthread_cond_t * cond);
-int pthread_cond_signal (pthread_cond_t * cond);
-int pthread_cond_broadcast (pthread_cond_t * cond);
-
-
 
 /* Data Types */
 typedef HANDLE pthread_t;
@@ -980,17 +988,6 @@ extern FILE *port_open_memstream (char **ptr, size_t * sizeloc);
 
 extern void port_close_memstream (FILE * fp, char **ptr, size_t * sizeloc);
 
-extern char *trim (char *str);
-
-extern int parse_bigint (INT64 * ret_p, const char *str_p, int base);
-
-extern int str_to_int32 (int *ret_p, char **end_p, const char *str_p, int base);
-extern int str_to_uint32 (unsigned int *ret_p, char **end_p, const char *str_p, int base);
-extern int str_to_int64 (INT64 * ret_p, char **end_p, const char *str_p, int base);
-extern int str_to_uint64 (UINT64 * ret_p, char **end_p, const char *str_p, int base);
-extern int str_to_double (double *ret_p, char **end_p, const char *str_p);
-extern int str_to_float (float *ret_p, char **end_p, const char *str_p);
-
 #if defined (WINDOWS)
 extern float strtof_win (const char *nptr, char **endptr);
 #endif
@@ -1000,7 +997,7 @@ extern size_t strlcpy (char *, const char *, size_t);
 #endif
 
 #if (defined (WINDOWS) && defined (_WIN32))
-extern time_t mktime_for_win32 (struct tm *tm);
+EXPORT_IMPORT extern time_t mktime_for_win32 (struct tm *tm);
 #endif
 
 #if (defined (WINDOWS) && !defined (PRId64))
@@ -1014,7 +1011,17 @@ extern int msleep (const long msec);
 extern "C"
 {
 #endif
-  extern int parse_int (int *ret_p, const char *str_p, int base);
+  EXPORT_IMPORT extern char *trim (char *str);
+
+  EXPORT_IMPORT extern int parse_int (int *ret_p, const char *str_p, int base);
+  EXPORT_IMPORT extern int parse_bigint (INT64 * ret_p, const char *str_p, int base);
+
+  EXPORT_IMPORT extern int str_to_int32 (int *ret_p, char **end_p, const char *str_p, int base);
+  EXPORT_IMPORT extern int str_to_uint32 (unsigned int *ret_p, char **end_p, const char *str_p, int base);
+  EXPORT_IMPORT extern int str_to_int64 (INT64 * ret_p, char **end_p, const char *str_p, int base);
+  EXPORT_IMPORT extern int str_to_uint64 (UINT64 * ret_p, char **end_p, const char *str_p, int base);
+  EXPORT_IMPORT extern int str_to_double (double *ret_p, char **end_p, const char *str_p);
+  EXPORT_IMPORT extern int str_to_float (float *ret_p, char **end_p, const char *str_p);
 #ifdef __cplusplus
 }
 #endif
