@@ -30,6 +30,7 @@
 #include "dbtype_def.h"
 #include "thread_compat.hpp"
 #include "memory_alignment.hpp"
+#include "customheaps.h"
 
 /*
  * Macros related to memory allocation
@@ -102,6 +103,8 @@ extern void db_scramble (void *region, int size);
 
 #if !defined (SERVER_MODE)
 
+#define GLOBAL_HEAP_ID 0
+
 extern HL_HEAPID private_heap_id;
 extern HL_HEAPID ws_heap_id;
 
@@ -111,14 +114,21 @@ extern HL_HEAPID ws_heap_id;
 
 /* allocation APIs for workspace */
 #define db_ws_alloc(size) \
-        db_private_alloc(NULL, size)
+        db_workspace_alloc(size)
 #define db_ws_free(ptr) \
-        db_private_free(NULL, ptr)
+        db_workspace_free(ptr)
 #define db_ws_realloc(ptr, size) \
-        db_private_realloc(NULL, ptr, size)
+        db_workspace_realloc(ptr, size)
 
-#define db_create_workspace_heap() (ws_heap_id = db_create_private_heap())
-#define db_destroy_workspace_heap() db_destroy_private_heap(NULL, ws_heap_id)
+#define db_create_workspace_heap() (ws_heap_id = (ws_heap_id == 0) ? db_create_private_heap() : ws_heap_id)
+#define db_destroy_workspace_heap() \
+        do { \
+          if (ws_heap_id != 0) {db_destroy_private_heap (NULL, ws_heap_id); ws_heap_id = 0;} \
+        } while (0)
+
+extern void *db_workspace_alloc (size_t size);
+extern void db_workspace_free (void *ptr);
+extern void *db_workspace_realloc (void *ptr, size_t size);
 
 #else /* SERVER_MODE */
 
