@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -142,6 +141,7 @@ namespace cubload
 %token <string> SQS_String_Body
 %token <string> DQS_String_Body
 %token COMMA
+%token DOT
 
 %type <int_val> attribute_list_type
 %type <cmd_spec> class_command_spec
@@ -250,15 +250,39 @@ command_line :
   ;
 
 id_command :
+  CMD_ID IDENTIFIER DOT IDENTIFIER INT_LIT
+  {
+    DBG_PRINT ("CMD_ID IDENTIFIER DOT IDENTIFIER INT_LIT");
+    std::string name;
+    name.reserve($2->size + sizeof (".") + $4->size);
+    name.append ($2->val).append (".").append ($4->val);
+    m_driver.get_class_installer ().check_class (name.c_str (), atoi ($5->val));
+  }
+  |
   CMD_ID IDENTIFIER INT_LIT
   {
+    DBG_PRINT ("CMD_ID IDENTIFIER INT_LIT");
     m_driver.get_class_installer ().check_class ($2->val, atoi ($3->val));
   }
   ;
 
 class_command :
+  CMD_CLASS IDENTIFIER DOT IDENTIFIER class_command_spec
+  {
+    DBG_PRINT ("CMD_CLASS IDENTIFIER DOT IDENTIFIER class_command_spec");
+    std::string name;
+    name.reserve($2->size + sizeof (".") + $4->size);
+    name.append ($2->val).append (".").append ($4->val);
+    string_type name_buf (const_cast<char *> (name.c_str ()), name.size (), false);
+    m_driver.get_class_installer ().install_class (&name_buf, $5);
+
+    delete $5;
+    $5 = NULL;
+  }
+  |
   CMD_CLASS IDENTIFIER class_command_spec
   {
+    DBG_PRINT ("CMD_CLASS IDENTIFIER class_command_spec");
     m_driver.get_class_installer ().install_class ($2, $3);
 
     delete $3;

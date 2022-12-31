@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -57,7 +56,7 @@ static int
 get_num_requested_class (const char *input_filename, int *num_class)
 {
   FILE *input_file;
-  char buffer[DB_MAX_IDENTIFIER_LENGTH];
+  char buffer[LINE_MAX];
 
   if (input_filename == NULL || num_class == NULL)
     {
@@ -72,7 +71,7 @@ get_num_requested_class (const char *input_filename, int *num_class)
     }
 
   *num_class = 0;
-  while (fgets ((char *) buffer, DB_MAX_IDENTIFIER_LENGTH, input_file) != NULL)
+  while (fgets ((char *) buffer, LINE_MAX, input_file) != NULL)
     {
       (*num_class)++;
     }
@@ -96,6 +95,8 @@ get_class_mops (char **class_names, int num_class, MOP ** class_list, int *num_c
   int i;
   char downcase_class_name[SM_MAX_IDENTIFIER_LENGTH];
   DB_OBJECT *class_ = NULL;
+  const char *dot = NULL;
+  int len = 0;
 
   if (class_names == NULL || num_class <= 0 || class_list == NULL || num_class_list == NULL)
     {
@@ -116,12 +117,32 @@ get_class_mops (char **class_names, int num_class, MOP ** class_list, int *num_c
 
   for (i = 0; i < num_class; i++)
     {
-      if (class_names[i] == NULL || strlen (class_names[i]) == 0)
+      const char *class_name_p = NULL;
+      const char *class_name_only = NULL;
+      char owner_name[DB_MAX_USER_LENGTH] = { '\0' };
+
+      if (class_names[i] == NULL || (len = STATIC_CAST (int, strlen (class_names[i]))) == 0)
 	{
 	  goto error;
 	}
 
-      sm_downcase_name (class_names[i], downcase_class_name, SM_MAX_IDENTIFIER_LENGTH);
+      if (utility_check_class_name (class_names[i]) != NO_ERROR)
+	{
+	  goto error;
+	}
+
+      sm_qualifier_name (class_names[i], owner_name, DB_MAX_USER_LENGTH);
+      class_name_only = sm_remove_qualifier_name (class_names[i]);
+      if (strcasecmp (owner_name, "dba") == 0 && sm_check_system_class_by_name (class_name_only))
+	{
+	  class_name_p = class_name_only;
+	}
+      else
+	{
+	  class_name_p = class_names[i];
+	}
+
+      sm_user_specified_name (class_name_p, downcase_class_name, SM_MAX_IDENTIFIER_LENGTH);
 
       class_ = locator_find_class (downcase_class_name);
       if (class_ != NULL)
@@ -168,11 +189,11 @@ get_class_mops_from_file (const char *input_filename, MOP ** class_list, int *nu
   int status = NO_ERROR;
   int i = 0;
   FILE *input_file;
-  char buffer[DB_MAX_IDENTIFIER_LENGTH];
+  char buffer[LINE_MAX];
   char **class_names = NULL;
   int num_class = 0;
-  int len = 0;
-  char *ptr = NULL;
+  int len = 0, sub_len = 0;
+  const char *dot = NULL;
 
   if (input_filename == NULL || class_list == NULL || num_class_mops == NULL)
     {
@@ -193,35 +214,35 @@ get_class_mops_from_file (const char *input_filename, MOP ** class_list, int *nu
       return ER_FAILED;
     }
 
-  class_names = (char **) malloc (DB_SIZEOF (char *) * num_class);
+  class_names = (char **) calloc (num_class, DB_SIZEOF (char *));
   if (class_names == NULL)
     {
+      if (input_file != nullptr)
+	{
+	  fclose (input_file);
+	}
       return ER_FAILED;
-    }
-  for (i = 0; i < num_class; i++)
-    {
-      class_names[i] = NULL;
     }
 
   for (i = 0; i < num_class; ++i)
     {
-      if (fgets ((char *) buffer, DB_MAX_IDENTIFIER_LENGTH, input_file) == NULL)
+      if (fgets ((char *) buffer, LINE_MAX, input_file) == NULL)
 	{
 	  status = ER_FAILED;
 	  goto end;
 	}
 
-      ptr = strchr (buffer, '\n');
-      if (ptr)
-	{
-	  len = CAST_BUFLEN (ptr - buffer);
-	}
-      else
-	{
-	  len = (int) strlen (buffer);
-	}
+      trim (buffer);
+      len = STATIC_CAST (int, strlen (buffer));
+      sub_len = len;
 
       if (len < 1)
+	{
+	  status = ER_FAILED;
+	  goto end;
+	}
+
+      if (utility_check_class_name (buffer) != NO_ERROR)
 	{
 	  status = ER_FAILED;
 	  goto end;
@@ -251,7 +272,10 @@ end:
     {
       for (i = 0; i < num_class; i++)
 	{
-	  free_and_init (class_names[i]);
+	  if (class_names[i])
+	    {
+	      free_and_init (class_names[i]);
+	    }
 	}
 
       free (class_names);

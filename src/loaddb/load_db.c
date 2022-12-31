@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -35,6 +34,7 @@
 #include "transform.h"
 #include "utility.h"
 #include "authenticate.h"
+#include "ddl_log.h"
 
 #include <fstream>
 #include <thread>
@@ -527,6 +527,10 @@ loaddb_internal (UTIL_FUNCTION_ARG * arg, int dba_mode)
   /* login */
   if (!args.user_name.empty () || !dba_mode)
     {
+      if (strcasecmp (args.user_name.c_str (), "DBA") == 0 && args.no_user_specified_name)
+	{
+	  db_set_client_type (DB_CLIENT_TYPE_ADMIN_LOADDB_COMPAT);
+	}
       (void) db_login (args.user_name.c_str (), args.password.c_str ());
       error = db_restart (arg->command_name, true, args.volume.c_str ());
       if (error != NO_ERROR)
@@ -569,6 +573,11 @@ loaddb_internal (UTIL_FUNCTION_ARG * arg, int dba_mode)
       status = 3;
       goto error_return;
     }
+
+  logddl_init (APP_NAME_LOADDB);
+  logddl_check_ddl_audit_param ();
+  logddl_set_db_name (args.volume.c_str ());
+  logddl_set_user_name (args.user_name.c_str ());
 
   /* disable trigger actions to be fired */
   db_disable_trigger ();
@@ -681,6 +690,8 @@ loaddb_internal (UTIL_FUNCTION_ARG * arg, int dba_mode)
     {
       print_log_msg (1, "\nStart schema loading.\n");
 
+      logddl_set_loaddb_file_type (LOADDB_FILE_TYPE_SCHEMA);
+      logddl_set_load_filename (args.schema_file.c_str ());
       /*
        * CUBRID 8.2 should be compatible with earlier versions of CUBRID.
        * Therefore, we do not perform user authentication when the loader
@@ -691,7 +702,7 @@ loaddb_internal (UTIL_FUNCTION_ARG * arg, int dba_mode)
 	  AU_DISABLE (au_save);
 	}
 
-      if (ldr_exec_query_from_file (args.schema_file.c_str (), schema_file, &schema_file_start_line, &args) != 0)
+      if (ldr_exec_query_from_file (args.schema_file.c_str (), schema_file, &schema_file_start_line, &args) != NO_ERROR)
 	{
 	  print_log_msg (1, "\nError occurred during schema loading." "\nAborting current transaction...");
 	  msg_format = "Error occurred during schema loading." "Aborting current transaction...\n";
@@ -701,6 +712,7 @@ loaddb_internal (UTIL_FUNCTION_ARG * arg, int dba_mode)
 	  db_shutdown ();
 	  print_log_msg (1, " done.\n\nRestart loaddb with '-%c %s:%d' option\n", LOAD_SCHEMA_FILE_S,
 			 args.schema_file.c_str (), schema_file_start_line);
+	  logddl_write_end ();
 	  goto error_return;
 	}
 
@@ -733,6 +745,8 @@ loaddb_internal (UTIL_FUNCTION_ARG * arg, int dba_mode)
       db_commit_transaction ();
       fclose (schema_file);
       schema_file = NULL;
+
+      logddl_write_end ();
     }
 
   if (!args.object_file.empty ())
@@ -765,7 +779,9 @@ loaddb_internal (UTIL_FUNCTION_ARG * arg, int dba_mode)
   if (index_file != NULL)
     {
       print_log_msg (1, "\nStart index loading.\n");
-      if (ldr_exec_query_from_file (args.index_file.c_str (), index_file, &index_file_start_line, &args) != 0)
+      logddl_set_loaddb_file_type (LOADDB_FILE_TYPE_INDEX);
+      logddl_set_load_filename (args.index_file.c_str ());
+      if (ldr_exec_query_from_file (args.index_file.c_str (), index_file, &index_file_start_line, &args) != NO_ERROR)
 	{
 	  print_log_msg (1, "\nError occurred during index loading." "\nAborting current transaction...");
 	  msg_format = "Error occurred during index loading." "Aborting current transaction...\n";
@@ -775,6 +791,7 @@ loaddb_internal (UTIL_FUNCTION_ARG * arg, int dba_mode)
 	  db_shutdown ();
 	  print_log_msg (1, " done.\n\nRestart loaddb with '-%c %s:%d' option\n", LOAD_INDEX_FILE_S,
 			 args.index_file.c_str (), index_file_start_line);
+	  logddl_write_end ();
 	  goto error_return;
 	}
 
@@ -786,13 +803,18 @@ loaddb_internal (UTIL_FUNCTION_ARG * arg, int dba_mode)
 
       print_log_msg (1, "Index loading from %s finished.\n", args.index_file.c_str ());
       db_commit_transaction ();
+
+      logddl_set_err_code (error);
+      logddl_write_end ();
     }
 
   if (trigger_file != NULL)
     {
       print_log_msg (1, "\nStart trigger loading.\n");
-
-      if (ldr_exec_query_from_file (args.trigger_file.c_str (), trigger_file, &trigger_file_start_line, &args) != 0)
+      logddl_set_loaddb_file_type (LOADDB_FILE_TYPE_TRIGGER);
+      logddl_set_load_filename (args.trigger_file.c_str ());
+      if (ldr_exec_query_from_file (args.trigger_file.c_str (), trigger_file, &trigger_file_start_line, &args) !=
+	  NO_ERROR)
 	{
 	  print_log_msg (1, "\nError occurred during trigger loading." "\nAborting current transaction...");
 	  msg_format = "Error occurred during trigger loading." "Aborting current transaction...\n";
@@ -802,6 +824,7 @@ loaddb_internal (UTIL_FUNCTION_ARG * arg, int dba_mode)
 	  db_shutdown ();
 	  print_log_msg (1, " done.\n\nRestart loaddb with '--%s %s:%d' option\n", LOAD_TRIGGER_FILE_L,
 			 args.trigger_file.c_str (), trigger_file_start_line);
+	  logddl_write_end ();
 	  goto error_return;
 	}
 
@@ -812,6 +835,9 @@ loaddb_internal (UTIL_FUNCTION_ARG * arg, int dba_mode)
 
       print_log_msg (1, "Trigger loading from %s finished.\n", args.trigger_file.c_str ());
       db_commit_transaction ();
+
+      logddl_set_err_code (error);
+      logddl_write_end ();
     }
 
   if (index_file != NULL)
@@ -830,6 +856,8 @@ loaddb_internal (UTIL_FUNCTION_ARG * arg, int dba_mode)
   (void) db_shutdown ();
 
   fclose (loaddb_log_file);
+
+  logddl_destroy ();
 
   return status;
 
@@ -851,6 +879,7 @@ error_return:
       fclose (loaddb_log_file);
     }
 
+  logddl_destroy ();
   return status;
 }
 
@@ -911,6 +940,7 @@ ldr_exec_query_from_file (const char *file_name, FILE * input_stream, int *start
   int executed_cnt = 0;
   int last_statement_line_no = 0;	// tracks line no of the last successfully executed stmt. -1 for failed ones.
   int check_line_no = true;
+  PT_NODE *statement = NULL;
 
   if ((*start_line) > 1)
     {
@@ -986,6 +1016,7 @@ ldr_exec_query_from_file (const char *file_name, FILE * input_stream, int *start
 		      print_log_msg (1, "ERROR: %s \n", db_error_string (3));
 		      assert (er_errid () != NO_ERROR);
 		      error = er_errid ();
+		      logddl_set_file_line (line);
 		    }
 		}
 	      while (session_error);
@@ -1003,6 +1034,7 @@ ldr_exec_query_from_file (const char *file_name, FILE * input_stream, int *start
 	{
 	  print_log_msg (1, "ERROR: %s\n", db_error_string (3));
 	  db_close_session (session);
+	  logddl_set_file_line (last_statement_line_no);
 	  break;
 	}
       executed_cnt++;
@@ -1011,6 +1043,7 @@ ldr_exec_query_from_file (const char *file_name, FILE * input_stream, int *start
 	{
 	  print_log_msg (1, "ERROR: %s\n", db_error_string (3));
 	  db_close_session (session);
+	  logddl_set_file_line (last_statement_line_no);
 	  break;
 	}
 
@@ -1030,11 +1063,14 @@ end:
   if (error < 0)
     {
       db_abort_transaction ();
+      logddl_set_err_code (error);
+      logddl_set_commit_count ((executed_cnt / args->periodic_commit) * args->periodic_commit);
     }
   else
     {
       *start_line = last_statement_line_no + 1;
       print_log_msg (1, "Total %8d statements executed.\n", executed_cnt);
+      logddl_set_msg ("Total %8d statements executed.", executed_cnt);
       fflush (stdout);
       db_commit_transaction ();
     }
@@ -1089,6 +1125,7 @@ get_loaddb_args (UTIL_ARG_MAP * arg_map, load_args * args)
   args->compare_storage_order = utility_get_option_bool_value (arg_map, LOAD_COMPARE_STORAGE_ORDER_S);
   args->table_name = table_name ? table_name : empty;
   args->ignore_class_file = ignore_class_file ? ignore_class_file : empty;
+  args->no_user_specified_name = utility_get_option_bool_value (arg_map, LOAD_NO_USER_SPECIFIED_NAME_S);
 }
 
 static void

@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -340,7 +339,9 @@ orc_diskrep_from_record (THREAD_ENTRY * thread_p, RECDES * record)
 		  goto error;
 		}
 
+#if !defined (NDEBUG)
 	      (void) pgbuf_check_page_ptype (thread_p, root, PAGE_BTREE);
+#endif /* !NDEBUG */
 
 	      root_header = btree_get_root_header (thread_p, root);
 	      if (root_header == NULL)
@@ -351,7 +352,7 @@ orc_diskrep_from_record (THREAD_ENTRY * thread_p, RECDES * record)
 
 	      /* construct BTID_INT structure */
 	      btid_int.sys_btid = &bt_statsp->btid;
-	      if (btree_glean_root_header_info (thread_p, root_header, &btid_int) != NO_ERROR)
+	      if (btree_glean_root_header_info (thread_p, root_header, &btid_int, true) != NO_ERROR)
 		{
 		  pgbuf_unfix_and_init (thread_p, root);
 		  goto error;
@@ -740,6 +741,24 @@ or_class_hfid (RECDES * record, HFID * hfid)
   hfid->vfid.fileid = OR_GET_INT (ptr + ORC_HFID_FILEID_OFFSET);
   hfid->vfid.volid = OR_GET_INT (ptr + ORC_HFID_VOLID_OFFSET);
   hfid->hpgid = OR_GET_INT (ptr + ORC_HFID_PAGEID_OFFSET);
+}
+
+/*
+ * or_class_tde_algorithm, () - Extracts the tde algorithm from the disk representation of a class
+ *   return: void
+ *   record(in): packed disk record containing class
+ *   tde_algo (out): pointer to tde_algo to be filled in
+ *
+ */
+void
+or_class_tde_algorithm (RECDES * record, TDE_ALGORITHM * tde_algo)
+{
+  char *ptr;
+
+  assert (OR_GET_OFFSET_SIZE (record->data) == BIG_VAR_OFFSET_SIZE);
+
+  ptr = record->data + OR_FIXED_ATTRIBUTES_OFFSET (record->data, ORC_CLASS_VAR_ATT_COUNT);
+  *(int *) tde_algo = OR_GET_INT (ptr + ORC_CLASS_TDE_ALGORITHM);
 }
 
 #if defined (ENABLE_UNUSED_FUNCTION)
@@ -1854,7 +1873,6 @@ or_install_btids_class (OR_CLASSREP * rep, BTID * id, DB_SEQ * constraint_seq, i
   int i, j, e;
   int att_id, att_cnt;
   OR_ATTRIBUTE *att;
-  OR_ATTRIBUTE *ptr = NULL;
   OR_INDEX *index;
   DB_VALUE stat_val;
 
@@ -1914,16 +1932,15 @@ or_install_btids_class (OR_CLASSREP * rep, BTID * id, DB_SEQ * constraint_seq, i
 
 	  att_id = db_get_int (&att_val);
 
-	  for (j = 0, att = rep->attributes, ptr = NULL; j < rep->n_attributes && ptr == NULL; j++, att++)
+	  for (j = 0, att = rep->attributes; j < rep->n_attributes; j++, att++)
 	    {
 	      if (att->id == att_id)
 		{
-		  ptr = att;
-		  index->atts[index->n_atts] = ptr;
+		  index->atts[index->n_atts] = att;
 		  (index->n_atts)++;
+		  break;
 		}
 	    }
-
 	}
 
       /* asc_desc info */
@@ -2101,11 +2118,12 @@ or_install_btids_attribute (OR_CLASSREP * rep, int att_id, BTID * id)
   int size;
 
   /* Find the attribute with the matching attribute ID */
-  for (i = 0, att = rep->attributes; i < rep->n_attributes && ptr == NULL; i++, att++)
+  for (i = 0, att = rep->attributes; i < rep->n_attributes; i++, att++)
     {
       if (att->id == att_id)
 	{
 	  ptr = att;
+	  break;
 	}
     }
 

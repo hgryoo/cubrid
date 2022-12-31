@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -40,6 +39,7 @@
 #include "perf_monitor.h"
 #include "storage_common.h"
 #include "thread_compat.hpp"
+#include "tde.h"
 
 // forward declarations
 class multi_index_unique_stats;
@@ -230,18 +230,6 @@ struct func_pred_unpack_info
   xasl_unpack_info *unpack_info;
 };
 
-#if 0				/* TODO: check not use - ksseo */
-typedef struct heap_spacecache HEAP_SPACECACHE;
-struct heap_spacecache
-{				/* Define an alter space cache for heap file */
-
-  float remain_sumlen;		/* Total new length of records that it is predicted for the rest of space cache. If it
-				 * is unknown -1 is stored. This value is used to estimate the number of pages to
-				 * allocate at a particular time in space cache. If the value is < pagesize, only one
-				 * page at a time is allocated. */
-};
-#endif
-
 typedef struct heap_idx_elements_info HEAP_IDX_ELEMENTS_INFO;
 struct heap_idx_elements_info
 {
@@ -317,6 +305,11 @@ struct heap_operation_context
   // side-effect - disables MVCC operations
 
   bool use_bulk_logging;	// note - currently for bulk insert only
+
+  bool do_supplemental_log;	/* flag for whether do supplemental logging or do not */
+  LOG_LSA supp_undo_lsa;	/* lsa of the log that contains undo or redo image and it is used 
+				 * in supplemental log for INSERT/UPDATE/DELETE */
+  LOG_LSA supp_redo_lsa;
 
   /* Performance stat dump. */
   PERF_UTIME_TRACKER *time_track;
@@ -458,6 +451,7 @@ extern int heap_estimate_num_objects (THREAD_ENTRY * thread_p, const HFID * hfid
 extern int heap_get_class_name (THREAD_ENTRY * thread_p, const OID * class_oid, char **class_name);
 extern int heap_get_class_name_alloc_if_diff (THREAD_ENTRY * thread_p, const OID * class_oid, char *guess_classname,
 					      char **class_name_out);
+extern int heap_get_class_tde_algorithm (THREAD_ENTRY * thread_p, const OID * class_oid, TDE_ALGORITHM * tde_algo);
 extern int heap_get_class_partitions (THREAD_ENTRY * thread_p, const OID * class_oid, OR_PARTITION ** parts,
 				      int *parts_count);
 extern void heap_clear_partition_info (THREAD_ENTRY * thread_p, OR_PARTITION * parts, int parts_count);
@@ -470,7 +464,7 @@ extern int heap_attrinfo_start (THREAD_ENTRY * thread_p, const OID * class_oid, 
 extern void heap_attrinfo_end (THREAD_ENTRY * thread_p, HEAP_CACHE_ATTRINFO * attr_info);
 extern int heap_attrinfo_clear_dbvalues (HEAP_CACHE_ATTRINFO * attr_info);
 extern int heap_attrinfo_read_dbvalues (THREAD_ENTRY * thread_p, const OID * inst_oid, RECDES * recdes,
-					HEAP_SCANCACHE * scan_cache, HEAP_CACHE_ATTRINFO * attr_info);
+					HEAP_CACHE_ATTRINFO * attr_info);
 extern int heap_attrinfo_read_dbvalues_without_oid (THREAD_ENTRY * thread_p, RECDES * recdes,
 						    HEAP_CACHE_ATTRINFO * attr_info);
 extern int heap_attrinfo_delete_lob (THREAD_ENTRY * thread_p, RECDES * recdes, HEAP_CACHE_ATTRINFO * attr_info);
@@ -485,7 +479,7 @@ extern SCAN_CODE heap_attrinfo_transform_to_disk_except_lob (THREAD_ENTRY * thre
 extern DB_VALUE *heap_attrinfo_generate_key (THREAD_ENTRY * thread_p, int n_atts, int *att_ids, int *atts_prefix_length,
 					     HEAP_CACHE_ATTRINFO * attr_info, RECDES * recdes, DB_VALUE * dbvalue,
 					     char *buf, FUNCTION_INDEX_INFO * func_index_info,
-					     TP_DOMAIN * midxkey_domain);
+					     TP_DOMAIN * midxkey_domain, OID * cur_oid);
 extern int heap_attrinfo_start_with_index (THREAD_ENTRY * thread_p, OID * class_oid, RECDES * class_recdes,
 					   HEAP_CACHE_ATTRINFO * attr_info, HEAP_IDX_ELEMENTS_INFO * idx_info);
 extern int heap_attrinfo_start_with_btid (THREAD_ENTRY * thread_p, OID * class_oid, BTID * btid,
@@ -584,6 +578,8 @@ extern int heap_get_class_info (THREAD_ENTRY * thread_p, const OID * class_oid, 
 				FILE_TYPE * ftype_out, char **classname_out);
 extern int heap_cache_class_info (THREAD_ENTRY * thread_p, const OID * class_oid, HFID * hfid,
 				  FILE_TYPE ftype, const char *classname_in);
+extern int heap_get_hfid_if_cached (THREAD_ENTRY * thread_p, const OID * class_oid, HFID * hfid_out,
+				    FILE_TYPE * ftype_out, char **classname_out, bool * success);
 extern int heap_compact_pages (THREAD_ENTRY * thread_p, OID * class_oid);
 
 extern void heap_classrepr_dump_all (THREAD_ENTRY * thread_p, FILE * fp, OID * class_oid);

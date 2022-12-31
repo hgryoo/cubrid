@@ -1,20 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation
- * Copyright (C) 2016 CUBRID Corporation
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -25,6 +23,8 @@
  * Note:
  */
 
+#include "jsp_comm.h"
+
 #include "config.h"
 
 #include <assert.h>
@@ -33,6 +33,8 @@
 #include <sys/param.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/uio.h>
+#include <sys/un.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <errno.h>
@@ -43,11 +45,26 @@
 #include <windows.h>
 #endif /* not WINDOWS */
 
-#include "jsp_comm.h"
-
+#include "jsp_file.h"
+#include "connection_support.h"
 #include "porting.h"
 #include "error_manager.h"
+#include "environment_variable.h"
 
+#include "system_parameter.h"
+#include "object_representation.h"
+#include "host_lookup.h"
+
+#if defined (CS_MODE)
+#include "network_interface_cl.h"
+#else
+#include "boot_sr.h"
+#endif
+
+static SOCKET jsp_connect_server_tcp (int server_port);
+#if !defined (WINDOWS)
+static SOCKET jsp_connect_server_uds (const char *db_name);
+#endif
 /*
  * jsp_connect_server
  *   return: connect fail - return Error Code
@@ -57,73 +74,23 @@
  */
 
 SOCKET
-jsp_connect_server (int server_port)
+jsp_connect_server (const char *db_name, int server_port)
 {
-  struct sockaddr_in tcp_srv_addr;
-  SOCKET sockfd = INVALID_SOCKET;
-  int success = -1;
-  unsigned int inaddr;
-  int b;
-  char *server_host = (char *) "127.0.0.1";	/* assume as local host */
-
-  union
-  {
-    struct sockaddr_in in;
-  } saddr_buf;
-  struct sockaddr *saddr = (struct sockaddr *) &saddr_buf;
-  socklen_t slen;
-
-  if (server_port < 0)
+  SOCKET socket = INVALID_SOCKET;
+#if defined (WINDOWS)
+  socket = jsp_connect_server_tcp (server_port);
+#else
+  if (server_port == JAVASP_PORT_UDS_MODE)
     {
-      return sockfd;		/* INVALID_SOCKET (-1) */
-    }
-
-  inaddr = inet_addr (server_host);
-  memset ((void *) &tcp_srv_addr, 0, sizeof (tcp_srv_addr));
-  tcp_srv_addr.sin_family = AF_INET;
-  tcp_srv_addr.sin_port = htons (server_port);
-
-  if (inaddr != INADDR_NONE)
-    {
-      memcpy ((void *) &tcp_srv_addr.sin_addr, (void *) &inaddr, sizeof (inaddr));
+      socket = jsp_connect_server_uds (db_name);
     }
   else
     {
-      struct hostent *hp;
-      hp = gethostbyname (server_host);
-
-      if (hp == NULL)
-	{
-	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_HOST_NAME_ERROR, 1, server_host);
-	  return INVALID_SOCKET;
-	}
-      memcpy ((void *) &tcp_srv_addr.sin_addr, (void *) hp->h_addr, hp->h_length);
+      socket = jsp_connect_server_tcp (server_port);
     }
-  slen = sizeof (tcp_srv_addr);
-  memcpy ((void *) saddr, (void *) &tcp_srv_addr, slen);
-
-  sockfd = socket (saddr->sa_family, SOCK_STREAM, 0);
-  if (IS_INVALID_SOCKET (sockfd))
-    {
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_CANNOT_CONNECT_JVM, 1, "socket()");
-      return INVALID_SOCKET;
-    }
-  else
-    {
-      b = 1;
-      setsockopt (sockfd, IPPROTO_TCP, TCP_NODELAY, (char *) &b, sizeof (b));
-    }
-
-  success = connect (sockfd, saddr, slen);
-  if (success < 0)
-    {
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_CANNOT_CONNECT_JVM, 1, "connect()");
-      return INVALID_SOCKET;
-    }
-
-  return sockfd;
+#endif
+  return socket;
 }
-
 
 /*
  * jsp_disconnect_server -
@@ -134,18 +101,22 @@ jsp_connect_server (int server_port)
  */
 
 void
-jsp_disconnect_server (const SOCKET sockfd)
+jsp_disconnect_server (SOCKET & sockfd)
 {
-  struct linger linger_buffer;
+  if (!IS_INVALID_SOCKET (sockfd))
+    {
+      struct linger linger_buffer;
 
-  linger_buffer.l_onoff = 1;
-  linger_buffer.l_linger = 0;
-  setsockopt (sockfd, SOL_SOCKET, SO_LINGER, (char *) &linger_buffer, sizeof (linger_buffer));
+      linger_buffer.l_onoff = 1;
+      linger_buffer.l_linger = 0;
+      setsockopt (sockfd, SOL_SOCKET, SO_LINGER, (char *) &linger_buffer, sizeof (linger_buffer));
 #if defined(WINDOWS)
-  closesocket (sockfd);
+      closesocket (sockfd);
 #else /* not WINDOWS */
-  close (sockfd);
+      close (sockfd);
 #endif /* not WINDOWS */
+      sockfd = INVALID_SOCKET;
+    }
 }
 
 /*
@@ -213,47 +184,168 @@ jsp_writen (SOCKET fd, const void *vptr, int n)
 int
 jsp_readn (SOCKET fd, void *vptr, int n)
 {
-  int nleft;
-  int nread;
-  char *ptr;
+  const static int PING_TIMEOUT = 5000;
+  return css_readn (fd, (char *) vptr, n, PING_TIMEOUT);
+}
 
-  ptr = (char *) vptr;
-  nleft = n;
+int
+jsp_ping (SOCKET fd)
+{
+  char buffer[DB_MAX_IDENTIFIER_LENGTH];
 
-  while (nleft > 0)
+  OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_request;
+  char *request = OR_ALIGNED_BUF_START (a_request);
+  char *ptr = or_pack_int (request, OR_INT_SIZE);
+  ptr = or_pack_int (ptr, SP_CODE_UTIL_PING);
+
+  int nbytes = jsp_writen (fd, request, OR_INT_SIZE * 2);
+  if (nbytes != OR_INT_SIZE * 2)
     {
-#if defined(WINDOWS)
-      nread = recv (fd, ptr, nleft, 0);
-#else
-      nread = recv (fd, ptr, (size_t) nleft, 0);
-#endif
-
-      if (nread < 0)
-	{
-
-#if defined(WINDOWS)
-	  if (errno == WSAEINTR)
-#else /* not WINDOWS */
-	  if (errno == EINTR)
-#endif /* not WINDOWS */
-	    {
-	      nread = 0;	/* and call read() again */
-	    }
-	  else
-	    {
-	      return (-1);
-	    }
-	}
-      else if (nread == 0)
-	{
-	  break;		/* EOF */
-	}
-
-      nleft -= nread;
-      ptr += nread;
+      return ER_SP_NETWORK_ERROR;
     }
 
-  return (n - nleft);		/* return >= 0 */
+  int res_size = 0;
+  nbytes = jsp_readn (fd, (char *) &res_size, OR_INT_SIZE);
+  if (nbytes != OR_INT_SIZE)
+    {
+      return ER_SP_NETWORK_ERROR;
+    }
+  res_size = ntohl (res_size);
+
+  nbytes = jsp_readn (fd, buffer, res_size);
+  if (nbytes != res_size)
+    {
+      return ER_SP_NETWORK_ERROR;
+    }
+
+  return NO_ERROR;
+}
+
+char *
+jsp_get_socket_file_path (const char *db_name)
+{
+  static char path[PATH_MAX];
+  static bool need_init = true;
+
+  if (need_init)
+    {
+      const size_t DIR_PATH_MAX = 128;	/* Guaranteed not to exceed 108 characters, see envvar_check_environment() */
+      char dir_path[DIR_PATH_MAX] = { 0 };
+      const char *cubrid_tmp = envvar_get ("TMP");
+      if (cubrid_tmp == NULL || cubrid_tmp[0] == '\0')
+	{
+	  envvar_vardir_file (dir_path, DIR_PATH_MAX, "CUBRID_SOCK/");
+	}
+      else
+	{
+	  snprintf (dir_path, DIR_PATH_MAX, "%s/", cubrid_tmp);
+	}
+
+      snprintf (path, PATH_MAX, "%s%s%s%s", dir_path, "sp_", db_name, ".sock");
+      need_init = false;
+    }
+
+  return path;
+}
+
+#if !defined (WINDOWS)
+static SOCKET
+jsp_connect_server_uds (const char *db_name)
+{
+  struct sockaddr_un sock_addr;
+  SOCKET sockfd = INVALID_SOCKET;
+
+  sockfd = socket (AF_UNIX, SOCK_STREAM, 0);
+  if (IS_INVALID_SOCKET (sockfd))
+    {
+      return INVALID_SOCKET;
+    }
+
+  int slen = sizeof (sock_addr);
+  memset (&sock_addr, 0, slen);
+  sock_addr.sun_family = AF_UNIX;
+  snprintf (sock_addr.sun_path, sizeof (sock_addr.sun_path), "%s", jsp_get_socket_file_path (db_name));
+
+  int success = connect (sockfd, (struct sockaddr *) &sock_addr, slen);
+  if (success < 0)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_CANNOT_CONNECT_JVM, 1, "connect()");
+      return INVALID_SOCKET;
+    }
+
+  int one = 1;
+  setsockopt (sockfd, IPPROTO_TCP, TCP_NODELAY, (char *) &one, sizeof (one));
+  return sockfd;
+}
+#endif
+
+static SOCKET
+jsp_connect_server_tcp (int server_port)
+{
+  struct sockaddr_in tcp_srv_addr;
+
+  SOCKET sockfd = INVALID_SOCKET;
+  int success = -1;
+  unsigned int inaddr;
+  int b;
+  char *server_host = (char *) "127.0.0.1";	/* assume as local host */
+
+  union
+  {
+    struct sockaddr_in in;
+  } saddr_buf;
+  struct sockaddr *saddr = (struct sockaddr *) &saddr_buf;
+  socklen_t slen;
+
+  if (server_port < 0)
+    {
+      return sockfd;		/* INVALID_SOCKET (-1) */
+    }
+
+  inaddr = inet_addr (server_host);
+  memset ((void *) &tcp_srv_addr, 0, sizeof (tcp_srv_addr));
+  tcp_srv_addr.sin_family = AF_INET;
+  tcp_srv_addr.sin_port = htons (server_port);
+
+  if (inaddr != INADDR_NONE)
+    {
+      memcpy ((void *) &tcp_srv_addr.sin_addr, (void *) &inaddr, sizeof (inaddr));
+    }
+  else
+    {
+      struct hostent *hp;
+      hp = gethostbyname_uhost (server_host);
+
+      if (hp == NULL)
+	{
+	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_HOST_NAME_ERROR, 1, server_host);
+	  return INVALID_SOCKET;
+	}
+      memcpy ((void *) &tcp_srv_addr.sin_addr, (void *) hp->h_addr, hp->h_length);
+    }
+  slen = sizeof (tcp_srv_addr);
+  memcpy ((void *) saddr, (void *) &tcp_srv_addr, slen);
+
+  sockfd = socket (saddr->sa_family, SOCK_STREAM, 0);
+  if (IS_INVALID_SOCKET (sockfd))
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_CANNOT_CONNECT_JVM, 1, "socket()");
+      return INVALID_SOCKET;
+    }
+  else
+    {
+      b = 1;
+      setsockopt (sockfd, IPPROTO_TCP, TCP_NODELAY, (char *) &b, sizeof (b));
+    }
+
+  success = connect (sockfd, saddr, slen);
+  if (success < 0)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_CANNOT_CONNECT_JVM, 1, "connect()");
+      return INVALID_SOCKET;
+    }
+
+  return sockfd;
 }
 
 #if defined(WINDOWS)

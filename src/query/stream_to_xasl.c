@@ -1,20 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation
- * Copyright (C) 2016 CUBRID Corporation
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -120,6 +118,7 @@ static char *stx_build_rlist_spec_type (THREAD_ENTRY * thread_p, char *ptr, REGU
 					OUTPTR_LIST * outptr_list);
 static char *stx_build_set_spec_type (THREAD_ENTRY * thread_p, char *tmp, SET_SPEC_TYPE * ptr);
 static char *stx_build_method_spec_type (THREAD_ENTRY * thread_p, char *tmp, METHOD_SPEC_TYPE * ptr);
+static char *stx_build_dblink_spec_type (THREAD_ENTRY * thread_p, char *ptr, DBLINK_SPEC_TYPE * dblink_spec);
 static char *stx_build_val_list (THREAD_ENTRY * thread_p, char *tmp, VAL_LIST * ptr);
 #if defined(ENABLE_UNUSED_FUNCTION)
 static char *stx_build_db_value_list (THREAD_ENTRY * thread_p, char *tmp, QPROC_DB_VALUE_LIST ptr);
@@ -1386,6 +1385,26 @@ stx_restore_OID_array (THREAD_ENTRY * thread_p, char *ptr, int nelements)
   return oid_array;
 }
 
+static KEY_VAL_RANGE *
+stx_restore_key_val_array (THREAD_ENTRY * thread_p, char *ptr, int nelements)
+{
+  KEY_VAL_RANGE *key_val_array;
+  int i;
+
+  key_val_array = (KEY_VAL_RANGE *) stx_alloc_struct (thread_p, sizeof (KEY_VAL_RANGE) * nelements);
+  if (key_val_array == NULL)
+    {
+      stx_set_xasl_errcode (thread_p, ER_OUT_OF_VIRTUAL_MEMORY);
+      return NULL;
+    }
+  for (i = 0; i < nelements; i++)
+    {
+      ptr = or_unpack_key_val_range (ptr, &key_val_array[i]);
+    }
+
+  return key_val_array;
+}
+
 #if defined(ENABLE_UNUSED_FUNCTION)
 static char *
 stx_restore_input_vals (THREAD_ENTRY * thread_p, char *ptr, int nelements)
@@ -2096,12 +2115,6 @@ stx_build_xasl_node (THREAD_ENTRY * thread_p, char *ptr, XASL_NODE * xasl)
 
   xasl->curr_spec = stx_restore_access_spec_type (thread_p, &ptr, NULL);
 
-  ptr = or_unpack_int (ptr, &xasl->next_scan_on);
-
-  ptr = or_unpack_int (ptr, &xasl->next_scan_block_on);
-
-  ptr = or_unpack_int (ptr, &xasl->cat_fetched);
-
   ptr = or_unpack_int (ptr, &tmp);
   xasl->scan_op_type = (SCAN_OPERATION_TYPE) tmp;
 
@@ -2183,9 +2196,6 @@ stx_build_xasl_node (THREAD_ENTRY * thread_p, char *ptr, XASL_NODE * xasl)
     {
       return NULL;
     }
-
-  ptr = or_unpack_int (ptr, (int *) &xasl->projected_size);
-  ptr = or_unpack_double (ptr, (double *) &xasl->cardinality);
 
   ptr = or_unpack_int (ptr, &tmp);
   xasl->iscan_oid_order = (bool) tmp;
@@ -2424,9 +2434,6 @@ stx_build_method_sig (THREAD_ENTRY * thread_p, char *ptr, METHOD_SIG * method_si
       goto error;
     }
 
-  /* is can be null */
-  method_sig->class_name = stx_restore_string (thread_p, ptr);
-
   ptr = or_unpack_int (ptr, (int *) &method_sig->method_type);
   ptr = or_unpack_int (ptr, &method_sig->num_method_args);
 
@@ -2441,6 +2448,37 @@ stx_build_method_sig (THREAD_ENTRY * thread_p, char *ptr, METHOD_SIG * method_si
   for (n = 0; n < num_args; n++)
     {
       ptr = or_unpack_int (ptr, &(method_sig->method_arg_pos[n]));
+    }
+
+  if (method_sig->method_type == METHOD_TYPE_JAVA_SP)
+    {
+      method_sig->arg_info.arg_mode = (int *) stx_alloc_struct (thread_p, sizeof (int) * method_sig->num_method_args);
+      if (method_sig->arg_info.arg_mode == NULL)
+	{
+	  goto error;
+	}
+
+      method_sig->arg_info.arg_type = (int *) stx_alloc_struct (thread_p, sizeof (int) * method_sig->num_method_args);
+      if (method_sig->arg_info.arg_type == NULL)
+	{
+	  goto error;
+	}
+
+      for (n = 0; n < method_sig->num_method_args; n++)
+	{
+	  ptr = or_unpack_int (ptr, &method_sig->arg_info.arg_mode[n]);
+	}
+      for (n = 0; n < method_sig->num_method_args; n++)
+	{
+	  ptr = or_unpack_int (ptr, &method_sig->arg_info.arg_type[n]);
+	}
+
+      ptr = or_unpack_int (ptr, &method_sig->arg_info.result_type);
+    }
+  else				/* method */
+    {
+      /* is can be null */
+      method_sig->class_name = stx_restore_string (thread_p, ptr);
     }
 
   ptr = or_unpack_int (ptr, &offset);
@@ -3515,6 +3553,7 @@ stx_build_update_proc (THREAD_ENTRY * thread_p, char *ptr, UPDATE_PROC_NODE * up
 
   ptr = or_unpack_int (ptr, &update_info->wait_msecs);
   ptr = or_unpack_int (ptr, &update_info->no_logging);
+  ptr = or_unpack_int (ptr, &update_info->no_supplemental_log);
   ptr = or_unpack_int (ptr, &update_info->num_orderby_keys);
 
   /* restore MVCC condition reevaluation data */
@@ -3568,6 +3607,7 @@ stx_build_delete_proc (THREAD_ENTRY * thread_p, char *ptr, DELETE_PROC_NODE * de
 
   ptr = or_unpack_int (ptr, &delete_info->wait_msecs);
   ptr = or_unpack_int (ptr, &delete_info->no_logging);
+  ptr = or_unpack_int (ptr, &delete_info->no_supplemental_log);
 
   /* restore MVCC condition reevaluation data */
   ptr = or_unpack_int (ptr, &delete_info->num_reev_classes);
@@ -4235,7 +4275,6 @@ stx_build_rlike_eval_term (THREAD_ENTRY * thread_p, char *ptr, RLIKE_EVAL_TERM *
 
   /* initialize regex object pointer */
   rlike_eval_term->compiled_regex = NULL;
-  rlike_eval_term->compiled_pattern = NULL;
 
   return ptr;
 
@@ -4351,6 +4390,10 @@ stx_build_access_spec_type (THREAD_ENTRY * thread_p, char *ptr, ACCESS_SPEC_TYPE
       ptr = stx_build (thread_p, ptr, ACCESS_SPEC_JSON_TABLE_SPEC (access_spec));
       break;
 
+    case TARGET_DBLINK:
+      ptr = stx_build_dblink_spec_type (thread_p, ptr, &ACCESS_SPEC_DBLINK_SPEC (access_spec));
+      break;
+
     default:
       stx_set_xasl_errcode (thread_p, ER_QPROC_INVALID_XASLNODE);
       return NULL;
@@ -4448,6 +4491,20 @@ stx_build_indx_info (THREAD_ENTRY * thread_p, char *ptr, INDX_INFO * indx_info)
 
   ptr = or_unpack_int (ptr, &indx_info->func_idx_col_id);
 
+  ptr = or_unpack_int (ptr, &offset);
+  if (offset == 0)
+    {
+      indx_info->cov_list_id = NULL;
+    }
+  else
+    {
+      indx_info->cov_list_id = stx_restore_list_id (thread_p, &xasl_unpack_info->packed_xasl[offset]);
+      if (indx_info->cov_list_id == NULL)
+	{
+	  return NULL;
+	}
+    }
+
   if (indx_info->use_iss)
     {
       ptr = or_unpack_int (ptr, &tmp);
@@ -4494,6 +4551,22 @@ stx_build_key_info (THREAD_ENTRY * thread_p, char *ptr, KEY_INFO * key_info)
       key_info->key_ranges =
 	stx_restore_key_range_array (thread_p, &xasl_unpack_info->packed_xasl[offset], key_info->key_cnt);
       if (key_info->key_ranges == NULL)
+	{
+	  stx_set_xasl_errcode (thread_p, ER_OUT_OF_VIRTUAL_MEMORY);
+	  return NULL;
+	}
+    }
+
+  ptr = or_unpack_int (ptr, &offset);
+  if (offset == 0 || key_info->key_cnt == 0)
+    {
+      key_info->key_vals = NULL;
+    }
+  else
+    {
+      key_info->key_vals =
+	stx_restore_key_val_array (thread_p, &xasl_unpack_info->packed_xasl[offset], key_info->key_cnt);
+      if (key_info->key_vals == NULL)
 	{
 	  stx_set_xasl_errcode (thread_p, ER_OUT_OF_VIRTUAL_MEMORY);
 	  return NULL;
@@ -5027,6 +5100,67 @@ stx_build_method_spec_type (THREAD_ENTRY * thread_p, char *ptr, METHOD_SPEC_TYPE
 }
 
 static char *
+stx_build_dblink_spec_type (THREAD_ENTRY * thread_p, char *ptr, DBLINK_SPEC_TYPE * dblink_spec)
+{
+  int offset;
+  XASL_UNPACK_INFO *xasl_unpack_info = get_xasl_unpack_info_ptr (thread_p);
+
+  ptr = or_unpack_int (ptr, &offset);
+  if (offset == 0)
+    {
+      dblink_spec->dblink_regu_list_pred = NULL;
+    }
+  else
+    {
+      dblink_spec->dblink_regu_list_pred =
+	stx_restore_regu_variable_list (thread_p, &xasl_unpack_info->packed_xasl[offset]);
+      if (dblink_spec->dblink_regu_list_pred == NULL)
+	{
+	  goto error;
+	}
+    }
+
+  ptr = or_unpack_int (ptr, &offset);
+  if (offset == 0)
+    {
+      dblink_spec->dblink_regu_list_rest = NULL;
+    }
+  else
+    {
+      dblink_spec->dblink_regu_list_rest =
+	stx_restore_regu_variable_list (thread_p, &xasl_unpack_info->packed_xasl[offset]);
+      if (dblink_spec->dblink_regu_list_rest == NULL)
+	{
+	  goto error;
+	}
+    }
+
+  /* host variable count */
+  ptr = or_unpack_int (ptr, &dblink_spec->host_var_count);
+  if (dblink_spec->host_var_count > 0)
+    {
+      ptr = or_unpack_int (ptr, &offset);
+      dblink_spec->host_var_index =
+	stx_restore_int_array (thread_p, &xasl_unpack_info->packed_xasl[offset], dblink_spec->host_var_count);
+      if (dblink_spec->host_var_index == NULL)
+	{
+	  goto error;
+	}
+    }
+
+  dblink_spec->conn_url = stx_restore_string (thread_p, ptr);
+  dblink_spec->conn_user = stx_restore_string (thread_p, ptr);
+  dblink_spec->conn_password = stx_restore_string (thread_p, ptr);
+  dblink_spec->conn_sql = stx_restore_string (thread_p, ptr);
+
+  return ptr;
+
+error:
+  stx_set_xasl_errcode (thread_p, ER_OUT_OF_VIRTUAL_MEMORY);
+  return NULL;
+}
+
+static char *
 stx_build_val_list (THREAD_ENTRY * thread_p, char *ptr, VAL_LIST * val_list)
 {
   int offset, i;
@@ -5520,7 +5654,7 @@ stx_build_aggregate_type (THREAD_ENTRY * thread_p, char *ptr, AGGREGATE_TYPE * a
 	}
     }
 
-  ptr = or_unpack_int (ptr, &aggregate->accumulator.curr_cnt);
+  ptr = or_unpack_int64 (ptr, &aggregate->accumulator.curr_cnt);
 
   /* next */
   ptr = or_unpack_int (ptr, &offset);

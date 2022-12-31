@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -138,12 +137,16 @@ static PT_NODE *pt_make_outer_select_for_show_stmt (PARSER_CONTEXT * parser, PT_
 						    const char *select_alias);
 static PT_NODE *pt_make_field_type_expr_node (PARSER_CONTEXT * parser);
 static PT_NODE *pt_make_select_count_star (PARSER_CONTEXT * parser);
+#if defined(ENABLE_UNUSED_FUNCTION)
 static PT_NODE *pt_make_field_extra_expr_node (PARSER_CONTEXT * parser);
 static PT_NODE *pt_make_field_key_type_expr_node (PARSER_CONTEXT * parser);
+#endif /* ENABLE_UNUSED_FUNCTION */
 static PT_NODE *pt_make_sort_spec_with_identifier (PARSER_CONTEXT * parser, const char *identifier,
 						   PT_MISC_TYPE sort_mode);
 static PT_NODE *pt_make_sort_spec_with_number (PARSER_CONTEXT * parser, const int number_pos, PT_MISC_TYPE sort_mode);
+#if defined(ENABLE_UNUSED_FUNCTION)
 static PT_NODE *pt_make_collection_type_subquery_node (PARSER_CONTEXT * parser, const char *table_name);
+#endif /* ENABLE_UNUSED_FUNCTION */
 static PT_NODE *pt_make_dummy_query_check_table (PARSER_CONTEXT * parser, const char *table_name);
 static PT_NODE *pt_make_query_user_groups (PARSER_CONTEXT * parser, const char *user_name);
 static void pt_help_show_create_table (PARSER_CONTEXT * parser, PT_NODE * table_name, string_buffer & strbuf);
@@ -228,7 +231,6 @@ pt_and (PARSER_CONTEXT * parser, const PT_NODE * arg1, const PT_NODE * arg2)
   node = parser_new_node (parser, PT_EXPR);
   if (node)
     {
-      parser_init_node (node);
       node->info.expr.op = PT_AND;
       node->info.expr.arg1 = (PT_NODE *) arg1;
       node->info.expr.arg2 = (PT_NODE *) arg2;
@@ -254,7 +256,6 @@ pt_union (PARSER_CONTEXT * parser, PT_NODE * arg1, PT_NODE * arg2)
 
   if (node)
     {
-      parser_init_node (node);
       /* set query id # */
       node->info.query.id = (UINTPTR) node;
 
@@ -309,7 +310,6 @@ pt_name (PARSER_CONTEXT * parser, const char *name)
   node = parser_new_node (parser, PT_NAME);
   if (node)
     {
-      parser_init_node (node);
       node->info.name.original = pt_append_string (parser, NULL, name);
     }
 
@@ -331,7 +331,6 @@ pt_table_option (PARSER_CONTEXT * parser, const PT_TABLE_OPTION_TYPE option, PT_
   node = parser_new_node (parser, PT_TABLE_OPTION);
   if (node)
     {
-      parser_init_node (node);
       node->info.table_option.option = option;
       node->info.table_option.val = val;
     }
@@ -356,7 +355,6 @@ pt_expression (PARSER_CONTEXT * parser, PT_OP_TYPE op, PT_NODE * arg1, PT_NODE *
   node = parser_new_node (parser, PT_EXPR);
   if (node)
     {
-      parser_init_node (node);
       node->info.expr.op = op;
       node->info.expr.arg1 = arg1;
       node->info.expr.arg2 = arg2;
@@ -429,7 +427,6 @@ pt_entity (PARSER_CONTEXT * parser, const PT_NODE * entity_name, const PT_NODE *
   node = parser_new_node (parser, PT_SPEC);
   if (node)
     {
-      parser_init_node (node);
       node->info.spec.entity_name = (PT_NODE *) entity_name;
       node->info.spec.range_var = (PT_NODE *) range_var;
       node->info.spec.flat_entity_list = (PT_NODE *) flat_list;
@@ -454,7 +451,6 @@ pt_tuple_value (PARSER_CONTEXT * parser, PT_NODE * name, CURSOR_ID * cursor_p, i
   node = parser_new_node (parser, PT_TUPLE_VALUE);
   if (node)
     {
-      parser_init_node (node);
       node->info.tuple_value.name = name;
       node->info.tuple_value.index = index;
       node->info.tuple_value.cursor_p = cursor_p;
@@ -476,7 +472,6 @@ pt_insert_value (PARSER_CONTEXT * parser, PT_NODE * node)
   PT_NODE *insert_val = parser_new_node (parser, PT_INSERT_VALUE);
   if (insert_val != NULL)
     {
-      parser_init_node (insert_val);
       insert_val->info.insert_value.original_node = node;
     }
   return insert_val;
@@ -713,6 +708,56 @@ pt_is_expr_wrapped_function (PARSER_CONTEXT * parser, const PT_NODE * node)
     || function_type == F_SPATIAL_ASTEXT || function_type == F_SPATIAL_FROMTEXT)
 	{
 	  return true;
+	}
+    }
+
+  return false;
+}
+
+/*
+ * pt_is_json_function () -
+ *   return: true if node is a json function
+ *   parser(in): parser context
+ *   node(in): PT_FUNTION node
+ */
+bool
+pt_is_json_function (PARSER_CONTEXT * parser, const PT_NODE * node)
+{
+  FUNC_TYPE function_type;
+
+  if (node->node_type == PT_FUNCTION)
+    {
+      function_type = node->info.function.function_type;
+      switch (function_type)
+	{
+	case F_JSON_ARRAY:
+	case F_JSON_ARRAY_APPEND:
+	case F_JSON_ARRAY_INSERT:
+	case F_JSON_CONTAINS:
+	case F_JSON_CONTAINS_PATH:
+	case F_JSON_DEPTH:
+	case F_JSON_EXTRACT:
+	case F_JSON_GET_ALL_PATHS:
+	case F_JSON_INSERT:
+	case F_JSON_KEYS:
+	case F_JSON_LENGTH:
+	case F_JSON_MERGE:
+	case F_JSON_MERGE_PATCH:
+	case F_JSON_OBJECT:
+	case F_JSON_PRETTY:
+	case F_JSON_QUOTE:
+	case F_JSON_REMOVE:
+	case F_JSON_REPLACE:
+	case F_JSON_SEARCH:
+	case F_JSON_SET:
+	case F_JSON_TYPE:
+	case F_JSON_UNQUOTE:
+	case F_JSON_VALID:
+	case PT_JSON_ARRAYAGG:
+	case PT_JSON_OBJECTAGG:
+	  return true;
+	default:
+	  return false;
 	}
     }
 
@@ -1060,6 +1105,105 @@ pt_find_aggregate_functions_post (PARSER_CONTEXT * parser, PT_NODE * tree, void 
 }
 
 /*
+ * pt_is_order_sensitive_agg_post () -
+ *   return:
+ *   parser(in):
+ *   tree(in):
+ *   arg(in/out):
+ *   continue_walk(in/out):
+ */
+PT_NODE *
+pt_is_order_sensitive_agg_post (PARSER_CONTEXT * parser, PT_NODE * tree, void *arg, int *continue_walk)
+{
+  bool *order_sensitive_agg = (bool *) arg;
+
+  if (*order_sensitive_agg)
+    {
+      *continue_walk = PT_STOP_WALK;
+    }
+  else
+    {
+      *continue_walk = PT_CONTINUE_WALK;
+    }
+
+  return tree;
+}
+
+/*
+ * pt_is_group_concat () -
+ *   return:
+ *   parser(in):
+ *   tree(in):
+ *   arg(in/out): true if node is an analytic function node
+ *   continue_walk(in/out):
+ */
+PT_NODE *
+pt_is_group_concat (PARSER_CONTEXT * parser, PT_NODE * tree, void *arg, int *continue_walk)
+{
+  bool *has_group_concat = (bool *) arg;
+
+  if (tree && tree->node_type == PT_FUNCTION && tree->info.function.function_type == PT_GROUP_CONCAT)
+    {
+      *has_group_concat = true;
+    }
+
+  if (*has_group_concat)
+    {
+      *continue_walk = PT_STOP_WALK;
+    }
+  else if (PT_IS_QUERY_NODE_TYPE (tree->node_type))
+    {
+      *continue_walk = PT_LIST_WALK;
+    }
+  else
+    {
+      *continue_walk = PT_CONTINUE_WALK;
+    }
+
+  return tree;
+}
+
+/*
+ * pt_is_order_sensitive_agg () -
+ *   return:
+ *   parser(in):
+ *   tree(in):
+ *   arg(in/out): true if node is an order-sensitive aggrigation function node
+ *   continue_walk(in/out):
+ */
+PT_NODE *
+pt_is_order_sensitive_agg (PARSER_CONTEXT * parser, PT_NODE * tree, void *arg, int *continue_walk)
+{
+  bool *has_group_concat = (bool *) arg;
+
+  if (tree && tree->node_type == PT_FUNCTION &&
+      (tree->info.function.function_type == PT_GROUP_CONCAT
+       || tree->info.function.function_type == PT_CUME_DIST
+       || tree->info.function.function_type == PT_PERCENT_RANK
+       || tree->info.function.function_type == PT_PERCENTILE_CONT
+       || tree->info.function.function_type == PT_PERCENTILE_DISC
+       || tree->info.function.function_type == F_SEQUENCE || pt_is_json_function (parser, tree)))
+    {
+      *has_group_concat = true;
+    }
+
+  if (*has_group_concat)
+    {
+      *continue_walk = PT_STOP_WALK;
+    }
+  else if (PT_IS_QUERY_NODE_TYPE (tree->node_type))
+    {
+      *continue_walk = PT_LIST_WALK;
+    }
+  else
+    {
+      *continue_walk = PT_CONTINUE_WALK;
+    }
+
+  return tree;
+}
+
+/*
  * pt_is_analytic_node_post () -
  *   return:
  *   parser(in):
@@ -1178,6 +1322,65 @@ pt_is_inst_or_orderby_num_node_post (PARSER_CONTEXT * parser, PT_NODE * tree, vo
 }
 
 /*
+ * pt_is_inst_num_node_post () -
+ *   return:
+ *   parser(in):
+ *   tree(in):
+ *   arg(in/out):
+ *   continue_walk(in/out):
+ */
+PT_NODE *
+pt_is_inst_num_node_post (PARSER_CONTEXT * parser, PT_NODE * tree, void *arg, int *continue_walk)
+{
+  bool *has_inst_num = (bool *) arg;
+
+  if (*has_inst_num)
+    {
+      *continue_walk = PT_STOP_WALK;
+    }
+  else
+    {
+      *continue_walk = PT_CONTINUE_WALK;
+    }
+
+  return tree;
+}
+
+/*
+ * pt_is_inst_num_node () -
+ *   return:
+ *   parser(in):
+ *   tree(in):
+ *   arg(in/out): true if node is an INST_NUM expression node
+ *   continue_walk(in/out):
+ */
+PT_NODE *
+pt_is_inst_num_node (PARSER_CONTEXT * parser, PT_NODE * tree, void *arg, int *continue_walk)
+{
+  bool *has_inst_num = (bool *) arg;
+
+  if (PT_IS_INSTNUM (tree))
+    {
+      *has_inst_num = true;
+    }
+
+  if (*has_inst_num)
+    {
+      *continue_walk = PT_STOP_WALK;
+    }
+  else if (PT_IS_QUERY_NODE_TYPE (tree->node_type))
+    {
+      *continue_walk = PT_LIST_WALK;
+    }
+  else
+    {
+      *continue_walk = PT_CONTINUE_WALK;
+    }
+
+  return tree;
+}
+
+/*
  * pt_is_inst_or_orderby_num_node () -
  *   return:
  *   parser(in):
@@ -1202,6 +1405,44 @@ pt_is_inst_or_orderby_num_node (PARSER_CONTEXT * parser, PT_NODE * tree, void *a
   else if (PT_IS_QUERY_NODE_TYPE (tree->node_type))
     {
       *continue_walk = PT_LIST_WALK;
+    }
+  else
+    {
+      *continue_walk = PT_CONTINUE_WALK;
+    }
+
+  return tree;
+}
+
+/*
+ * pt_is_inst_or_inst_num_node () -
+ *   return:
+ *   parser(in):
+ *   tree(in):
+ *   arg(in/out): true if node is an INST_NUM or ORDERBY_NUM or GROUPBY_NUM expression node
+ *   continue_walk(in/out):
+ */
+PT_NODE *
+pt_is_inst_or_inst_num_node (PARSER_CONTEXT * parser, PT_NODE * tree, void *arg, int *continue_walk)
+{
+  bool *has_inst_orderby_num = (bool *) arg;
+
+  if (PT_IS_INSTNUM (tree) || PT_IS_ORDERBYNUM (tree) || PT_IS_GROUPBYNUM (tree))
+    {
+      *has_inst_orderby_num = true;
+    }
+
+  if (*has_inst_orderby_num)
+    {
+      *continue_walk = PT_STOP_WALK;
+    }
+  else if (PT_IS_QUERY_NODE_TYPE (tree->node_type))
+    {
+      *continue_walk = PT_LIST_WALK;
+    }
+  else
+    {
+      *continue_walk = PT_CONTINUE_WALK;
     }
 
   return tree;
@@ -1244,6 +1485,16 @@ pt_is_ddl_statement (const PT_NODE * node)
 	case PT_REMOVE_TRIGGER:
 	case PT_RENAME_TRIGGER:
 	case PT_UPDATE_STATS:
+	  /* TODO: check it  */
+	case PT_CREATE_SERVER:
+	case PT_DROP_SERVER:
+	case PT_RENAME_SERVER:
+	case PT_ALTER_SERVER:
+	case PT_TRUNCATE:
+	case PT_ALTER_SYNONYM:
+	case PT_CREATE_SYNONYM:
+	case PT_DROP_SYNONYM:
+	case PT_RENAME_SYNONYM:
 	  return true;
 	default:
 	  break;
@@ -2508,7 +2759,7 @@ pt_split_join_preds (PARSER_CONTEXT * parser, PT_NODE * predicates, PT_NODE ** j
     {
       bool has_filter_pred = false;
 
-      assert (PT_IS_EXPR_NODE (current_conj));
+      assert (PT_IS_EXPR_NODE (current_conj) || PT_IS_VALUE_NODE (current_conj));
       /* It is either fully CNF or not at all. */
       assert (!(current_conj->next != NULL
 		&& (PT_IS_EXPR_NODE_WITH_OPERATOR (current_conj, PT_AND)
@@ -2518,7 +2769,7 @@ pt_split_join_preds (PARSER_CONTEXT * parser, PT_NODE * predicates, PT_NODE ** j
 
       for (current_pred = current_conj; current_pred != NULL; current_pred = current_pred->or_next)
 	{
-	  assert (PT_IS_EXPR_NODE (current_pred));
+	  assert (PT_IS_EXPR_NODE (current_pred) || PT_IS_VALUE_NODE (current_pred));
 	  /* It is either fully CNF or not at all. */
 	  assert (!(current_pred->or_next != NULL
 		    && (PT_IS_EXPR_NODE_WITH_OPERATOR (current_pred, PT_AND)
@@ -2717,25 +2968,6 @@ pt_column_updatable (PARSER_CONTEXT * parser, PT_NODE * statement)
   return updatable;
 }
 #endif
-
-/*
- * pt_has_error () - returns true if there are errors recorder for this parser
- *   return:
- *   parser(in):
- */
-int
-pt_has_error (const PARSER_CONTEXT * parser)
-{
-  if (parser && (parser->error_msgs != NULL || parser->has_internal_error))
-    {
-#if 0				/* TODO */
-      assert (er_errid () != NO_ERROR);
-#endif
-      return 1;
-    }
-
-  return 0;
-}
 
 /*
  * pt_statement_line_number () -
@@ -2937,6 +3169,55 @@ pt_has_aggregate (PARSER_CONTEXT * parser, PT_NODE * node)
 }
 
 /*
+ * pt_has_define_vars () - check if a statement uses define vars ':='
+ * return	: true if the statement uses define vars ':='
+ * parser (in)	: parser context
+ * stmt (in)	: statement
+ */
+bool
+pt_has_define_vars (PARSER_CONTEXT * parser, PT_NODE * stmt)
+{
+  bool has_define_vars = false;
+
+  parser_walk_tree (parser, stmt, pt_is_define_vars, &has_define_vars, NULL, NULL);
+
+  return has_define_vars;
+}
+
+/*
+ * pt_is_define_vars () - check if a node is a define vars ':='
+ * return : node
+ * parser (in) : parser context
+ * node (in)   : node
+ * arg (in)    :
+ * continue_walk (in) :
+ */
+PT_NODE *
+pt_is_define_vars (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk)
+{
+  bool *is_define_vars = (bool *) arg;
+  *continue_walk = PT_CONTINUE_WALK;
+  assert (is_define_vars != NULL);
+
+  if (*is_define_vars)
+    {
+      /* stop checking, there already is a parameter in the statement */
+      return node;
+    }
+
+  if (node->node_type == PT_EXPR)
+    {
+      if (node->info.expr.op == PT_DEFINE_VARIABLE)
+	{
+	  *is_define_vars = true;
+	  *continue_walk = PT_STOP_WALK;
+	}
+    }
+
+  return node;
+}
+
+/*
  * pt_has_analytic () -
  *   return: true if statement has an analytic function in its parse tree
  *   parser(in):
@@ -2994,6 +3275,52 @@ pt_has_analytic (PARSER_CONTEXT * parser, PT_NODE * node)
 }
 
 /*
+ * pt_has_order_sensitive_agg () -
+ *   return: true if statement has an group_concat function in its parse tree
+ *   parser(in):
+ *   node(in/out):
+ *
+ */
+bool
+pt_has_order_sensitive_agg (PARSER_CONTEXT * parser, PT_NODE * node)
+{
+  bool has_order_sensitive_agg = false;
+  bool has_order_sensitive_agg_arg1 = false;
+  bool has_order_sensitive_agg_arg2 = false;
+
+  if (!node)
+    {
+      return false;
+    }
+
+  switch (node->node_type)
+    {
+    case PT_SELECT:
+      (void) parser_walk_tree (parser, node->info.query.q.select.list, pt_is_order_sensitive_agg,
+			       &has_order_sensitive_agg, pt_is_order_sensitive_agg_post, &has_order_sensitive_agg);
+      break;
+
+    case PT_UNION:
+    case PT_DIFFERENCE:
+    case PT_INTERSECTION:
+      has_order_sensitive_agg_arg1 = pt_has_order_sensitive_agg (parser, node->info.query.q.union_.arg1);
+      has_order_sensitive_agg_arg2 = pt_has_order_sensitive_agg (parser, node->info.query.q.union_.arg2);
+      if (has_order_sensitive_agg_arg1 || has_order_sensitive_agg_arg2)
+	{
+	  has_order_sensitive_agg = true;
+	}
+      break;
+
+    default:
+      (void) parser_walk_tree (parser, node, pt_is_order_sensitive_agg, &has_order_sensitive_agg,
+			       pt_is_order_sensitive_agg_post, &has_order_sensitive_agg);
+      break;
+    }
+
+  return has_order_sensitive_agg;
+}
+
+/*
  * pt_has_inst_or_orderby_num () - check if tree has an INST_NUM or ORDERBY_NUM
  *				   node somewhere
  *   return: true if tree has INST_NUM/ORDERBY_NUM
@@ -3012,6 +3339,179 @@ pt_has_inst_or_orderby_num (PARSER_CONTEXT * parser, PT_NODE * node)
 }
 
 /*
+ * pt_has_inst_num () - check if tree has an INST_NUM node somewhere
+ *   return: true if tree has INST_NUM
+ *   parser(in):
+ *   node(in):
+ */
+bool
+pt_has_inst_num (PARSER_CONTEXT * parser, PT_NODE * node)
+{
+  bool has_inst_num = false;
+
+  (void) parser_walk_tree (parser, node, pt_is_inst_num_node, &has_inst_num, pt_is_inst_num_node_post, &has_inst_num);
+
+  return has_inst_num;
+}
+
+/*
+ * pt_has_inst_in_where_and_select_list ()
+ *          - check if tree has an INST_NUM or ORDERBY_NUM or GROUPBY_NUM node in where and select_list
+ *   return: true if tree has INST_NUM/ORDERBY_NUM
+ *   parser(in):
+ *   node(in):
+ */
+
+bool
+pt_has_inst_in_where_and_select_list (PARSER_CONTEXT * parser, PT_NODE * node)
+{
+  bool has_inst_orderby_num = false;
+  PT_NODE *where, *select_list, *orderby_for, *having, *using_index;
+
+  switch (node->node_type)
+    {
+    case PT_SELECT:
+      using_index = node->info.query.q.select.using_index;
+      if (using_index != NULL && using_index->info.name.indx_key_limit != NULL)
+	{
+	  return true;
+	}
+      where = node->info.query.q.select.where;
+      (void) parser_walk_tree (parser, where, pt_is_inst_or_inst_num_node, &has_inst_orderby_num,
+			       pt_is_inst_or_orderby_num_node_post, &has_inst_orderby_num);
+      select_list = node->info.query.q.select.list;
+      (void) parser_walk_tree (parser, select_list, pt_is_inst_or_inst_num_node, &has_inst_orderby_num,
+			       pt_is_inst_or_orderby_num_node_post, &has_inst_orderby_num);
+      orderby_for = node->info.query.orderby_for;
+      (void) parser_walk_tree (parser, orderby_for, pt_is_inst_or_inst_num_node, &has_inst_orderby_num,
+			       pt_is_inst_or_orderby_num_node_post, &has_inst_orderby_num);
+      having = node->info.query.q.select.having;
+      (void) parser_walk_tree (parser, having, pt_is_inst_or_inst_num_node, &has_inst_orderby_num,
+			       pt_is_inst_or_orderby_num_node_post, &has_inst_orderby_num);
+      break;
+
+    case PT_UNION:
+    case PT_DIFFERENCE:
+    case PT_INTERSECTION:
+      if (node->info.query.limit)
+	{
+	  return true;
+	}
+      has_inst_orderby_num |= pt_has_inst_in_where_and_select_list (parser, node->info.query.q.union_.arg1);
+      has_inst_orderby_num |= pt_has_inst_in_where_and_select_list (parser, node->info.query.q.union_.arg2);
+      break;
+
+    default:
+      break;
+    }
+
+  return has_inst_orderby_num;
+}
+
+/*
+ * pt_has_inst_or_orderby_num_in_where ()
+ *          - check if tree has an INST_NUM or ORDERBY_NUM or GROUPBY_NUM node in where
+ *   return: true if tree has INST_NUM/ORDERBY_NUM
+ *   parser(in):
+ *   node(in):
+ */
+
+bool
+pt_has_inst_or_orderby_num_in_where (PARSER_CONTEXT * parser, PT_NODE * node)
+{
+  bool has_inst_orderby_num = false;
+  PT_NODE *where, *select_list, *orderby_for, *having, *using_index;
+
+  switch (node->node_type)
+    {
+    case PT_SELECT:
+      using_index = node->info.query.q.select.using_index;
+      if (using_index != NULL && using_index->info.name.indx_key_limit != NULL)
+	{
+	  return true;
+	}
+      where = node->info.query.q.select.where;
+      (void) parser_walk_tree (parser, where, pt_is_inst_or_inst_num_node, &has_inst_orderby_num,
+			       pt_is_inst_or_orderby_num_node_post, &has_inst_orderby_num);
+      orderby_for = node->info.query.orderby_for;
+      (void) parser_walk_tree (parser, orderby_for, pt_is_inst_or_inst_num_node, &has_inst_orderby_num,
+			       pt_is_inst_or_orderby_num_node_post, &has_inst_orderby_num);
+      having = node->info.query.q.select.having;
+      (void) parser_walk_tree (parser, having, pt_is_inst_or_inst_num_node, &has_inst_orderby_num,
+			       pt_is_inst_or_orderby_num_node_post, &has_inst_orderby_num);
+      break;
+
+    case PT_UNION:
+    case PT_DIFFERENCE:
+    case PT_INTERSECTION:
+      if (node->info.query.limit)
+	{
+	  return true;
+	}
+      has_inst_orderby_num |= pt_has_inst_or_orderby_num_in_where (parser, node->info.query.q.union_.arg1);
+      has_inst_orderby_num |= pt_has_inst_or_orderby_num_in_where (parser, node->info.query.q.union_.arg2);
+      break;
+
+    default:
+      break;
+    }
+
+  return has_inst_orderby_num;
+}
+
+/*
+ * pt_set_correlation_level ()
+ *          - set correlation level
+ *   parser(in):
+ *   subquery(in):
+ *   level(in):
+ */
+
+void
+pt_set_correlation_level (PARSER_CONTEXT * parser, PT_NODE * subquery, int level)
+{
+  switch (subquery->node_type)
+    {
+    case PT_SELECT:
+      subquery->info.query.correlation_level = level;
+      break;
+
+    case PT_UNION:
+    case PT_DIFFERENCE:
+    case PT_INTERSECTION:
+      subquery->info.query.correlation_level = level;
+      pt_set_correlation_level (parser, subquery->info.query.q.union_.arg1, level);
+      pt_set_correlation_level (parser, subquery->info.query.q.union_.arg2, level);
+      break;
+
+    default:
+      break;
+    }
+}
+
+/*
+ * pt_has_nullable_term () - check if tree has an nullable term
+ *				   node somewhere
+ *   return: true if tree has nullable term
+ *   parser(in):
+ *   node(in):
+ */
+bool
+pt_has_nullable_term (PARSER_CONTEXT * parser, PT_NODE * node)
+{
+  int has_nullable_term = 0;
+  PT_NODE *next;
+
+  next = node->next;
+  node->next = NULL;
+  (void) parser_walk_tree (parser, node, NULL, NULL, qo_check_nullable_expr, &has_nullable_term);
+  node->next = next;
+
+  return has_nullable_term == 0 ? false : true;
+}
+
+/*
+>>>>>>> upstream/develop
  * pt_insert_host_var () - insert a host_var into a list based on
  *                         its ordinal position
  *   return: a list of PT_HOST_VAR type nodes
@@ -4070,10 +4570,10 @@ error_exit:
 void
 pt_copy_statement_flags (PT_NODE * source, PT_NODE * destination)
 {
-  destination->recompile = source->recompile;
-  destination->cannot_prepare = source->cannot_prepare;
-  destination->si_datetime = source->si_datetime;
-  destination->si_tran_id = source->si_tran_id;
+  destination->flag.recompile = source->flag.recompile;
+  destination->flag.cannot_prepare = source->flag.cannot_prepare;
+  destination->flag.si_datetime = source->flag.si_datetime;
+  destination->flag.si_tran_id = source->flag.si_tran_id;
 }
 
 /*
@@ -4191,11 +4691,11 @@ pt_dup_key_update_stmt (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * assig
     }
 
   /* We need the OID PT_VALUE to become a host variable, see qo_optimize_queries () */
-  node->info.update.search_cond->force_auto_parameterize = 1;
+  node->info.update.search_cond->flag.force_auto_parameterize = 1;
 
   /* We don't want constant folding on the WHERE clause because it might result in the host variable being removed from
    * the tree. */
-  node->info.update.search_cond->do_not_fold = 1;
+  node->info.update.search_cond->flag.do_not_fold = 1;
 
   func_node = NULL;
   name_node = NULL;
@@ -5374,6 +5874,7 @@ pt_make_collation_expr_node (PARSER_CONTEXT * parser)
   return if_node;
 }
 
+#if defined(ENABLE_UNUSED_FUNCTION)
 /*
  * pt_make_field_extra_expr_node() - builds the 'Extra' field for the
  *				SHOW COLUMNS statment
@@ -5430,7 +5931,9 @@ pt_make_field_extra_expr_node (PARSER_CONTEXT * parser)
 
   return extra_node;
 }
+#endif /* ENABLE_UNUSED_FUNCTION */
 
+#if defined(ENABLE_UNUSED_FUNCTION)
 /*
  * pt_make_field_key_type_expr_node() - builds the 'Key' field for the
  *				SHOW COLUMNS statment
@@ -5711,6 +6214,7 @@ pt_make_field_key_type_expr_node (PARSER_CONTEXT * parser)
   }
   return key_node;
 }
+#endif /* ENABLE_UNUSED_FUNCTION */
 
 /*
  * pt_make_sort_spec_with_identifier() - builds a SORT_SPEC for GROUP BY or
@@ -5781,6 +6285,7 @@ pt_make_sort_spec_with_number (PARSER_CONTEXT * parser, const int number_pos, PT
   return sort_spec_node;
 }
 
+#if defined(ENABLE_UNUSED_FUNCTION)
 /*
  * pt_make_collection_type_subquery_node() - builds a SELECT subquery used
  *					construct the string to display
@@ -5890,6 +6395,7 @@ pt_make_collection_type_subquery_node (PARSER_CONTEXT * parser, const char *tabl
 
   return query;
 }
+#endif /* ENABLE_UNUSED_FUNCTION */
 
 /*
  * pt_make_dummy_query_check_table() - builds a SELECT subquery used check
@@ -6013,6 +6519,7 @@ pt_make_query_show_table (PARSER_CONTEXT * parser, bool is_full_syntax, int like
       /* add IF to SELECT list, list should not be empty at this point */
       assert (sub_query->info.query.q.select.list != NULL);
 
+      pt_add_name_col_to_sel_list (parser, sub_query, "C.owner_name", "Owner");
       sub_query->info.query.q.select.list = parser_append_node (if_node, sub_query->info.query.q.select.list);
     }
 
@@ -6172,6 +6679,13 @@ pt_resolve_showstmt_args_unnamed (PARSER_CONTEXT * parser, const SHOWSTMT_NAMED_
 
       if (arg_infos[i].type == AVT_IDENTIFIER)
 	{
+	  /* store user-specified-name in info.name.original. */
+	  parser_walk_tree (parser, arg, NULL, NULL, pt_set_user_specified_name, NULL);
+	  if (pt_has_error (parser))
+	    {
+	      goto error;
+	    }
+
 	  /* replace identifier node with string value node */
 	  id_string = pt_make_string_value (parser, arg->info.name.original);
 	  if (id_string == NULL)
@@ -6542,6 +7056,13 @@ pt_make_query_show_columns (PARSER_CONTEXT * parser, PT_NODE * original_cls_id, 
       PT_SELECT_INFO_SET_FLAG (sub_query, PT_SELECT_INFO_COLS_SCHEMA);
     }
 
+  /* store user-specified-name in info.name.original. */
+  parser_walk_tree (parser, original_cls_id, NULL, NULL, pt_set_user_specified_name, NULL);
+  if (pt_has_error (parser))
+    {
+      return NULL;
+    }
+
   intl_identifier_lower (original_cls_id->info.name.original, lower_table_name);
 
   db_make_int (db_valuep + 0, 0);
@@ -6722,6 +7243,13 @@ pt_make_query_show_create_table (PARSER_CONTEXT * parser, PT_NODE * table_name)
   parser_block_allocator alloc (parser);
   string_buffer strbuf (alloc);
 
+  /* store user-specified-name in info.name.original. */
+  parser_walk_tree (parser, table_name, NULL, NULL, pt_set_user_specified_name, NULL);
+  if (pt_has_error (parser))
+    {
+      return NULL;
+    }
+
   pt_help_show_create_table (parser, table_name, strbuf);
   if (strbuf.len () == 0)
     {
@@ -6787,6 +7315,13 @@ pt_make_query_show_create_view (PARSER_CONTEXT * parser, PT_NODE * view_identifi
   assert (view_identifier != NULL);
   assert (view_identifier->node_type == PT_NAME);
 
+  /* store user-specified-name in info.name.original. */
+  parser_walk_tree (parser, view_identifier, NULL, NULL, pt_set_user_specified_name, NULL);
+  if (pt_has_error (parser))
+    {
+      return NULL;
+    }
+
   node = parser_new_node (parser, PT_SELECT);
   if (node == NULL)
     {
@@ -6843,7 +7378,8 @@ pt_make_query_show_create_view (PARSER_CONTEXT * parser, PT_NODE * view_identifi
   /* ------ SELECT ... WHERE ------- */
   {
     PT_NODE *where_item = NULL;
-    where_item = pt_make_pred_name_string_val (parser, PT_EQ, "VC.vclass_name", lower_view_name);
+    where_item =
+      pt_make_pred_name_string_val (parser, PT_EQ, "VC.vclass_name", sm_remove_qualifier_name (lower_view_name));
 
     /* WHERE list should be empty */
     assert (node->info.query.q.select.where == NULL);
@@ -6874,7 +7410,7 @@ pt_make_query_show_exec_stats (PARSER_CONTEXT * parser)
       return NULL;
     }
 
-  parser->dont_collect_exec_stats = 1;
+  parser->flag.dont_collect_exec_stats = 1;
 
   show_node = pt_pop (parser);
   assert (show_node == node[0]);
@@ -6964,7 +7500,7 @@ pt_make_query_show_exec_stats_all (PARSER_CONTEXT * parser)
 
   show_node = pt_pop (parser);
   assert (show_node == node[0]);
-  parser->dont_collect_exec_stats = 1;
+  parser->flag.dont_collect_exec_stats = 1;
 
   return node[0];
 }
@@ -7114,7 +7650,8 @@ pt_make_query_show_grants_curr_usr (PARSER_CONTEXT * parser)
  *	 	       '')
  *		 ) AS GRANTS
  *   FROM db_class C, _db_auth AU
- *   WHERE AU.class_of.class_name = C.class_name AND
+ *   WHERE AU.class_of.unique_name = C.unique_name AND
+ *	    AU.class_of.owner.name = C.owner_name AND
  *	    C.is_system_class='NO' AND
  *	    ( AU.grantee.name=<user_name> OR
  *	      SET{ AU.grantee.name} SUBSETEQ (
@@ -7167,7 +7704,7 @@ pt_make_query_show_grants (PARSER_CONTEXT * parser, const char *original_user_na
    *      CONCAT ( 'GRANT ',
    *                GROUP_CONCAT(AU.auth_type ORDER BY 1 SEPARATOR ', '),
    *                ' ON ' ,
-   *                AU.class_of.class_name,
+   *                AU.class_of.unique_name,
    *                ' TO ',
    *                AU.grantee.name ,
    *                IF (AU.is_grantable=1,
@@ -7213,7 +7750,7 @@ pt_make_query_show_grants (PARSER_CONTEXT * parser, const char *original_user_na
     concat_arg = pt_make_string_value (parser, " ON ");
     concat_arg_list = parser_append_node (concat_arg, concat_arg_list);
 
-    concat_arg = pt_make_dotted_identifier (parser, "AU.class_of.class_name");
+    concat_arg = pt_make_dotted_identifier (parser, "AU.class_of.unique_name");
     concat_arg_list = parser_append_node (concat_arg, concat_arg_list);
 
     concat_arg = pt_make_string_value (parser, " TO ");
@@ -7257,6 +7794,7 @@ pt_make_query_show_grants (PARSER_CONTEXT * parser, const char *original_user_na
   /* ------ SELECT ... WHERE ------- */
   /*
    * WHERE AU.class_of.class_name = C.class_name AND
+   *    AU.class_of.owner.name = C.owner_name AND
    *    C.is_system_class='NO' AND
    *    ( AU.grantee.name=<user_name> OR
    *      SET{ AU.grantee.name} SUBSETEQ (  <query_user_groups> )
@@ -7268,6 +7806,14 @@ pt_make_query_show_grants (PARSER_CONTEXT * parser, const char *original_user_na
 
     where_item = pt_make_pred_with_identifiers (parser, PT_EQ, "AU.class_of.class_name", "C.class_name");
     where_expr = where_item;
+  }
+  {
+    /* AU.class_of.owner.name = C.owner_name */
+    PT_NODE *where_item = NULL;
+
+    where_item = pt_make_pred_with_identifiers (parser, PT_EQ, "AU.class_of.owner.name", "C.owner_name");
+    /* <where_expr> = <where_expr> AND <where_item> */
+    where_expr = parser_make_expression (parser, PT_AND, where_expr, where_item, NULL);
   }
   {
     /* C.is_system_class = 'NO' */
@@ -7558,7 +8104,7 @@ pt_split_delete_stmt (PARSER_CONTEXT * parser, PT_NODE * delete_stmt)
 	  if (last_new_del_stmt != NULL)
 	    {
 	      last_new_del_stmt->info.delete_.hint = delete_stmt->info.delete_.hint;
-	      last_new_del_stmt->recompile = delete_stmt->recompile;
+	      last_new_del_stmt->flag.recompile = delete_stmt->flag.recompile;
 	      if ((last_new_del_stmt->info.delete_.hint & PT_HINT_LK_TIMEOUT)
 		  && delete_stmt->info.delete_.waitsecs_hint != NULL)
 		{
@@ -7679,6 +8225,13 @@ pt_make_query_show_index (PARSER_CONTEXT * parser, PT_NODE * original_cls_id)
 
   assert (original_cls_id != NULL);
   assert (original_cls_id->node_type == PT_NAME);
+
+  /* store user-specified-name in info.name.original. */
+  parser_walk_tree (parser, original_cls_id, NULL, NULL, pt_set_user_specified_name, NULL);
+  if (pt_has_error (parser))
+    {
+      return NULL;
+    }
 
   query = parser_new_node (parser, PT_SELECT);
   if (query == NULL)
@@ -8847,8 +9400,8 @@ pt_get_query_limit_from_limit (PARSER_CONTEXT * parser, PT_NODE * limit, DB_VALU
 
   domainp = tp_domain_resolve_default (DB_TYPE_BIGINT);
 
-  save_set_host_var = parser->set_host_var;
-  parser->set_host_var = 1;
+  save_set_host_var = parser->flag.set_host_var;
+  parser->flag.set_host_var = 1;
 
   assert (limit->node_type == PT_VALUE || limit->node_type == PT_HOST_VAR || limit->node_type == PT_EXPR);
 
@@ -8911,7 +9464,7 @@ cleanup:
       db_make_null (limit_val);
     }
 
-  parser->set_host_var = save_set_host_var;
+  parser->flag.set_host_var = save_set_host_var;
   return error;
 }
 
@@ -8991,8 +9544,8 @@ pt_check_ordby_num_for_multi_range_opt (PARSER_CONTEXT * parser, PT_NODE * query
 
   db_make_null (&limit_val);
 
-  save_set_host_var = parser->set_host_var;
-  parser->set_host_var = 1;
+  save_set_host_var = parser->flag.set_host_var;
+  parser->flag.set_host_var = 1;
 
   if (pt_get_query_limit_value (parser, query, &limit_val) != NO_ERROR)
     {
@@ -9028,7 +9581,7 @@ end_mro_candidate:
     }
 
 end:
-  parser->set_host_var = save_set_host_var;
+  parser->flag.set_host_var = save_set_host_var;
   return valid;
 }
 
@@ -9366,7 +9919,7 @@ pt_check_enum_data_type (PARSER_CONTEXT * parser, PT_NODE * dt)
   unsigned char pad[2];
 
   bool ti = true;
-  bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
+  static bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
 
   if (dt == NULL || dt->node_type != PT_DATA_TYPE || dt->type_enum != PT_TYPE_ENUMERATION)
     {
@@ -9575,8 +10128,11 @@ pt_make_query_show_trace (PARSER_CONTEXT * parser)
   trace_func->alias_print = pt_append_string (parser, NULL, "trace");
   select->info.query.q.select.list = parser_append_node (trace_func, select->info.query.q.select.list);
 
-  parser->dont_collect_exec_stats = 1;
-  parser->query_trace = false;
+  if (parser->statement_number == 0)	// This is when only the show trace statement is used.
+    {
+      parser->flag.dont_collect_exec_stats = 1;
+      parser->query_trace = false;
+    }
 
   return select;
 }
@@ -9615,6 +10171,11 @@ pt_has_non_groupby_column_node (PARSER_CONTEXT * parser, PT_NODE * node, void *a
     }
 
   if (!PT_IS_NAME_NODE (node))
+    {
+      return node;
+    }
+
+  if (node->info.name.correlation_level > 0)
     {
       return node;
     }
@@ -9716,4 +10277,397 @@ pt_has_name_oid (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *contin
     }
 
   return node;
+}
+
+PT_NODE *
+pt_set_user_specified_name (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk)
+{
+  const char *dot = NULL;
+  const char *original_name = NULL;
+  const char *resolved_name = NULL;
+  char downcase_resolved_name[DB_MAX_USER_LENGTH] = { '\0' };
+  const char *user_specified_name = NULL;
+
+  assert (continue_walk != NULL);
+
+  if (parser == NULL || node == NULL)
+    {
+      PT_ERROR (parser, node, "Invalid arguments.");
+      return NULL;
+    }
+
+  if (pt_has_error (parser))
+    {
+      return node;
+    }
+
+  switch (node->node_type)
+    {
+    case PT_NAME:
+      if (PT_NAME_INFO_IS_FLAGED (node, PT_NAME_INFO_USER_SPECIFIED))
+	{
+	  original_name = node->info.name.original;
+	  resolved_name = node->info.name.resolved;
+	}
+      else
+	{
+	  return node;
+	}
+      break;
+    case PT_EXPR:
+      if (PT_IS_SERIAL (node->info.expr.op))
+	{
+	  if (PT_IS_DOT_NODE (node->info.expr.arg1)
+	      && PT_IS_NAME_NODE (node->info.expr.arg1->info.dot.arg1)
+	      && PT_IS_NAME_NODE (node->info.expr.arg1->info.dot.arg2))
+	    {
+	      PT_NODE *owner = node->info.expr.arg1->info.dot.arg1;
+	      PT_NODE *name = node->info.expr.arg1->info.dot.arg2;
+
+	      original_name = name->info.name.original;
+	      resolved_name = owner->info.name.original;
+	    }
+	  else if (PT_IS_NAME_NODE (node->info.expr.arg1))
+	    {
+	      PT_NODE *name = node->info.expr.arg1;
+
+	      original_name = name->info.name.original;
+	    }
+	  else
+	    {
+	      return node;
+	    }
+	}
+      else
+	{
+	  return node;
+	}
+      break;
+    case PT_ALTER_SYNONYM:
+      {
+	const char *synonym_owner_name = NULL;
+
+	assert (PT_SYNONYM_NAME (node) != NULL);
+
+	synonym_owner_name = pt_get_qualifier_name (parser, PT_SYNONYM_NAME (node));
+	assert (synonym_owner_name != NULL);
+	PT_SYNONYM_OWNER_NAME (node) = pt_name (parser, synonym_owner_name);
+
+	/* If only the comment is changed, PT_SYNONYM_TARGET_NAME (node) can be NULL. */
+	if (PT_SYNONYM_TARGET_NAME (node) != NULL)
+	  {
+	    const char *target_owner_name = NULL;
+
+	    /* When processing PT_NAME, resolved_name is prefixed to original_name.
+	     * If original_name is the name of a system class/vclass, resolved_name is not prefixed to original_name. */
+	    target_owner_name = pt_get_qualifier_name (parser, PT_SYNONYM_TARGET_NAME (node));
+	    if (target_owner_name == NULL
+		&& sm_check_system_class_by_name (PT_NAME_ORIGINAL (PT_SYNONYM_TARGET_NAME (node))) == true)
+	      {
+		PT_SYNONYM_TARGET_OWNER_NAME (node) = pt_name (parser, "dba");
+	      }
+	    else
+	      {
+		assert (target_owner_name != NULL);
+		PT_SYNONYM_TARGET_OWNER_NAME (node) = pt_name (parser, target_owner_name);
+	      }
+	  }
+
+	return node;
+      }
+      // break;
+    case PT_CREATE_SYNONYM:
+      {
+	const char *synonym_owner_name = NULL;
+	const char *target_owner_name = NULL;
+
+	assert (PT_SYNONYM_NAME (node) != NULL);
+	assert (PT_SYNONYM_TARGET_NAME (node) != NULL);
+
+	synonym_owner_name = pt_get_qualifier_name (parser, PT_SYNONYM_NAME (node));
+	assert (synonym_owner_name != NULL);
+	PT_SYNONYM_OWNER_NAME (node) = pt_name (parser, synonym_owner_name);
+
+	/* When processing PT_NAME, resolved_name is prefixed to original_name.
+	 * If original_name is the name of a system class/vclass, resolved_name is not prefixed to original_name. */
+	target_owner_name = pt_get_qualifier_name (parser, PT_SYNONYM_TARGET_NAME (node));
+	if (target_owner_name == NULL
+	    && sm_check_system_class_by_name (PT_NAME_ORIGINAL (PT_SYNONYM_TARGET_NAME (node))) == true)
+	  {
+	    PT_SYNONYM_TARGET_OWNER_NAME (node) = pt_name (parser, "dba");
+	  }
+	else
+	  {
+	    assert (target_owner_name != NULL);
+	    PT_SYNONYM_TARGET_OWNER_NAME (node) = pt_name (parser, target_owner_name);
+	  }
+
+	return node;
+      }
+      // break;
+    case PT_DROP_SYNONYM:
+      {
+	const char *synonym_owner_name = NULL;
+
+	assert (PT_SYNONYM_NAME (node) != NULL);
+
+	synonym_owner_name = pt_get_qualifier_name (parser, PT_SYNONYM_NAME (node));
+	assert (synonym_owner_name != NULL);
+	PT_SYNONYM_OWNER_NAME (node) = pt_name (parser, synonym_owner_name);
+
+	return node;
+      }
+      // break;
+    case PT_RENAME_SYNONYM:
+      {
+	const char *old_synonym_owner_name = NULL;
+	const char *new_synonym_owner_name = NULL;
+
+	assert (PT_SYNONYM_OLD_NAME (node) != NULL);
+	assert (PT_SYNONYM_NEW_NAME (node) != NULL);
+
+	old_synonym_owner_name = pt_get_qualifier_name (parser, PT_SYNONYM_OLD_NAME (node));
+	assert (old_synonym_owner_name != NULL);
+	PT_SYNONYM_OLD_OWNER_NAME (node) = pt_name (parser, old_synonym_owner_name);
+
+	new_synonym_owner_name = pt_get_qualifier_name (parser, PT_SYNONYM_NEW_NAME (node));
+	assert (new_synonym_owner_name != NULL);
+	PT_SYNONYM_NEW_OWNER_NAME (node) = pt_name (parser, new_synonym_owner_name);
+
+	return node;
+      }
+      // break;
+    case PT_CREATE_ENTITY:
+      {
+	bool is_dba_group_member = au_is_dba_group_member (Au_user);
+	if (sm_check_system_class_by_name (PT_NAME_ORIGINAL (PT_CREATE_ENTITY_NAME (node))) && !is_dba_group_member)
+	  {
+	    int error = NO_ERROR;
+	    ERROR_SET_ERROR_1ARG (error, ER_AU_DBA_ONLY, "create system class/vclass");
+	    PT_ERRORc (parser, node, er_msg ());
+	    *continue_walk = PT_STOP_WALK;
+	  }
+
+	return node;
+      }
+      // break;
+    case PT_RENAME:
+      {
+	if (sm_check_system_class_by_name (PT_NAME_ORIGINAL (PT_RENAME_NEW_NAME (node))))
+	  {
+	    PT_ERROR (parser, node, "It is not allowed to be renamed to the system class name.");
+	    *continue_walk = PT_STOP_WALK;
+	  }
+
+	return node;
+      }
+      // break;
+    default:
+      return node;
+    }
+
+  // *INDENT-OFF*
+  assert ((node->node_type == PT_NAME && PT_NAME_INFO_IS_FLAGED (node, PT_NAME_INFO_USER_SPECIFIED))
+          || (node->node_type == PT_EXPR && PT_IS_SERIAL (node->info.expr.op)));
+  // *INDENT-ON*
+  assert (original_name && original_name[0] != '\0');
+
+  if (strchr (original_name, '.'))
+    {
+      /* It is already user_specified_name. */
+      return node;
+    }
+
+  if (strlen (original_name) >= DB_MAX_IDENTIFIER_LENGTH - DB_MAX_SCHEMA_LENGTH)
+    {
+      PT_ERRORf2 (parser, node,
+		  "Object name [%s] not allowed. It cannot exceed %d bytes.",
+		  pt_short_print (parser, node), DB_MAX_IDENTIFIER_LENGTH - DB_MAX_USER_LENGTH);
+      *continue_walk = PT_STOP_WALK;
+      return node;
+    }
+
+  /* In the system_class, user_specified_name does not include user_name.
+   * So, info.name.original is different for each case below.
+   *
+   *    original_name        resolve_name        user_specified_name
+   * -------------------------------------------------------------------------------
+   * 1. common_class_name &&             NULL -> current_user_name.common_class_name
+   * 2. common_class_name && common_user_name ->  common_user_name.common_class_name
+   * 3. common_class_name &&    dba_user_name ->     dba_user_name.common_class_name
+   * 4. system_class_name &&             NULL ->                   system_class_name
+   * 5. system_class_name && common_user_name ->  common_user_name.system_class_name -> error
+   * 6. system_class_name &&    dba_user_name ->     dba_user_name.system_class_name -> error
+   * 
+   * In case 5, raises an error to inform the user of an incorrect customization.
+   */
+  if (node->node_type == PT_NAME && sm_check_system_class_by_name (original_name))
+    {
+      /* In case 5, 6 */
+      if (resolved_name != NULL)
+	{
+	  PT_ERROR (parser, node, "It is not allowed to specify an owner in the system class name.");
+	  *continue_walk = PT_STOP_WALK;
+	  return node;
+	}
+
+      /* resolved_name == NULL */
+
+      /* Skip in case 4 */
+      return node;
+    }
+
+  if (resolved_name == NULL || resolved_name[0] == '\0')
+    {
+      resolved_name = sc_current_schema_name ();
+    }
+  else if (intl_identifier_lower_string_size (resolved_name) >= DB_MAX_USER_LENGTH)
+    {
+      PT_ERRORf2 (parser, node,
+		  "User name [%s] not allowed. It cannot exceed %d bytes.", resolved_name, DB_MAX_USER_LENGTH);
+      *continue_walk = PT_STOP_WALK;
+      return node;
+    }
+
+  intl_identifier_lower (resolved_name, downcase_resolved_name);
+
+  /* In case 1, 2, 3 */
+  user_specified_name = pt_append_string (parser, downcase_resolved_name, ".");
+  user_specified_name = pt_append_string (parser, user_specified_name, original_name);
+
+  assert (intl_identifier_lower_string_size (user_specified_name) < DB_MAX_IDENTIFIER_LENGTH);
+
+  if (PT_IS_NAME_NODE (node))
+    {
+      node->info.name.original = user_specified_name;
+      node->info.name.resolved = NULL;
+    }
+  else
+    {
+      assert (PT_IS_EXPR_NODE (node) && PT_IS_SERIAL (node->info.expr.op));
+
+      if (PT_IS_DOT_NODE (node->info.expr.arg1))
+	{
+	  node->info.expr.arg1->info.dot.arg2->info.name.original = user_specified_name;
+	  node->info.expr.arg1->info.dot.arg2->info.name.resolved = NULL;
+
+	  parser_free_tree (parser, node->info.expr.arg1->info.dot.arg1);
+	  node->info.expr.arg1 = node->info.expr.arg1->info.dot.arg2;
+	}
+      else
+	{
+	  assert (PT_IS_NAME_NODE (node->info.expr.arg1));
+
+	  node->info.expr.arg1->info.name.original = user_specified_name;
+	  node->info.expr.arg1->info.name.resolved = NULL;
+	}
+    }
+
+  return node;
+}
+
+/*
+ * pt_get_qualifier_name() - If the name is a user-specified name, get the user name.
+ * return	: user name or NULL on error
+ * parser (in)	: parser context
+ * node (in)	: node of type PT_NAME
+ */
+const char *
+pt_get_qualifier_name (PARSER_CONTEXT * parser, PT_NODE * node)
+{
+  const char *name = NULL;
+  char qualifier_name[DB_MAX_USER_LENGTH] = { '\0' };
+
+  if (parser == NULL || node == NULL)
+    {
+      return NULL;
+    }
+
+  if (PT_IS_NAME_NODE (node) == false)
+    {
+      return NULL;
+    }
+
+  if (PT_NAME_ORIGINAL (node) == NULL || (PT_NAME_ORIGINAL (node))[0] == '\0')
+    {
+      return NULL;
+    }
+
+  if (sm_qualifier_name (PT_NAME_ORIGINAL (node), qualifier_name, DB_MAX_USER_LENGTH) == NULL)
+    {
+      return PT_NAME_RESOLVED (node);
+    }
+
+  return pt_append_string (parser, NULL, qualifier_name);
+}
+
+/*
+ * pt_get_name_with_qualifier_removed() - If the name has a qualifier name, remove it.
+ * return	: name with qualifier name removed
+ * name (in)	: user-specified name or object name
+ */
+const char *
+pt_get_name_with_qualifier_removed (const char *name)
+{
+  return sm_remove_qualifier_name (name);
+}
+
+/*
+ * pt_get_name_without_current_user_name() - If the name is a user-specified name and the specified user is
+ *                                           the current user, return only the object name.
+ * return	: user name or NULL on error
+ * parser (in)	: parser context
+ * node (in)	: node of type PT_NAME
+ */
+const char *
+pt_get_name_without_current_user_name (const char *name)
+{
+  char *dot = NULL;
+  char name_copy[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+  const char *current_schema_name = NULL;
+  const char *object_name = NULL;
+  int error = NO_ERROR;
+
+  if (name == NULL || name[0] == '\0')
+    {
+      return name;
+    }
+
+  assert (strlen (name) < DB_MAX_IDENTIFIER_LENGTH);
+  strcpy (name_copy, name);
+
+  dot = strchr (name_copy, '.');
+
+  /* If the name is not a user-specified name, it is returned as is. */
+  if (dot == NULL)
+    {
+      /*
+       * e.g.        name: object_name
+       *      object_name: object_name
+       */
+      return name;
+    }
+
+  current_schema_name = sc_current_schema_name ();
+
+  dot[0] = '\0';
+
+  if (intl_identifier_casecmp (name_copy, current_schema_name) == 0)
+    {
+      /*
+       * e.g.        name: current_schema_name.object_name
+       *      object_name: object_name
+       */
+      object_name = strchr (name, '.') + 1;
+    }
+  else
+    {
+      /*
+       * e.g.        name: other_user_name.object_name
+       *      object_name: other_user_name.object_name
+       */
+      object_name = name;
+    }
+
+  return object_name;
 }

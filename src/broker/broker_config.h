@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -36,10 +35,13 @@
 #define	APPL_SERVER_CAS_ORACLE    1
 #define APPL_SERVER_CAS_MYSQL51   2
 #define APPL_SERVER_CAS_MYSQL     3
+#define APPL_SERVER_CAS_CGW       4
 
 #define IS_APPL_SERVER_TYPE_CAS(x)	\
         ((x == APPL_SERVER_CAS) || (x == APPL_SERVER_CAS_ORACLE) || \
-            (x == APPL_SERVER_CAS_MYSQL51) || (x == APPL_SERVER_CAS_MYSQL))
+            (x == APPL_SERVER_CAS_MYSQL51) || (x == APPL_SERVER_CAS_MYSQL) || \
+            (x == APPL_SERVER_CAS_CGW))
+
 #define IS_NOT_APPL_SERVER_TYPE_CAS(x)	!IS_APPL_SERVER_TYPE_CAS(x)
 
 #define APPL_SERVER_CAS_TYPE_NAME               "CAS"
@@ -47,6 +49,7 @@
 #define APPL_SERVER_CAS_MYSQL_TYPE_NAME         "CAS_MYSQL"
 #define APPL_SERVER_CAS_MYSQL51_TYPE_NAME       "CAS_MYSQL51"
 #define APPL_SERVER_CAS_MYSQL61_TYPE_NAME       "CAS_MYSQL61"
+#define APPL_SERVER_CAS_CGW_TYPE_NAME           "CAS_CGW"
 
 #define MAX_BROKER_NUM          50
 
@@ -107,6 +110,22 @@
 #define BROKER_INFO_NAME_MAX             (BROKER_INFO_PATH_MAX)
 
 #define DEFAULT_SSL_MODE                 "OFF"
+
+#define CGW_LINK_SERVER_NAME_LEN	 256
+#define CGW_LINK_SERVER_IP_LEN		 32
+#define CGW_LINK_SERVER_PORT_LEN	 10
+#define CGW_LINK_ODBC_DRIVER_NAME_LEN	 256
+#define CGW_LINK_CONNECT_URL_PROPERTY_LEN	512
+#define CGW_LINK_STRING_FORMAT_LEN 128
+#define CGW_LINK_URL_MAX_LEN	         (CGW_LINK_SERVER_IP_LEN                 \
+                                          + CGW_LINK_SERVER_PORT_LEN             \
+                                          + CGW_LINK_ODBC_DRIVER_NAME_LEN        \
+                                          + CGW_LINK_CONNECT_URL_PROPERTY_LEN    \
+                                          + SRV_CON_DBNAME_SIZE                  \
+                                          + SRV_CON_DBUSER_SIZE                  \
+                                          + SRV_CON_DBPASSWD_SIZE)               \
+                                          + CGW_LINK_STRING_FORMAT_LEN           \
+
 
 enum t_sql_log_mode_value
 {
@@ -281,6 +300,12 @@ struct t_broker_info
   /* to here, these are used only in shard */
 
   char use_SSL;
+
+  char cgw_link_server[CGW_LINK_SERVER_NAME_LEN];
+  char cgw_link_server_ip[CGW_LINK_SERVER_IP_LEN];
+  char cgw_link_server_port[CGW_LINK_SERVER_PORT_LEN];
+  char cgw_link_odbc_driver_name[CGW_LINK_ODBC_DRIVER_NAME_LEN];
+  char cgw_link_connect_url_property[CGW_LINK_CONNECT_URL_PROPERTY_LEN];
 };
 
 extern int broker_config_read (const char *conf_file, T_BROKER_INFO * br_info, int *num_broker, int *br_shm_id,

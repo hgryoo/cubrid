@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -36,7 +35,13 @@
 #include "numeric_opfunc.h"
 #include "object_domain.h"
 #include "thread_compat.hpp"
+
+#ifdef  __cplusplus
+#include <functional>
 #include "string_regex.hpp"
+#else
+typedef struct cub_compiled_regex cub_compiled_regex;
+#endif
 
 #define QSTR_IS_CHAR(s)          (((s)==DB_TYPE_CHAR) || \
                                  ((s)==DB_TYPE_VARCHAR))
@@ -65,19 +70,19 @@
         QSTR_COMPARE(id, string1, size1, string2, size2, ti)
 
 #define QSTR_COMPARE(id, string1, size1, string2, size2, ti) \
-  (lang_get_collation (id))->fastcmp ((lang_get_collation (id)), (string1), \
+  (LANG_GET_COLLATION (id))->fastcmp ((LANG_GET_COLLATION (id)), (string1), \
 				      (size1), (string2), (size2), ti)
 #define QSTR_MATCH(id, string1, size1, string2, size2, esc, has_last_escape, \
 		   match_size) \
-  (lang_get_collation (id))->strmatch ((lang_get_collation (id)), true, \
+  (LANG_GET_COLLATION (id))->strmatch ((LANG_GET_COLLATION (id)), true, \
 				       (string1), (size1), \
 				       (string2), (size2), (esc), \
 				       (has_last_escape), (match_size), false)
 #define QSTR_NEXT_ALPHA_CHAR(id, cur_chr, size, next_chr, len) \
-  (lang_get_collation (id))->next_coll_seq ((lang_get_collation (id)), \
+  (LANG_GET_COLLATION (id))->next_coll_seq ((LANG_GET_COLLATION (id)), \
 					(cur_chr), (size), (next_chr), (len), false)
 #define QSTR_SPLIT_KEY(id, is_desc, str1, size1, str2, size2, k, s, ti) \
-  (lang_get_collation (id))->split_key ((lang_get_collation (id)), is_desc, \
+  (LANG_GET_COLLATION (id))->split_key ((LANG_GET_COLLATION (id)), is_desc, \
 					(str1), (size1), (str2), (size2), \
 					(k), (s), ti)
 
@@ -217,21 +222,23 @@ extern int db_string_pad (const MISC_OPERAND pad_operand, const DB_VALUE * src_s
 extern int db_string_like (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * esc_char,
 			   int *result);
 
-#ifdef __cplusplus
+//***********************************************************************************************
+// Regular Expression Functions
+//***********************************************************************************************
+// using db_regex_func = std::function<int (DB_VALUE *, DB_VALUE*[], const int, cub_compiled_regex **, char **)>;
 extern int db_string_rlike (const DB_VALUE * src_string, const DB_VALUE * pattern, const DB_VALUE * case_sensitive,
-			    cub_regex_object ** comp_regex, char **comp_pattern, int *result);
-
+			    cub_compiled_regex ** comp_regex, int *result);
 extern int db_string_regexp_count (DB_VALUE * result, DB_VALUE * args[], const int num_args,
-				   cub_regex_object ** comp_regex, char **comp_pattern);
+				   cub_compiled_regex ** comp_regex);
 extern int db_string_regexp_instr (DB_VALUE * result, DB_VALUE * args[], const int num_args,
-				   cub_regex_object ** comp_regex, char **comp_pattern);
+				   cub_compiled_regex ** comp_regex);
 extern int db_string_regexp_like (DB_VALUE * result, DB_VALUE * args[], const int num_args,
-				  cub_regex_object ** comp_regex, char **comp_pattern);
+				  cub_compiled_regex ** comp_regex);
 extern int db_string_regexp_replace (DB_VALUE * result, DB_VALUE * args[], const int num_args,
-				     cub_regex_object ** comp_regex, char **comp_pattern);
+				     cub_compiled_regex ** comp_regex);
 extern int db_string_regexp_substr (DB_VALUE * result, DB_VALUE * args[], const int num_args,
-				    cub_regex_object ** comp_regex, char **comp_pattern);
-#endif
+				    cub_compiled_regex ** comp_regex);
+//***********************************************************************************************
 
 extern int db_string_limit_size_string (DB_VALUE * src_string, DB_VALUE * result, const int new_size, int *spare_bytes);
 extern int db_string_fix_string_size (DB_VALUE * src_string);

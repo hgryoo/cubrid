@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -77,6 +76,8 @@
 #if defined(SA_MODE)
 extern bool catcls_Enable;
 #endif /* SA_MODE */
+
+#define UNIQUE_SAVEPOINT_CHANGE_OWNER_WITH_RENAME "cHANGEoWNERwITHrENAME"
 
 /*
  * Message id in the set MSGCAT_SET_AUTHORIZATION
@@ -175,6 +176,8 @@ const char *AU_DBA_USER_NAME = "DBA";
          strcmp(name, CT_AUTHORIZATION_NAME) == 0 || \
          strcmp(name, CT_AUTHORIZATIONS_NAME) == 0 || \
 	 strcmp(name, CT_CHARSET_NAME) == 0 || \
+         strcmp(name, CT_DB_SERVER_NAME) == 0 || \
+	 strcmp(name, CT_SYNONYM_NAME) == 0 || \
 	 strcmp(name, CT_DUAL_NAME) == 0)
 
 enum fetch_by
@@ -308,6 +311,7 @@ MOP Au_root = NULL;
  * use the AU_DISABLE, AU_ENABLE macros instead.
  */
 int Au_disable = 1;
+bool Au_sysadm = false;
 
 /*
  * Au_ignore_passwords
@@ -557,7 +561,7 @@ static void au_print_cache (int cache, FILE * fp);
 static void au_print_grant_entry (DB_SET * grants, int grant_index, FILE * fp);
 static void au_print_auth (MOP auth, FILE * fp);
 
-static int au_change_serial_owner (MOP * object, MOP new_owner);
+static int au_change_serial_owner (MOP serial_mop, MOP owner_mop, bool by_class_owner_change);
 /*
  * DB_ EXTENSION FUNCTIONS
  */
@@ -1177,6 +1181,23 @@ au_find_user (const char *user_name)
       return NULL;
     }
 
+  {
+    /*
+     * To reduce unnecessary code execution,
+     * the current schema name can be used instead of the current user name.
+     * 
+     * Returns the current user object when the user name is the same as the current schema name.
+     * 
+     * Au_user_name cannot be used because it does not always store the current user name.
+     * When au_login_method () is called, Au_user_name is not changed.
+     */
+    const char *sc_name = sc_current_schema_name ();
+    if (Au_user && sc_name && sc_name[0] != '\0' && intl_identifier_casecmp (sc_name, user_name) == 0)
+      {
+	return Au_user;
+      }
+  }
+
   /* disable checking of internal authorization object access */
   AU_DISABLE (save);
 
@@ -1545,7 +1566,7 @@ au_set_new_auth (MOP au_obj, MOP grantor, MOP user, MOP class_mop, DB_AUTH auth_
     }
 
   db_make_string (&class_name_val, sm_get_ch_name (class_mop));
-  db_class_inst = obj_find_unique (db_class, "class_name", &class_name_val, AU_FETCH_READ);
+  db_class_inst = obj_find_unique (db_class, "unique_name", &class_name_val, AU_FETCH_READ);
   if (db_class_inst == NULL)
     {
       assert (er_errid () != NO_ERROR);
@@ -1589,7 +1610,7 @@ au_get_new_auth (MOP grantor, MOP user, MOP class_mop, DB_AUTH auth_type)
   const char *sql_query =
     "SELECT [au].object FROM [" CT_CLASSAUTH_NAME "] [au]"
     " WHERE [au].[grantee].[name] = ? AND [au].[grantor].[name] = ?"
-    " AND [au].[class_of].[class_name] = ? AND [au].[auth_type] = ?";
+    " AND [au].[class_of].[unique_name] = ? AND [au].[auth_type] = ?";
   enum
   {
     INDEX_FOR_GRANTEE_NAME = 0,
@@ -2015,7 +2036,7 @@ au_delete_auth_of_dropping_table (const char *class_name)
   int error = NO_ERROR, save;
   const char *sql_query =
     "DELETE FROM [" CT_CLASSAUTH_NAME "] [au]" " WHERE [au].[class_of] IN" " (SELECT [cl] FROM " CT_CLASS_NAME
-    " [cl] WHERE [class_name] = ?);";
+    " [cl] WHERE [unique_name] = ?);";
   DB_VALUE val;
   DB_QUERY_RESULT *result = NULL;
   DB_SESSION *session = NULL;
@@ -2136,6 +2157,48 @@ au_is_dba_group_member (MOP user)
   db_set_read_fetch_instance_version (read_fetch_instance_version);
 
   return is_member;
+}
+
+bool
+au_is_user_group_member (MOP group_user, MOP user)
+{
+  DB_SET *groups;
+  DB_VALUE group_user_val;
+  int error = NO_ERROR;
+
+  db_make_null (&group_user_val);
+
+  if (!group_user || !user)
+    {
+      return false;
+    }
+
+  if (ws_is_same_object (group_user, user))
+    {
+      return true;
+    }
+
+  db_make_object (&group_user_val, group_user);
+
+  if (au_get_set (user, "groups", &groups) == NO_ERROR)
+    {
+      if (set_ismember (groups, &group_user_val))
+	{
+	  set_free (groups);
+	  return true;
+	}
+    }
+  else
+    {
+      assert (er_errid () != NO_ERROR);
+    }
+
+  if (groups)
+    {
+      set_free (groups);
+    }
+
+  return false;
 }
 
 /*
@@ -3388,12 +3451,12 @@ au_drop_user (MOP user)
   DB_SET *new_groups, *direct_groups;
   int g, gcard, i;
   DB_VALUE name;
-  const char *class_name[] = {
+  static const char *class_name[] = {
     /*
      * drop user command can be called only by DBA group,
      * so we can use query for _db_class directly
      */
-    "_db_class", "db_trigger", "db_serial", NULL
+    "_db_class", "db_trigger", "db_serial", "_db_server", "_db_synonym", NULL
   };
   char query_buf[1024];
 
@@ -3422,7 +3485,7 @@ au_drop_user (MOP user)
       goto error;
     }
 
-  /* check if user owns class/vclass/trigger/serial */
+  /* check if user owns class/vclass/trigger/serial/synonym */
   for (i = 0; class_name[i] != NULL; i++)
     {
       sprintf (query_buf, "select count(*) from [%s] where [owner] = ?;", class_name[i]);
@@ -3458,7 +3521,7 @@ au_drop_user (MOP user)
 	  goto error;
 	}
 
-      db_make_int (&value, 0);
+      db_make_bigint (&value, 0);
       error = db_query_get_tuple_value (result, 0, &value);
       if (error != NO_ERROR)
 	{
@@ -3467,7 +3530,7 @@ au_drop_user (MOP user)
 	  goto error;
 	}
 
-      if (db_get_int (&value) > 0)
+      if (db_get_bigint (&value) > 0)
 	{
 	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_AU_USER_HAS_DATABASE_OBJECTS, 0);
 	  db_query_end (result);
@@ -5112,47 +5175,249 @@ fail_end:
  *   owner(in): new owner
  */
 int
-au_change_owner (MOP classmop, MOP owner)
+au_change_owner (MOP class_mop, MOP owner_mop)
 {
+  SM_CLASS *class_ = NULL;
+  SM_ATTRIBUTE *attr = NULL;
+  SM_CLASS_CONSTRAINT *constraints = NULL;
+  SM_CONSTRAINT_INFO *save_constraints = NULL;
+  SM_CONSTRAINT_INFO *saved = NULL;
+  MOBJ obj = NULL;
+  char *class_old_name = NULL;
+  char *class_new_name = NULL;
+  char *owner_name = NULL;
+  char downcase_owner_name[DB_MAX_USER_LENGTH] = { '\0' };
+  char buf[DB_MAX_SERIAL_NAME_LENGTH] = { '\0' };
+  bool has_savepoint = true;
+  int save = 0;
   int error = NO_ERROR;
-  SM_CLASS *class_;
-  int save;
-  SM_ATTRIBUTE *attr;
 
-  AU_DISABLE (save);
+  if (class_mop == NULL || owner_mop == NULL)
+    {
+      ERROR_SET_WARNING (error, ER_AU_INVALID_ARGUMENTS);
+      return error;
+    }
+
   if (!au_is_dba_group_member (Au_user))
     {
-      error = ER_AU_DBA_ONLY;
-      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, error, 1, "change_owner");
+      ERROR_SET_WARNING_1ARG (error, ER_AU_DBA_ONLY, "change_owner");
+      return error;
     }
-  else
-    {
-      error = au_fetch_class_force (classmop, &class_, AU_FETCH_UPDATE);
-      if (error == NO_ERROR)
-	{
-	  /*
-	   * Change serial object's owner when the class has auto_increment
-	   * attribute column.
-	   */
-	  for (attr = class_->attributes; attr != NULL; attr = (SM_ATTRIBUTE *) attr->header.next)
-	    {
-	      if (attr->auto_increment != NULL)
-		{
-		  error = au_change_serial_owner (&attr->auto_increment, owner);
-		  if (error != NO_ERROR)
-		    {
-		      goto exit_on_error;
-		    }
-		}
-	    }
 
-	  /* Change class owner */
-	  class_->owner = owner;
-	  error = locator_flush_class (classmop);
+  AU_DISABLE (save);
+
+  error = au_fetch_class_force (class_mop, &class_, AU_FETCH_UPDATE);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  if (ws_is_same_object (class_->owner, owner_mop))
+    {
+      goto end;
+    }
+
+  error = tran_system_savepoint (UNIQUE_SAVEPOINT_CHANGE_OWNER_WITH_RENAME);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  has_savepoint = true;
+
+  /* Change serial object's owner when the class has auto_increment attribute column. */
+  for (attr = class_->attributes; attr; attr = (SM_ATTRIBUTE *) attr->header.next)
+    {
+      if (attr->auto_increment)
+	{
+	  error = au_change_serial_owner (attr->auto_increment, owner_mop, true);
+	  if (error != NO_ERROR)
+	    {
+	      ASSERT_ERROR ();
+	      goto end;
+	    }
 	}
     }
-exit_on_error:
+
+  /* Change the owner of the class. */
+  class_->owner = owner_mop;
+
+  /* unique_name contains owner_name. if owner of class is changed, unique_name must be changed as well. */
+  class_old_name = CONST_CAST (char *, sm_ch_name ((MOBJ) class_));
+
+  /* unique_name of system class does not contain owner_name. unique_name does not need to be changed. */
+  if (sm_check_system_class_by_name (class_old_name))
+    {
+      error = locator_flush_class (class_mop);
+      if (error != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  goto end;
+	}
+
+      goto end;
+    }
+
+  owner_name = au_get_user_name (owner_mop);
+  if (!owner_name)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+  sm_downcase_name (owner_name, downcase_owner_name, DB_MAX_USER_LENGTH);
+  db_ws_free_and_init (owner_name);
+
+  snprintf (buf, DB_MAX_IDENTIFIER_LENGTH, "%s.%s", downcase_owner_name, sm_remove_qualifier_name (class_old_name));
+  class_new_name = db_private_strdup (NULL, buf);
+  if (class_new_name == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      return error;
+    }
+
+  obj = locator_prepare_rename_class (class_mop, class_old_name, class_new_name);
+  if (obj == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+
+  class_->header.ch_name = class_new_name;
+
+  if (class_->class_type == SM_CLASS_CT && class_->constraints != NULL)
+    {
+      for (constraints = class_->constraints; constraints; constraints = constraints->next)
+	{
+	  if (constraints->type != SM_CONSTRAINT_INDEX
+	      && constraints->type != SM_CONSTRAINT_REVERSE_INDEX
+	      && constraints->type != SM_CONSTRAINT_UNIQUE && constraints->type != SM_CONSTRAINT_REVERSE_UNIQUE)
+	    {
+	      continue;
+	    }
+
+	  if (constraints->func_index_info || constraints->filter_predicate)
+	    {
+	      error = sm_save_constraint_info (&save_constraints, constraints);
+	      if (error != NO_ERROR)
+		{
+		  ASSERT_ERROR ();
+		  goto end;
+		}
+
+	      if (!save_constraints)
+		{
+		  ASSERT_ERROR_AND_SET (error);
+		  goto end;
+		}
+
+	      saved = save_constraints;
+	      while (saved->next)
+		{
+		  saved = saved->next;
+		}
+
+	      if (constraints->func_index_info)
+		{
+		  /* recompile function index expression */
+		  error = do_recreate_func_index_constr (NULL, saved, NULL, NULL, class_old_name, class_new_name);
+		  if (error != NO_ERROR)
+		    {
+		      ASSERT_ERROR ();
+		      goto end;
+		    }
+
+		  continue;
+		}
+
+	      if (constraints->filter_predicate)
+		{
+		  /* recompile filter index expression */
+		  error =
+		    do_recreate_filter_index_constr (NULL, saved->filter_predicate, NULL, class_old_name,
+						     class_new_name);
+		  if (error != NO_ERROR)
+		    {
+		      ASSERT_ERROR ();
+		      goto end;
+		    }
+
+		  continue;
+		}
+	    }
+	}
+
+      /* drop indexes */
+      for (saved = save_constraints; saved; saved = saved->next)
+	{
+	  if (SM_IS_CONSTRAINT_UNIQUE_FAMILY ((SM_CONSTRAINT_TYPE) saved->constraint_type))
+	    {
+	      error = sm_drop_constraint (class_mop, saved->constraint_type, saved->name,
+					  (const char **) saved->att_names, false, false);
+	      if (error != NO_ERROR)
+		{
+		  ASSERT_ERROR ();
+		  goto end;
+		}
+	    }
+	  else
+	    {
+	      error = sm_drop_index (class_mop, saved->name);
+	      if (error != NO_ERROR)
+		{
+		  ASSERT_ERROR ();
+		  goto end;
+		}
+	    }
+	}
+
+      /* add indexes */
+      for (saved = save_constraints; saved != NULL; saved = saved->next)
+	{
+	  error = sm_add_constraint (class_mop, saved->constraint_type, saved->name, (const char **) saved->att_names,
+				     saved->asc_desc, saved->prefix_length, false, saved->filter_predicate,
+				     saved->func_index_info, saved->comment, saved->index_status);
+	  if (error != NO_ERROR)
+	    {
+	      ASSERT_ERROR ();
+	      goto end;
+	    }
+	}
+    }
+
+  error = locator_flush_class (class_mop);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  if (class_old_name)
+    {
+      db_private_free_and_init (NULL, class_old_name);
+    }
+
+  class_new_name = NULL;
+
+end:
   AU_ENABLE (save);
+
+  if (class_new_name)
+    {
+      db_private_free_and_init (NULL, class_new_name);
+    }
+
+  if (save_constraints)
+    {
+      sm_free_constraint_info (&save_constraints);
+    }
+
+  if (has_savepoint && error != NO_ERROR && error != ER_LK_UNILATERALLY_ABORTED)
+    {
+      tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_CHANGE_OWNER_WITH_RENAME);
+    }
+
   return (error);
 }
 
@@ -5165,109 +5430,126 @@ exit_on_error:
  *   owner(in): new owner
  */
 void
-au_change_owner_method (MOP obj, DB_VALUE * returnval, DB_VALUE * class_, DB_VALUE * owner)
+au_change_owner_method (MOP obj, DB_VALUE * return_val, DB_VALUE * class_val, DB_VALUE * owner_val)
 {
-  MOP user, classmop;
-  int error = NO_ERROR;
-  int is_partition = DB_NOT_PARTITIONED_CLASS, i, savepoint_owner = 0;
+  MOP class_mop = NULL;
+  SM_CLASS *class_ = NULL;
   MOP *sub_partitions = NULL;
-  const char *class_name = NULL, *owner_name = NULL;
-  SM_CLASS *clsobj;
+  MOP owner_mop = NULL;
+  const char *class_name = NULL;
+  const char *owner_name = NULL;
+  int is_partition = DB_NOT_PARTITIONED_CLASS;
+  bool has_savepoint = false;
+  int i;
+  int error = NO_ERROR;
 
-  db_make_null (returnval);
-
-  if (DB_IS_NULL (class_) || !IS_STRING (class_) || (class_name = db_get_string (class_)) == NULL)
+  if (!return_val || !class_val || !owner_val)
     {
-      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ER_AU_INVALID_CLASS, 1, "");
-      db_make_error (returnval, ER_AU_INVALID_CLASS);
-      return;
-    }
-  if (DB_IS_NULL (owner) || !IS_STRING (owner) || (owner_name = db_get_string (owner)) == NULL)
-    {
-      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ER_AU_INVALID_USER, 1, "");
-      db_make_error (returnval, ER_AU_INVALID_USER);
+      ERROR_SET_WARNING (error, ER_AU_INVALID_ARGUMENTS);
+      db_make_error (return_val, error);
       return;
     }
 
-  classmop = sm_find_class (class_name);
-  if (classmop == NULL)
+  if (!DB_IS_STRING (class_val) || (class_name = db_get_string (class_val)) == NULL)
     {
-      db_make_error (returnval, er_errid ());
+      ERROR_SET_WARNING_1ARG (error, ER_AU_INVALID_CLASS, "");
+      db_make_error (return_val, error);
       return;
     }
 
-  error = au_fetch_class_force (classmop, &clsobj, AU_FETCH_UPDATE);
+  if (!DB_IS_STRING (owner_val) || (owner_name = db_get_string (owner_val)) == NULL)
+    {
+      ERROR_SET_WARNING_1ARG (error, ER_AU_INVALID_USER, "");
+      db_make_error (return_val, error);
+      return;
+    }
+
+  class_mop = sm_find_class (class_name);
+  if (class_mop == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      db_make_error (return_val, error);
+      return;
+    }
+
+  error = au_fetch_class_force (class_mop, &class_, AU_FETCH_UPDATE);
   if (error != NO_ERROR)
     {
-      goto fail_return;
+      ASSERT_ERROR_AND_SET (error);
+      return;
     }
 
   /* To change the owner of a system class is not allowed. */
-  if (sm_issystem (clsobj))
+  if (sm_issystem (class_))
     {
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_AU_CANT_ALTER_OWNER_OF_SYSTEM_CLASS, 0);
-      db_make_error (returnval, er_errid ());
+      ERROR_SET_ERROR_1ARG (error, ER_AU_CANT_ALTER_OWNER_OF_SYSTEM_CLASS, "");
+      db_make_error (return_val, error);
       return;
     }
 
-  user = au_find_user (owner_name);
-  if (user == NULL)
+  owner_mop = au_find_user (owner_name);
+  if (owner_mop == NULL)
     {
-      db_make_error (returnval, er_errid ());
+      ASSERT_ERROR_AND_SET (error);
+      db_make_error (return_val, error);
       return;
     }
 
-  error = sm_partitioned_class_type (classmop, &is_partition, NULL, &sub_partitions);
+  error = sm_partitioned_class_type (class_mop, &is_partition, NULL, &sub_partitions);
   if (error != NO_ERROR)
     {
-      goto fail_return;
+      ASSERT_ERROR ();
+      db_make_error (return_val, error);
+      return;
     }
 
-  if (is_partition != DB_NOT_PARTITIONED_CLASS)
+  if (is_partition == DB_PARTITION_CLASS)	/* if partition; error */
     {
-      if (is_partition == DB_PARTITION_CLASS)	/* if partition; error */
+      ERROR_SET_ERROR (error, ER_NOT_ALLOWED_ACCESS_TO_PARTITION);
+      db_make_error (return_val, error);
+      goto end;
+    }
+
+  if (is_partition == DB_PARTITIONED_CLASS)	/* if partitioned class; do actions to all partitions */
+    {
+      error = tran_system_savepoint (UNIQUE_PARTITION_SAVEPOINT_OWNER);
+      if (error != NO_ERROR)
 	{
-	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_NOT_ALLOWED_ACCESS_TO_PARTITION, 0);
-	  error = ER_NOT_ALLOWED_ACCESS_TO_PARTITION;
-	  goto fail_return;
+	  ASSERT_ERROR ();
+	  db_make_error (return_val, error);
+	  goto end;
 	}
-      else			/* if partitioned class; do actions to all partitions */
+
+      has_savepoint = true;
+
+      for (i = 0; sub_partitions[i]; i++)
 	{
-	  error = tran_system_savepoint (UNIQUE_PARTITION_SAVEPOINT_OWNER);
+	  error = au_change_owner (sub_partitions[i], owner_mop);
 	  if (error != NO_ERROR)
 	    {
-	      goto fail_return;
-	    }
-	  savepoint_owner = 1;
-	  for (i = 0; sub_partitions[i]; i++)
-	    {
-	      error = au_change_owner (sub_partitions[i], user);
-	      if (error != NO_ERROR)
-		{
-		  break;
-		}
-	    }
-	  if (error != NO_ERROR)
-	    {
-	      goto fail_return;
+	      ASSERT_ERROR ();
+	      db_make_error (return_val, error);
+	      goto end;
 	    }
 	}
     }
 
-  error = au_change_owner (classmop, user);
-
-fail_return:
-  if (savepoint_owner && error != NO_ERROR && error != ER_LK_UNILATERALLY_ABORTED)
+  error = au_change_owner (class_mop, owner_mop);
+  if (error != NO_ERROR)
     {
-      (void) tran_abort_upto_system_savepoint (UNIQUE_PARTITION_SAVEPOINT_OWNER);
+      ASSERT_ERROR ();
+      db_make_error (return_val, error);
     }
+
+end:
   if (sub_partitions)
     {
       free_and_init (sub_partitions);
     }
-  if (error != NO_ERROR)
+
+  if (has_savepoint && error != NO_ERROR && error != ER_LK_UNILATERALLY_ABORTED)
     {
-      db_make_error (returnval, error);
+      tran_abort_upto_system_savepoint (UNIQUE_PARTITION_SAVEPOINT_OWNER);
     }
 }
 
@@ -5276,57 +5558,184 @@ fail_return:
  *   return: error code
  *   object(in/out): serial object whose owner is to be changed
  *   new_owner(in): new owner
+ *   is_auto_increment(in): check if auto increment serial name change is necessary
  */
 int
-au_change_serial_owner (MOP * object, MOP new_owner)
+au_change_serial_owner (MOP serial_mop, MOP owner_mop, bool by_class_owner_change)
 {
-  DB_OTMPL *obt_p = NULL;
+  DB_OBJECT *serial_owner_obj = NULL;
+  DB_OBJECT *serial_class_mop = NULL;
+  DB_OBJECT *serial_obj = NULL;
+  DB_IDENTIFIER serial_obj_id;
+  DB_OTMPL *obj_tmpl = NULL;
   DB_VALUE value;
-  int au_save, error;
+  const char *serial_name = NULL;
+  char serial_new_name[DB_MAX_SERIAL_NAME_LENGTH] = { '\0' };
+  const char *att_name = NULL;
+  char *owner_name = NULL;
+  char downcase_owner_name[DB_MAX_USER_LENGTH] = { '\0' };
+  bool is_abort = false;
+  int save = 0;
+  int error = NO_ERROR;
 
-  assert (object != NULL);
+  if (!serial_mop || !owner_mop)
+    {
+      ERROR_SET_WARNING (error, ER_OBJ_INVALID_ARGUMENTS);
+      return error;
+    }
+
+  OID_SET_NULL (&serial_obj_id);
 
   if (!au_is_dba_group_member (Au_user))
     {
-      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ER_AU_DBA_ONLY, 1, "change_serial_owner");
-      return ER_AU_DBA_ONLY;
+      ERROR_SET_WARNING_1ARG (error, ER_AU_DBA_ONLY, "change_serial_owner");
+      return error;
     }
 
-  AU_DISABLE (au_save);
+  AU_DISABLE (save);
 
-  obt_p = dbt_edit_object (*object);
-  if (obt_p == NULL)
-    {
-      goto exit_on_error;
-    }
+  /*
+   * class, serial, and trigger distinguish user schema by unique_name (user_specified_name).
+   * so if the owner of class, serial, trigger changes, the unique_name must also change.
+   */
 
-  db_make_object (&value, new_owner);
-  error = dbt_put_internal (obt_p, "owner", &value);
-  pr_clear_value (&value);
+  /*
+   * after serial.next_value, the currect value maybe changed, but cub_cas
+   * still hold the old value. To get the new value. we need decache it
+   * then refetch it from server again.
+   */
+  assert (WS_ISDIRTY (serial_mop) == false);
+
+  ws_decache (serial_mop);
+
+  /* no need to get last version for serial - actually, the purpose is AU_FETCH_WRITE, so fetch type is not relevant;
+   * the last version will be locked and it will be considered visibile only if delid is not set */
+  error = au_fetch_instance_force (serial_mop, NULL, AU_FETCH_WRITE, LC_FETCH_MVCC_VERSION);
   if (error != NO_ERROR)
     {
-      goto exit_on_error;
+      ASSERT_ERROR ();
+      goto end;
     }
 
-  *object = dbt_finish_object (obt_p);
-  if (*object == NULL)
+  if (!by_class_owner_change)
     {
-      goto exit_on_error;
+      /* It can be checked as one of unique_name, class_name, and att_name. */
+      error = obj_get (serial_mop, SERIAL_ATTR_ATT_NAME, &value);
+      if (error != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  goto end;
+	}
+
+      if (!DB_IS_NULL (&value))
+	{
+	  ERROR_SET_WARNING (error, ER_AU_CANT_ALTER_OWNER_OF_AUTO_INCREMENT);
+	  goto end;
+	}
     }
 
-  AU_ENABLE (au_save);
-  return NO_ERROR;
-
-exit_on_error:
-  if (obt_p != NULL)
+  /* Check if the owner to be changed is the same. */
+  error = obj_get (serial_mop, SERIAL_ATTR_OWNER, &value);
+  if (error != NO_ERROR)
     {
-      dbt_abort_object (obt_p);
+      ASSERT_ERROR ();
+      goto end;
     }
 
-  AU_ENABLE (au_save);
+  if (DB_VALUE_DOMAIN_TYPE (&value) != DB_TYPE_OBJECT || (serial_owner_obj = db_get_object (&value)) == NULL)
+    {
+      /* Unable to get attribute value. */
+      ERROR_SET_WARNING (error, ER_OBJ_INVALID_ARGUMENTS);
+      goto end;
+    }
 
-  assert (er_errid () != NO_ERROR);
-  return er_errid ();
+  if (ws_is_same_object (serial_owner_obj, owner_mop))
+    {
+      goto end;
+    }
+
+  error = obj_get (serial_mop, SERIAL_ATTR_NAME, &value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  if (!DB_IS_STRING (&value) || (serial_name = db_get_string (&value)) == NULL)
+    {
+      /* Unable to get attribute value. */
+      ERROR_SET_WARNING (error, ER_OBJ_INVALID_ARGUMENTS);
+      goto end;
+    }
+
+  owner_name = au_get_user_name (owner_mop);
+  if (!owner_name)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+  sm_downcase_name (owner_name, downcase_owner_name, DB_MAX_USER_LENGTH);
+  db_ws_free_and_init (owner_name);
+
+  snprintf (serial_new_name, SM_MAX_IDENTIFIER_LENGTH, "%s.%s", downcase_owner_name, serial_name);
+
+  serial_class_mop = sm_find_class (CT_SERIAL_NAME);
+  if (serial_class_mop == NULL)
+    {
+      ERROR_SET_ERROR (error, ER_QPROC_DB_SERIAL_NOT_FOUND);
+      goto end;
+    }
+
+  if (do_get_serial_obj_id (&serial_obj_id, serial_class_mop, serial_new_name) != NULL)
+    {
+      ERROR_SET_ERROR_1ARG (error, ER_QPROC_SERIAL_ALREADY_EXIST, serial_new_name);
+      goto end;
+    }
+
+  obj_tmpl = dbt_edit_object (serial_mop);
+  if (!obj_tmpl)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  /* unique_name */
+  db_make_string (&value, serial_new_name);
+  error = dbt_put_internal (obj_tmpl, SERIAL_ATTR_UNIQUE_NAME, &value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      is_abort = true;
+      goto end;
+    }
+
+  /* owner */
+  db_make_object (&value, owner_mop);
+  error = dbt_put_internal (obj_tmpl, SERIAL_ATTR_OWNER, &value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      is_abort = true;
+      goto end;
+    }
+
+  serial_obj = dbt_finish_object (obj_tmpl);
+  if (!serial_obj)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      is_abort = true;
+      goto end;
+    }
+
+end:
+  if (is_abort && obj_tmpl)
+    {
+      dbt_abort_object (obj_tmpl);
+    }
+
+  AU_ENABLE (save);
+
+  return error;
 }
 
 /*
@@ -5338,51 +5747,62 @@ exit_on_error:
  *   owner(in): new owner
  */
 void
-au_change_serial_owner_method (MOP obj, DB_VALUE * returnval, DB_VALUE * serial, DB_VALUE * owner)
+au_change_serial_owner_method (MOP obj, DB_VALUE * return_val, DB_VALUE * serial_val, DB_VALUE * owner_val)
 {
-  MOP user = NULL, serial_object = NULL;
-  MOP serial_class_mop;
+  MOP serial_class_mop = NULL;
+  MOP serial_mop = NULL;
   DB_IDENTIFIER serial_obj_id;
-  const char *serial_name = NULL, *owner_name = NULL;
+  MOP owner_mop = NULL;
+  const char *serial_name = NULL;
+  char user_specified_serial_name[DB_MAX_SERIAL_NAME_LENGTH] = { '\0' };
+  const char *owner_name = NULL;
   int error = NO_ERROR;
 
-  db_make_null (returnval);
-
-  if (DB_IS_NULL (serial) || !IS_STRING (serial) || (serial_name = db_get_string (serial)) == NULL)
+  if (!return_val || !serial_val || !owner_val)
     {
-      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ER_OBJ_INVALID_ARGUMENT, 1, "");
-      db_make_error (returnval, ER_OBJ_INVALID_ARGUMENT);
+      ERROR_SET_WARNING (error, ER_OBJ_INVALID_ARGUMENTS);
+      db_make_error (return_val, error);
       return;
     }
 
-  if (DB_IS_NULL (owner) || !IS_STRING (owner) || (owner_name = db_get_string (owner)) == NULL)
+  if (!DB_IS_STRING (serial_val) || (serial_name = db_get_string (serial_val)) == NULL)
     {
-      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ER_AU_INVALID_USER, 1, "");
-      db_make_error (returnval, ER_AU_INVALID_USER);
+      ERROR_SET_WARNING_1ARG (error, ER_OBJ_INVALID_ARGUMENT, "");
+      db_make_error (return_val, error);
+      return;
+    }
+
+  if (!DB_IS_STRING (owner_val) || (owner_name = db_get_string (owner_val)) == NULL)
+    {
+      ERROR_SET_WARNING_1ARG (error, ER_AU_INVALID_USER, "");
+      db_make_error (return_val, error);
       return;
     }
 
   serial_class_mop = sm_find_class (CT_SERIAL_NAME);
 
-  serial_object = do_get_serial_obj_id (&serial_obj_id, serial_class_mop, serial_name);
-  if (serial_object == NULL)
+  sm_user_specified_name (serial_name, user_specified_serial_name, DB_MAX_SERIAL_NAME_LENGTH);
+  serial_mop = do_get_serial_obj_id (&serial_obj_id, serial_class_mop, user_specified_serial_name);
+  if (serial_mop == NULL)
     {
-      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ER_QPROC_SERIAL_NOT_FOUND, 1, serial_name);
-      db_make_error (returnval, ER_QPROC_SERIAL_NOT_FOUND);
+      ERROR_SET_ERROR_1ARG (error, ER_QPROC_SERIAL_NOT_FOUND, user_specified_serial_name);
+      db_make_error (return_val, error);
       return;
     }
 
-  user = au_find_user (owner_name);
-  if (user == NULL)
+  owner_mop = au_find_user (owner_name);
+  if (owner_mop == NULL)
     {
-      db_make_error (returnval, er_errid ());
+      ASSERT_ERROR_AND_SET (error);
+      db_make_error (return_val, error);
       return;
     }
 
-  error = au_change_serial_owner (&serial_object, user);
+  error = au_change_serial_owner (serial_mop, owner_mop, false);
   if (error != NO_ERROR)
     {
-      db_make_error (returnval, error);
+      ASSERT_ERROR ();
+      db_make_error (return_val, error);
     }
 }
 
@@ -5394,30 +5814,125 @@ au_change_serial_owner_method (MOP obj, DB_VALUE * returnval, DB_VALUE * serial,
  *   owner(in):new owner
  */
 int
-au_change_trigger_owner (MOP trigger, MOP owner)
+au_change_trigger_owner (MOP trigger_mop, MOP owner_mop)
 {
-  int error = NO_ERROR;
-  int save;
+  DB_OBJECT *trigger_owner_obj = NULL;
+  DB_OBJECT *target_class_obj = NULL;
+  SM_CLASS *target_class = NULL;
   DB_VALUE value;
+  const char *trigger_old_name = NULL;
+  char trigger_new_name[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+  char *owner_name = NULL;
+  char downcase_owner_name[DB_MAX_USER_LENGTH] = { '\0' };
+  int save = 0;
+  int error = NO_ERROR;
 
-  AU_DISABLE (save);
+  if (!trigger_mop || !owner_mop)
+    {
+      ERROR_SET_WARNING (error, ER_OBJ_INVALID_ARGUMENTS);
+      return error;
+    }
+
   if (!au_is_dba_group_member (Au_user))
     {
-      error = ER_AU_DBA_ONLY;
-      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, error, 1, "change_trigger_owner");
+      ERROR_SET_WARNING_1ARG (error, ER_AU_DBA_ONLY, "change_trigger_owner");
+      return error;
     }
-  else
+
+  AU_DISABLE (save);
+
+  /*
+   * class, serial, and trigger distinguish user schema by unique_name (user_specified_name).
+   * so if the owner of class, serial, trigger changes, the unique_name must also change.
+   */
+
+  error = obj_get (trigger_mop, TR_ATT_UNIQUE_NAME, &value);
+  if (error != NO_ERROR)
     {
-      db_make_object (&value, owner);
-      if ((error = obj_set (trigger, TR_ATT_OWNER, &value)) < 0)
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  if (!IS_STRING (&value) || (trigger_old_name = db_get_string (&value)) == NULL)
+    {
+      ERROR_SET_WARNING_1ARG (error, ER_TR_TRIGGER_NOT_FOUND, "");
+      goto end;
+    }
+
+  /* Check if the owner to be changed is the same. */
+  error = obj_get (trigger_mop, TR_ATT_OWNER, &value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  if (DB_VALUE_DOMAIN_TYPE (&value) != DB_TYPE_OBJECT || (trigger_owner_obj = db_get_object (&value)) == NULL)
+    {
+      /* Unable to get attribute value. */
+      ERROR_SET_WARNING (error, ER_OBJ_INVALID_ARGUMENTS);
+      goto end;
+    }
+
+  if (ws_is_same_object (trigger_owner_obj, owner_mop))
+    {
+      goto end;
+    }
+
+  /* TO BE: It is necessary to check the permission of the target class of the owner to be changed. */
+#if 0
+  error = obj_get (target_class_obj, TR_ATT_CLASS, &value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  error = au_fetch_class (target_class_obj, &target_class, AU_FETCH_READ, AU_SELECT);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+#endif
+
+  owner_name = au_get_user_name (owner_mop);
+  if (!owner_name)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+  sm_downcase_name (owner_name, downcase_owner_name, DB_MAX_USER_LENGTH);
+  db_ws_free_and_init (owner_name);
+
+  snprintf (trigger_new_name, SM_MAX_IDENTIFIER_LENGTH, "%s.%s", downcase_owner_name,
+	    sm_remove_qualifier_name (trigger_old_name));
+
+  error = tr_rename_trigger (trigger_mop, trigger_new_name, false, true);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  /* owner */
+  db_make_object (&value, owner_mop);
+  error = obj_set (trigger_mop, TR_ATT_OWNER, &value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+
+      /* abort on error */
+      if (tr_rename_trigger (trigger_mop, trigger_old_name, false, true) != NO_ERROR)
 	{
-	  goto end;
+	  assert (false);
 	}
     }
 
 end:
   AU_ENABLE (save);
-  return (error);
+
+  return error;
 }
 
 /*
@@ -5429,45 +5944,56 @@ end:
  *   owner(in): new owner
  */
 void
-au_change_trigger_owner_method (MOP obj, DB_VALUE * returnval, DB_VALUE * trigger, DB_VALUE * owner)
+au_change_trigger_owner_method (MOP obj, DB_VALUE * return_val, DB_VALUE * trigger_val, DB_VALUE * owner_val)
 {
-  MOP user, trigger_mop;
-  int error;
-  int ok = 0;
+  MOP trigger_mop = NULL;
+  MOP owner_mop = NULL;
+  const char *trigger_name = NULL;
+  const char *owner_name = NULL;
+  int error = NO_ERROR;
 
-  db_make_null (returnval);
-  if (trigger != NULL && IS_STRING (trigger) && !DB_IS_NULL (trigger) && db_get_string (trigger) != NULL)
+  if (!return_val || !trigger_val || !owner_val)
     {
-      if (owner != NULL && IS_STRING (owner) && !DB_IS_NULL (owner) && db_get_string (owner) != NULL)
-	{
-
-	  trigger_mop = tr_find_trigger (db_get_string (trigger));
-	  if (trigger_mop != NULL)
-	    {
-	      user = au_find_user (db_get_string (owner));
-	      if (user != NULL)
-		{
-		  error = au_change_trigger_owner (trigger_mop, user);
-		  if (error == NO_ERROR)
-		    {
-		      ok = 1;
-		    }
-		}
-	    }
-	}
-      else
-	{
-	  er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ER_AU_INVALID_USER, 1, "");
-	}
-    }
-  else
-    {
-      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ER_TR_TRIGGER_NOT_FOUND, 1, "");
+      ERROR_SET_WARNING (error, ER_OBJ_INVALID_ARGUMENTS);
+      db_make_error (return_val, error);
+      return;
     }
 
-  if (!ok)
+  if (!DB_IS_STRING (trigger_val) || (trigger_name = db_get_string (trigger_val)) == NULL)
     {
-      db_make_error (returnval, er_errid ());
+      ERROR_SET_WARNING_1ARG (error, ER_TR_TRIGGER_NOT_FOUND, "");
+      db_make_error (return_val, error);
+      return;
+    }
+
+  if (!DB_IS_STRING (owner_val) || (owner_name = db_get_string (owner_val)) == NULL)
+    {
+      ERROR_SET_WARNING_1ARG (error, ER_AU_INVALID_USER, "");
+      db_make_error (return_val, error);
+      return;
+    }
+
+  trigger_mop = tr_find_trigger (trigger_name);
+  if (trigger_mop == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      db_make_error (return_val, error);
+      return;
+    }
+
+  owner_mop = au_find_user (owner_name);
+  if (owner_mop == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      db_make_error (return_val, error);
+      return;
+    }
+
+  error = au_change_trigger_owner (trigger_mop, owner_mop);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      db_make_error (return_val, error);
     }
 }
 
@@ -5774,6 +6300,21 @@ au_user_name (void)
     {
       int save;
 
+      /*
+       * To reduce unnecessary code execution,
+       * the current schema name can be used instead of the current user name.
+       * 
+       * Au_user_name cannot be used because it does not always store the current user name.
+       * When au_login_method () is called, Au_user_name is not changed.
+       */
+      const char *sc_name = sc_current_schema_name ();
+      char upper_sc_name[DB_MAX_USER_LENGTH];
+      if (sc_name && sc_name[0] != '\0')
+	{
+	  intl_identifier_upper (sc_name, upper_sc_name);
+	  return ws_copy_string (upper_sc_name);
+	}
+
       AU_DISABLE (save);
 
       if (obj_get (Au_user, "name", &value) == NO_ERROR)
@@ -5861,7 +6402,7 @@ check_authorization (MOP classobj, SM_CLASS * sm_class, DB_AUTH type)
    * Callers generally check Au_disable already to avoid the function call.
    * Check it again to be safe, at this point, it isn't going to add anything.
    */
-  if (Au_disable)
+  if (Au_disable && (!Au_sysadm || !(sm_class->flags & SM_CLASSFLAG_SYSTEM)))
     {
       return NO_ERROR;
     }
@@ -6151,7 +6692,7 @@ au_fetch_class_internal (MOP op, SM_CLASS ** class_ptr, AU_FETCHMODE fetchmode, 
 	}
     }
 
-  if (Au_disable || !(error = check_authorization (classmop, class_, type)))
+  if ((Au_disable && type != DB_AUTH_ALTER) || !(error = check_authorization (classmop, class_, type)))
     {
       if (class_ptr != NULL)
 	{
@@ -6609,7 +7150,7 @@ au_perform_login (const char *name, const char *password, bool ignore_dba_privil
 			  || !match_password (dbpassword, db_get_string (&value)))
 			{
 			  error = ER_AU_INVALID_PASSWORD;
-			  er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, error, 0);
+			  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 0);
 			}
 		    }
 		  else
@@ -6625,7 +7166,7 @@ au_perform_login (const char *name, const char *password, bool ignore_dba_privil
 		      if (dbpassword != NULL && strlen (dbpassword))
 			{
 			  error = ER_AU_INVALID_PASSWORD;
-			  er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, error, 0);
+			  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 0);
 			}
 		    }
 		  if (pass != NULL)
@@ -6908,6 +7449,32 @@ au_get_user_name (MOP obj)
   DB_VALUE value;
   db_make_null (&value);
   char *name = NULL;
+
+  {
+    MOP sc_owner;
+    const char *sc_name;
+    char upper_sc_name[DB_MAX_USER_LENGTH];
+
+    /*
+     * To reduce unnecessary code execution,
+     * the current schema name can be used instead of the current user name.
+     * 
+     * Returns the current schema name if the user object is the same as the current user object.
+     * 
+     * Au_user_name cannot be used because it does not always store the current user name.
+     * When au_login_method () is called, Au_user_name is not changed.
+     */
+    sc_owner = sc_current_schema_owner ();
+    if (sc_owner && ws_is_same_object (sc_owner, obj))
+      {
+	sc_name = sc_current_schema_name ();
+	if (sc_name && sc_name[0] != '\0')
+	  {
+	    intl_identifier_upper (sc_name, upper_sc_name);
+	    return ws_copy_string (upper_sc_name);
+	  }
+      }
+  }
 
   int error = obj_get (obj, "name", &value);
   if (error == NO_ERROR)
@@ -7486,7 +8053,9 @@ build_class_grant_list (CLASS_AUTH * cl_auth, MOP class_mop)
 static void
 issue_grant_statement (print_output & output_ctx, CLASS_AUTH * auth, CLASS_GRANT * grant, int authbits)
 {
-  const char *gtype, *classname;
+  const char *gtype;
+  char owner_name[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+  char *class_name = NULL;
   char *username;
   int typebit;
 
@@ -7518,12 +8087,11 @@ issue_grant_statement (print_output & output_ctx, CLASS_AUTH * auth, CLASS_GRANT
       gtype = "???";
       break;
     }
-  classname = sm_get_ch_name (auth->class_mop);
+  SPLIT_USER_SPECIFIED_NAME (sm_get_ch_name (auth->class_mop), owner_name, class_name);
   username = au_get_user_name (grant->user->obj);
 
   output_ctx ("GRANT %s ON ", gtype);
-  output_ctx ("[%s]", classname);
-
+  output_ctx ("[%s].[%s]", owner_name, class_name);
   if (username != NULL)
     {
       output_ctx (" TO [%s]", username);
@@ -7597,7 +8165,11 @@ class_grant_loop (print_output & output_ctx, CLASS_AUTH * auth)
 		   */
 		  if ((user->available_auth & authbits) == authbits)
 		    {
-		      issue_grant_statement (output_ctx, auth, grant, authbits);
+		      if (!ws_is_same_object (auth->users->obj, grant->user->obj))
+			{
+			  issue_grant_statement (output_ctx, auth, grant, authbits);
+			}
+
 		      /* turn on grant bits in the granted user */
 		      grant->user->available_auth |= authbits;
 		      /* turn off the pending grant bits in granting user */
@@ -8313,6 +8885,9 @@ au_install (void)
     {
       goto exit_on_error;
     }
+  /* If the attribute configuration is changed, the CATCLS_USER_ATTR_IDX_NAME also be changed.
+   *   - CATCLS_USER_ATTR_IDX_NAME is defined in the cubload::server_class_installer::locate_class () function.
+   */
   smt_add_attribute (def, "name", "string", (DB_DOMAIN *) 0);
   smt_add_attribute (def, "id", "integer", (DB_DOMAIN *) 0);
   smt_add_attribute (def, "password", AU_PASSWORD_CLASS_NAME, (DB_DOMAIN *) 0);
@@ -8625,6 +9200,19 @@ au_disable (void)
 }
 
 /*
+ * au_sysadm_disable - set Au_disable for sysadm
+ *   return: original Au_disable value
+ */
+int
+au_sysadm_disable (void)
+{
+  int save = Au_disable;
+  Au_disable = 1;
+  Au_sysadm = true;
+  return save;
+}
+
+/*
  * au_enable - restore Au_disable
  *   return:
  *   save(in): original Au_disable value
@@ -8633,6 +9221,7 @@ void
 au_enable (int save)
 {
   Au_disable = save;
+  Au_sysadm = false;
 }
 
 /*
@@ -8655,6 +9244,31 @@ au_get_dba_user (void)
   return Au_dba_user;
 }
 
+static int
+au_check_owner (DB_VALUE * creator_val)
+{
+  MOP creator;
+  DB_SET *groups;
+  int ret_val = ER_FAILED;
+
+  creator = db_get_object (creator_val);
+
+  if (ws_is_same_object (creator, Au_user) || au_is_dba_group_member (Au_user))
+    {
+      ret_val = NO_ERROR;
+    }
+  else if (au_get_set (Au_user, "groups", &groups) == NO_ERROR)
+    {
+      if (set_ismember (groups, creator_val))
+	{
+	  ret_val = NO_ERROR;
+	}
+      set_free (groups);
+    }
+
+  return ret_val;
+}
+
 /*
  * au_check_serial_authorization - check whether the current user is able to
  *                                 modify serial object or not
@@ -8665,42 +9279,54 @@ int
 au_check_serial_authorization (MOP serial_object)
 {
   DB_VALUE creator_val;
-  MOP creator;
-  DB_SET *groups;
   int ret_val;
 
   ret_val = db_get (serial_object, "owner", &creator_val);
+  if (ret_val != NO_ERROR)
+    {
+      return ret_val;
+    }
 
+  assert (!DB_IS_NULL (&creator_val));
+
+  ret_val = au_check_owner (&creator_val);
+  if (ret_val != NO_ERROR)
+    {
+      ret_val = ER_QPROC_CANNOT_UPDATE_SERIAL;
+      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ret_val, 0);
+    }
+
+  pr_clear_value (&creator_val);
+  return ret_val;
+}
+
+int
+au_check_server_authorization (MOP server_object)
+{
+  DB_VALUE creator_val;
+  int ret_val;
+
+  ret_val = db_get (server_object, "owner", &creator_val);
   if (ret_val != NO_ERROR || DB_IS_NULL (&creator_val))
     {
       return ret_val;
     }
 
-  creator = db_get_object (&creator_val);
-
-  ret_val = ER_QPROC_CANNOT_UPDATE_SERIAL;
-
-  if (ws_is_same_object (creator, Au_user) || au_is_dba_group_member (Au_user))
-    {
-      ret_val = NO_ERROR;
-    }
-  else if (au_get_set (Au_user, "groups", &groups) == NO_ERROR)
-    {
-      if (set_ismember (groups, &creator_val))
-	{
-	  ret_val = NO_ERROR;
-	}
-      set_free (groups);
-    }
-
+  ret_val = au_check_owner (&creator_val);
   if (ret_val != NO_ERROR)
     {
+      ret_val = ER_DBLINK_CANNOT_UPDATE_SERVER;
       er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ret_val, 0);
     }
 
   pr_clear_value (&creator_val);
-
   return ret_val;
+}
+
+bool
+au_is_server_authorized_user (DB_VALUE * owner_val)
+{
+  return (au_check_owner (owner_val) == NO_ERROR);
 }
 
 const char *

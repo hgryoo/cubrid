@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -66,7 +65,8 @@ static T_CUBRID_FILE_INFO cubrid_file[NUM_CUBRID_FILE] = {
   {FID_ACCESS_CONTROL_FILE, ""},
   {FID_SLOW_LOG_DIR, ""},
   {FID_SHARD_DBINFO, ""},
-  {FID_SHARD_PROXY_LOG_DIR, ""}
+  {FID_SHARD_PROXY_LOG_DIR, ""},
+  {FID_CUBRID_GATEWAY_CONF, ""}
 };
 
 void
@@ -217,6 +217,9 @@ get_cubrid_file (T_CUBRID_FILE_ID fid, char *buf, size_t len)
     case FID_CUBRID_BROKER_CONF:
       envvar_confdir_file (buf, len, "cubrid_broker.conf");
       break;
+    case FID_CUBRID_GATEWAY_CONF:
+      envvar_confdir_file (buf, len, "cubrid_gateway.conf");
+      break;
     case FID_UV_ERR_MSG:
       envvar_confdir_file (buf, len, "uv_er.msg");
       break;
@@ -255,6 +258,26 @@ get_cubrid_file (T_CUBRID_FILE_ID fid, char *buf, size_t len)
     case FID_ADMIND_PID:
       envvar_vardir_file (buf, len, "as_pid/casd.pid");
       break;
+#if defined(FOR_ODBC_GATEWAY)
+    case FID_SQL_LOG_DIR:
+      envvar_logdir_file (buf, len, "gateway/sql_log/");
+      break;
+    case FID_SQL_LOG2_DIR:
+      envvar_logdir_file (buf, len, "gateway/sql_log/query/");
+      break;
+    case FID_SLOW_LOG_DIR:
+      envvar_logdir_file (buf, len, "gateway/sql_log/");
+      break;
+    case FID_ADMIND_LOG:
+      envvar_logdir_file (buf, len, "gateway/sql_log/cas_admind.log");
+      break;
+    case FID_MONITORD_LOG:
+      envvar_logdir_file (buf, len, "gateway/sql_log/cas_monitord.log");
+      break;
+    case FID_CUBRID_ERR_DIR:
+      envvar_logdir_file (buf, len, "gateway/error_log/");
+      break;
+#else
     case FID_SQL_LOG_DIR:
       envvar_logdir_file (buf, len, "broker/sql_log/");
       break;
@@ -270,11 +293,12 @@ get_cubrid_file (T_CUBRID_FILE_ID fid, char *buf, size_t len)
     case FID_MONITORD_LOG:
       envvar_logdir_file (buf, len, "broker/sql_log/cas_monitord.log");
       break;
-    case FID_ER_HTML:
-      envvar_confdir_file (buf, len, "uw_er.html");
-      break;
     case FID_CUBRID_ERR_DIR:
       envvar_logdir_file (buf, len, "broker/error_log/");
+      break;
+#endif
+    case FID_ER_HTML:
+      envvar_confdir_file (buf, len, "uw_er.html");
       break;
     case FID_CAS_FOR_ORACLE_DBINFO:
       envvar_confdir_file (buf, len, "databases_oracle.txt");

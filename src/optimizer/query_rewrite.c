@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -48,6 +47,16 @@ struct spec_id_info
 {
   UINTPTR id;
   bool appears;
+  bool nullable;
+};
+
+typedef struct spec_cnt_info SPEC_CNT_INFO;
+struct spec_cnt_info
+{
+  PT_NODE *spec;
+  int my_spec_cnt;
+  int other_spec_cnt;
+  PT_NODE *my_spec_node;
 };
 
 typedef struct to_dot_info TO_DOT_INFO;
@@ -101,6 +110,20 @@ static PT_NODE *qo_optimize_queries (PARSER_CONTEXT * parser, PT_NODE * node, vo
 static void qo_do_auto_parameterize_limit_clause (PARSER_CONTEXT * parser, PT_NODE * node);
 static void qo_do_auto_parameterize_keylimit_clause (PARSER_CONTEXT * parser, PT_NODE * node);
 static PT_NODE *qo_optimize_queries_post (PARSER_CONTEXT * parser, PT_NODE * tree, void *arg, int *continue_walk);
+static PT_NODE *qo_get_name_cnt_by_spec (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk);
+static PT_NODE *qo_collect_name_with_eq_const (PARSER_CONTEXT * parser, PT_NODE * on_cond, PT_NODE * spec);
+static PT_NODE *qo_reduce_outer_joined_tables (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * query);
+
+
+
+#define QO_CHECK_AND_REDUCE_EQUALITY_TERMS(parser, node, where) \
+  do { \
+      if (!node->flag.done_reduce_equality_terms) \
+      { \
+          node->flag.done_reduce_equality_terms = true; \
+          qo_reduce_equality_terms (parser, node, where); \
+      } \
+  } while (0)
 
 /*
  * qo_find_best_path_type () -
@@ -189,6 +212,50 @@ qo_check_nullable_expr (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int 
 	case PT_CONCAT_WS:
 	  /* NEED FUTURE OPTIMIZATION */
 	  (*nullable_cntp)++;
+	  break;
+	default:
+	  break;
+	}
+    }
+
+  return node;
+}
+
+/*
+ * qo_check_nullable_expr_with_spec () -
+ *   return:
+ *   parser(in):
+ *   node(in):
+ *   arg(in):
+ *   continue_walk(in):
+ */
+PT_NODE *
+qo_check_nullable_expr_with_spec (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk)
+{
+  SPEC_ID_INFO *info = (SPEC_ID_INFO *) arg;
+
+  if (node->node_type == PT_EXPR)
+    {
+      /* check for nullable term: expr(..., NULL, ...) can be non-NULL */
+      switch (node->info.expr.op)
+	{
+	case PT_IS_NULL:
+	case PT_CASE:
+	case PT_COALESCE:
+	case PT_NVL:
+	case PT_NVL2:
+	case PT_DECODE:
+	case PT_IF:
+	case PT_IFNULL:
+	case PT_ISNULL:
+	case PT_CONCAT_WS:
+	  info->appears = false;
+	  parser_walk_tree (parser, node, qo_get_name_by_spec_id, info, NULL, NULL);
+	  if (info->appears)
+	    {
+	      info->nullable = true;
+	      *continue_walk = PT_STOP_WALK;
+	    }
 	  break;
 	default:
 	  break;
@@ -795,7 +862,6 @@ qo_construct_new_set (PARSER_CONTEXT * parser, PT_NODE * node)
   /* create mset constructor subtree */
   if (arg && (set = parser_new_node (parser, PT_FUNCTION)) != NULL)
     {
-      parser_init_node (set);
       set->info.function.function_type = F_SEQUENCE;
       set->info.function.arg_list = arg;
       set->type_enum = PT_TYPE_SEQUENCE;
@@ -831,13 +897,14 @@ qo_make_new_derived_tblspec (PARSER_CONTEXT * parser, PT_NODE * node, PT_NODE * 
   const char *dtblnam, *dattnam;
 
   dtbl = qo_construct_new_set (parser, pred);
-  if (dtbl)
+  if (!dtbl)
     {
-      spec = parser_new_node (parser, PT_SPEC);
+      return NULL;
     }
+
+  spec = parser_new_node (parser, PT_SPEC);
   if (spec)
     {
-      parser_init_node (spec);
       spec_id = (UINTPTR) spec;
       spec->info.spec.id = spec_id;
       spec->info.spec.only_all = PT_ONLY;
@@ -869,7 +936,6 @@ qo_make_new_derived_tblspec (PARSER_CONTEXT * parser, PT_NODE * node, PT_NODE * 
 	  node->info.spec.path_conjuncts = eq = parser_new_node (parser, PT_EXPR);
 	  if (eq)
 	    {
-	      parser_init_node (eq);
 	      eq->type_enum = PT_TYPE_LOGICAL;
 	      eq->info.expr.op = PT_EQ;
 	      eq->info.expr.arg1 = pt_name (parser, dattnam);
@@ -1286,8 +1352,8 @@ qo_reduce_equality_terms (PARSER_CONTEXT * parser, PT_NODE * node, PT_NODE ** wh
       found_equality_term = false;	/* 2nd init */
 
       if (expr->info.expr.op == PT_EQ && expr->info.expr.arg1 && expr->info.expr.arg2
-	  && (!pt_is_function_index_expression (expr->info.expr.arg1) || !PT_IS_CONST (expr->info.expr.arg2))
-	  && (!pt_is_function_index_expression (expr->info.expr.arg2) || !PT_IS_CONST (expr->info.expr.arg1)))
+	  && !(pt_is_function_index_expression (expr->info.expr.arg1) && qo_is_reduceable_const (expr->info.expr.arg2))
+	  && !(pt_is_function_index_expression (expr->info.expr.arg2) && qo_is_reduceable_const (expr->info.expr.arg1)))
 	{			/* 'opd = opd' */
 	  found_equality_term = true;	/* pass 2nd phase */
 	  num_check = 2;
@@ -1391,7 +1457,15 @@ qo_reduce_equality_terms (PARSER_CONTEXT * parser, PT_NODE * node, PT_NODE ** wh
 		    {
 		      ;		/* step to next */
 		    }
-
+		  /* replace a constant value for a substitutable node which is set to PT_NAME_INFO_CONSTANT */
+		  if (col->node_type == PT_NAME || col->node_type == PT_DOT_)
+		    {
+		      col = pt_get_end_path_node (col);
+		      if (PT_NAME_INFO_IS_FLAGED (col, PT_NAME_INFO_CONSTANT))
+			{
+			  col = col->info.name.constant_value;
+			}
+		    }
 		  /* do not reduce PT_NAME that belongs to PT_NODE_LIST to PT_VALUE */
 		  if (attr && col && !PT_IS_VALUE_QUERY (col) && qo_is_reduceable_const (col))
 		    {
@@ -1739,6 +1813,28 @@ qo_reduce_equality_terms (PARSER_CONTEXT * parser, PT_NODE * node, PT_NODE ** wh
       *orgp = parser_append_node (join_term_list, *orgp);
     }
 
+}
+
+/*
+ * qo_reduce_equality_terms_post ()
+ *   return: PT_NODE *
+ *   parser(in): parser environment
+ *   node(in): (name) node to compare id's with
+ *   arg(in): info of spec and result
+ *   continue_walk(in):
+ */
+static PT_NODE *
+qo_reduce_equality_terms_post (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk)
+{
+  PT_NODE **wherep;
+
+  if (node->node_type == PT_SELECT)
+    {
+      wherep = &node->info.query.q.select.where;
+      QO_CHECK_AND_REDUCE_EQUALITY_TERMS (parser, node, wherep);
+    }
+
+  return node;
 }
 
 /*
@@ -2993,6 +3089,417 @@ qo_reduce_comp_pair_terms (PARSER_CONTEXT * parser, PT_NODE ** wherep)
 }
 
 /*
+ * qo_get_name_cnt_by_spec () - looks for a name with a matching id
+ *   return: PT_NODE *
+ *   parser(in): parser environment
+ *   spec(in):
+ *   arg(in): info of spec and result
+ *   continue_walk(in):
+ */
+static PT_NODE *
+qo_get_name_cnt_by_spec (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk)
+{
+  SPEC_CNT_INFO *info = (SPEC_CNT_INFO *) arg;
+
+  if (node->node_type == PT_NAME)
+    {
+      if (node->info.name.spec_id == info->spec->info.spec.id)
+	{
+	  info->my_spec_cnt++;
+	  info->my_spec_node = node;
+	}
+      else
+	{
+	  info->other_spec_cnt++;
+	}
+    }
+
+  if (info->my_spec_cnt >= 2 || (info->my_spec_cnt == 1 && info->other_spec_cnt >= 1))
+    {
+      *continue_walk = PT_STOP_WALK;
+    }
+  return node;
+}
+
+/*
+ * qo_get_name_cnt_by_spec_without_oncond () - looks for a name with a matching id
+ *   return: PT_NODE *
+ *   parser(in): parser environment
+ *   spec(in):
+ *   arg(in): info of spec and result
+ *   continue_walk(in):
+ */
+static PT_NODE *
+qo_get_name_cnt_by_spec_without_oncond (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk)
+{
+  SPEC_CNT_INFO *info = (SPEC_CNT_INFO *) arg;
+  *continue_walk = PT_CONTINUE_WALK;
+
+  /* ignore on_cond of my spec */
+  if ((pt_is_expr_node (node) && node->info.expr.location == info->spec->info.spec.location)
+      || (pt_is_value_node (node) && node->info.value.location == info->spec->info.spec.location)
+      || (node->node_type == PT_SPEC && node->info.spec.id == info->spec->info.spec.id))
+    {
+      *continue_walk = PT_LIST_WALK;
+      return node;
+    }
+
+  if (node->node_type == PT_NAME)
+    {
+      if (node->info.name.spec_id == info->spec->info.spec.id)
+	{
+	  info->my_spec_cnt++;
+	  info->my_spec_node = node;
+	}
+      else
+	{
+	  info->other_spec_cnt++;
+	}
+    }
+
+  if (info->my_spec_cnt >= 1)
+    {
+      *continue_walk = PT_STOP_WALK;
+    }
+  return node;
+}
+
+/*
+ * qo_collect_name_with_eq_const () - collect name node with equal OP and constant value
+ *   return: node_list
+ *   parser(in):
+ *   on_cond(in):
+ *   spec(in):
+ *
+ * Note:
+ * collect name nodes with following conditions
+ *                arg1            op             arg2
+ *     only have one of my spec   '='    not have my spec node
+ * e.g.)      col(my spec)         =     2 (constant)
+ *            a.col(my spec)       =     b.col
+ *            a.col(my spec)       =     b.col + c.col
+ */
+static PT_NODE *
+qo_collect_name_with_eq_const (PARSER_CONTEXT * parser, PT_NODE * on_cond, PT_NODE * spec)
+{
+  PT_NODE *pred, *arg1, *arg2;
+  PT_NODE *point, *s_name, *point_list = NULL;
+  SPEC_CNT_INFO info1, info2;
+
+  info1.spec = spec;
+  info2.spec = spec;
+
+  pred = on_cond;
+  while (pred != NULL)
+    {
+      if (pred->or_next != NULL)
+	{
+	  pred = pred->next;
+	  continue;
+	}
+      if (!PT_IS_EXPR_NODE_WITH_OPERATOR (pred, PT_EQ))
+	{
+	  pred = pred->next;
+	  continue;
+	}
+      /* check on_cond predicate */
+      if (spec->info.spec.location != pred->info.expr.location)
+	{
+	  pred = pred->next;
+	  continue;
+	}
+
+      arg1 = pred->info.expr.arg1;
+      arg2 = pred->info.expr.arg2;
+      /* find name with spec id */
+      info1.my_spec_cnt = 0;
+      info1.other_spec_cnt = 0;
+      info2.my_spec_cnt = 0;
+      info2.other_spec_cnt = 0;
+      parser_walk_tree (parser, arg1, qo_get_name_cnt_by_spec, &info1, NULL, NULL);
+      parser_walk_tree (parser, arg2, qo_get_name_cnt_by_spec, &info2, NULL, NULL);
+
+      /* col1(my spec) = const */
+      if (info1.my_spec_cnt == 1 && info1.other_spec_cnt == 0)
+	{
+	  /* const */
+	  if (info2.my_spec_cnt == 0)
+	    {
+	      point_list = parser_append_node (pt_point (parser, info1.my_spec_node), point_list);
+	    }
+	}
+      /* const = col(my spec) */
+      else if (info2.my_spec_cnt == 1 && info2.other_spec_cnt == 0)
+	{
+	  /* const */
+	  if (info1.my_spec_cnt == 0)
+	    {
+	      point_list = parser_append_node (pt_point (parser, info2.my_spec_node), point_list);
+	    }
+	}
+      pred = pred->next;
+    }
+  return point_list;
+}
+
+/*
+ * qo_modify_location () -
+ *   return:
+ *   parser(in):
+ *   node(in):
+ *   arg(in):
+ *   continue_walk(in):
+ */
+static PT_NODE *
+qo_modify_location (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk)
+{
+  RESET_LOCATION_INFO *infop = (RESET_LOCATION_INFO *) arg;
+
+  if (node->node_type == PT_EXPR && node->info.expr.location == infop->start)
+    {
+      node->info.expr.location = infop->end;
+    }
+
+  if (node->node_type == PT_NAME && node->info.name.location == infop->start)
+    {
+      node->info.name.location = infop->end;
+    }
+
+  if (node->node_type == PT_VALUE && node->info.value.location == infop->start)
+    {
+      node->info.value.location = infop->end;
+    }
+
+  return node;
+}
+
+/*
+ * qo_reset_spec_location () - reset location of spec
+ *   return: node_list
+ *   parser(in):
+ *   on_cond(in):
+ *   spec(in):
+ *
+ * Note:
+ */
+static void
+qo_reset_spec_location (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * query)
+{
+  short curr_loc, after_loc;
+  PT_NODE *where;
+  RESET_LOCATION_INFO locate_info;
+
+  while (spec != NULL)
+    {
+      curr_loc = spec->info.spec.location;
+      after_loc = curr_loc - 1;
+
+      if (curr_loc <= 0 || after_loc <= 0)
+	{
+	  spec = spec->next;
+	  continue;
+	}
+
+      /* reset location of spec */
+      spec->info.spec.location = after_loc;
+
+      /* reset location of predicate */
+      locate_info.start = curr_loc;
+      locate_info.end = after_loc;
+      where = query->info.query.q.select.where;
+      (void) parser_walk_tree (parser, where, qo_modify_location, &locate_info, NULL, NULL);
+
+      spec = spec->next;
+    }
+}
+
+/*
+ * qo_reduce_outer_joined_tables () - reduce outer joined tables with unique join predicates
+ *   return:
+ *   parser(in):
+ *   spec(in):
+ *   query(in):
+ *
+ * Note:
+ * 	examples:
+ *  	          select count(*)
+ *                  from tbl1 a left outer join tbl2 b on a.pk = b.pk <== outer joined table with unique join columns
+ *                ==>
+ *                select count(*)
+ *                  from tbl1 a
+ */
+static PT_NODE *
+qo_reduce_outer_joined_tables (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * query)
+{
+  MOP cls;
+  SM_CLASS_CONSTRAINT *consp;
+  SM_ATTRIBUTE *attrp;
+  PT_NODE *point_list = NULL, *point, *where, *col, *tmp_spec, *prev_spec, *pred, *prev_pred, *next_pred;
+  PT_NODE *next_spec;
+  SPEC_CNT_INFO info;
+  bool all_unique_col_match = false;
+  int i;
+
+  /* check left outer join */
+  /* TO_DO : for right outer join */
+  if (spec == NULL || spec->info.spec.join_type != PT_JOIN_LEFT_OUTER)
+    {
+      return query;
+    }
+
+  /* check query */
+  if (!PT_IS_SELECT (query))
+    {
+      return query;
+    }
+
+  /* check Inheritance of spec */
+  if (spec->info.spec.only_all == PT_ALL)
+    {
+      return query;
+    }
+
+  /* check no_merge sql hint */
+  if (query->info.query.q.select.hint & PT_HINT_NO_MERGE)
+    {
+      return query;
+    }
+
+  /* check referenced columns except on_cond */
+  info.spec = spec;
+  info.my_spec_cnt = 0;
+  info.other_spec_cnt = 0;
+  parser_walk_tree (parser, query, qo_get_name_cnt_by_spec_without_oncond, &info, NULL, NULL);
+  if (info.my_spec_cnt >= 1)
+    {
+      /* Except for on_cond, the referenced columns exist. */
+      return query;
+    }
+
+  where = query->info.query.q.select.where;
+  /* get columns with equal op and constant in on_cond */
+  point_list = qo_collect_name_with_eq_const (parser, where, spec);
+  if (point_list == NULL)
+    {
+      return query;
+    }
+
+  /* get class info */
+  cls = sm_find_class (spec->info.spec.flat_entity_list->info.name.original);
+  if (cls == NULL)
+    {
+      goto end;
+    }
+
+  /* get index info of spec */
+  consp = sm_class_constraints (cls);
+  while (consp != NULL)
+    {
+      if (!SM_IS_CONSTRAINT_UNIQUE_FAMILY (consp->type))
+	{
+	  consp = consp->next;
+	  continue;
+	}
+
+      /* check columns on this constraint */
+      for (i = 0; consp->attributes[i]; i++)
+	{
+	  attrp = consp->attributes[i];
+	  point = point_list;
+	  col = point;
+	  CAST_POINTER_TO_NODE (col);
+	  while (col != NULL)
+	    {
+	      if (intl_identifier_casecmp (col->info.name.original, attrp->header.name) == 0)
+		{
+		  break;
+		}
+	      point = point->next;
+	      col = point;
+	      CAST_POINTER_TO_NODE (col);
+	    }
+	  /* not find */
+	  if (col == NULL)
+	    {
+	      break;
+	    }
+	}
+      /* matche all columns of the unique index */
+      if (consp->attributes[i] == NULL)
+	{
+	  all_unique_col_match = true;
+	  break;
+	}
+
+      consp = consp->next;
+    }
+
+  if (all_unique_col_match)
+    {
+      /* remove unnecessary table spec */
+      /* find previous spec */
+      prev_spec = NULL;
+      tmp_spec = query->info.query.q.select.from;
+      while (tmp_spec && tmp_spec->info.spec.id != spec->info.spec.id)
+	{
+	  prev_spec = tmp_spec;
+	  tmp_spec = tmp_spec->next;
+	}
+      if (tmp_spec == NULL || prev_spec == NULL)
+	{
+	  goto end;
+	}
+
+      /* cut off unnecessary spec */
+      prev_spec->next = next_spec = spec->next;
+      spec->next = NULL;
+
+      /* remove on_cond predicate */
+      prev_pred = NULL;
+      pred = query->info.query.q.select.where;
+      while (pred != NULL)
+	{
+	  next_pred = pred->next;
+	  if ((pt_is_expr_node (pred) && pred->info.expr.location == spec->info.spec.location)
+	      || (pt_is_value_node (pred) && pred->info.value.location == spec->info.spec.location))
+	    {
+	      if (prev_pred == NULL)
+		{
+		  /* first time */
+		  query->info.query.q.select.where = next_pred;
+		  pred->next = NULL;
+		  parser_free_tree (parser, pred);
+		}
+	      else
+		{
+		  prev_pred->next = next_pred;
+		  pred->next = NULL;
+		  parser_free_tree (parser, pred);
+		}
+	    }
+	  else
+	    {
+	      prev_pred = pred;
+	    }
+	  pred = next_pred;
+	}
+
+      /* reset location */
+      qo_reset_spec_location (parser, next_spec, query);
+
+      /* free spec */
+      parser_free_tree (parser, spec);
+    }
+
+end:
+  if (point_list != NULL)
+    {
+      parser_free_tree (parser, point_list);
+    }
+  return query;
+}
+
+/*
  * pt_is_ascii_string_value_node () -
  *   return: whether the node is a non-national string value (CHAR or VARCHAR)
  *   node(in):
@@ -3521,7 +4028,6 @@ qo_rewrite_like_for_index_scan (PARSER_CONTEXT * const parser, PT_NODE * like, P
 
   /* if success, use like_save. Otherwise, keep like. */
   like_save = pt_semantic_type (parser, like_save, NULL);
-
   if (like_save == NULL || er_errid () != NO_ERROR || pt_has_error (parser))
     {
       like->next = between->next;
@@ -3587,7 +4093,13 @@ qo_check_like_expression_pre (PARSER_CONTEXT * parser, PT_NODE * node, void *arg
       return node;
     }
 
-  if (PT_IS_QUERY (node) || PT_IS_NAME_NODE (node) || PT_IS_DOT_NODE (node))
+  if (PT_IS_QUERY (node) || PT_IS_DOT_NODE (node))
+    {
+      *like_expression_not_safe = true;
+      *continue_walk = PT_STOP_WALK;
+      return node;
+    }
+  else if (PT_IS_NAME_NODE (node) && node->info.name.correlation_level == 0)
     {
       *like_expression_not_safe = true;
       *continue_walk = PT_STOP_WALK;
@@ -3606,11 +4118,18 @@ qo_check_like_expression_pre (PARSER_CONTEXT * parser, PT_NODE * node, void *arg
 static void
 qo_rewrite_like_terms (PARSER_CONTEXT * parser, PT_NODE ** cnf_list)
 {
+  bool error_saved = false;
   PT_NODE *cnf_node = NULL;
   /* prev node in list which linked by next pointer. */
   PT_NODE *prev = NULL;
   /* prev node in list which linked by or_next pointer. */
   PT_NODE *or_prev = NULL;
+
+  if (er_errid () != NO_ERROR)
+    {
+      er_stack_push ();
+      error_saved = true;
+    }
 
   for (cnf_node = *cnf_list; cnf_node != NULL; cnf_node = cnf_node->next)
     {
@@ -3740,6 +4259,11 @@ qo_rewrite_like_terms (PARSER_CONTEXT * parser, PT_NODE ** cnf_list)
 	  or_prev = crt_expr;
 	}
       prev = cnf_node;
+    }
+
+  if (error_saved)
+    {
+      er_stack_pop ();
     }
 }
 
@@ -5428,11 +5952,10 @@ qo_apply_range_intersection (PARSER_CONTEXT * parser, PT_NODE ** wherep)
 static PT_NODE *
 qo_rewrite_outerjoin (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk)
 {
-  PT_NODE *spec, *prev_spec, *expr, *ns;
-  SPEC_ID_INFO info;
+  PT_NODE *spec, *expr, *ns, *save_next;
+  SPEC_ID_INFO info, info_spec;
   RESET_LOCATION_INFO locate_info;
-  int nullable_cnt;		/* nullable terms count */
-  bool rewrite_again;
+  bool rewrite_again, is_outer_joined;
 
   if (node->node_type != PT_SELECT)
     {
@@ -5450,41 +5973,43 @@ qo_rewrite_outerjoin (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *c
     {
       rewrite_again = false;
       /* traverse spec list */
-      prev_spec = NULL;
-      for (spec = node->info.query.q.select.from; spec; prev_spec = spec, spec = spec->next)
+      for (spec = node->info.query.q.select.from; spec; spec = spec->next)
 	{
-	  if (spec->info.spec.join_type == PT_JOIN_LEFT_OUTER || spec->info.spec.join_type == PT_JOIN_RIGHT_OUTER)
+	  /* check outer join spec. */
+	  is_outer_joined = mq_is_outer_join_spec (parser, spec);
+	  if (is_outer_joined)
 	    {
-	      if (spec->info.spec.join_type == PT_JOIN_LEFT_OUTER)
-		{
-		  info.id = spec->info.spec.id;
-		}
-	      else if (prev_spec != NULL)
-		{
-		  info.id = prev_spec->info.spec.id;
-		}
-
-	      info.appears = false;
-	      nullable_cnt = 0;
+	      info.id = info_spec.id = spec->info.spec.id;
 
 	      /* search where list */
 	      for (expr = node->info.query.q.select.where; expr; expr = expr->next)
 		{
 		  if (expr->node_type == PT_EXPR && expr->info.expr.location == 0 && expr->info.expr.op != PT_IS_NULL
-		      && expr->or_next == NULL)
+		      && expr->or_next == NULL && expr->info.expr.op != PT_AND && expr->info.expr.op != PT_OR)
 		    {
-		      (void) parser_walk_leaves (parser, expr, qo_get_name_by_spec_id, &info, qo_check_nullable_expr,
-						 &nullable_cnt);
+		      info_spec.appears = false;
+		      info.nullable = false;
+
+		      save_next = expr->next;
+		      expr->next = NULL;
+		      (void) parser_walk_tree (parser, expr, NULL, NULL, qo_check_nullable_expr_with_spec, &info);
+		      (void) parser_walk_tree (parser, expr, qo_get_name_by_spec_id, &info_spec, NULL, NULL);
+		      expr->next = save_next;
+
 		      /* have found a term which makes outer join to inner */
-		      if (info.appears && nullable_cnt == 0)
+		      /* there are predicate referenced by spec and all preds are not nullable */
+		      if (info_spec.appears && !info.nullable)
 			{
 			  rewrite_again = true;
-			  spec->info.spec.join_type = PT_JOIN_INNER;
+			  if (spec->info.spec.join_type == PT_JOIN_LEFT_OUTER)
+			    {
+			      spec->info.spec.join_type = PT_JOIN_INNER;
 
-			  locate_info.start = spec->info.spec.location;
-			  locate_info.end = locate_info.start;
-			  (void) parser_walk_tree (parser, node->info.query.q.select.where, qo_reset_location,
-						   &locate_info, NULL, NULL);
+			      locate_info.start = spec->info.spec.location;
+			      locate_info.end = locate_info.start;
+			      (void) parser_walk_tree (parser, node->info.query.q.select.where, qo_reset_location,
+						       &locate_info, NULL, NULL);
+			    }
 
 			  /* rewrite the following connected right outer join to inner join */
 			  for (ns = spec->next;	/* traverse next spec */
@@ -5731,7 +6256,7 @@ qo_rewrite_hidden_col_as_derived (PARSER_CONTEXT * parser, PT_NODE * node, PT_NO
 	      for (t_node = node->info.query.q.select.list; t_node && t_node->next; t_node = next)
 		{
 		  next = t_node->next;
-		  if (next->is_hidden_column)
+		  if (next->flag.is_hidden_column)
 		    {
 		      parser_free_tree (parser, next);
 		      t_node->next = NULL;
@@ -5752,7 +6277,7 @@ qo_rewrite_hidden_col_as_derived (PARSER_CONTEXT * parser, PT_NODE * node, PT_NO
 		  skip_query_rewrite_as_derived = true;
 		  for (t_node = node->info.query.q.select.list; t_node; t_node = t_node->next)
 		    {
-		      if (!t_node->is_hidden_column)
+		      if (!t_node->flag.is_hidden_column)
 			{
 			  skip_query_rewrite_as_derived = false;
 			}
@@ -5763,7 +6288,7 @@ qo_rewrite_hidden_col_as_derived (PARSER_CONTEXT * parser, PT_NODE * node, PT_NO
 		{
 		  for (t_node = node->info.query.q.select.list; t_node; t_node = t_node->next)
 		    {
-		      if (t_node->is_hidden_column)
+		      if (t_node->flag.is_hidden_column)
 			{
 			  /* make derived query */
 			  derived = mq_rewrite_query_as_derived (parser, node);
@@ -5775,6 +6300,7 @@ qo_rewrite_hidden_col_as_derived (PARSER_CONTEXT * parser, PT_NODE * node, PT_NO
 			  PT_NODE_MOVE_NUMBER_OUTERLINK (derived, node);
 			  derived->info.query.q.select.flavor = node->info.query.q.select.flavor;
 			  derived->info.query.is_subquery = node->info.query.is_subquery;
+			  derived->type_enum = node->type_enum;
 
 			  /* free old composite query */
 			  parser_free_tree (parser, node);
@@ -5951,9 +6477,19 @@ qo_rewrite_index_hints (PARSER_CONTEXT * parser, PT_NODE * statement)
 	       * resolved */
 	      assert (hint_node->info.name.resolved != NULL && next_node->info.name.resolved != NULL);
 
+	      /*
+	       * Case of comparing names after dot(.).
+	       * 1. When comparing owner_name.class_name and class_name.
+	       *    class_name used in index_name must be in from. So, only class_name should be compared,
+	       *    not owner_name.
+	       *    e.g. select c1 from t1 force index (i1) where c1 >= 0 using index i1(+);
+	       *      - resolved_name of "force index (i1)"  : "t1"
+	       *      - resolved_name of "using index i1(+)" : "dba.t1"
+	       */
+
 	      /* compare the tables on which the indexes are defined */
 	      res_cmp_tbl_names =
-		intl_identifier_casecmp (hint_node->info.name.resolved, next_node->info.name.resolved);
+		pt_user_specified_name_compare (hint_node->info.name.resolved, next_node->info.name.resolved);
 
 	      if (res_cmp_tbl_names == 0)
 		{
@@ -6066,7 +6602,7 @@ qo_rewrite_index_hints (PARSER_CONTEXT * parser, PT_NODE * statement)
 	  if ((hint_node->etc == (void *) PT_IDX_HINT_CLASS_NONE
 	       || ((hint_node->etc == (void *) PT_IDX_HINT_IGNORE || hint_node->etc == (void *) PT_IDX_HINT_FORCE)
 		   && (intl_identifier_casecmp (hint_node->info.name.original, next_node->info.name.original) == 0)))
-	      && (intl_identifier_casecmp (hint_node->info.name.resolved, next_node->info.name.resolved) == 0))
+	      && (pt_user_specified_name_compare (hint_node->info.name.resolved, next_node->info.name.resolved) == 0))
 	    {
 	      is_hint_masked = true;
 	    }
@@ -6656,6 +7192,130 @@ qo_move_on_clause_of_explicit_join_to_where_clause (PARSER_CONTEXT * parser, PT_
 }
 
 /*
+ * qo_push_limit_to_union () - push limit on union query
+ *   return: PT_NODE *
+ *   parser(in): parser environment
+ *   node(in): possible query
+ *   arg(in):
+ *   continue_walk(in):
+ */
+static PT_NODE *
+qo_push_limit_to_union (PARSER_CONTEXT * parser, PT_NODE * node, PT_NODE * limit)
+{
+  PT_NODE *save_next, *add_limit;
+
+  switch (node->node_type)
+    {
+    case PT_SELECT:
+      if (!pt_has_inst_or_orderby_num_in_where (parser, node) && node->info.query.limit == NULL)
+	{
+	  /* case of limit 10,10 */
+	  if (limit->next)
+	    {
+	      /* change 'limit 10,10' to 'limit 10 + 10' */
+	      /* generate 'limit 10 + 10' */
+	      if (!(add_limit = parser_new_node (parser, PT_EXPR)))
+		{
+		  PT_ERRORm (parser, add_limit, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_OUT_OF_MEMORY);
+		  return NULL;
+		}
+	      /* cut off limit->next */
+	      save_next = limit->next;
+	      limit->next = NULL;
+
+	      add_limit->type_enum = limit->type_enum;
+	      add_limit->info.expr.op = PT_PLUS;
+	      add_limit->info.expr.arg1 = parser_copy_tree (parser, save_next);
+	      add_limit->info.expr.arg2 = parser_copy_tree (parser, limit);
+	      limit->next = save_next;
+
+	      node->info.query.limit = add_limit;
+	    }
+	  else
+	    {
+	      node->info.query.limit = parser_copy_tree (parser, limit);
+	    }
+
+	  node->info.query.flag.rewrite_limit = 1;
+	  return node;
+	}
+      break;
+
+    case PT_UNION:
+      qo_push_limit_to_union (parser, node->info.query.q.union_.arg1, limit);
+      qo_push_limit_to_union (parser, node->info.query.q.union_.arg2, limit);
+      break;
+
+    default:
+      break;
+    }
+  return node;
+}
+
+/*
+ * qo_check_distinct_union () - check having distinct in union clause
+ *   return: PT_NODE *
+ *   parser(in): parser environment
+ *   node(in): possible query
+ *   arg(in):
+ *   continue_walk(in):
+ */
+static bool
+qo_check_distinct_union (PARSER_CONTEXT * parser, PT_NODE * node)
+{
+  bool result = false;
+
+  switch (node->node_type)
+    {
+    case PT_UNION:
+      if (node->info.query.all_distinct == PT_DISTINCT)
+	{
+	  return true;
+	}
+
+      result |= qo_check_distinct_union (parser, node->info.query.q.union_.arg1);
+      result |= qo_check_distinct_union (parser, node->info.query.q.union_.arg2);
+      break;
+
+    default:
+      break;
+    }
+  return result;
+}
+
+/*
+ * qo_check_hint_union () - check having distinct in union clause
+ *   return: PT_NODE *
+ *   parser(in): parser environment
+ *   node(in): possible query
+ *   arg(in):
+ *   continue_walk(in):
+ */
+static bool
+qo_check_hint_union (PARSER_CONTEXT * parser, PT_NODE * node, PT_HINT_ENUM hint)
+{
+  bool result = false;
+
+  switch (node->node_type)
+    {
+    case PT_SELECT:
+      if (node->info.query.q.select.hint & hint)
+	{
+	  return true;
+	}
+      break;
+    case PT_UNION:
+      result |= qo_check_hint_union (parser, node->info.query.q.union_.arg1, hint);
+      result |= qo_check_hint_union (parser, node->info.query.q.union_.arg2, hint);
+      break;
+
+    default:
+      break;
+    }
+  return result;
+}
+
+/*
  * qo_optimize_queries () - checks all subqueries for rewrite optimizations
  *   return: PT_NODE *
  *   parser(in): parser environment
@@ -6689,7 +7349,7 @@ qo_optimize_queries (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *co
        * statement to get targets to update. We should check whether it was already single-table-optimized. Here is an
        * example: CREATE TABLE t(p INT, c INT, x INT); INSERT INTO t VALUES(1, 11, 0), (1, 12, 0), (2, 21, 0); UPDATE t
        * SET x=0 WHERE c IN (SELECT c FROM t START WITH p=1 CONNECT BY PRIOR c=p); */
-      if (node->info.query.q.select.connect_by != NULL && !PT_IS_VALUE_NODE (node->info.query.q.select.where)
+      if (node->info.query.q.select.connect_by != NULL
 	  && !node->info.query.q.select.after_cb_filter && !node->info.query.q.select.single_table_opt)
 	{
 	  PT_NODE *join_part = NULL;
@@ -6787,7 +7447,7 @@ qo_optimize_queries (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *co
       /* If LIMIT clause is specified without ORDER BY clause, we will rewrite the UNION query as derived. For example,
        * (SELECT ...) UNION (SELECT ...) LIMIT 10 will be rewritten to: SELECT * FROM ((SELECT ...) UNION (SELECT ...))
        * T WHERE INST_NUM() <= 10 */
-      if (node->info.query.limit && node->info.query.rewrite_limit)
+      if (node->info.query.limit && node->info.query.flag.rewrite_limit)
 	{
 	  limit = pt_limit_to_numbering_expr (parser, node->info.query.limit, PT_INST_NUM, false);
 	  if (limit != NULL)
@@ -6795,16 +7455,22 @@ qo_optimize_queries (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *co
 	      PT_NODE *limit_node;
 	      bool single_tuple_bak;
 
-	      node->info.query.rewrite_limit = 0;
+	      node->info.query.flag.rewrite_limit = 0;
 
 	      /* to move limit clause to derived */
 	      limit_node = node->info.query.limit;
 	      node->info.query.limit = NULL;
 
 	      /* to move single tuple to derived */
-	      single_tuple_bak = node->info.query.single_tuple;
-	      node->info.query.single_tuple = false;
+	      single_tuple_bak = node->info.query.flag.single_tuple;
+	      node->info.query.flag.single_tuple = false;
 
+	      /* push limit to union */
+	      if (node->info.query.order_by == NULL && !qo_check_distinct_union (parser, node)
+		  && !qo_check_hint_union (parser, node, PT_HINT_NO_PUSH_PRED))
+		{
+		  node = qo_push_limit_to_union (parser, node, limit_node);
+		}
 	      derived = mq_rewrite_query_as_derived (parser, node);
 	      if (derived != NULL)
 		{
@@ -6817,7 +7483,7 @@ qo_optimize_queries (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *co
 
 		  node = derived;
 		}
-	      node->info.query.single_tuple = single_tuple_bak;
+	      node->info.query.flag.single_tuple = single_tuple_bak;
 	      node->info.query.limit = limit_node;
 	    }
 	}
@@ -7008,7 +7674,7 @@ qo_optimize_queries (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *co
 
 	      /* Not found aggregate function in cnf node and no ROLLUP clause. So, move it from HAVING clause to WHERE
 	       * clause. */
-	      if (can_move && !node->info.query.q.select.group_by->with_rollup)
+	      if (can_move && !node->info.query.q.select.group_by->flag.with_rollup)
 		{
 		  /* delete cnf node from HAVING clause */
 		  if (!prev)
@@ -7034,11 +7700,28 @@ qo_optimize_queries (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *co
       /* reduce equality terms */
       if (*wherep)
 	{
-	  qo_reduce_equality_terms (parser, node, wherep);
+	  if (PT_IS_SELECT (node))
+	    {
+	      /*
+	       * It is correct that qo_reduce_equality_terms() is called in the post order.
+	       * for correlated constant value in another subquery
+	       * e.g. select .. from (select col1 .. where col1 =1) a,
+	       *                     (select col1 from table) b where a.col1 = b.col1
+	       *      ==>
+	       *      select .. from (select 1 .. where col1 =1) a, <== 1st replace
+	       *                     (select col1 from table) b where 1 = b.col1 <== 2nd replace
+	       * Applies only to SELECT. In other cases, apply later if necessary.
+	       */
+	      parser_walk_tree (parser, node, NULL, NULL, qo_reduce_equality_terms_post, NULL);
+	    }
+	  else
+	    {
+	      QO_CHECK_AND_REDUCE_EQUALITY_TERMS (parser, node, wherep);
+	    }
 	}
       if (*havingp)
 	{
-	  qo_reduce_equality_terms (parser, node, havingp);
+	  QO_CHECK_AND_REDUCE_EQUALITY_TERMS (parser, node, havingp);
 	}
 
       /* we don't reduce equality terms for startwith and connectby. This optimization for every A after a statement
@@ -7048,19 +7731,19 @@ qo_optimize_queries (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *co
        * from all levels, column A being different. */
       if (*aftercbfilterp)
 	{
-	  qo_reduce_equality_terms (parser, node, aftercbfilterp);
+	  QO_CHECK_AND_REDUCE_EQUALITY_TERMS (parser, node, aftercbfilterp);
 	}
       if (*merge_upd_wherep)
 	{
-	  qo_reduce_equality_terms (parser, node, merge_upd_wherep);
+	  QO_CHECK_AND_REDUCE_EQUALITY_TERMS (parser, node, merge_upd_wherep);
 	}
       if (*merge_ins_wherep)
 	{
-	  qo_reduce_equality_terms (parser, node, merge_ins_wherep);
+	  QO_CHECK_AND_REDUCE_EQUALITY_TERMS (parser, node, merge_ins_wherep);
 	}
       if (*merge_del_wherep)
 	{
-	  qo_reduce_equality_terms (parser, node, merge_del_wherep);
+	  QO_CHECK_AND_REDUCE_EQUALITY_TERMS (parser, node, merge_del_wherep);
 	}
 
       /* convert terms of the form 'const op attr' to 'attr op const' */
@@ -7303,18 +7986,52 @@ qo_optimize_queries (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *co
 	    {
 	      return node;	/* give up */
 	    }
+
+	  PT_NODE *point_list = NULL;
+	  PT_NODE *point, *tmp_spec;
+	  spec = node->info.query.q.select.from;
+	  /* predicate push */
+	  while (spec)
+	    {
+	      if (spec->info.spec.derived_table_type == PT_IS_SUBQUERY
+		  || spec->info.spec.derived_table_type == PT_DERIVED_DBLINK_TABLE)
+		{
+		  (void) mq_copypush_sargable_terms (parser, node, spec);
+		}
+	      else
+		{
+		  point_list = parser_append_previous_node (pt_point (parser, spec), point_list);
+		}
+	      spec = spec->next;
+	    }
+	  /* reduce unnecessary tables */
+	  point = point_list;
+	  while (point)
+	    {
+	      tmp_spec = point;
+	      CAST_POINTER_TO_NODE (tmp_spec);
+	      if (mq_is_outer_join_spec (parser, tmp_spec) && !PT_SPEC_IS_CTE (tmp_spec))
+		{
+		  node = qo_reduce_outer_joined_tables (parser, tmp_spec, node);
+		}
+	      point = point->next;
+	    }
+	  if (point_list != NULL)
+	    {
+	      parser_free_tree (parser, point_list);
+	    }
 	}
 
       /* auto-parameterization is safe when it is done as the last step of rewrite optimization */
       if (!prm_get_bool_value (PRM_ID_HOSTVAR_LATE_BINDING)
-	  && prm_get_integer_value (PRM_ID_XASL_CACHE_MAX_ENTRIES) > 0 && node->cannot_prepare == 0)
+	  && prm_get_integer_value (PRM_ID_XASL_CACHE_MAX_ENTRIES) > 0 && node->flag.cannot_prepare == 0)
 	{
 	  call_auto_parameterize = true;
 	}
     }
 
   /* auto-parameterize convert value in expression to host variable (input marker) */
-  if (*wherep && (call_auto_parameterize || (*wherep)->force_auto_parameterize))
+  if (*wherep && (call_auto_parameterize || (*wherep)->flag.force_auto_parameterize))
     {
       qo_do_auto_parameterize (parser, *wherep);
     }
@@ -7339,7 +8056,7 @@ qo_optimize_queries (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *co
       qo_do_auto_parameterize (parser, *aftercbfilterp);
     }
 
-  if (*merge_upd_wherep && (call_auto_parameterize || (*merge_upd_wherep)->force_auto_parameterize))
+  if (*merge_upd_wherep && (call_auto_parameterize || (*merge_upd_wherep)->flag.force_auto_parameterize))
     {
       qo_do_auto_parameterize (parser, *merge_upd_wherep);
     }
@@ -7399,7 +8116,7 @@ qo_optimize_queries (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *co
     {
       if (node->info.query.is_subquery == PT_IS_SUBQUERY)
 	{
-	  if (node->info.query.single_tuple == 1)
+	  if (node->info.query.flag.single_tuple == 1)
 	    {
 	      node = qo_rewrite_hidden_col_as_derived (parser, node, NULL);
 	    }

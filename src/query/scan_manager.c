@@ -1,20 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation
- * Copyright (C) 2016 CUBRID Corporation
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -51,6 +49,7 @@
 #include "dbtype.h"
 #include "xasl_predicate.hpp"
 #include "xasl.h"
+#include "query_hash_scan.h"
 
 #if !defined(SERVER_MODE)
 #define pthread_mutex_init(a, b)
@@ -185,6 +184,7 @@ static SCAN_CODE scan_next_set_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 static SCAN_CODE scan_next_json_table_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id);
 static SCAN_CODE scan_next_value_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id);
 static SCAN_CODE scan_next_method_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id);
+static SCAN_CODE scan_next_dblink_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id);
 static SCAN_CODE scan_handle_single_scan (THREAD_ENTRY * thread_p, SCAN_ID * s_id, QP_SCAN_FUNC next_scan);
 static SCAN_CODE scan_prev_scan_local (THREAD_ENTRY * thread_p, SCAN_ID * scan_id);
 static void resolve_domains_on_list_scan (LLIST_SCAN_ID * llsidp, val_list_node * ref_val_list);
@@ -205,7 +205,7 @@ static int scan_key_compare (DB_VALUE * val1, DB_VALUE * val2, int num_index_ter
 static SCAN_CODE scan_build_hash_list_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id);
 static SCAN_CODE scan_next_hash_list_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id);
 static SCAN_CODE scan_hash_probe_next (THREAD_ENTRY * thread_p, SCAN_ID * scan_id, QFILE_TUPLE * tuple);
-static bool check_hash_list_scan (LLIST_SCAN_ID * llsidp, int *val_cnt, int hash_list_scan_yn);
+static HASH_METHOD check_hash_list_scan (LLIST_SCAN_ID * llsidp, int *val_cnt, int hash_list_scan_type);
 
 /*
  * scan_init_iss () - initialize index skip scan structure
@@ -740,7 +740,8 @@ scan_init_indx_coverage (THREAD_ENTRY * thread_p, int coverage_enabled, valptr_l
    * the list file allocates PRM_INDEX_SCAN_KEY_BUFFER_PAGES pages memory
    * for its memory buffer, which is generally larger than prm_get_integer_value (PRM_ID_TEMP_MEM_BUFFER_PAGES).
    */
-  indx_cov->list_id = qfile_open_list (thread_p, indx_cov->type_list, NULL, query_id, QFILE_FLAG_USE_KEY_BUFFER);
+  indx_cov->list_id =
+    qfile_open_list (thread_p, indx_cov->type_list, NULL, query_id, QFILE_FLAG_USE_KEY_BUFFER, indx_cov->list_id);
   if (indx_cov->list_id == NULL)
     {
       err = ER_FAILED;
@@ -1149,7 +1150,7 @@ scan_key_compare (DB_VALUE * val1, DB_VALUE * val2, int num_index_term)
 {
   int rc = DB_UNK;
   DB_TYPE key_type;
-  int dummy_size1, dummy_size2, dummy_diff_column;
+  int dummy_diff_column;
   bool dummy_dom_is_desc, dummy_next_dom_is_desc;
 
   if (val1 == NULL || val2 == NULL)
@@ -1179,8 +1180,8 @@ scan_key_compare (DB_VALUE * val1, DB_VALUE * val2, int num_index_term)
       if (key_type == DB_TYPE_MIDXKEY)
 	{
 	  rc =
-	    pr_midxkey_compare (db_get_midxkey (val1), db_get_midxkey (val2), 1, 1, num_index_term, NULL, &dummy_size1,
-				&dummy_size2, &dummy_diff_column, &dummy_dom_is_desc, &dummy_next_dom_is_desc);
+	    pr_midxkey_compare (db_get_midxkey (val1), db_get_midxkey (val2), 1, 1, num_index_term, NULL,
+				NULL, NULL, &dummy_diff_column, &dummy_dom_is_desc, &dummy_next_dom_is_desc);
 	}
       else
 	{
@@ -1491,7 +1492,6 @@ scan_dbvals_to_midxkey (THREAD_ENTRY * thread_p, DB_VALUE * retval, bool * index
 
   int idx_ncols = 0, natts, i, j;
   int buf_size, nullmap_size;
-  unsigned char *bits;
 
   regu_variable_list_node *operand;
 
@@ -1531,11 +1531,16 @@ scan_dbvals_to_midxkey (THREAD_ENTRY * thread_p, DB_VALUE * retval, bool * index
     for (idx_dom = idx_setdomain; idx_dom != NULL; idx_dom = idx_dom->next)
       {
 	dom_ncols++;
+#if 0
+	/* idx_dom->precision is -1 in the following cases.
+	 * create index idx on t1(IFNULL(a,'x'), b); -- a is char(n)
+	 * Remove the assert check.  */
 	if (idx_dom->precision < 0)
 	  {
 	    assert (false);
 	    return ER_FAILED;
 	  }
+#endif
       }
 
     if (dom_ncols <= 0)
@@ -1753,15 +1758,7 @@ scan_dbvals_to_midxkey (THREAD_ENTRY * thread_p, DB_VALUE * retval, bool * index
   key_ptr = nullmap_ptr + nullmap_size;
 
   OR_BUF_INIT (buf, key_ptr, buf_size - nullmap_size);
-
-  if (nullmap_size > 0)
-    {
-      bits = (unsigned char *) nullmap_ptr;
-      for (i = 0; i < nullmap_size; i++)
-	{
-	  bits[i] = (unsigned char) 0;
-	}
-    }
+  MIDXKEY_BOUNDBITS_INIT (nullmap_ptr, nullmap_size);
 
   /* generate multi columns key (values -> midxkey.buf) */
   for (operand = func->value.funcp->operand, i = 0, dom = (vals_setdomain != NULL) ? vals_setdomain : idx_setdomain;
@@ -1895,9 +1892,9 @@ scan_regu_key_to_index_key (THREAD_ENTRY * thread_p, KEY_RANGE * key_ranges, KEY
   int curr_key_prefix_length = 0;
   int count;
   int ret = NO_ERROR;
-  regu_variable_list_node *requ_list;
   DB_TYPE db_type;
   int key_len;
+  regu_variable_list_node *requ_list;
 
   assert ((key_ranges->range >= GE_LE && key_ranges->range <= INF_LT) || (key_ranges->range == EQ_NA));
   assert (!(key_ranges->key1 == NULL && key_ranges->key2 == NULL));
@@ -1907,6 +1904,7 @@ scan_regu_key_to_index_key (THREAD_ENTRY * thread_p, KEY_RANGE * key_ranges, KEY
       curr_key_prefix_length = iscan_id->bt_attrs_prefix_length[0];
     }
 
+  /* TO_DO : fix to move this to XASL generator */
   if (key_ranges->key1)
     {
       if (key_ranges->key1->type == TYPE_FUNC && key_ranges->key1->value.funcp->ftype == F_MIDXKEY)
@@ -2050,12 +2048,23 @@ scan_regu_key_to_index_key (THREAD_ENTRY * thread_p, KEY_RANGE * key_ranges, KEY
 	  && key_ranges->key1->type == TYPE_FUNC && key_ranges->key1->value.funcp->ftype == F_MIDXKEY)
 	{
 	  assert (key_val_range->range == EQ_NA);
+	  ret = pr_clone_value (&key_val_range->key1, &key_val_range->key2);
+	  if (ret != NO_ERROR)
+	    {
+	      key_val_range->range = NA_NA;
 
-	  key_minmax = BTREE_COERCE_KEY_WITH_MAX_VALUE;
+	      return ret;
+	    }
 
-	  ret =
-	    scan_dbvals_to_midxkey (thread_p, &key_val_range->key2, &indexable, btree_domainp,
-				    key_val_range->num_index_term, key_ranges->key1, vd, key_minmax, iscan_id->iss.use);
+	  /* Set minmax type opposite to key1 */
+	  if (key_val_range->key2.data.midxkey.min_max_val.type == MIN_COLUMN)
+	    {
+	      key_val_range->key2.data.midxkey.min_max_val.type = MAX_COLUMN;
+	    }
+	  else
+	    {
+	      key_val_range->key2.data.midxkey.min_max_val.type = MIN_COLUMN;
+	    }
 	}
       else
 	{
@@ -2227,10 +2236,7 @@ scan_get_index_oidset (THREAD_ENTRY * thread_p, SCAN_ID * s_id, DB_BIGINT * key_
 	  db_make_null (&key_vals[i].key2);
 	  key_vals[i].is_truncated = false;
 	  key_vals[i].num_index_term = 0;
-	}
 
-      for (i = 0; i < key_cnt; i++)
-	{
 	  key_vals[i].range = key_ranges[i].range;
 	  if (key_vals[i].range == INF_INF)
 	    {
@@ -3018,6 +3024,7 @@ scan_open_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
   BTREE_SCAN *BTS;
   int coverage_enabled;
   int func_index_col_id;
+  static bool oracle_style_empty_string = prm_get_bool_value (PRM_ID_ORACLE_STYLE_EMPTY_STRING);
 
   /* scan type is INDEX SCAN */
   scan_id->type = S_INDX_SCAN;
@@ -3038,7 +3045,9 @@ scan_open_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
       return ER_FAILED;
     }
 
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, Root, PAGE_BTREE);
+#endif /* !NDEBUG */
 
   root_header = btree_get_root_header (thread_p, Root);
   if (root_header == NULL)
@@ -3064,7 +3073,7 @@ scan_open_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
   isidp->key_vals = NULL;
 
   isidp->indx_cov.type_list = NULL;
-  isidp->indx_cov.list_id = NULL;
+  isidp->indx_cov.list_id = indx_info->cov_list_id;
   isidp->indx_cov.tplrec = NULL;
   isidp->indx_cov.lsid = NULL;
 
@@ -3074,8 +3083,8 @@ scan_open_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 
   /* construct BTID_INT structure */
   BTS->btid_int.sys_btid = btid;
-
-  if (btree_glean_root_header_info (thread_p, root_header, &BTS->btid_int) != NO_ERROR)
+  if (btree_glean_root_header_info
+      (thread_p, root_header, &BTS->btid_int, BTS->btid_int.key_type == NULL ? true : false) != NO_ERROR)
     {
       pgbuf_unfix_and_init (thread_p, Root);
       goto exit_on_error;
@@ -3102,7 +3111,7 @@ scan_open_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
   isidp->num_vstr = 0;
   isidp->vstr_ids = NULL;
 
-  if (prm_get_bool_value (PRM_ID_ORACLE_STYLE_EMPTY_STRING))
+  if (oracle_style_empty_string)
     {
       isidp->num_vstr = isidp->bt_num_attrs;	/* init to maximum */
       isidp->vstr_ids = (ATTR_ID *) db_private_alloc (thread_p, isidp->num_vstr * sizeof (ATTR_ID));
@@ -3195,7 +3204,7 @@ scan_open_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
     {
       bool need_copy_buf;
 
-      isidp->key_vals = (KEY_VAL_RANGE *) db_private_alloc (thread_p, isidp->key_cnt * sizeof (KEY_VAL_RANGE));
+      isidp->key_vals = indx_info->key_info.key_vals;
       if (isidp->key_vals == NULL)
 	{
 	  goto exit_on_error;
@@ -3278,7 +3287,7 @@ exit_on_error:
 
   if (isidp->key_vals)
     {
-      db_private_free_and_init (thread_p, isidp->key_vals);
+      isidp->key_vals = NULL;
     }
   if (isidp->bt_attr_ids)
     {
@@ -3304,10 +3313,6 @@ exit_on_error:
 	  db_private_free_and_init (thread_p, isidp->indx_cov.type_list->domp);
 	}
       db_private_free_and_init (thread_p, isidp->indx_cov.type_list);
-    }
-  if (isidp->indx_cov.list_id != NULL)
-    {
-      QFILE_FREE_AND_INIT_LIST_ID (isidp->indx_cov.list_id);
     }
   if (isidp->indx_cov.tplrec != NULL)
     {
@@ -3361,6 +3366,7 @@ scan_open_index_key_info_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
   BTREE_SCAN *bts = NULL;
   int func_index_col_id;
   DB_TYPE single_node_type = DB_TYPE_NULL;
+  static bool oracle_style_empty_string = prm_get_bool_value (PRM_ID_ORACLE_STYLE_EMPTY_STRING);
 
   scan_id->type = S_INDX_KEY_INFO_SCAN;
 
@@ -3414,7 +3420,8 @@ scan_open_index_key_info_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 
   /* construct BTID_INT structure */
   bts->btid_int.sys_btid = btid;
-  if (btree_glean_root_header_info (thread_p, root_header, &bts->btid_int) != NO_ERROR)
+  if (btree_glean_root_header_info
+      (thread_p, root_header, &bts->btid_int, bts->btid_int.key_type == NULL ? true : false) != NO_ERROR)
     {
       goto exit_on_error;
     }
@@ -3431,7 +3438,7 @@ scan_open_index_key_info_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
   isidp->num_vstr = 0;
   isidp->vstr_ids = NULL;
 
-  if (prm_get_bool_value (PRM_ID_ORACLE_STYLE_EMPTY_STRING))
+  if (oracle_style_empty_string)
     {
       isidp->num_vstr = isidp->bt_num_attrs;	/* init to maximum */
       isidp->vstr_ids = (ATTR_ID *) db_private_alloc (thread_p, isidp->num_vstr * sizeof (ATTR_ID));
@@ -3490,7 +3497,7 @@ exit_on_error:
 
   if (isidp->key_vals)
     {
-      db_private_free_and_init (thread_p, isidp->key_vals);
+      isidp->key_vals = NULL;
     }
   if (isidp->bt_attr_ids)
     {
@@ -3593,7 +3600,7 @@ scan_open_index_node_info_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 
   /* construct BTID_INT structure */
   idx_nsid_p->btns.btid_int.sys_btid = btid;
-  if (btree_glean_root_header_info (thread_p, root_header, &idx_nsid_p->btns.btid_int) != NO_ERROR)
+  if (btree_glean_root_header_info (thread_p, root_header, &idx_nsid_p->btns.btid_int, true) != NO_ERROR)
     {
       return ER_FAILED;
     }
@@ -3657,10 +3664,11 @@ scan_open_list_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
   /* regulator variable list for build, probe */
   llsidp->hlsid.build_regu_list = regu_list_build;
   llsidp->hlsid.probe_regu_list = regu_list_probe;
+  llsidp->hlsid.need_coerce_type = false;
 
   /* check if hash list scan is possible? */
-  llsidp->hlsid.hash_list_scan_yn = false;
-  if (check_hash_list_scan (llsidp, &val_cnt, hash_list_scan_yn))
+  llsidp->hlsid.hash_list_scan_type = check_hash_list_scan (llsidp, &val_cnt, hash_list_scan_yn);
+  if (llsidp->hlsid.hash_list_scan_type != HASH_METH_NOT_USE)
     {
       bool on_trace;
       TSC_TICKS start_tick, end_tick;
@@ -3673,15 +3681,29 @@ scan_open_list_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 	}
 
       /* create hash table */
-      llsidp->hlsid.hash_table =
-	mht_create ("Hash List Scan", llsidp->list_id->tuple_cnt, qdata_hash_scan_key, qdata_hscan_key_eq);
-      if (llsidp->hlsid.hash_table == NULL)
+      if (llsidp->hlsid.hash_list_scan_type == HASH_METH_HASH_FILE)
 	{
-	  return S_ERROR;
+	  llsidp->hlsid.file.hash_table = (FHSID *) db_private_alloc (thread_p, sizeof (FHSID));
+	  if (llsidp->hlsid.file.hash_table == NULL)
+	    {
+	      return S_ERROR;
+	    }
+	  if (fhs_create (thread_p, llsidp->hlsid.file.hash_table, llsidp->list_id->tuple_cnt) == NULL)
+	    {
+	      return S_ERROR;
+	    }
 	}
-
+      else
+	{
+	  llsidp->hlsid.memory.hash_table = mht_create_hls ("Hash List Scan", llsidp->list_id->tuple_cnt, NULL, NULL);
+	  if (llsidp->hlsid.memory.hash_table == NULL)
+	    {
+	      return S_ERROR;
+	    }
+	}
       /* alloc temp key */
       llsidp->hlsid.temp_key = qdata_alloc_hscan_key (thread_p, val_cnt, false);
+      llsidp->hlsid.temp_new_key = qdata_alloc_hscan_key (thread_p, val_cnt, true);
       if (scan_start_scan (thread_p, scan_id) != NO_ERROR)
 	{
 	  return S_ERROR;
@@ -3692,8 +3714,6 @@ scan_open_list_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 	}
       scan_end_scan (thread_p, scan_id);
 
-      llsidp->hlsid.hash_list_scan_yn = true;
-
       if (on_trace)
 	{
 	  tsc_getticks (&end_tick);
@@ -3703,9 +3723,10 @@ scan_open_list_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
     }
   else
     {
-      llsidp->hlsid.hash_table = NULL;
+      llsidp->hlsid.memory.hash_table = NULL;
+      llsidp->hlsid.memory.curr_hash_entry = NULL;
       llsidp->hlsid.temp_key = NULL;
-      llsidp->hlsid.curr_hash_entry = NULL;
+      llsidp->hlsid.temp_new_key = NULL;
     }
 
   return NO_ERROR;
@@ -3960,7 +3981,42 @@ scan_open_method_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
   /* mvcc_select_lock_needed = false, fixed = true */
   scan_init_scan_id (scan_id, false, S_SELECT, true, grouped, single_fetch, join_dbval, val_list, vd);
 
-  return method_open_scan (thread_p, &scan_id->s.vaid.scan_buf, list_id, meth_sig_list);
+  int error = scan_id->s.msid.init (thread_p, meth_sig_list, list_id);
+  if (error == NO_ERROR)
+    {
+      error = scan_id->s.msid.open ();
+    }
+  return error;
+}
+
+/*
+ * scan_open_dblink_scan () -
+ *   return: NO_ERROR, or ER_code
+ *   scan_id(out): Scan identifier
+ *   conn_url(in):
+ *   conn_user(in):
+ *   conn_password(in):
+ *   sql_text(in):
+ *
+ */
+int
+scan_open_dblink_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
+		       struct access_spec_node *spec, VAL_DESCR * vd, VAL_LIST * val_list, DBLINK_HOST_VARS * host_vars)
+{
+  DBLINK_SCAN_ID *dblid = &scan_id->s.dblid;
+  DB_TYPE single_node_type = DB_TYPE_NULL;
+
+  /* scan type is DBLINK SCAN */
+  scan_id->type = S_DBLINK_SCAN;
+
+  /* initialize SCAN_ID structure */
+  scan_init_scan_id (scan_id, false, S_SELECT, true, 0, spec->single_fetch, NULL, val_list, vd);
+
+  /* scan predicates */
+  scan_init_scan_pred (&dblid->scan_pred, NULL, spec->where_pred,
+		       ((spec->where_pred) ? eval_fnc (thread_p, spec->where_pred, &single_node_type) : NULL));
+
+  return dblink_open_scan (&scan_id->s.dblid.scan_info, spec, vd, host_vars);
 }
 
 /*
@@ -4080,7 +4136,6 @@ scan_start_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 	  hsidp->caches_inited = true;
 	}
       break;
-
     case S_INDX_SCAN:
       isidp = &scan_id->s.isid;
       if (!OID_IS_ROOTOID (&isidp->cls_oid))
@@ -4245,6 +4300,7 @@ scan_start_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
       break;
 
     case S_METHOD_SCAN:
+    case S_DBLINK_SCAN:
       break;
 
     default:
@@ -4354,9 +4410,9 @@ scan_reset_scan_block (THREAD_ENTRY * thread_p, SCAN_ID * s_id)
 	  if (indx_cov_p->list_id != NULL)
 	    {
 	      qfile_destroy_list (thread_p, indx_cov_p->list_id);
-	      QFILE_FREE_AND_INIT_LIST_ID (indx_cov_p->list_id);
 
-	      indx_cov_p->list_id = qfile_open_list (thread_p, indx_cov_p->type_list, NULL, indx_cov_p->query_id, 0);
+	      indx_cov_p->list_id =
+		qfile_open_list (thread_p, indx_cov_p->type_list, NULL, indx_cov_p->query_id, 0, indx_cov_p->list_id);
 	      if (indx_cov_p->list_id == NULL)
 		{
 		  status = S_ERROR;
@@ -4390,6 +4446,10 @@ scan_reset_scan_block (THREAD_ENTRY * thread_p, SCAN_ID * s_id)
     case S_SET_SCAN:
     case S_JSON_TABLE_SCAN:
       s_id->position = S_BEFORE;
+      break;
+
+    case S_DBLINK_SCAN:
+      status = dblink_scan_reset (&s_id->s.dblid.scan_info);
       break;
 
     default:
@@ -4533,10 +4593,10 @@ scan_next_scan_block (THREAD_ENTRY * thread_p, SCAN_ID * s_id)
     case S_SHOWSTMT_SCAN:
     case S_SET_SCAN:
     case S_METHOD_SCAN:
+    case S_DBLINK_SCAN:
     case S_JSON_TABLE_SCAN:
     case S_VALUES_SCAN:
       return (s_id->position == S_BEFORE) ? S_SUCCESS : S_END;
-
     default:
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QPROC_INVALID_XASLNODE, 0);
       return S_ERROR;
@@ -4659,6 +4719,7 @@ scan_end_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
       break;
 
     case S_METHOD_SCAN:
+    case S_DBLINK_SCAN:
       break;
 
     default:
@@ -4700,7 +4761,7 @@ scan_close_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
       isidp = &scan_id->s.isid;
       if (isidp->key_vals)
 	{
-	  db_private_free_and_init (thread_p, isidp->key_vals);
+	  isidp->key_vals = NULL;
 	}
 
       /* free allocated memory for the scan */
@@ -4738,7 +4799,6 @@ scan_close_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 	{
 	  qfile_close_list (thread_p, isidp->indx_cov.list_id);
 	  qfile_destroy_list (thread_p, isidp->indx_cov.list_id);
-	  QFILE_FREE_AND_INIT_LIST_ID (isidp->indx_cov.list_id);
 	}
       if (isidp->indx_cov.type_list != NULL)
 	{
@@ -4798,21 +4858,34 @@ scan_close_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
     case S_LIST_SCAN:
       llsidp = &scan_id->s.llsid;
       /* clear hash list scan table */
-      if (llsidp->hlsid.hash_table != NULL)
+      if (llsidp->hlsid.hash_list_scan_type == HASH_METH_IN_MEM
+	  || llsidp->hlsid.hash_list_scan_type == HASH_METH_HYBRID)
 	{
 #if 0
-	  (void) mht_dump (thread_p, stdout, llsidp->hlsid.hash_table, -1, qdata_print_hash_scan_entry, NULL);
+	  (void) mht_dump_hls (thread_p, stdout, llsidp->hlsid.memory.hash_table, 1, qdata_print_hash_scan_entry,
+			       (void *) &llsidp->hlsid.hash_list_scan_type);
 	  printf ("temp file : tuple count = %d, file_size = %dK\n", llsidp->list_id->tuple_cnt,
 		  llsidp->list_id->page_cnt * 16);
 #endif
-	  mht_clear (llsidp->hlsid.hash_table, qdata_free_hscan_entry, (void *) thread_p);
-	  mht_destroy (llsidp->hlsid.hash_table);
+	  mht_clear_hls (llsidp->hlsid.memory.hash_table, qdata_free_hscan_entry, (void *) thread_p);
+	  mht_destroy_hls (llsidp->hlsid.memory.hash_table);
+	}
+      else if (llsidp->hlsid.hash_list_scan_type == HASH_METH_HASH_FILE)
+	{
+	  fhs_destroy (thread_p, llsidp->hlsid.file.hash_table);
+	  db_private_free_and_init (thread_p, llsidp->hlsid.file.hash_table);
 	}
       /* free temp keys and values */
       if (llsidp->hlsid.temp_key != NULL)
 	{
 	  qdata_free_hscan_key (thread_p, llsidp->hlsid.temp_key, llsidp->hlsid.temp_key->val_count);
 	  llsidp->hlsid.temp_key = NULL;
+	}
+      /* free temp new keys and values */
+      if (llsidp->hlsid.temp_new_key != NULL)
+	{
+	  qdata_free_hscan_key (thread_p, llsidp->hlsid.temp_new_key, llsidp->hlsid.temp_new_key->val_count);
+	  llsidp->hlsid.temp_new_key = NULL;
 	}
       break;
 
@@ -4832,7 +4905,11 @@ scan_close_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
       break;
 
     case S_METHOD_SCAN:
-      method_close_scan (thread_p, &scan_id->s.vaid.scan_buf);
+      scan_id->s.msid.close ();
+      break;
+
+    case S_DBLINK_SCAN:
+      dblink_close_scan (&scan_id->s.dblid.scan_info);
       break;
 
     case S_JSON_TABLE_SCAN:
@@ -4994,7 +5071,7 @@ scan_next_scan_local (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
       break;
 
     case S_LIST_SCAN:
-      if (scan_id->s.llsid.hlsid.hash_list_scan_yn)
+      if (scan_id->s.llsid.hlsid.hash_list_scan_type != HASH_METH_NOT_USE)
 	{
 	  status = scan_next_hash_list_scan (thread_p, scan_id);
 	}
@@ -5022,6 +5099,10 @@ scan_next_scan_local (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 
     case S_METHOD_SCAN:
       status = scan_next_method_scan (thread_p, scan_id);
+      break;
+
+    case S_DBLINK_SCAN:
+      status = scan_next_dblink_scan (thread_p, scan_id);
       break;
 
     default:
@@ -5368,8 +5449,7 @@ scan_next_heap_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
       if (hsidp->rest_regu_list)
 	{
 	  /* read the rest of the values from the heap into the attribute cache */
-	  if (heap_attrinfo_read_dbvalues (thread_p, p_current_oid, &recdes, &hsidp->scan_cache,
-					   hsidp->rest_attrs.attr_cache) != NO_ERROR)
+	  if (heap_attrinfo_read_dbvalues (thread_p, p_current_oid, &recdes, hsidp->rest_attrs.attr_cache) != NO_ERROR)
 	    {
 	      return S_ERROR;
 	    }
@@ -5569,7 +5649,7 @@ scan_next_class_attr_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
       if (hsidp->rest_regu_list)
 	{
 	  /* read the rest of the values from the heap into the attribute cache */
-	  if (heap_attrinfo_read_dbvalues (thread_p, NULL, NULL, NULL, hsidp->rest_attrs.attr_cache) != NO_ERROR)
+	  if (heap_attrinfo_read_dbvalues (thread_p, NULL, NULL, hsidp->rest_attrs.attr_cache) != NO_ERROR)
 	    {
 	      return S_ERROR;
 	    }
@@ -5698,14 +5778,13 @@ scan_next_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 		  return ret;
 		}
 
+	      scan_id->position = S_ON;
+	      isidp->curr_oidno = 0;	/* first oid number */
 	      if (isidp->need_count_only == true)
 		{
 		  /* no more scan is needed. just return */
 		  return S_SUCCESS;
 		}
-
-	      scan_id->position = S_ON;
-	      isidp->curr_oidno = 0;	/* first oid number */
 
 	      if (SCAN_IS_INDEX_COVERED (isidp))
 		{
@@ -5743,6 +5822,12 @@ scan_next_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 	      if (isidp->curr_oidno < oids_cnt - 1)
 		{
 		  isidp->curr_oidno++;
+		  if (isidp->need_count_only == true)
+		    {
+		      /* no more scan is needed. just return */
+		      return S_SUCCESS;
+		    }
+
 		  if (!SCAN_IS_INDEX_COVERED (isidp))
 		    {
 		      if (isidp->multi_range_opt.use)
@@ -5795,9 +5880,9 @@ scan_next_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 			  /* close current list and start a new one */
 			  qfile_close_scan (thread_p, isidp->indx_cov.lsid);
 			  qfile_destroy_list (thread_p, isidp->indx_cov.list_id);
-			  QFILE_FREE_AND_INIT_LIST_ID (isidp->indx_cov.list_id);
 			  isidp->indx_cov.list_id =
-			    qfile_open_list (thread_p, isidp->indx_cov.type_list, NULL, isidp->indx_cov.query_id, 0);
+			    qfile_open_list (thread_p, isidp->indx_cov.type_list, NULL, isidp->indx_cov.query_id, 0,
+					     isidp->indx_cov.list_id);
 			  if (isidp->indx_cov.list_id == NULL)
 			    {
 			      return S_ERROR;
@@ -5813,13 +5898,13 @@ scan_next_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 			  return ret;
 			}
 
+		      isidp->curr_oidno = 0;	/* first oid number */
 		      if (isidp->need_count_only == true)
 			{
 			  /* no more scan is needed. just return */
 			  return S_SUCCESS;
 			}
 
-		      isidp->curr_oidno = 0;	/* first oid number */
 		      if (SCAN_IS_INDEX_COVERED (isidp))
 			{
 			  qfile_close_list (thread_p, isidp->indx_cov.list_id);
@@ -6169,8 +6254,7 @@ scan_next_index_lookup_heap (THREAD_ENTRY * thread_p, SCAN_ID * scan_id, INDX_SC
   if (isidp->rest_regu_list)
     {
       /* read the rest of the values from the heap into the attribute cache */
-      if (heap_attrinfo_read_dbvalues (thread_p, isidp->curr_oidp, &recdes, &isidp->scan_cache,
-				       isidp->rest_attrs.attr_cache) != NO_ERROR)
+      if (heap_attrinfo_read_dbvalues (thread_p, isidp->curr_oidp, &recdes, isidp->rest_attrs.attr_cache) != NO_ERROR)
 	{
 	  return S_ERROR;
 	}
@@ -6697,55 +6781,135 @@ scan_next_json_table_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 static SCAN_CODE
 scan_next_method_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 {
-  VA_SCAN_ID *vaidp;
   SCAN_CODE qp_scan;
   val_list_node vl;
   QPROC_DB_VALUE_LIST src_valp;
   QPROC_DB_VALUE_LIST dest_valp;
 
-  vaidp = &scan_id->s.vaid;
-
   /* execute method scan */
-  qp_scan = method_scan_next (thread_p, &vaidp->scan_buf, &vl);
-  if (qp_scan != S_SUCCESS)
+  qp_scan = scan_id->s.msid.next_scan (vl);
+  if (qp_scan == S_SUCCESS)
     {
-      /* scan error or end of scan */
-      if (qp_scan == S_END)
+      /* copy the result into the value list of the scan ID */
+      for (src_valp = vl.valp, dest_valp = scan_id->val_list->valp; src_valp && dest_valp;
+	   src_valp = src_valp->next, dest_valp = dest_valp->next)
 	{
-	  scan_id->position = S_AFTER;
-	  return S_END;
+	  if (DB_IS_NULL (src_valp->val))
+	    {
+	      pr_clear_value (dest_valp->val);
+	    }
+	  else if (DB_VALUE_DOMAIN_TYPE (src_valp->val) != DB_VALUE_DOMAIN_TYPE (dest_valp->val))
+	    {
+	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QPROC_INVALID_DATATYPE, 0);
+	      qp_scan = S_ERROR;
+	      break;
+	    }
+	  else if (!qdata_copy_db_value (dest_valp->val, src_valp->val))
+	    {
+	      qp_scan = S_ERROR;
+	      break;
+	    }
+
+	  pr_clear_value (src_valp->val);
+	}
+    }
+  else if (qp_scan == S_END)
+    {
+      scan_id->position = S_AFTER;
+    }
+
+  /* clear */
+  for (src_valp = vl.valp; src_valp; src_valp = src_valp->next)
+    {
+      db_private_free_and_init (thread_p, src_valp->val);
+    }
+
+  return qp_scan;
+}
+
+/*
+ * scan_next_dblink_scan () - The scan is moved to the next dblink scan item.
+ *   return: SCAN_CODE (S_SUCCESS, S_END, S_ERROR)
+ *   scan_id(in/out): Scan identifier
+ *
+ * Note: If there are no more scan items, S_END is returned. If an error occurs, S_ERROR is returned.
+ */
+static SCAN_CODE
+scan_next_dblink_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
+{
+  DBLINK_SCAN_ID *vaidp;
+  SCAN_CODE qp_scan;
+  DB_LOGICAL ev_res;
+  QFILE_TUPLE_RECORD tplrec = { NULL, 0 };
+
+  vaidp = &scan_id->s.dblid;
+
+  /* execute dblink scan */
+
+  while ((qp_scan = dblink_scan_next (&vaidp->scan_info, scan_id->val_list)) == S_SUCCESS)
+    {
+      /* evaluate the predicate to see if the tuple qualifies */
+      ev_res = V_TRUE;
+      if (vaidp->scan_pred.pr_eval_fnc && vaidp->scan_pred.pred_expr)
+	{
+	  ev_res = (*vaidp->scan_pred.pr_eval_fnc) (thread_p, vaidp->scan_pred.pred_expr, scan_id->vd, NULL);
+	  if (ev_res == V_ERROR)
+	    {
+	      return S_ERROR;
+	    }
+	}
+
+      if (scan_id->qualification == QPROC_QUALIFIED)
+	{
+	  if (ev_res != V_TRUE)	/* V_FALSE || V_UNKNOWN */
+	    {
+	      continue;		/* not qualified, continue to the next tuple */
+	    }
+	}
+      else if (scan_id->qualification == QPROC_NOT_QUALIFIED)
+	{
+	  if (ev_res != V_FALSE)	/* V_TRUE || V_UNKNOWN */
+	    {
+	      continue;		/* qualified, continue to the next tuple */
+	    }
+	}
+      else if (scan_id->qualification == QPROC_QUALIFIED_OR_NOT)
+	{
+	  if (ev_res == V_TRUE)
+	    {
+	      scan_id->qualification = QPROC_QUALIFIED;
+	    }
+	  else if (ev_res == V_FALSE)
+	    {
+	      scan_id->qualification = QPROC_NOT_QUALIFIED;
+	    }
+	  else			/* V_UNKNOWN */
+	    {
+	      /* nop */
+	      ;
+	    }
 	}
       else
-	{
-	  return S_ERROR;
+	{			/* invalid value; the same as QPROC_QUALIFIED */
+	  if (ev_res != V_TRUE)	/* V_FALSE || V_UNKNOWN */
+	    {
+	      continue;		/* not qualified, continue to the next tuple */
+	    }
 	}
+
+      return S_SUCCESS;
     }
 
-  /* copy the result into the value list of the scan ID */
-  for (src_valp = vl.valp, dest_valp = scan_id->val_list->valp; src_valp && dest_valp;
-       src_valp = src_valp->next, dest_valp = dest_valp->next)
+  /* scan error or end of scan */
+  if (qp_scan == S_END)
     {
-      if (DB_IS_NULL (src_valp->val))
-	{
-	  pr_clear_value (dest_valp->val);
-	}
-      else if (DB_VALUE_DOMAIN_TYPE (src_valp->val) != DB_VALUE_DOMAIN_TYPE (dest_valp->val))
-	{
-	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QPROC_INVALID_DATATYPE, 0);
-	  pr_clear_value (src_valp->val);
-	  free_and_init (src_valp->val);
-	  return S_ERROR;
-	}
-      else if (!qdata_copy_db_value (dest_valp->val, src_valp->val))
-	{
-	  return S_ERROR;
-	}
-
-      pr_clear_value (src_valp->val);
-      free_and_init (src_valp->val);
+      scan_id->position = S_AFTER;
+      return S_END;
     }
-
-  return S_SUCCESS;
+  else
+    {
+      return S_ERROR;
+    }
 }
 
 /*
@@ -7567,7 +7731,14 @@ scan_print_stats_json (SCAN_ID * scan_id, json_t * scan_stats)
 
       if (scan_id->type == S_HEAP_SCAN)
 	{
-	  json_object_set_new (scan_stats, "heap", scan);
+	  if (scan_id->scan_stats.agg_optimized_scan)
+	    {
+	      json_object_set_new (scan_stats, "aggregate optimized,", scan);
+	    }
+	  else
+	    {
+	      json_object_set_new (scan_stats, "heap", scan);
+	    }
 	}
       else
 	{
@@ -7621,6 +7792,10 @@ scan_print_stats_json (SCAN_ID * scan_id, json_t * scan_stats)
       json_object_set_new (scan_stats, "method", scan);
       break;
 
+    case S_DBLINK_SCAN:
+      json_object_set_new (scan_stats, "dblink", scan);
+      break;
+
     case S_CLASS_ATTR_SCAN:
       json_object_set_new (scan_stats, "class_attr", scan);
       break;
@@ -7647,7 +7822,14 @@ scan_print_stats_text (FILE * fp, SCAN_ID * scan_id)
   switch (scan_id->type)
     {
     case S_HEAP_SCAN:
-      fprintf (fp, "(heap");
+      if (scan_id->scan_stats.agg_optimized_scan)
+	{
+	  fprintf (fp, "(aggregate optimized,");
+	}
+      else
+	{
+	  fprintf (fp, "(heap");
+	}
       break;
 
     case S_INDX_SCAN:
@@ -7655,9 +7837,17 @@ scan_print_stats_text (FILE * fp, SCAN_ID * scan_id)
       break;
 
     case S_LIST_SCAN:
-      if (scan_id->s.llsid.hlsid.hash_list_scan_yn)
+      if (scan_id->s.llsid.hlsid.hash_list_scan_type == HASH_METH_IN_MEM)
 	{
-	  fprintf (fp, "(hash temp buildtime : %d,", TO_MSEC (scan_id->scan_stats.elapsed_hash_build));
+	  fprintf (fp, "(hash temp(m), build time: %d,", TO_MSEC (scan_id->scan_stats.elapsed_hash_build));
+	}
+      else if (scan_id->s.llsid.hlsid.hash_list_scan_type == HASH_METH_HYBRID)
+	{
+	  fprintf (fp, "(hash temp(h), build time: %d,", TO_MSEC (scan_id->scan_stats.elapsed_hash_build));
+	}
+      else if (scan_id->s.llsid.hlsid.hash_list_scan_type == HASH_METH_HASH_FILE)
+	{
+	  fprintf (fp, "(hash temp(f), build time: %d,", TO_MSEC (scan_id->scan_stats.elapsed_hash_build));
 	}
       else
 	{
@@ -7677,6 +7867,10 @@ scan_print_stats_text (FILE * fp, SCAN_ID * scan_id)
       fprintf (fp, "(method");
       break;
 
+    case S_DBLINK_SCAN:
+      fprintf (fp, "(dblink");
+      break;
+
     case S_CLASS_ATTR_SCAN:
       fprintf (fp, "(class_attr");
       break;
@@ -7686,23 +7880,32 @@ scan_print_stats_text (FILE * fp, SCAN_ID * scan_id)
       break;
     }
 
-  fprintf (fp, " time: %d, fetch: %lld, ioread: %lld", TO_MSEC (scan_id->scan_stats.elapsed_scan),
-	   (long long int) scan_id->scan_stats.num_fetches, (long long int) scan_id->scan_stats.num_ioreads);
+  fprintf (fp, " time: %d, fetch: %llu, ioread: %llu", TO_MSEC (scan_id->scan_stats.elapsed_scan),
+	   (unsigned long long int) scan_id->scan_stats.num_fetches,
+	   (unsigned long long int) scan_id->scan_stats.num_ioreads);
 
   switch (scan_id->type)
     {
     case S_HEAP_SCAN:
     case S_LIST_SCAN:
-      fprintf (fp, ", readrows: %d, rows: %d)", scan_id->scan_stats.read_rows, scan_id->scan_stats.qualified_rows);
+      fprintf (fp, ", readrows: %llu, rows: %llu)", (unsigned long long int) scan_id->scan_stats.read_rows,
+	       (unsigned long long int) scan_id->scan_stats.qualified_rows);
       break;
 
     case S_INDX_SCAN:
-      fprintf (fp, ", readkeys: %d, filteredkeys: %d, rows: %d", scan_id->scan_stats.read_keys,
-	       scan_id->scan_stats.qualified_keys, scan_id->scan_stats.key_qualified_rows);
+      fprintf (fp, ", readkeys: %llu, filteredkeys: %llu, rows: %llu",
+	       (unsigned long long int) scan_id->scan_stats.read_keys,
+	       (unsigned long long int) scan_id->scan_stats.qualified_keys,
+	       (unsigned long long int) scan_id->scan_stats.key_qualified_rows);
 
       if (scan_id->scan_stats.covered_index == true)
 	{
 	  fprintf (fp, ", covered: true");
+	}
+
+      if (scan_id->s.isid.need_count_only == true)
+	{
+	  fprintf (fp, ", count_only: true");
 	}
 
       if (scan_id->scan_stats.multi_range_opt == true)
@@ -7723,8 +7926,8 @@ scan_print_stats_text (FILE * fp, SCAN_ID * scan_id)
 
       if (scan_id->scan_stats.covered_index == false)
 	{
-	  fprintf (fp, " (lookup time: %d, rows: %d)", TO_MSEC (scan_id->scan_stats.elapsed_lookup),
-		   scan_id->scan_stats.data_qualified_rows);
+	  fprintf (fp, " (lookup time: %d, rows: %llu)", TO_MSEC (scan_id->scan_stats.elapsed_lookup),
+		   (unsigned long long int) scan_id->scan_stats.data_qualified_rows);
 	}
       break;
 
@@ -7750,9 +7953,12 @@ scan_build_hash_list_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
   QFILE_TUPLE_RECORD tplrec = { NULL, 0 };
   HASH_SCAN_KEY *key, *new_key;
   HASH_SCAN_VALUE *new_value;
+  unsigned int hash_key;
+  TFTID tftid;
 
   llsidp = &scan_id->s.llsid;
   key = llsidp->hlsid.temp_key;
+  new_key = llsidp->hlsid.temp_new_key;
 
   tplrec.size = 0;
   tplrec.tpl = (QFILE_TUPLE) NULL;
@@ -7770,7 +7976,6 @@ scan_build_hash_list_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 	      return S_ERROR;
 	    }
 	}
-
       scan_id->scan_stats.read_rows++;
 
       /* build key */
@@ -7779,20 +7984,61 @@ scan_build_hash_list_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 	  return S_ERROR;
 	}
       /* create new key */
-      new_key = qdata_copy_hscan_key (thread_p, key, llsidp->hlsid.probe_regu_list, scan_id->vd);
-      if (new_key == NULL)
+      if (llsidp->hlsid.need_coerce_type)
 	{
-	  return S_ERROR;
+	  new_key = qdata_copy_hscan_key_without_alloc (thread_p, key, llsidp->hlsid.probe_regu_list, new_key);
+	  if (new_key == NULL)
+	    {
+	      return S_ERROR;
+	    }
 	}
-      /* create new value */
-      new_value = qdata_alloc_hscan_value (thread_p, tplrec.tpl);
-      if (new_value == NULL)
+      else
 	{
-	  return S_ERROR;
+	  new_key = key;
 	}
-      /* add to hash table */
-      if (mht_put_orderly (llsidp->hlsid.hash_table, (void *) new_key, (void *) new_value) == NULL)
+
+      /* make hash key */
+      hash_key = qdata_hash_scan_key (new_key, UINT_MAX, llsidp->hlsid.hash_list_scan_type);
+
+      switch (llsidp->hlsid.hash_list_scan_type)
 	{
+	case HASH_METH_IN_MEM:
+	  /* create new value */
+	  new_value = qdata_alloc_hscan_value (thread_p, tplrec.tpl);
+	  if (new_value == NULL)
+	    {
+	      return S_ERROR;
+	    }
+	  /* add to hash table */
+	  if (mht_put_hls (llsidp->hlsid.memory.hash_table, (void *) &hash_key, (void *) new_value) == NULL)
+	    {
+	      return S_ERROR;
+	    }
+	  break;
+	case HASH_METH_HYBRID:
+	  /* create new value */
+	  new_value = qdata_alloc_hscan_value_OID (thread_p, &llsidp->lsid);
+	  if (new_value == NULL)
+	    {
+	      return S_ERROR;
+	    }
+	  /* add to hash table */
+	  if (mht_put_hls (llsidp->hlsid.memory.hash_table, (void *) &hash_key, (void *) new_value) == NULL)
+	    {
+	      return S_ERROR;
+	    }
+	  break;
+	case HASH_METH_HASH_FILE:
+	  /* curr_offset is int and tftid.offset is short. */
+	  /* the offset is a position within a page(16K), so it can be stored as a short type. */
+	  SET_TFTID (tftid, llsidp->lsid.curr_vpid.volid, llsidp->lsid.curr_vpid.pageid, llsidp->lsid.curr_offset);
+	  /* add to hash table */
+	  if (fhs_insert (thread_p, llsidp->hlsid.file.hash_table, (void *) &hash_key, &tftid) == NULL)
+	    {
+	      return S_ERROR;
+	    }
+	  break;
+	default:
 	  return S_ERROR;
 	}
     }
@@ -7911,10 +8157,15 @@ static SCAN_CODE
 scan_hash_probe_next (THREAD_ENTRY * thread_p, SCAN_ID * scan_id, QFILE_TUPLE * tuple)
 {
   LLIST_SCAN_ID *llsidp;
-  SCAN_CODE qp_scan;
   HASH_SCAN_KEY *key;
   HASH_SCAN_VALUE *hvalue;
   QFILE_LIST_SCAN_ID *scan_id_p;
+  QFILE_TUPLE_POSITION tuple_pos;
+  QFILE_TUPLE_SIMPLE_POS *simple_pos;
+  QFILE_TUPLE_RECORD tplrec = { NULL, 0 };
+  unsigned int hash_key;
+  EH_SEARCH eh_search;
+  TFTID result;
 
   llsidp = &scan_id->s.llsid;
   key = llsidp->hlsid.temp_key;
@@ -7922,44 +8173,137 @@ scan_hash_probe_next (THREAD_ENTRY * thread_p, SCAN_ID * scan_id, QFILE_TUPLE * 
 
   if (scan_id_p->position == S_BEFORE)
     {
-      if (llsidp->hlsid.hash_table->nentries > 0)
+      /* build key */
+      if (qdata_build_hscan_key (thread_p, scan_id->vd, llsidp->hlsid.probe_regu_list, key) != NO_ERROR)
 	{
-	  /* init curr_hash_entry */
-	  llsidp->hlsid.curr_hash_entry = NULL;
-	  /* build key */
-	  if (qdata_build_hscan_key (thread_p, scan_id->vd, llsidp->hlsid.probe_regu_list, key) != NO_ERROR)
-	    {
-	      return S_ERROR;
-	    }
+	  return S_ERROR;
+	}
+      /* make hash key */
+      hash_key = qdata_hash_scan_key (key, UINT_MAX, llsidp->hlsid.hash_list_scan_type);
+      llsidp->hlsid.curr_hash_key = hash_key;
 
+      switch (llsidp->hlsid.hash_list_scan_type)
+	{
+	case HASH_METH_IN_MEM:
+	case HASH_METH_HYBRID:
+	  /* init curr_hash_entry */
+	  llsidp->hlsid.memory.curr_hash_entry = NULL;
 	  /* get value from hash table */
 	  hvalue =
-	    (HASH_SCAN_VALUE *) mht_get2 (llsidp->hlsid.hash_table, key, (void **) &llsidp->hlsid.curr_hash_entry);
+	    (HASH_SCAN_VALUE *) mht_get_hls (llsidp->hlsid.memory.hash_table, (void *) &hash_key,
+					     (void **) &llsidp->hlsid.memory.curr_hash_entry);
 	  if (hvalue == NULL)
 	    {
 	      return S_END;
 	    }
-	  *tuple = hvalue->tuple;
+	  if (llsidp->hlsid.hash_list_scan_type == HASH_METH_IN_MEM)
+	    {
+	      *tuple = hvalue->tuple;
+	    }
+	  else if (llsidp->hlsid.hash_list_scan_type == HASH_METH_HYBRID)
+	    {
+	      MAKE_TUPLE_POSTION (tuple_pos, hvalue->pos, scan_id_p);
+	      if (qfile_jump_scan_tuple_position (thread_p, scan_id_p, &tuple_pos, &tplrec, PEEK) != S_SUCCESS)
+		{
+		  return S_ERROR;
+		}
+	      *tuple = tplrec.tpl;
+	    }
+	  else
+	    {
+	      return S_ERROR;
+	    }
 	  scan_id_p->position = S_ON;
 	  return S_SUCCESS;
-	}
-      else
-	{
-	  return S_END;
+
+	case HASH_METH_HASH_FILE:
+	  /* init curr_oid and get value from hash table */
+	  eh_search = fhs_search (thread_p, &llsidp->hlsid, &result);
+	  switch (eh_search)
+	    {
+	    case EH_KEY_FOUND:
+	      MAKE_TFTID_TO_TUPLE_POSTION (tuple_pos, result, scan_id_p);
+	      if (qfile_jump_scan_tuple_position (thread_p, scan_id_p, &tuple_pos, &tplrec, PEEK) != S_SUCCESS)
+		{
+		  return S_ERROR;
+		}
+	      *tuple = tplrec.tpl;
+	      scan_id_p->position = S_ON;
+	      return S_SUCCESS;
+	    case EH_KEY_NOTFOUND:
+	      return S_END;
+	    case EH_ERROR_OCCURRED:
+	    default:
+	      return S_ERROR;
+	    }
+	  break;
+	default:
+	  return S_ERROR;
 	}
     }
   else if (scan_id_p->position == S_ON)
     {
-      if (llsidp->hlsid.curr_hash_entry->next)
+      switch (llsidp->hlsid.hash_list_scan_type)
 	{
-	  llsidp->hlsid.curr_hash_entry = llsidp->hlsid.curr_hash_entry->next;
-	  *tuple = ((HASH_SCAN_VALUE *) llsidp->hlsid.curr_hash_entry->data)->tuple;
+	case HASH_METH_IN_MEM:
+	case HASH_METH_HYBRID:
+	  hvalue =
+	    (HASH_SCAN_VALUE *) mht_get_next_hls (llsidp->hlsid.memory.hash_table,
+						  (void *) &llsidp->hlsid.curr_hash_key,
+						  (void **) &llsidp->hlsid.memory.curr_hash_entry);
+	  if (hvalue == NULL)
+	    {
+	      if (llsidp->hlsid.hash_list_scan_type == HASH_METH_HYBRID)
+		{
+		  qmgr_free_old_page_and_init (thread_p, scan_id_p->curr_pgptr, scan_id_p->list_id.tfile_vfid);
+		}
+	      scan_id_p->position = S_AFTER;
+	      return S_END;
+	    }
+	  if (llsidp->hlsid.hash_list_scan_type == HASH_METH_IN_MEM)
+	    {
+	      *tuple = ((HASH_SCAN_VALUE *) llsidp->hlsid.memory.curr_hash_entry->data)->tuple;
+	    }
+	  else if (llsidp->hlsid.hash_list_scan_type == HASH_METH_HYBRID)
+	    {
+	      simple_pos = ((HASH_SCAN_VALUE *) llsidp->hlsid.memory.curr_hash_entry->data)->pos;
+	      MAKE_TUPLE_POSTION (tuple_pos, simple_pos, scan_id_p);
+
+	      if (qfile_jump_scan_tuple_position (thread_p, scan_id_p, &tuple_pos, &tplrec, PEEK) != S_SUCCESS)
+		{
+		  return S_ERROR;
+		}
+	      *tuple = tplrec.tpl;
+	    }
+	  else
+	    {
+	      return S_ERROR;
+	    }
 	  return S_SUCCESS;
-	}
-      else
-	{
-	  scan_id_p->position = S_AFTER;
+
+	case HASH_METH_HASH_FILE:
+	  eh_search = fhs_search_next (thread_p, &llsidp->hlsid, &result);
+	  switch (eh_search)
+	    {
+	    case EH_KEY_FOUND:
+	      MAKE_TFTID_TO_TUPLE_POSTION (tuple_pos, result, scan_id_p);
+	      if (qfile_jump_scan_tuple_position (thread_p, scan_id_p, &tuple_pos, &tplrec, PEEK) != S_SUCCESS)
+		{
+		  return S_ERROR;
+		}
+	      *tuple = tplrec.tpl;
+	      return S_SUCCESS;
+	    case EH_KEY_NOTFOUND:
+	      qmgr_free_old_page_and_init (thread_p, scan_id_p->curr_pgptr, scan_id_p->list_id.tfile_vfid);
+	      scan_id_p->position = S_AFTER;
+	      return S_END;
+	    case EH_ERROR_OCCURRED:
+	    default:
+	      return S_ERROR;
+	    }
 	  return S_END;
+	default:
+	  return S_ERROR;
 	}
     }
   else if (scan_id_p->position == S_AFTER)
@@ -7972,12 +8316,13 @@ scan_hash_probe_next (THREAD_ENTRY * thread_p, SCAN_ID * scan_id, QFILE_TUPLE * 
       return S_ERROR;
     }
 
-  return qp_scan;
+  /* Can't reach here */
+  return S_ERROR;
 }
 
 /*
  * check_hash_list_scan () - Check if hash list scan is possible
- *   return: bool
+ *   return: int  1: in-memory 2: hybrid in-memory
  *   llsidp (in): list scan id pointer
  *   node :
  *      1. count of tuple of list file > 0
@@ -7987,7 +8332,7 @@ scan_hash_probe_next (THREAD_ENTRY * thread_p, SCAN_ID * scan_id, QFILE_TUPLE * 
  *      5. type of regu var is not oid && vobj
  *      6. list file from dptr is not allowed
 */
-static bool
+static HASH_METHOD
 check_hash_list_scan (LLIST_SCAN_ID * llsidp, int *val_cnt, int hash_list_scan_yn)
 {
   int build_cnt;
@@ -7995,26 +8340,22 @@ check_hash_list_scan (LLIST_SCAN_ID * llsidp, int *val_cnt, int hash_list_scan_y
   DB_TYPE vtype1, vtype2;
   UINT64 mem_limit = prm_get_bigint_value (PRM_ID_MAX_HASH_LIST_SCAN_SIZE);
 
+  assert (hash_list_scan_yn == 0 || hash_list_scan_yn == 1);
   /* no_hash_list_scan sql hint check */
   if (hash_list_scan_yn == 0)
     {
-      return false;
+      return HASH_METH_NOT_USE;
     }
 
   /* count of tuple of list file > 0 */
   if (llsidp->list_id->tuple_cnt <= 0)
     {
-      return false;
-    }
-  /* list file size check */
-  if ((UINT64) llsidp->list_id->page_cnt * DB_PAGESIZE > mem_limit)
-    {
-      return false;
+      return HASH_METH_NOT_USE;
     }
   /* regu_list_build, regu_list_probe is not null */
   if (llsidp->hlsid.build_regu_list == NULL || llsidp->hlsid.probe_regu_list == NULL)
     {
-      return false;
+      return HASH_METH_NOT_USE;
     }
 
   build = llsidp->hlsid.build_regu_list;
@@ -8031,7 +8372,11 @@ check_hash_list_scan (LLIST_SCAN_ID * llsidp, int *val_cnt, int hash_list_scan_y
       if (((vtype1 == DB_TYPE_OBJECT || vtype1 == DB_TYPE_VOBJ) && vtype2 == DB_TYPE_OID) ||
 	  ((vtype2 == DB_TYPE_OBJECT || vtype2 == DB_TYPE_VOBJ) && vtype1 == DB_TYPE_OID))
 	{
-	  return false;
+	  return HASH_METH_NOT_USE;
+	}
+      if (vtype1 != vtype2)
+	{
+	  llsidp->hlsid.need_coerce_type = true;
 	}
       build = build->next;
       probe = probe->next;
@@ -8039,12 +8384,33 @@ check_hash_list_scan (LLIST_SCAN_ID * llsidp, int *val_cnt, int hash_list_scan_y
   /* The number of probe regu_var and build regu match */
   if (build != NULL || probe != NULL)
     {
-      return false;
+      return HASH_METH_NOT_USE;
     }
   *val_cnt = build_cnt;
 
   /* 6. list file from dptr is not allowed */
   /* Since dptr is searched after scan_open_scan, it is checked when llsidp->list_id->tuple_cnt <= 0 */
 
-  return true;
+  /* list file size check */
+  if (mem_limit == 0)
+    {
+      return HASH_METH_NOT_USE;
+    }
+  else if ((UINT64) llsidp->list_id->page_cnt * DB_PAGESIZE <= mem_limit)
+    {
+      return HASH_METH_IN_MEM;
+    }
+  else if ((UINT64) llsidp->list_id->tuple_cnt * (sizeof (HENTRY_HLS) + sizeof (QFILE_TUPLE_SIMPLE_POS)) <= mem_limit)
+    {
+      /* bytes of 1 row = sizeof(HENTRY_HLS) + sizeof(QFILE_TUPLE_SIMPLE_POS) = 44 bytes (64bit) */
+      /* HENTRY_HLS = pointer(8bytes) * 4 = 32 bytes */
+      /* SIMPLE_POS = pageid(4bytes) + volid(2bytes) + padding(2bytes) + offset(4bytes) = 12 bytes */
+      return HASH_METH_HYBRID;
+    }
+  else
+    {
+      return HASH_METH_HASH_FILE;
+    }
+
+  return HASH_METH_NOT_USE;
 }

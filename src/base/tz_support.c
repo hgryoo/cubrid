@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -85,7 +84,7 @@ typedef enum ds_search_direction DS_SEARCH_DIRECTION;
 
 
 #define FULL_DATE(jul_date, time_sec) ((full_date_t) jul_date * 86400ll \
-				       + (full_date_t) time_sec)
+                                       + (full_date_t) time_sec)
 #define TIME_OFFSET(is_utc, offset) \
   ((is_utc) ? (-offset) : (offset))
 #define ABS(i) ((i) >= 0 ? (i) : -(i))
@@ -189,9 +188,9 @@ static int tz_get_iana_zone_id_by_windows_zone (const char *windows_zone_name);
     v = (SYM_TYPE) TZ_GET_SYM_ADDR (lh, SYM_NAME);			    \
     if (v == NULL)							    \
       {									    \
-	strncpy (sym_name, (SYM_NAME), sizeof (sym_name) - 1);		    \
-	sym_name[sizeof (sym_name) - 1] = '\0';				    \
-	goto error_loading_symbol;					    \
+        strncpy (sym_name, (SYM_NAME), sizeof (sym_name) - 1);		    \
+        sym_name[sizeof (sym_name) - 1] = '\0';				    \
+        goto error_loading_symbol;					    \
       }									    \
   } while (0)
 
@@ -1893,7 +1892,9 @@ tz_encode_tz_id (const TZ_DECODE_INFO * tz_info, TZ_ID * tz_id)
 {
   if (tz_info->type == TZ_REGION_OFFSET)
     {
-      int offset = (tz_info->offset < 0) ? (-tz_info->offset) : tz_info->offset;
+      // *INDENT-OFF*
+      unsigned int offset = static_cast<unsigned int> ((tz_info->offset < 0) ? (-tz_info->offset) : tz_info->offset);
+      // *INDENT-ON*
 
       offset = offset & TZ_OFFSET_MASK;
 
@@ -4678,6 +4679,12 @@ tz_get_server_tz_region_session (void)
   TZ_REGION *session_tz_region;
 
   thread_p = thread_get_thread_entry_info ();
+
+  if (thread_p->type == TT_DAEMON && thread_p->is_cdc_daemon && prm_get_integer_value (PRM_ID_SUPPLEMENTAL_LOG) > 0)
+    {
+      return &tz_Region_system;
+    }
+
   session_tz_region = session_get_session_tz_region (thread_p);
 
   if (session_tz_region == NULL)
@@ -5469,4 +5476,26 @@ exit:
   tz_set_data (&save_data);
 
   return err_status;
+}
+
+//TODO: make tz_get_offset_in_mins get into account DST
+/*
+ * tz_get_offset_in_mins () - time zone offset in minutes from GMT
+ */
+int
+tz_get_offset_in_mins ()
+{
+  time_t currtime;
+  struct tm *timeinfo;
+
+  time (&currtime);
+  timeinfo = gmtime (&currtime);
+  time_t utc = mktime (timeinfo);
+  timeinfo = localtime (&currtime);
+  time_t local = mktime (timeinfo);
+
+  // Get offset in minutes from UTC
+  int offsetFromUTC = difftime (utc, local) / 60;
+
+  return offsetFromUTC;
 }

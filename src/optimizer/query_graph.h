@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -372,6 +371,7 @@ struct qo_node
   /* NULL if no USING INDEX clause in the query */
 
   BITSET outer_dep_set;		/* outer join dependency; to preserve join sequence */
+  BITSET right_dep_set;		/* outer join dependency for right outer join; to preserve join sequence */
   PT_HINT_ENUM hint;		/* hint comment contained in given */
   bool sargable;		/* whether sargs are applicable to this node */
   bool sort_limit_candidate;	/* whether this node is a candidate for a SORT_LIMIT plan */
@@ -395,6 +395,7 @@ struct qo_node
 #define QO_NODE_USING_INDEX(node)       (node)->using_index
 
 #define QO_NODE_OUTER_DEP_SET(node)     (node)->outer_dep_set
+#define QO_NODE_RIGHT_DEP_SET(node)     (node)->right_dep_set
 #define QO_NODE_SARGABLE(node)          (node)->sargable
 
 #define QO_NODE_NAME(node)		(node)->class_name
@@ -422,6 +423,17 @@ struct qo_node
   (QO_NODE_PT_JOIN_TYPE(node) == PT_JOIN_LEFT_OUTER  || \
    QO_NODE_PT_JOIN_TYPE(node) == PT_JOIN_RIGHT_OUTER || \
    QO_NODE_PT_JOIN_TYPE(node) == PT_JOIN_FULL_OUTER)
+
+#define QO_ADD_OUTER_DEP_SET(tail,head) \
+   bitset_union (&(QO_NODE_OUTER_DEP_SET (tail)), &(QO_NODE_OUTER_DEP_SET (head))); \
+   bitset_add (&(QO_NODE_OUTER_DEP_SET (tail)), QO_NODE_IDX (head));
+
+#define QO_ADD_RIGHT_DEP_SET(tail,head) \
+   bitset_union (&(QO_NODE_RIGHT_DEP_SET (tail)), &(QO_NODE_RIGHT_DEP_SET (head))); \
+   bitset_add (&(QO_NODE_RIGHT_DEP_SET (tail)), QO_NODE_IDX (head));
+
+#define QO_ADD_RIGHT_TO_OUTER(tail,head) \
+   bitset_union (&(QO_NODE_OUTER_DEP_SET (tail)), &(QO_NODE_RIGHT_DEP_SET (head)));
 
 struct qo_segment
 {
@@ -491,6 +503,7 @@ struct qo_segment
   /* The index of this segment in the corresponding Env's seg array. */
   int idx;
   bool is_function_index;
+  bool is_not_null;
 };
 
 #define QO_SEG_ENV(seg)			(seg)->env
@@ -510,6 +523,7 @@ struct qo_segment
 #define QO_SEG_IS_OID_SEG(seg)		(QO_NODE_OID_SEG(QO_SEG_HEAD(seg)) == seg)
 #define QO_SEG_INDEX_TERMS(seg)         (seg)->index_terms
 #define QO_SEG_FUNC_INDEX(seg)		(seg)->is_function_index
+#define QO_SEG_IS_NOT_NULL(seg)		(seg)->is_not_null
 #define OID_SEG_NAME                    "OID$"
 
 struct qo_eqclass

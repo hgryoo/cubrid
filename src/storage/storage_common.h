@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -93,9 +92,13 @@ typedef INT32 LOLENGTH;		/* Length for a large object */
 #define IO_MIN_PAGE_SIZE        (4 * ONE_K)
 #define IO_MAX_PAGE_SIZE        (16 * ONE_K)
 
-#define LOG_PAGESIZE            (db_log_page_size())
-#define IO_PAGESIZE             (db_io_page_size())
-#define DB_PAGESIZE             (db_page_size())
+extern PGLENGTH db_Io_page_size;
+extern PGLENGTH db_Log_page_size;
+extern PGLENGTH db_User_page_size;
+
+#define LOG_PAGESIZE            db_Log_page_size
+#define IO_PAGESIZE             db_Io_page_size
+#define DB_PAGESIZE             db_User_page_size
 
 #define IS_POWER_OF_2(x)        (((x) & ((x) - 1)) == 0)
 
@@ -219,7 +222,7 @@ struct recdes
   int area_size;		/* Length of the allocated area. It includes only the data field. The value is negative
 				 * if data is inside buffer. For example, peeking in a slotted page. */
   int length;			/* Length of the data. Does not include the length and type fields */
-  INT16 type;			/* Type of record */
+  INT16 type;			/* Type of record (REC_HOME, REC_NEWHOME,... ) */
   char *data;			/* The data */
 };
 /* Replace existing data in record at offset_to_data and size old_data_size
@@ -346,6 +349,7 @@ typedef int TRANID;		/* Transaction identifier */
     } \
   while (0)
 
+#if 0				// not used
 /* back up MVCC ID */
 #define MVCCID_BACKWARD(id) \
   do \
@@ -353,7 +357,7 @@ typedef int TRANID;		/* Transaction identifier */
       (id)--; \
     } \
   while ((id) < MVCCID_FIRST)
-
+#endif
 
 #define COMPOSITE_LOCK(scan_op_type)	(scan_op_type != S_SELECT)
 #define READONLY_SCAN(scan_op_type)	(scan_op_type == S_SELECT)
@@ -444,6 +448,7 @@ typedef enum
 #define CUBRID_MAGIC_LOG_INFO                   "CUBRID/LogInfo"
 #define CUBRID_MAGIC_DATABASE_BACKUP            "CUBRID/Backup_v2"
 #define CUBRID_MAGIC_DATABASE_BACKUP_OLD        "CUBRID/Backup"
+#define CUBRID_MAGIC_KEYS                       "CUBRID/Keys"
 
 /*
  * Typedefs related to the scan data structures
@@ -663,9 +668,6 @@ typedef enum
 /************************************************************************/
 /* storage common functions                                             */
 /************************************************************************/
-extern INT16 db_page_size (void);
-extern INT16 db_io_page_size (void);
-extern INT16 db_log_page_size (void);
 extern int db_set_page_size (INT16 io_page_size, INT16 log_page_size);
 extern INT16 db_network_page_size (void);
 extern void db_print_data (DB_TYPE type, DB_DATA * data, FILE * fd);
@@ -1148,20 +1150,22 @@ typedef enum
  *    This constant defines the maximum size in bytes of a class name,
  *    attribute name, method name, or any other named entity in the schema.
  */
-#define SM_MAX_IDENTIFIER_LENGTH 255
+#define SM_MAX_IDENTIFIER_LENGTH    DB_MAX_IDENTIFIER_LENGTH
+#define SM_MAX_USER_LENGTH          DB_MAX_USER_LENGTH
 
-#define SERIAL_ATTR_NAME          "name"
-#define SERIAL_ATTR_OWNER         "owner"
-#define SERIAL_ATTR_CURRENT_VAL   "current_val"
-#define SERIAL_ATTR_INCREMENT_VAL "increment_val"
-#define SERIAL_ATTR_MAX_VAL       "max_val"
-#define SERIAL_ATTR_MIN_VAL       "min_val"
-#define SERIAL_ATTR_CYCLIC        "cyclic"
-#define SERIAL_ATTR_STARTED       "started"
-#define SERIAL_ATTR_CLASS_NAME    "class_name"
-#define SERIAL_ATTR_ATT_NAME      "att_name"
-#define SERIAL_ATTR_CACHED_NUM    "cached_num"
-#define SERIAL_ATTR_COMMENT       "comment"
+#define SERIAL_ATTR_UNIQUE_NAME     "unique_name"
+#define SERIAL_ATTR_NAME            "name"
+#define SERIAL_ATTR_OWNER           "owner"
+#define SERIAL_ATTR_CURRENT_VAL     "current_val"
+#define SERIAL_ATTR_INCREMENT_VAL   "increment_val"
+#define SERIAL_ATTR_MAX_VAL         "max_val"
+#define SERIAL_ATTR_MIN_VAL         "min_val"
+#define SERIAL_ATTR_CYCLIC          "cyclic"
+#define SERIAL_ATTR_STARTED         "started"
+#define SERIAL_ATTR_CLASS_NAME      "class_name"
+#define SERIAL_ATTR_ATT_NAME        "att_name"
+#define SERIAL_ATTR_CACHED_NUM      "cached_num"
+#define SERIAL_ATTR_COMMENT         "comment"
 
 static const bool PEEK = true;	/* Peek for a slotted record */
 static const bool COPY = false;	/* Don't peek, but copy a slotted record */

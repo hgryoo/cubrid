@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -60,7 +59,7 @@ namespace cubthread
     , m_lf_tran_sys (NULL)
   {
     m_entry_manager = new entry_manager ();
-    m_daemon_entry_manager = new daemon_entry_manager();
+    m_daemon_entry_manager = new daemon_entry_manager ();
   }
 
   manager::~manager ()
@@ -125,10 +124,12 @@ namespace cubthread
     assert (tracker.empty ());
 
 #if defined (SERVER_MODE)
-    for (auto iter = tracker.begin (); iter != tracker.end (); iter = tracker.erase (iter))
+    for (; !tracker.empty ();)
       {
+	const auto iter = tracker.begin ();
 	(*iter)->stop_execution ();
 	delete *iter;
+	tracker.erase (iter);
       }
 #endif // SERVER_MODE
   }
@@ -291,7 +292,8 @@ namespace cubthread
   }
 
   void
-  manager::push_task_on_core (entry_workpool *worker_pool_arg, entry_task *exec_p, std::size_t core_hash)
+  manager::push_task_on_core (entry_workpool *worker_pool_arg, entry_task *exec_p, std::size_t core_hash,
+			      bool method_mode = false)
   {
     if (worker_pool_arg == NULL)
       {
@@ -303,7 +305,7 @@ namespace cubthread
       {
 #if defined (SERVER_MODE)
 	check_not_single_thread ();
-	worker_pool_arg->execute_on_core (exec_p, core_hash);
+	worker_pool_arg->execute_on_core (exec_p, core_hash, method_mode);
 #else // not SERVER_MODE = SA_MODE
 	assert (false);
 	// execute on this thread
@@ -483,6 +485,7 @@ namespace cubthread
     // init main entry
     assert (Main_entry_p == NULL);
     Main_entry_p = new entry ();
+    Main_entry_p->type = TT_MASTER;
     Main_entry_p->index = 0;
     Main_entry_p->register_id ();
     Main_entry_p->m_status = entry::status::TS_RUN;
@@ -591,7 +594,7 @@ namespace cubthread
   get_max_thread_count (void)
   {
     // system thread + managed threads
-    return 1 + (Manager != NULL ? Manager->get_max_thread_count() : 0);
+    return 1 + (Manager != NULL ? Manager->get_max_thread_count () : 0);
   }
 
   entry &

@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -134,6 +133,7 @@ struct session_state
   int private_lru_index;
 
   load_session *load_session_p;
+  method_runtime_context *method_rctx_p;
 
   // *INDENT-OFF*
   session_state ();
@@ -311,6 +311,7 @@ session_state_init (void *st)
   session_p->private_lru_index = -1;
   session_p->auto_commit = false;
   session_p->load_session_p = NULL;
+  session_p->method_rctx_p = NULL;
 
   return NO_ERROR;
 }
@@ -701,7 +702,7 @@ session_state_create (THREAD_ENTRY * thread_p, SESSION_ID * id)
   /* increase reference count of new session_p */
   session_state_increase_ref_count (thread_p, session_p);
 
-  session_p->private_lru_index = pgbuf_assign_private_lru (thread_p, false, (int) session_p->id);
+  session_p->private_lru_index = pgbuf_assign_private_lru (thread_p);
   /* set as thread session */
   session_set_conn_entry_data (thread_p, session_p);
 
@@ -2393,7 +2394,11 @@ session_preserve_temporary_files (THREAD_ENTRY * thread_p, SESSION_QUERY_ENTRY *
 	{
 	  if (!VFID_ISNULL (&tfile_vfid_p->temp_vfid))
 	    {
-	      file_temp_preserve (thread_p, &tfile_vfid_p->temp_vfid);
+	      if (!tfile_vfid_p->preserved)
+		{
+		  file_temp_preserve (thread_p, &tfile_vfid_p->temp_vfid);
+		  tfile_vfid_p->preserved = true;
+		}
 	    }
 	  temp = tfile_vfid_p;
 	  tfile_vfid_p = tfile_vfid_p->next;
@@ -2425,7 +2430,6 @@ sentry_to_qentry (const SESSION_QUERY_ENTRY * sentry_p, QMGR_QUERY_ENTRY * qentr
   qentry_p->xasl_ent = NULL;
   qentry_p->er_msg = NULL;
   qentry_p->is_holdable = true;
-  qentry_p->is_preserved = true;
 }
 
 /*
@@ -2468,6 +2472,7 @@ session_store_query_entry_info (THREAD_ENTRY * thread_p, QMGR_QUERY_ENTRY * qent
     {
       return;
     }
+
   session_preserve_temporary_files (thread_p, sqentry_p);
 
   if (state_p->queries == NULL)
@@ -2506,7 +2511,7 @@ session_free_sentry_data (THREAD_ENTRY * thread_p, SESSION_QUERY_ENTRY * sentry_
 
   if (sentry_p->temp_file != NULL)
     {
-      qmgr_free_temp_file_list (thread_p, sentry_p->temp_file, sentry_p->query_id, false, true);
+      qmgr_free_temp_file_list (thread_p, sentry_p->temp_file, sentry_p->query_id, false);
     }
 
   sessions.num_holdable_cursors--;
@@ -2541,6 +2546,34 @@ session_load_query_entry_info (THREAD_ENTRY * thread_p, QMGR_QUERY_ENTRY * qentr
       sentry_p = sentry_p->next;
     }
   return ER_FAILED;
+}
+
+/*
+ * session_remove_query_entry_all () - remove all query entries from the session
+ * thread_p (in) : active thread
+ */
+void
+session_remove_query_entry_all (THREAD_ENTRY * thread_p)
+{
+  SESSION_STATE *state_p = NULL;
+  SESSION_QUERY_ENTRY *sentry_p = NULL, *prev = NULL;
+
+  state_p = session_get_session_state (thread_p);
+  if (state_p == NULL)
+    {
+      return;
+    }
+
+  sentry_p = state_p->queries;
+  while (sentry_p != NULL)
+    {
+      session_free_sentry_data (thread_p, sentry_p);
+      prev = sentry_p;
+      sentry_p = sentry_p->next;
+
+      free_and_init (prev);
+    }
+  state_p->queries = NULL;
 }
 
 /*
@@ -3138,6 +3171,28 @@ session_get_load_session (THREAD_ENTRY * thread_p, REFPTR (load_session, load_se
   return NO_ERROR;
 }
 
+int
+session_get_method_runtime_context (THREAD_ENTRY * thread_p,
+				    REFPTR (method_runtime_context, method_runtime_context_ref_ptr))
+{
+  SESSION_STATE *state_p = NULL;
+
+  state_p = session_get_session_state (thread_p);
+  if (state_p == NULL)
+    {
+      return ER_FAILED;
+    }
+
+  if (state_p->method_rctx_p == NULL)
+    {
+      state_p->method_rctx_p = new method_runtime_context ();
+    }
+
+  method_runtime_context_ref_ptr = state_p->method_rctx_p;
+
+  return NO_ERROR;
+}
+
 /* 
  * session_stop_attached_threads - stops extra attached threads (not connection worker thread)
  *                                 associated with the session
@@ -3159,6 +3214,15 @@ session_stop_attached_threads (void *session_arg)
 
       delete session->load_session_p;
       session->load_session_p = NULL;
+    }
+
+  if (session->method_rctx_p != NULL)
+    {
+      session->method_rctx_p->set_interrupt (er_errid ());
+      session->method_rctx_p->wait_for_interrupt ();
+
+      delete session->method_rctx_p;
+      session->method_rctx_p = NULL;
     }
 #endif
 }

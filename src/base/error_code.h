@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -28,6 +27,9 @@
  * details.
  * The error codes must also be added to compat/dbi_compat.h
  * ER_LAST_ERROR must also be updated.
+ * In case of common,  
+ * cci repository source (src/cci/base_error_code.h) must be updated,
+ * becuase CCI source and Engine source have been separated.
  */
 
 #ifndef _ERROR_CODE_H_
@@ -1606,7 +1608,139 @@
 
 #define ER_LOG_UPTODATE_ERROR                       -1247
 
-#define ER_LAST_ERROR                               -1248
+#define ER_TDE_INVALID_KEYS_FILE                    -1248
+#define ER_TDE_MASTER_KEY_NOT_FOUND                 -1249
+#define ER_TDE_INVALID_MASTER_KEY                   -1250
+#define ER_TDE_ENCRYPTION_ERROR                     -1251
+#define ER_TDE_DECRYPTION_ERROR                     -1252
+#define ER_TDE_CIPHER_IS_NOT_LOADED                 -1253
+#define ER_TDE_KEY_CREATION_FAIL                    -1254
+#define ER_TDE_CIPHER_LOAD_FAIL                     -1255
+#define ER_TDE_COPY_KEYS_FILE_FAIL                  -1256
+#define ER_TDE_BACKUP_KEYS_FILE_FAIL                -1257
+#define ER_TDE_RESTORE_KEY_FOUND_ONLY_FROM_BACKUP   -1258
+#define ER_TDE_RESTORE_MAKE_KEYS_FILE_OLD           -1259
+#define ER_TDE_RESTORE_COPY_KEYS_FILE               -1260
+#define ER_TDE_RESTORE_CHANGE_MASTER_KEY            -1261
+#define ER_TDE_MAX_KEY_FILE                         -1262
+#define ER_TDE_ENCRYPTION_LOGPAGE_ERORR_AND_OFF_TDE -1263
+
+#define ER_SCALABILITY_DEV_RESERVED_ERROR01         -1264
+#define ER_SCALABILITY_DEV_RESERVED_ERROR02         -1265
+#define ER_SCALABILITY_DEV_RESERVED_ERROR03         -1266
+#define ER_SCALABILITY_DEV_RESERVED_ERROR04         -1267
+#define ER_SCALABILITY_DEV_RESERVED_ERROR05         -1268
+#define ER_SCALABILITY_DEV_RESERVED_ERROR06         -1269
+#define ER_SCALABILITY_DEV_RESERVED_ERROR07         -1270
+#define ER_SCALABILITY_DEV_RESERVED_ERROR08         -1271
+#define ER_SCALABILITY_DEV_RESERVED_ERROR09         -1272
+#define ER_SCALABILITY_DEV_RESERVED_ERROR10         -1273
+#define ER_SCALABILITY_DEV_RESERVED_ERROR11         -1274
+#define ER_SCALABILITY_DEV_RESERVED_ERROR12         -1275
+#define ER_SCALABILITY_DEV_RESERVED_ERROR13         -1276
+#define ER_SCALABILITY_DEV_RESERVED_ERROR14         -1277
+#define ER_SCALABILITY_DEV_RESERVED_ERROR15         -1278
+#define ER_SCALABILITY_DEV_RESERVED_ERROR16         -1279
+#define ER_SCALABILITY_DEV_RESERVED_ERROR17         -1280
+#define ER_SCALABILITY_DEV_RESERVED_ERROR18         -1281
+#define ER_SCALABILITY_DEV_RESERVED_ERROR19         -1282
+#define ER_SCALABILITY_DEV_RESERVED_ERROR20         -1283
+
+#define ER_TRUNCATE_PK_REFERRED                     -1284
+#define ER_TRUNCATE_CANT_CASCADE                    -1285
+
+#define ER_CDC_LSA_NOT_FOUND                        -1286
+#define ER_CDC_EXTRACTION_TIMEOUT                   -1287
+#define ER_CDC_IGNORE_LOG_INFO_INTERNAL             -1288
+#define ER_CDC_IGNORE_TRANSACTION                   -1289
+#define ER_CDC_INVALID_LOG_LSA                      -1290
+#define ER_CDC_NOT_AVAILABLE                        -1291
+#define ER_CDC_ADJUSTED_LSA                         -1292
+#define ER_CDC_NULL_EXTRACTION_LSA                  -1293
+#define ER_CDC_LOGINFO_ENTRY_GENERATED              -1294
+#define ER_CDC_IGNORE_LOG_INFO                      -1295
+
+#define ER_LOG_RECOVERY_ANALYSIS_STARTED            -1296
+#define ER_LOG_RECOVERY_REDO_STARTED                -1297
+#define ER_LOG_RECOVERY_UNDO_STARTED                -1298
+#define ER_LOG_RECOVERY_PHASE_FINISHING_UP          -1299
+#define ER_LOG_RECOVERY_PHASE_FINISHED              -1300
+#define ER_LOG_RECOVERY_PROGRESS                    -1301
+
+#define ER_DBLINK                                   -1302
+#define ER_DBLINK_INVALID_COLUMNS_SPECIFIED         -1303
+#define ER_DBLINK_CATALOG_DB_SERVER_NOT_FOUND       -1304
+#define ER_DBLINK_SERVER_NOT_FOUND                  -1305
+#define ER_DBLINK_SERVER_ALREADY_EXISTS             -1306
+#define ER_DBLINK_CANNOT_UPDATE_SERVER              -1307
+#define ER_DBLINK_UNSUPPORTED_TYPE                  -1308
+#define ER_DBLINK_INVALID_BIND_PARAM                -1309
+#define ER_DBLINK_PASSWORD_OVER_MAX_LENGTH          -1310
+#define ER_DBLINK_PASSWORD_INVALID_LENGTH           -1311
+#define ER_DBLINK_PASSWORD_CHECKSUM                 -1312
+#define ER_DBLINK_PASSWORD_INVALID_FMT              -1313
+#define ER_DBLINK_PASSWORD_DECRYPT                  -1314
+#define ER_DBLINK_PASSWORD_ENCRYPT                  -1315
+#define ER_DBLINK_SERVER_MULTIPLE_FOUND             -1316
+#define ER_DBLINK_SERVER_ALTER_NOT_ALLOWED          -1317
+
+#define ER_CGW_NATIVE_ODBC                          -1318
+#define ER_CGW_NUM_BIND                             -1319
+#define ER_CGW_INVALID_HANDLE                       -1320
+#define ER_CGW_TYPE_CONVERSION                      -1321
+#define ER_CGW_NOT_SUPPORTED_TYPE                   -1322
+#define ER_CGW_INVALID_STMT_HANDLE                  -1323
+#define ER_CGW_INVALID_DBC_HANDLE                   -1324
+#define ER_CGW_NOT_EXIST_LINK_NAME                  -1325
+#define ER_CGW_INVALID_NUMERIC_VALUE                -1326
+#define ER_CGW_INVALID_PRECISION_VALUE              -1327
+
+#define ER_CGW_INVALID_DESC_HANDLE                  -1328
+#define ER_CGW_NOT_SUPPORTED_DBMS                   -1329
+#define ER_CGW_NOT_ALLOCATE_ENV_HANDLE              -1330
+#define ER_CGW_NULL_COL_BINDER                      -1331
+
+#define ER_LOG_TOO_SANE_TO_RECREATE                 -1332
+
+#define ER_FLASHBACK_INVALID_TIME                   -1333
+#define ER_FLASHBACK_INVALID_CLASS                  -1334
+#define ER_FLASHBACK_EXCEED_MAX_NUM_TRAN_TO_SUMMARY -1335
+#define ER_FLASHBACK_SCHEMA_CHANGED                 -1336
+#define ER_FLASHBACK_LOG_NOT_EXIST                  -1337
+#define ER_FLASHBACK_DUPLICATED_REQUEST             -1338
+
+#define ER_SP_NOT_SUPPORTED_ARG_TYPE                -1339
+#define ER_SP_NOT_SUPPORTED_RETURN_TYPE             -1340
+
+#define ER_AU_INVALID_ARGUMENTS                     -1341
+#define ER_AU_CANT_ALTER_OWNER_OF_AUTO_INCREMENT    -1342
+#define ER_SM_RENAME_CANT_ALTER_OWNER               -1343
+#define ER_QPROC_CREATE_SERIAL_NOT_OWNER            -1344
+#define ER_TR_CREATE_NOT_ALLOWED                    -1345
+
+#define ER_SYNONYM_PUBLIC_ALREADY_EXIST             -1346
+#define ER_SYNONYM_PUBLIC_NOT_EXIST                 -1347
+#define ER_SYNONYM_ALREADY_EXIST                    -1348
+#define ER_SYNONYM_NOT_EXIST                        -1349
+#define ER_SYNONYM_INVALID_VALUE                    -1350
+
+#define ER_SM_INVALID_FUNCTION_EXPRESSION_LENGTH    -1351
+
+#define ER_CGW_INVALID_COLUMNS_SPECIFIED            -1352
+
+#define ER_SQL_ERROR_LOG_TRACE                      -1353
+#define ER_SQL_ERROR_LOG_MSG_TRACE                  -1354
+
+#define ER_UHOST_INVALID_FORMAT                     -1355
+#define ER_UHOST_HOST_NAME_TOO_LONG                 -1356
+#define ER_UHOST_HOST_NAME_ALREADY_EXIST            -1357
+#define ER_UHOST_HOST_NAME_IP_ADDR_NOT_COMPLETE     -1358
+#define ER_UHOST_CANT_LOOKUP_INFO                   -1359
+#define ER_UHOST_ERROR                              -1360
+
+#define ER_FILE_NOT_FOUND                           -1361
+
+#define ER_LAST_ERROR                               -1362
 
 /*
  * CAUTION!
@@ -1615,6 +1749,9 @@
  * files are updated with matching error strings. See message_catalog.c for
  * details.
  * ER_LAST_ERROR must also be updated.
+ * In case of common,  
+ * cci repository source (src/cci/base_error_code.h) must be updated,
+ * becuase CCI source and Engine source have been separated.
  */
 
 #endif /* _ERROR_CODE_H_ */

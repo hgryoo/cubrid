@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -678,7 +677,7 @@ shard_metadata_validate_key_range_internal (T_SHARD_KEY * key_p, T_SHM_SHARD_CON
   num_shard_conn = shm_conn_p->num_shard_conn;
   if (num_shard_conn < 0)
     {
-      SHARD_ERR ("%s: num shard connection is invalid.\n");
+      SHARD_ERR ("%s: num shard connection is invalid.\n", key_p->key_column);
       return -1;
     }
 
@@ -706,7 +705,7 @@ shard_metadata_validate_key_range_internal (T_SHARD_KEY * key_p, T_SHM_SHARD_CON
 	}
       if (j >= num_shard_conn)
 	{
-	  SHARD_ERR ("%s: shard range shard_id (%d) is invalid.\n", range_p->shard_id);
+	  SHARD_ERR ("%s: shard range shard_id (%d) is invalid.\n", key_p->key_column, range_p->shard_id);
 	  return -1;
 	}
 
@@ -715,7 +714,7 @@ shard_metadata_validate_key_range_internal (T_SHARD_KEY * key_p, T_SHM_SHARD_CON
 
   if ((modular >= 1) && (prv_range_max > modular))
     {
-      SHARD_ERR ("%s: shard range max (%d, modular %d) is invalid.\n", range_p->max, modular);
+      SHARD_ERR ("%s: shard range max (%d, modular %d) is invalid.\n", key_p->key_column, range_p->max, modular);
       return -1;
     }
 

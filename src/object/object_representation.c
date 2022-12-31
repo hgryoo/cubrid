@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -45,6 +44,7 @@
 #include "porting_inline.hpp"
 #include "query_list.h"
 #include "set_object.h"
+#include "access_spec.hpp"
 
 #if defined (SUPPRESS_STRLEN_WARNING)
 #define strlen(s1)  ((int) strlen(s1))
@@ -6635,8 +6635,7 @@ or_pack_listid (char *ptr, void *listid_ptr)
   OR_PUT_PTR (ptr, listid->tfile_vfid);
   ptr += OR_PTR_SIZE;
 
-  OR_PUT_INT (ptr, listid->tuple_cnt);
-  ptr += OR_INT_SIZE;
+  ptr = or_pack_int64 (ptr, listid->tuple_cnt);
 
   OR_PUT_INT (ptr, listid->page_cnt);
   ptr += OR_INT_SIZE;
@@ -6723,8 +6722,7 @@ or_unpack_listid (char *ptr, void *listid_ptr)
   listid->tfile_vfid = (struct qmgr_temp_file *) OR_GET_PTR (ptr);
   ptr += OR_PTR_SIZE;
 
-  listid->tuple_cnt = OR_GET_INT (ptr);
-  ptr += OR_INT_SIZE;
+  ptr = or_unpack_int64 (ptr, &listid->tuple_cnt);
 
   listid->page_cnt = OR_GET_INT (ptr);
   ptr += OR_INT_SIZE;
@@ -6764,7 +6762,7 @@ or_unpack_unbound_listid (char *ptr, void **listid_ptr)
   int count, i;
 
   /*
-   * tuple_cnt 4, vfid.fileid 4, vfid.volid 2, attr_list.oid_flg 2,
+   * tuple_cnt 8, vfid.fileid 4, vfid.volid 2, attr_list.oid_flg 2,
    * attr_list.attr_cnt 4, attr_list.attr_id 4 * n
    */
 
@@ -6837,16 +6835,21 @@ or_listid_length (void *listid_ptr)
       return length;
     }
 
-  /* QFILE_LIST_ID 9 fixed item tuple_cnt page_cnt first_vpid.pageid first_vpid.volid last_vpid.pageid last_vpid.volid
+  length = OR_PTR_SIZE /* query_id */  + OR_PTR_SIZE;	/* tfile_vfid */
+
+  /* aligned length for tuple_count (INT64, 8) */
+  length = DB_ALIGN (length, MAX_ALIGNMENT);	// aligned offset
+  length += OR_INT64_SIZE;
+
+  /* 8 fixed item page_cnt first_vpid.pageid first_vpid.volid last_vpid.pageid last_vpid.volid
    * last_offset lasttpl_len type_list_type_cnt */
-  length = OR_INT_SIZE * 9;
+  length += OR_INT_SIZE * 8;
 
   for (i = 0; i < listid->type_list.type_cnt; i++)
     {
       length += or_packed_domain_size (listid->type_list.domp[i], 0);
     }
 
-  length += OR_PTR_SIZE /* query_id */  + OR_PTR_SIZE;	/* tfile_vfid */
   return length;
 }
 
@@ -6877,6 +6880,56 @@ or_pack_method_sig (char *ptr, void *method_sig_ptr)
     {
       ptr = or_pack_int (ptr, method_sig->method_arg_pos[n]);
     }
+
+  return ptr;
+}
+
+/*
+ * or_pack_key_val_range - packs a KEY VALUE RANGE.
+ *    return: advanced buffer pointer
+ *    ptr(out): starting pointer
+ *    key_val_range(in):  key value range pointer
+ */
+char *
+or_pack_key_val_range (char *ptr, const void *key_val_range_ptr)
+{
+  KEY_VAL_RANGE *key_val_range = (KEY_VAL_RANGE *) key_val_range_ptr;
+
+  if (key_val_range == NULL)
+    {
+      return ptr;
+    }
+
+  ptr = or_pack_int (ptr, (int) key_val_range->range);
+  ptr = or_pack_int (ptr, key_val_range->num_index_term);
+  ptr = or_pack_int (ptr, (int) key_val_range->is_truncated);
+  ptr = or_pack_db_value (ptr, &key_val_range->key1);
+  ptr = or_pack_db_value (ptr, &key_val_range->key2);
+
+  return ptr;
+}
+
+/*
+ * or_unpack_key_val_array - unpacks a KEY_VAL_RANGE descriptor from a buffer.
+ *    return: advanced buffer pointer
+ *    ptr(in): starting pointer
+ *    n(in):
+ */
+char *
+or_unpack_key_val_range (char *ptr, void *key_val_range_ptr)
+{
+  KEY_VAL_RANGE *key_val_range = (KEY_VAL_RANGE *) key_val_range_ptr;
+
+  if (key_val_range == (KEY_VAL_RANGE *) 0)
+    {
+      return NULL;
+    }
+
+  ptr = or_unpack_int (ptr, (int *) &key_val_range->range);
+  ptr = or_unpack_int (ptr, &key_val_range->num_index_term);
+  ptr = or_unpack_int (ptr, (int *) &key_val_range->is_truncated);
+  ptr = or_unpack_db_value (ptr, &key_val_range->key1);
+  ptr = or_unpack_db_value (ptr, &key_val_range->key2);
 
   return ptr;
 }

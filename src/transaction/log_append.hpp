@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -35,6 +34,7 @@
 #include "object_representation_constants.h"
 #include "recovery.h"
 #include "storage_common.h"
+#include "log_compress.h"
 
 #include <atomic>
 #include <mutex>
@@ -78,6 +78,8 @@ struct log_append_info
   LOG_LSA prev_lsa;		/* Address of last append log record */
   LOG_PAGE *log_pgptr;		/* The log page which is fixed */
 
+  bool appending_page_tde_encrypted;  /* true if a newly appended page has to be tde-encrypted */
+
   log_append_info ();
   log_append_info (const log_append_info &other);
 
@@ -90,6 +92,8 @@ struct log_prior_node
 {
   LOG_RECORD_HEADER log_header;
   LOG_LSA start_lsa;		/* for assertion */
+
+  bool tde_encrypted;   /* whether the log page which'll contain this node has to be encrypted */
 
   /* data header info */
   int data_header_length;
@@ -153,11 +157,18 @@ LOG_PRIOR_NODE *prior_lsa_alloc_and_copy_crumbs (THREAD_ENTRY *thread_p, LOG_REC
     const LOG_CRUMB *rcrumbs);
 LOG_LSA prior_lsa_next_record (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, log_tdes *tdes);
 LOG_LSA prior_lsa_next_record_with_lock (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, log_tdes *tdes);
+int prior_set_tde_encrypted (log_prior_node *node, LOG_RCVINDEX recvindex);
+bool prior_is_tde_encrypted (const log_prior_node *node);
 void log_append_init_zip ();
 void log_append_final_zip ();
+extern LOG_ZIP *log_append_get_zip_undo (THREAD_ENTRY *thread_p);
+extern LOG_ZIP *log_append_get_zip_redo (THREAD_ENTRY *thread_p);
 
 // todo - move to header of log page buffer
 size_t logpb_get_memsize ();
+
+extern bool log_Zip_support;
+extern int log_Zip_min_size_to_compress;
 
 //////////////////////////////////////////////////////////////////////////
 //

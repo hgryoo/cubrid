@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -352,11 +351,23 @@ struct btree_checkscan
   BTREE_ISCAN_OID_LIST oid_list;	/* Data area to store OIDs */
 };				/* B+tree <key-oid> check scan structure */
 
+struct btree_ovfl_oid_capacity
+{
+  int max_pg_cnt_per_key;	/* Distinct key count with overflow oid page) */
+  int dis_key_cnt;		/* Distinct key count (with ovfl pages) */
+  int64_t tot_val_cnt;		/* Total number of values stored in overflow oid pages */
+  int tot_pg_cnt;		/* Total overflow oid page count */
+  float tot_free_space;		/* Total free space in overflow oid pages */
+  float tot_space;		/* Total space occupied by overflow oid pages */
+  float tot_used_space;		/* Total used space in  overflow oid pages */
+  float avg_pg_free_sp;		/* Average free space on the occupied overflowoid page */
+};
+
 typedef struct btree_capacity BTREE_CAPACITY;
 struct btree_capacity
 {
   int dis_key_cnt;		/* Distinct key count (in leaf pages) */
-  int tot_val_cnt;		/* Total number of values stored in tree */
+  int64_t tot_val_cnt;		/* Total number of values stored in tree */
   int avg_val_per_key;		/* Average number of values (OIDs) per key */
   int leaf_pg_cnt;		/* Leaf page count */
   int nleaf_pg_cnt;		/* NonLeaf page count */
@@ -371,6 +382,7 @@ struct btree_capacity
   float tot_used_space;		/* Total used space in index */
   int avg_pg_key_cnt;		/* Average page key count (in leaf pages) */
   float avg_pg_free_sp;		/* Average page free space */
+  struct btree_ovfl_oid_capacity ovfl_oid_pg;	/* For overflow OID page */
 };
 
 /*
@@ -457,7 +469,7 @@ struct btree_node_scan
       MVCC_SET_DELID (p_mvcc_rec_header, MVCCID_NULL); \
       MVCC_SET_CHN (p_mvcc_rec_header, 0); \
       MVCC_SET_REPID (p_mvcc_rec_header, 0); \
-      LSA_SET_NULL (p_mvcc_rec_header.prev_version_lsa); \
+      LSA_SET_NULL (&((p_mvcc_rec_header)->prev_version_lsa)); \
     } \
   while (0)
 
@@ -650,15 +662,11 @@ extern void btree_scan_clear_key (BTREE_SCAN * btree_scan);
 
 extern bool btree_is_unique_type (BTREE_TYPE type);
 extern int xbtree_get_unique_pk (THREAD_ENTRY * thread_p, BTID * btid);
-extern int btree_get_unique_statistics (THREAD_ENTRY * thread_p, BTID * btid, int *oid_cnt, int *null_cnt,
-					int *key_cnt);
-extern int btree_get_unique_statistics_for_count (THREAD_ENTRY * thread_p, BTID * btid, int *oid_cnt, int *null_cnt,
-						  int *key_cnt);
-
+extern int btree_get_unique_statistics (THREAD_ENTRY * thread_p, BTID * btid, long long *oid_cnt, long long *null_cnt,
+					long long *key_cnt);
+extern int btree_get_unique_statistics_for_count (THREAD_ENTRY * thread_p, BTID * btid, long long *oid_cnt,
+						  long long *null_cnt, long long *key_cnt);
 extern int btree_get_stats (THREAD_ENTRY * thread_p, BTREE_STATS * stat_info_p, bool with_fullscan);
-extern DISK_ISVALID btree_check_tree (THREAD_ENTRY * thread_p, const OID * class_oid_p, BTID * btid,
-				      const char *btname);
-extern DISK_ISVALID btree_check_by_btid (THREAD_ENTRY * thread_p, BTID * btid);
 extern int btree_get_pkey_btid (THREAD_ENTRY * thread_p, OID * cls_oid, BTID * pkey_btid);
 extern DISK_ISVALID btree_check_by_class_oid (THREAD_ENTRY * thread_p, OID * cls_oid, BTID * idx_btid);
 extern DISK_ISVALID btree_check_all (THREAD_ENTRY * thread_p);
@@ -719,11 +727,6 @@ extern int btree_rv_newpage_redo_init (THREAD_ENTRY * thread_p, LOG_RCV * recv);
 extern int btree_rv_save_keyval_for_undo (BTID_INT * btid, DB_VALUE * key, OID * cls_oid, OID * oid,
 					  BTREE_MVCC_INFO * mvcc_info, BTREE_OP_PURPOSE purpose,
 					  char *preallocated_buffer, char **data, int *capacity, int *length);
-extern int btree_rv_save_keyval_for_undo_two_objects (BTID_INT * btid, DB_VALUE * key,
-						      BTREE_OBJECT_INFO * first_version,
-						      BTREE_OBJECT_INFO * second_version, BTREE_OP_PURPOSE purpose,
-						      char *preallocated_buffer, char **data, int *capacity,
-						      int *length);
 extern int btree_rv_keyval_undo_insert (THREAD_ENTRY * thread_p, LOG_RCV * recv);
 extern int btree_rv_keyval_undo_insert_unique (THREAD_ENTRY * thread_p, LOG_RCV * recv);
 extern int btree_rv_keyval_undo_insert_mvcc_delid (THREAD_ENTRY * thread_p, LOG_RCV * recv);
@@ -779,7 +782,6 @@ extern void btree_set_mvcc_header_ids_for_update (THREAD_ENTRY * thread_p, bool 
 
 extern int btree_compare_btids (void *mem_btid1, void *mem_btid2);
 
-extern char *btree_unpack_mvccinfo (char *ptr, BTREE_MVCC_INFO * mvcc_info, short btree_mvcc_flags);
 extern char *btree_pack_mvccinfo (char *ptr, BTREE_MVCC_INFO * mvcc_info);
 extern int btree_packed_mvccinfo_size (BTREE_MVCC_INFO * mvcc_info);
 

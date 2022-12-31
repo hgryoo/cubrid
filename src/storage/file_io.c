@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -949,42 +948,6 @@ fileio_initialize_volume_info_cache (void)
   return 0;
 }
 
-/* TODO: check not use */
-#if 0
-/*
- * fileio_final_volinfo_cache () - Free volinfo_header.volinfo array
- *   return: void
- */
-void
-fileio_final_volinfo_cache (void)
-{
-  int i;
-#if defined(WINDOWS) && defined(SERVER_MODE)
-  int j;
-  FILEIO_VOLUME_INFO *vf;
-#endif /* WINDOWS && SERVER_MODE */
-  if (fileio_Vol_info_header.volinfo != NULL)
-    {
-      for (i = 0; i < fileio_Vol_info_header.num_volinfo_array; i++)
-	{
-#if defined(WINDOWS) && defined(SERVER_MODE)
-	  vf = fileio_Vol_info_header.volinfo[i];
-	  for (j = 0; j < FILEIO_VOLINFO_INCREMENT; j++)
-	    {
-	      if (vf[j].vol_mutex != NULL)
-		{
-		  pthread_mutex_destroy (&vf[j].vol_mutex);
-		}
-	    }
-#endif /* WINDOWS && SERVER_MODE */
-	  free_and_init (fileio_Vol_info_header.volinfo[i]);
-	}
-      free_and_init (fileio_Vol_info_header.volinfo);
-      fileio_Vol_info_header.num_volinfo_array = 0;
-    }
-}
-#endif
-
 static int
 fileio_allocate_and_initialize_volume_info (FILEIO_VOLUME_HEADER * header_p, int idx)
 {
@@ -1500,7 +1463,7 @@ fileio_lock_la_log_path (const char *db_full_name_p, const char *lock_path_p, in
 	  *last_deleted_arv_num = -1;
 	}
 
-      lseek (vol_fd, (off_t) 0, SEEK_SET);
+      fseek (fp, 0, SEEK_SET);
 
       if (GETHOSTNAME (host, CUB_MAXHOSTNAMELEN) != 0)
 	{
@@ -2638,19 +2601,6 @@ fileio_expand_to (THREAD_ENTRY * thread_p, VOLID vol_id, DKNPAGES size_npages, D
 	{
 	  ASSERT_ERROR_AND_SET (error_code);
 	}
-    }
-
-  if (error_code != NO_ERROR && error_code != ER_INTERRUPTED)
-    {
-      /* I don't like below assumption, it can be misleading. From what I have seen, errors are already set. */
-#if 0
-      /* It is likely that we run of space. The partition where the volume was created has been used since we checked
-       * above.
-       */
-      max_npages = fileio_get_number_of_partition_free_pages (vol_label_p, IO_PAGESIZE);
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_IO_EXPAND_OUT_OF_SPACE, 5, vol_label_p, size_npages,
-	      last_offset / 1024, max_npages, FILEIO_GET_FILE_SIZE (IO_PAGESIZE / 1024, max_npages));
-#endif /* 0 */
     }
 
   db_private_free (thread_p, io_page_p);
@@ -5854,8 +5804,17 @@ void
 fileio_make_backup_name (char *backup_name_p, const char *no_path_vol_name_p, const char *backup_path_p,
 			 FILEIO_BACKUP_LEVEL level, int unit_num)
 {
-  sprintf (backup_name_p, "%s%c%s%s%dv%03d", backup_path_p, PATH_SEPARATOR, no_path_vol_name_p, FILEIO_SUFFIX_BACKUP,
-	   level, unit_num);
+  if (unit_num >= 0)
+    {
+      sprintf (backup_name_p, "%s%c%s%s%dv%03d", backup_path_p, PATH_SEPARATOR, no_path_vol_name_p,
+	       FILEIO_SUFFIX_BACKUP, level, unit_num);
+    }
+  else
+    {
+      /* without unit number, usually with FILEIO_NO_BACKUP_UNITS */
+      sprintf (backup_name_p, "%s%c%s%s%d", backup_path_p, PATH_SEPARATOR, no_path_vol_name_p, FILEIO_SUFFIX_BACKUP,
+	       level);
+    }
 }
 
 /*
@@ -5875,6 +5834,56 @@ fileio_make_dwb_name (char *dwb_name_p, const char *dwb_path_p, const char *db_n
   sprintf (dwb_name_p, "%s%s%s%s", dwb_path_p, FILEIO_PATH_SEPARATOR (dwb_path_p), db_name_p, FILEIO_SUFFIX_DWB);
 }
 
+/*
+ * fileio_make_keys_name () - Build the name of KEYS file  (for TDE Master Key)
+ *   return: void
+ *   keys_name_p(out): the name of KEYS file
+ *   db_full_name_p(in): database full path
+ *
+ * Note: The caller must have enough space to store the name of the volume
+ *       that is constructed(sprintf). It is recommended to have at least
+ *       DB_MAX_PATH_LENGTH length.
+ */
+void
+fileio_make_keys_name (char *keys_name_p, const char *db_full_name_p)
+{
+  sprintf (keys_name_p, "%s%s", db_full_name_p, FILEIO_SUFFIX_KEYS);
+}
+
+/*
+ * fileio_make_keys_name_given_path () - Build the name of KEYS file (for TDE Master Key)
+ *   return: void
+ *   keys_name_p(out): the bname of KEYS file
+ *   keys_path_p(in): the directory path of KEYS file
+ *   db_name_p(in): database name
+ *
+ * Note: The caller must have enough space to store the name of the volume
+ *       that is constructed(sprintf). It is recommended to have at least
+ *       DB_MAX_PATH_LENGTH length.
+ */
+void
+fileio_make_keys_name_given_path (char *keys_name_p, const char *keys_path_p, const char *db_name_p)
+{
+  sprintf (keys_name_p, "%s%s%s%s", keys_path_p, FILEIO_PATH_SEPARATOR (keys_path_p), db_name_p, FILEIO_SUFFIX_KEYS);
+}
+
+#ifdef UNSTABLE_TDE_FOR_REPLICATION_LOG
+/*
+ * fileio_make_ha_sock_name () - Build the name of HA socket name (for sharing TDE Data keys)
+ *   return: void
+ *   keys_name_p(out): the name of KEYS volume
+ *   dbname(in): database name
+ *
+ * Note: The caller must have enough space to store the name of the volume
+ *       that is constructed(sprintf). It is recommended to have at least
+ *       DB_MAX_PATH_LENGTH length.
+ */
+void
+fileio_make_ha_sock_name (char *sock_path_p, const char *base_path_p, const char *sock_name_p)
+{
+  sprintf (sock_path_p, "%s%s%s", base_path_p, FILEIO_PATH_SEPARATOR (base_path_p), sock_name_p);
+}
+#endif /* UNSTABLE_TDE_FOR_REPLICATION_LOG */
 
 /*
  * fileio_cache () - Cache information related to a mounted volume
@@ -6753,7 +6762,8 @@ fileio_initialize_backup (const char *db_full_name_p, const char *backup_destina
   fileio_determine_backup_buffer_size (session_p, buf_size);
 #endif
   if (prm_get_bigint_value (PRM_ID_IO_BACKUP_MAX_VOLUME_SIZE) > 0
-      && (session_p->bkup.iosize >= MIN (prm_get_bigint_value (PRM_ID_IO_BACKUP_MAX_VOLUME_SIZE), DB_INT32_MAX)))
+      && ((UINT64) session_p->bkup.iosize >=
+	  MIN (prm_get_bigint_value (PRM_ID_IO_BACKUP_MAX_VOLUME_SIZE), DB_INT32_MAX)))
     {
       er_log_debug (ARG_FILE_LINE,
 		    "Backup block buffer size %ld must be less "
@@ -8524,7 +8534,7 @@ fileio_flush_backup (THREAD_ENTRY * thread_p, FILEIO_BACKUP_SESSION * session_p)
   bool is_force_new_bkvol = false;
 
   if (prm_get_bigint_value (PRM_ID_IO_BACKUP_MAX_VOLUME_SIZE) > 0
-      && session_p->bkup.count > prm_get_bigint_value (PRM_ID_IO_BACKUP_MAX_VOLUME_SIZE))
+      && (UINT64) session_p->bkup.count > prm_get_bigint_value (PRM_ID_IO_BACKUP_MAX_VOLUME_SIZE))
     {
       er_log_debug (ARG_FILE_LINE, "Backup_flush: Backup aborted because count %d larger than max volume size %ld\n",
 		    session_p->bkup.count, prm_get_bigint_value (PRM_ID_IO_BACKUP_MAX_VOLUME_SIZE));
@@ -8618,7 +8628,7 @@ fileio_flush_backup (THREAD_ENTRY * thread_p, FILEIO_BACKUP_SESSION * session_p)
 
 	  if (is_interactive_need_new || is_force_new_bkvol
 	      || (prm_get_bigint_value (PRM_ID_IO_BACKUP_MAX_VOLUME_SIZE) > 0
-		  && (session_p->bkup.voltotalio >= prm_get_bigint_value (PRM_ID_IO_BACKUP_MAX_VOLUME_SIZE))))
+		  && ((UINT64) session_p->bkup.voltotalio >= prm_get_bigint_value (PRM_ID_IO_BACKUP_MAX_VOLUME_SIZE))))
 	    {
 #if defined(CUBRID_DEBUG)
 	      fprintf (stdout, "open a new backup volume\n");
@@ -11522,10 +11532,10 @@ fileio_initialize_res (THREAD_ENTRY * thread_p, FILEIO_PAGE * io_page, PGLENGTH 
   io_page->prv.volid = -1;
 
   io_page->prv.ptype = '\0';
-  io_page->prv.pflag_reserve_1 = '\0';
+  io_page->prv.pflag = '\0';
   io_page->prv.p_reserve_1 = 0;
   io_page->prv.p_reserve_2 = 0;
-  io_page->prv.p_reserve_3 = 0;
+  io_page->prv.tde_nonce = 0;
 }
 
 

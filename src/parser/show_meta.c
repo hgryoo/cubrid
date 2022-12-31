@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -400,9 +399,9 @@ metadata_of_index_header (SHOW_ONLY_ALL flag)
     {"Btid", "varchar(64)"},
     {"Node_level", "int"},
     {"Max_key_len", "int"},
-    {"Num_oids", "int"},
-    {"Num_nulls", "int"},
-    {"Num_keys", "int"},
+    {"Num_oids", "bigint"},
+    {"Num_nulls", "bigint"},
+    {"Num_keys", "bigint"},
     {"Topclass_oid", "varchar(64)"},
     {"Unique", "int"},
     {"Overflow_vfid", "varchar(32)"},
@@ -445,19 +444,25 @@ metadata_of_index_capacity (SHOW_ONLY_ALL flag)
     {"Index_name", "varchar(256)"},
     {"Btid", "varchar(64)"},
     {"Num_distinct_key", "int"},
-    {"Total_value", "int"},
+    {"Total_value", "bigint"},
     {"Avg_num_value_per_key", "int"},
     {"Num_leaf_page", "int"},
     {"Num_non_leaf_page", "int"},
+    {"Num_ovf_page", "int"},
     {"Num_total_page", "int"},
     {"Height", "int"},
     {"Avg_key_len", "int"},
     {"Avg_rec_len", "int"},
     {"Total_space", "varchar(64)"},
-    {"Total_used_space", "varchar(64)"},
-    {"Total_free_space", "varchar(64)"},
-    {"Avg_num_page_key", "int"},
-    {"Avg_page_free_space", "varchar(64)"}
+    {"Total_used_space_non_ovf", "varchar(64)"},
+    {"Total_free_space_non_ovf", "varchar(64)"},
+    {"Total_used_space_ovf", "varchar(64)"},
+    {"Total_free_space_ovf", "varchar(64)"},
+    {"Avg_num_key_per_page_non_ovf", "int"},
+    {"Avg_free_space_per_page_non_ovf", "varchar(64)"},
+    {"Avg_num_ovf_page_per_key", "int"},
+    {"Avg_free_space_per_page_ovf", "varchar(64)"},
+    {"Max_num_ovf_page_a_key", "int"}
   };
 
   static const SHOWSTMT_COLUMN_ORDERBY orderby[] = {

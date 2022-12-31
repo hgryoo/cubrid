@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -40,7 +39,6 @@
 #include "class_object.h"
 #include "environment_variable.h"
 #include "set_object.h"
-#include "cci_applier.h"
 #include "schema_manager.h"
 #include "dbtype.h"
 
@@ -139,26 +137,32 @@ sl_write_catalog (void)
 static int
 sl_read_catalog (void)
 {
-  FILE *catalog_fp;
+  FILE *read_catalog_fp;
   char info[LINE_MAX];
 
-  catalog_fp = fopen (sql_catalog_path, "r");
+  read_catalog_fp = fopen (sql_catalog_path, "r");
 
-  if (catalog_fp == NULL)
+  if (read_catalog_fp == NULL)
     {
       return sl_write_catalog ();
     }
 
-  if (fgets (info, LINE_MAX, catalog_fp) == NULL)
+  if (fgets (info, LINE_MAX, read_catalog_fp) == NULL)
     {
+      if (read_catalog_fp != NULL)
+	{
+	  fclose (read_catalog_fp);
+	}
       return ER_FAILED;
     }
 
   if (sscanf (info, CATALOG_FORMAT, &sl_Info.curr_file_id, &sl_Info.last_inserted_sql_id) != 2)
     {
+      fclose (read_catalog_fp);
       return ER_FAILED;
     }
 
+  fclose (read_catalog_fp);
   return NO_ERROR;
 }
 
@@ -401,7 +405,7 @@ sl_write_update_sql (DB_OTMPL * inst_tp, DB_VALUE * key)
 
       string_buffer serial_name_strbuf;
 
-      sl_print_att_value (serial_name_strbuf, "name", inst_tp->assignments, inst_tp->nassigns);
+      sl_print_att_value (serial_name_strbuf, SERIAL_ATTR_UNIQUE_NAME, inst_tp->assignments, inst_tp->nassigns);
       char *serial_name = trim_single_quote ((char *) serial_name_strbuf.get_buffer (), serial_name_strbuf.len ());
 
       string_buffer alter_strbuf;

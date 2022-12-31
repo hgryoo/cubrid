@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -282,8 +281,6 @@ static char *bit_to_string (DB_VALUE * value, char string_delimiter, bool plain_
 static char *set_to_string (DB_VALUE * value, char begin_notation, char end_notation, int max_entries,
 			    bool plain_string, CSQL_OUTPUT_TYPE output_type, char column_encolser);
 static char *duplicate_string (const char *string);
-static char *string_to_string (const char *string_value, char string_delimiter, char string_introducer, int length,
-			       int *result_length, bool plain_string, bool change_single_quote);
 static int get_object_print_format (void);
 
 /*
@@ -392,7 +389,7 @@ add_commas (char *string)
 static void
 strip_trailing_zeros (char *numeric_string)
 {
-  register char *prefix;
+  char *prefix;
   size_t remainder_len;
 
   if (numeric_string == NULL)
@@ -1230,7 +1227,7 @@ csql_string_to_plain_string (const char *string_value, int length, int *result_l
  *   plain_string(in): refine string for plain output
  *   change_single_quote(in): refine string for query output
  */
-static char *
+char *
 string_to_string (const char *string_value, char string_delimiter, char string_introducer, int length,
 		  int *result_length, bool plain_string, bool change_single_quote)
 {
@@ -1342,7 +1339,7 @@ csql_db_value_as_string (DB_VALUE * value, int *length, bool plain_string, CSQL_
   int len = 0;
   char string_delimiter =
     (output_type != CSQL_UNKNOWN_OUTPUT) ? column_enclosure : default_string_profile.string_delimiter;
-  bool change_single_quote = (output_type == CSQL_QUERY_OUTPUT && column_enclosure == '\'');
+  bool change_single_quote = (output_type != CSQL_UNKNOWN_OUTPUT && column_enclosure == '\'');
 
   if (value == NULL)
     {
@@ -1383,7 +1380,7 @@ csql_db_value_as_string (DB_VALUE * value, int *length, bool plain_string, CSQL_
     case DB_TYPE_FLOAT:
       result =
 	double_to_string ((double) db_get_float (value), default_float_profile.fieldwidth,
-			  default_float_profile.precision, default_float_profile.leadingsign, NULL, NULL,
+			  default_float_profile.precision, default_float_profile.leadingsign, nullptr, nullptr,
 			  default_float_profile.leadingzeros, default_float_profile.trailingzeros,
 			  default_float_profile.commas, default_float_profile.format);
       if (result)
@@ -1394,7 +1391,7 @@ csql_db_value_as_string (DB_VALUE * value, int *length, bool plain_string, CSQL_
     case DB_TYPE_DOUBLE:
       result =
 	double_to_string (db_get_double (value), default_double_profile.fieldwidth, default_double_profile.precision,
-			  default_double_profile.leadingsign, NULL, NULL, default_double_profile.leadingzeros,
+			  default_double_profile.leadingsign, nullptr, nullptr, default_double_profile.leadingzeros,
 			  default_double_profile.trailingzeros, default_double_profile.commas,
 			  default_double_profile.format);
       if (result)

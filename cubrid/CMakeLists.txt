@@ -1,20 +1,19 @@
 #
-# Copyright (C) 2008 Search Solution Corporation
-# Copyright (C) 2016 CUBRID Corporation
-#
-#   This program is free software; you can redistribute it and/or modify
-#   it under the terms of the GNU General Public License as published by
-#   the Free Software Foundation; either version 2 of the License, or
-#   (at your option) any later version.
-#
-#  This program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with this program; if not, write to the Free Software
-#  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+#  Copyright 2008 Search Solution Corporation
+#  Copyright 2016 CUBRID Corporation
+# 
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+# 
+#       http://www.apache.org/licenses/LICENSE-2.0
+# 
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+# 
 #
 
 set(COMPAT_SOURCES
@@ -90,6 +89,7 @@ set(BASE_SOURCES
   ${BASE_DIR}/event_log.c
   ${BASE_DIR}/fault_injection.c
   ${BASE_DIR}/fileline_location.cpp
+  ${BASE_DIR}/filesys_temp.cpp
   ${BASE_DIR}/fixed_alloc.c
   ${BASE_DIR}/ini_parser.c
   ${BASE_DIR}/intl_support.c
@@ -111,7 +111,7 @@ set(BASE_SOURCES
   ${BASE_DIR}/mprec.c
   ${BASE_DIR}/object_representation_sr.c
   ${BASE_DIR}/packer.cpp
-  ${BASE_DIR}/get_clockfreq.c
+  ${BASE_DIR}/get_clock_freq.c
   ${BASE_DIR}/perf.cpp
   ${BASE_DIR}/pinnable_buffer.cpp
   ${BASE_DIR}/pinning.cpp
@@ -138,6 +138,7 @@ set (BASE_HEADERS
   ${BASE_DIR}/error_manager.h
   ${BASE_DIR}/extensible_array.hpp
   ${BASE_DIR}/fileline_location.hpp
+  ${BASE_DIR}/filesys_temp.hpp
   ${BASE_DIR}/locale_helper.hpp
   ${BASE_DIR}/lockfree_address_marker.hpp
   ${BASE_DIR}/lockfree_bitmap.hpp
@@ -180,13 +181,16 @@ set(CONNECTION_SOURCES
   ${CONNECTION_DIR}/connection_globals.c
   ${CONNECTION_DIR}/server_support.c
   ${CONNECTION_DIR}/connection_support.c
+  ${CONNECTION_DIR}/host_lookup.c
   )
 
 set(COMMUNICATION_SOURCES
+  ${COMMUNICATION_DIR}/network_common.cpp
   ${COMMUNICATION_DIR}/network_interface_sr.c
   ${COMMUNICATION_DIR}/network_sr.c
   )
 
+  
 set(MONITOR_SOURCES
   ${MONITOR_DIR}/monitor_collect.cpp
   ${MONITOR_DIR}/monitor_registration.cpp
@@ -208,7 +212,7 @@ set(QUERY_SOURCES
   ${QUERY_DIR}/fetch.c
   ${QUERY_DIR}/filter_pred_cache.c
   ${QUERY_DIR}/list_file.c
-  ${QUERY_DIR}/method_scan.c
+  ${QUERY_DIR}/dblink_scan.c
   ${QUERY_DIR}/numeric_opfunc.c
   ${QUERY_DIR}/partition.c
   ${QUERY_DIR}/query_aggregate.cpp
@@ -229,7 +233,8 @@ set(QUERY_SOURCES
   ${QUERY_DIR}/stream_to_xasl.c
   ${QUERY_DIR}/string_opfunc.c
   ${QUERY_DIR}/string_regex.cpp
-  ${QUERY_DIR}/spatial_opfunc.cpp
+  ${QUERY_DIR}/string_regex_std.cpp
+  ${QUERY_DIR}/string_regex_re2.cpp
   ${QUERY_DIR}/vacuum.c
   ${QUERY_DIR}/xasl_cache.c
   )
@@ -240,7 +245,6 @@ set(QUERY_HEADERS
   ${QUERY_DIR}/query_monitoring.hpp
   ${QUERY_DIR}/query_reevaluation.hpp
   ${QUERY_DIR}/scan_json_table.hpp
-  ${QUERY_DIR}/string_regex.hpp
   )
 
 set(OBJECT_SOURCES
@@ -260,6 +264,27 @@ set(JSP_SOURCES
   ${JSP_DIR}/jsp_comm.c
   ${JSP_DIR}/jsp_file.c
   ${JSP_DIR}/jsp_sr.c
+  )
+
+set(METHOD_SOURCES
+  ${METHOD_DIR}/method_connection_sr.cpp
+  ${METHOD_DIR}/method_connection_pool.cpp
+  ${METHOD_DIR}/method_def.cpp
+  ${METHOD_DIR}/method_error.cpp
+  ${METHOD_DIR}/method_invoke_builtin.cpp
+  ${METHOD_DIR}/method_invoke_group.cpp
+  ${METHOD_DIR}/method_invoke_java.cpp
+  ${METHOD_DIR}/method_query_cursor.cpp
+  ${METHOD_DIR}/method_query_util.cpp
+  ${METHOD_DIR}/method_struct_invoke.cpp
+  ${METHOD_DIR}/method_struct_value.cpp
+  ${METHOD_DIR}/method_struct_oid_info.cpp
+  ${METHOD_DIR}/method_struct_query.cpp
+  ${METHOD_DIR}/method_struct_schema_info.cpp
+  ${METHOD_DIR}/method_struct_parameter_info.cpp
+  ${METHOD_DIR}/method_scan.cpp
+  ${METHOD_DIR}/method_runtime_context.cpp
+  ${METHOD_DIR}/query_method.cpp
   )
 
 set(TRANSACTION_SOURCES
@@ -290,6 +315,7 @@ set(TRANSACTION_SOURCES
   ${TRANSACTION_DIR}/transaction_sr.c
   ${TRANSACTION_DIR}/transaction_transient.cpp
   ${TRANSACTION_DIR}/wait_for_graph.c
+  ${TRANSACTION_DIR}/flashback.c
   )
 set(TRANSACTION_HEADERS
   ${TRANSACTION_DIR}/client_credentials.hpp
@@ -308,6 +334,7 @@ set(TRANSACTION_HEADERS
   ${TRANSACTION_DIR}/mvcc_table.hpp
   ${TRANSACTION_DIR}/transaction_global.hpp
   ${TRANSACTION_DIR}/transaction_transient.hpp
+  ${TRANSACTION_DIR}/flashback.h
   )
 
 set(STORAGE_SOURCES
@@ -334,6 +361,7 @@ set(STORAGE_SOURCES
   ${STORAGE_DIR}/statistics_sr.c
   ${STORAGE_DIR}/storage_common.c
   ${STORAGE_DIR}/system_catalog.c
+  ${STORAGE_DIR}/tde.c
   )
 set(STORAGE_HEADERS
   ${STORAGE_DIR}/btree_unique.hpp
@@ -423,6 +451,7 @@ SET_SOURCE_FILES_PROPERTIES(
   ${EXECUTABLE_SOURCES}
   ${HEAPLAYER_SOURCES}
   ${JSP_SOURCES}
+  ${METHOD_SOURCES}
   ${LOADDB_SOURCES}
   ${MONITOR_SOURCES}
   ${OBJECT_SOURCES}
@@ -447,6 +476,7 @@ set (CUBRID_LIB_SOURCES
   ${EXECUTABLE_SOURCES}
   ${HEAPLAYER_SOURCES}
   ${JSP_SOURCES}
+  ${METHOD_SOURCES}
   ${LOADDB_SOURCES}
   ${MONITOR_SOURCES}
   ${OBJECT_SOURCES}
@@ -493,9 +523,6 @@ if(WIN32)
     ${LOADER_LEXER_OUTPUT}
     PROPERTIES COMPILE_FLAGS /WX-
   )
-  if(TARGET_PLATFORM_BITS EQUAL 32)
-    target_compile_definitions(cubrid PRIVATE _USE_32BIT_TIME_T)
-  endif(TARGET_PLATFORM_BITS EQUAL 32)
   target_link_libraries(cubrid LINK_PRIVATE ws2_32 ${JVM_LIBS})
   set_target_properties(cubrid PROPERTIES LINK_FLAGS "/DEF:\"${CMAKE_SOURCE_DIR}/win/libcubrid/libcubrid.def\"" LINK_FLAGS_RELEASE "/NODEFAULTLIB:libcmt.lib" LINK_FLAGS_DEBUG "/NODEFAULTLIB:msvcrt.lib")
 endif(WIN32)
@@ -503,9 +530,12 @@ target_include_directories(cubrid PRIVATE ${JAVA_INC} ${EP_INCLUDES} ${FLEX_INCL
 if(UNIX)
   target_link_libraries(cubrid LINK_PRIVATE -Wl,-whole-archive ${EP_LIBS} -Wl,-no-whole-archive)
   target_link_libraries(cubrid LINK_PUBLIC ${CURSES_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
+  target_link_libraries(cubrid PUBLIC stdc++fs)
 else(UNIX)
   target_link_libraries(cubrid LINK_PRIVATE ${EP_LIBS})
 endif(UNIX)
+# for dblink
+target_link_libraries(cubrid cascci)
 
 add_dependencies(cubrid ${EP_TARGETS} gen_loader_grammar gen_loader_lexer)
 
@@ -526,6 +556,8 @@ if(AT_LEAST_ONE_UNIT_TEST)
 
   target_link_libraries(cubrid-win-lib PRIVATE
     ws2_32
+    cascci
+    cubridcs
     ${JVM_LIBS}
     ${EP_LIBS}
     )
@@ -570,7 +602,10 @@ install(FILES
   ${BASE_DIR}/error_code.h
   DESTINATION ${CUBRID_INCLUDEDIR} COMPONENT Header
   )
-
+install(FILES
+  ${API_DIR}/cubrid_log.h
+  DESTINATION ${CUBRID_INCLUDEDIR} COMPONENT Header
+  )
 # install pdb files for debugging on windows
 if(WIN32)
   install(DIRECTORY

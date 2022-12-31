@@ -1,20 +1,19 @@
 #
-# Copyright (C) 2008 Search Solution Corporation
-# Copyright (C) 2016 CUBRID Corporation
-#
-#   This program is free software; you can redistribute it and/or modify
-#   it under the terms of the GNU General Public License as published by
-#   the Free Software Foundation; either version 2 of the License, or
-#   (at your option) any later version.
-#
-#  This program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  GNU General Public License for more details.
-#
-#  You should have received a copy of the GNU General Public License
-#  along with this program; if not, write to the Free Software
-#  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+#  Copyright 2008 Search Solution Corporation
+#  Copyright 2016 CUBRID Corporation
+# 
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+# 
+#       http://www.apache.org/licenses/LICENSE-2.0
+# 
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+# 
 #
 
 set(LIBCUBRIDESQL_SOURCES
@@ -345,33 +344,6 @@ if(UNIX)
   target_link_libraries(unittests_bit LINK_PRIVATE cubrid)
 endif(UNIX)
 
-
-# compat utils
-if(UNIX)
-  SET_SOURCE_FILES_PROPERTIES(
-    ${EXECUTABLES_DIR}/util_front.c
-    PROPERTIES LANGUAGE CXX
-  )
-  add_executable(addvoldb ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(backupdb ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(checkdb ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(commdb ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(compactdb ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(copydb ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(createdb ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(deletedb ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(installdb ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(killtran ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(loaddb ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(lockdb ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(optimizedb ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(renamedb ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(restoredb ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(spacedb ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(sqlx ${EXECUTABLES_DIR}/util_front.c)
-  add_executable(unloaddb ${EXECUTABLES_DIR}/util_front.c)
-endif(UNIX)
-
 # install
 install(TARGETS
   cubridesql
@@ -389,33 +361,6 @@ install(TARGETS
   LIBRARY DESTINATION ${CUBRID_LIBDIR} COMPONENT Library
   PUBLIC_HEADER DESTINATION ${CUBRID_INCLUDEDIR} COMPONENT Header
   )
-
-# install compats
-if(UNIX)
-  install(TARGETS
-    addvoldb
-    backupdb
-    checkdb
-    commdb
-    compactdb
-    copydb
-    createdb
-    deletedb
-    installdb
-    killtran
-    loaddb
-    lockdb
-    optimizedb
-    renamedb
-    restoredb
-    spacedb
-    sqlx
-    unloaddb
-    RUNTIME DESTINATION ${CUBRID_COMPATDIR} COMPONENT Application
-    )
-  # TODO: compat scripts start|stop_cubrid?
-endif(UNIX)
-
 
 # install pdb files for debugging on windows
 if(WIN32)

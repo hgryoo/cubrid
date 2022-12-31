@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -1826,18 +1825,19 @@ fetch_peek_arith (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 	  DB_TIMESTAMP db_timestamp;
 	  DB_DATETIME sys_datetime;
 	  DB_TIME db_time;
-	  struct timeb tloc;
+	  time_t sec;
+	  int millisec;
 	  struct tm *c_time_struct, tm_val;
 
 	  /* get the local time of the system */
-	  ftime (&tloc);
-	  c_time_struct = localtime_r (&tloc.time, &tm_val);
+	  util_get_second_and_ms_since_epoch (&sec, &millisec);
+	  c_time_struct = localtime_r (&sec, &tm_val);
 
 	  if (c_time_struct != NULL)
 	    {
 	      db_datetime_encode (&sys_datetime, c_time_struct->tm_mon + 1, c_time_struct->tm_mday,
 				  c_time_struct->tm_year + 1900, c_time_struct->tm_hour, c_time_struct->tm_min,
-				  c_time_struct->tm_sec, tloc.millitm);
+				  c_time_struct->tm_sec, millisec);
 	    }
 
 	  db_time = sys_datetime.time / 1000;
@@ -4635,7 +4635,7 @@ is_argument_wrapped_with_cast_op (const REGU_VARIABLE * regu_var)
 
   if (regu_var->type == TYPE_INARITH || regu_var->type == TYPE_OUTARITH)
     {
-      return (regu_var->value.arithptr->opcode == T_CAST);
+      return (regu_var->value.arithptr->opcode == T_CAST || regu_var->value.arithptr->opcode == T_CAST_WRAP);
     }
 
   return false;

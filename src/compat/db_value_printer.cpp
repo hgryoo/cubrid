@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -103,6 +102,27 @@ void db_value_printer::describe_money (const db_monetary *value)
     {
       m_buf ("%s%.2f", intl_get_money_esc_ISO_symbol (value->type), (value->amount > 0 ? DBL_MAX : -DBL_MAX));
     }
+}
+
+//--------------------------------------------------------------------------------
+void db_value_printer::describe_comment_value (const db_value *value)
+{
+  INTL_CODESET codeset = INTL_CODESET_NONE;
+  const char *src, *end;
+
+  codeset = db_get_string_codeset (value);
+  if (codeset != LANG_SYS_CODESET)
+    {
+      m_buf ("%s", lang_charset_introducer (codeset));
+    }
+
+  m_buf += '\'';
+
+  src = db_get_string (value);
+  end = src + db_get_string_size (value);
+  m_buf.add_bytes (end - src, src);
+
+  m_buf += '\'';
 }
 
 //--------------------------------------------------------------------------------
@@ -276,11 +296,11 @@ void db_value_printer::describe_data (const db_value *value)
       break;
 
     case DB_TYPE_FLOAT:
-      describe_real (m_buf, db_get_float (value), DB_FLOAT_DECIMAL_PRECISION);
+      m_buf ("%f", (double) db_get_float (value));
       break;
 
     case DB_TYPE_DOUBLE:
-      describe_real (m_buf, db_get_double (value), DB_DOUBLE_DECIMAL_PRECISION);
+      m_buf ("%e", (double) db_get_double (value));
       break;
 
     case DB_TYPE_NUMERIC:

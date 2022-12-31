@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -45,6 +44,7 @@
 #define NULL_VOLDES   (-1)	/* Value of a null (invalid) vol descriptor */
 
 #define FILEIO_INITIAL_BACKUP_UNITS    0
+#define FILEIO_NO_BACKUP_UNITS         -1
 
 /* Note: this value must be at least as large as PATH_MAX */
 #define FILEIO_MAX_USER_RESPONSE_SIZE 2000
@@ -58,6 +58,12 @@
 #define FILEIO_SECOND_BACKUP_VOL_INFO     1
 #define FILEIO_BACKUP_NUM_THREADS_AUTO    0
 #define FILEIO_BACKUP_SLEEP_MSECS_AUTO    0
+
+/* FILEIO_PAGE_FLAG (pflag in FILEIO_PAGE_RESERVED) */
+#define FILEIO_PAGE_FLAG_ENCRYPTED_AES 0x1
+#define FILEIO_PAGE_FLAG_ENCRYPTED_ARIA 0x2
+
+#define FILEIO_PAGE_FLAG_ENCRYPTED_MASK 0x3
 
 #if defined(WINDOWS)
 #define STR_PATH_SEPARATOR "\\"
@@ -84,6 +90,7 @@
 #define FILEIO_VOLINFO_SUFFIX        "_vinf"
 #define FILEIO_VOLLOCK_SUFFIX        "__lock"
 #define FILEIO_SUFFIX_DWB            "_dwb"
+#define FILEIO_SUFFIX_KEYS           "_keys"
 #define FILEIO_MAX_SUFFIX_LENGTH     7
 
 typedef enum
@@ -168,10 +175,10 @@ struct fileio_page_reserved
   INT32 pageid;			/* Page identifier */
   INT16 volid;			/* Volume identifier where the page reside */
   unsigned char ptype;		/* Page type */
-  unsigned char pflag_reserve_1;	/* unused - Reserved field */
+  unsigned char pflag;
   INT32 p_reserve_1;
   INT32 p_reserve_2;		/* unused - Reserved field */
-  INT64 p_reserve_3;		/* unused - Reserved field */
+  INT64 tde_nonce;		/* tde nonce. atomic counter for temp pages, lsa for perm pages */
 };
 
 typedef struct fileio_page_watermark FILEIO_PAGE_WATERMARK;
@@ -534,6 +541,11 @@ extern void fileio_make_backup_volume_info_name (char *backup_volinfo_name, cons
 extern void fileio_make_backup_name (char *backup_name, const char *nopath_volname, const char *backup_path,
 				     FILEIO_BACKUP_LEVEL level, int unit_num);
 extern void fileio_make_dwb_name (char *dwb_name_p, const char *dwb_path_p, const char *db_name_p);
+extern void fileio_make_keys_name (char *keys_name_p, const char *db_name_p);
+extern void fileio_make_keys_name_given_path (char *keys_name_p, const char *keys_path_p, const char *db_name_p);
+#ifdef UNSTABLE_TDE_FOR_REPLICATION_LOG
+extern void fileio_make_ha_sock_name (char *sock_path_p, const char *base_path_p, const char *sock_name_p);
+#endif /* UNSTABLE_TDE_FOR_REPLICATION_LOG */
 extern void fileio_remove_all_backup (THREAD_ENTRY * thread_p, int level);
 extern FILEIO_BACKUP_SESSION *fileio_initialize_backup (const char *db_fullname, const char *backup_destination,
 							FILEIO_BACKUP_SESSION * session, FILEIO_BACKUP_LEVEL level,

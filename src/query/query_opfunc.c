@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -6308,7 +6307,8 @@ qdata_get_single_tuple_from_list_id (THREAD_ENTRY * thread_p, qfile_list_id * li
   int length;
   TP_DOMAIN *domain_p;
   char *ptr;
-  int tuple_count, value_count, i;
+  INT64 tuple_count;
+  int value_count, i;
   QPROC_DB_VALUE_LIST value_list;
   int error_code;
 
@@ -7143,8 +7143,6 @@ qdata_evaluate_connect_by_root (THREAD_ENTRY * thread_p, void *xasl_p, regu_vari
     }
   while (bitval);		/* the parent tuple pos is null for the root node */
 
-  qfile_close_scan (thread_p, &s_id);
-
   /* here tuple_rec.tpl is the root tuple; get the required column */
 
   for (i = 0, valp = xptr->val_list->valp; valp; i++, valp = valp->next)
@@ -7159,6 +7157,7 @@ qdata_evaluate_connect_by_root (THREAD_ENTRY * thread_p, void *xasl_p, regu_vari
     {
       if (qexec_get_tuple_column_value (tuple_rec.tpl, i, result_val_p, regu_p->domain) != NO_ERROR)
 	{
+	  qfile_close_scan (thread_p, &s_id);
 	  return false;
 	}
     }
@@ -7169,14 +7168,18 @@ qdata_evaluate_connect_by_root (THREAD_ENTRY * thread_p, void *xasl_p, regu_vari
 	{
 	  if (pr_clone_value (xasl->instnum_val, result_val_p) != NO_ERROR)
 	    {
+	      qfile_close_scan (thread_p, &s_id);
 	      return false;
 	    }
 	}
       else
 	{
+	  qfile_close_scan (thread_p, &s_id);
 	  return false;
 	}
     }
+
+  qfile_close_scan (thread_p, &s_id);
 
   return true;
 }
@@ -7264,19 +7267,19 @@ qdata_evaluate_qprior (THREAD_ENTRY * thread_p, void *xasl_p, regu_variable_node
       tuple_rec.tpl = NULL;
     }
 
-  qfile_close_scan (thread_p, &s_id);
-
   if (tuple_rec.tpl != NULL)
     {
       /* fetch val list from the parent tuple */
       if (fetch_val_list (thread_p, xptr->proc.connect_by.prior_regu_list_pred, vd, NULL, NULL, tuple_rec.tpl, PEEK) !=
 	  NO_ERROR)
 	{
+	  qfile_close_scan (thread_p, &s_id);
 	  return false;
 	}
       if (fetch_val_list (thread_p, xptr->proc.connect_by.prior_regu_list_rest, vd, NULL, NULL, tuple_rec.tpl, PEEK) !=
 	  NO_ERROR)
 	{
+	  qfile_close_scan (thread_p, &s_id);
 	  return false;
 	}
 
@@ -7286,6 +7289,7 @@ qdata_evaluate_qprior (THREAD_ENTRY * thread_p, void *xasl_p, regu_variable_node
       /* evaluate the modified regu_p */
       if (fetch_copy_dbval (thread_p, regu_p, vd, NULL, NULL, tuple_rec.tpl, result_val_p) != NO_ERROR)
 	{
+	  qfile_close_scan (thread_p, &s_id);
 	  return false;
 	}
     }
@@ -7293,6 +7297,8 @@ qdata_evaluate_qprior (THREAD_ENTRY * thread_p, void *xasl_p, regu_variable_node
     {
       db_make_null (result_val_p);
     }
+
+  qfile_close_scan (thread_p, &s_id);
 
   return true;
 }
@@ -8536,7 +8542,7 @@ qdata_regexp_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_
     assert (index == no_args);
 
     // *INDENT-OFF*
-    std::function<int(DB_VALUE*, DB_VALUE*[], const int, cub_regex_object**, char**)> regexp_func;
+    std::function<int(DB_VALUE*, DB_VALUE*[], const int, cub_compiled_regex**)> regexp_func;
     switch (function_p->ftype)
     {
       case F_REGEXP_COUNT:
@@ -8567,7 +8573,7 @@ qdata_regexp_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_
       }
 
     cub_compiled_regex *compiled_regex = function_p->tmp_obj->compiled_regex;
-    error_status = regexp_func (function_p->value, args, no_args, &compiled_regex->regex, &compiled_regex->pattern);
+    error_status = regexp_func (function_p->value, args, no_args, &compiled_regex);
     if (error_status != NO_ERROR)
       {
 	goto exit;

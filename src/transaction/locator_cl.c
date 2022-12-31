@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -199,6 +198,19 @@ locator_set_sig_interrupt (int set)
       log_set_interrupt (set);
     }
 
+}
+
+/*
+ * locator_get_sig_interrupt () -
+ *
+ * return: lc_Is_siginterrupt
+ *
+ * Note:
+ */
+int
+locator_get_sig_interrupt ()
+{
+  return lc_Is_siginterrupt;
 }
 
 /*
@@ -661,14 +673,7 @@ locator_lock (MOP mop, LC_OBJTYPE isclass, LOCK lock, LC_FETCH_VERSION_TYPE fetc
   cache_lock.isolation = TM_TRAN_ISOLATION ();
   if (ws_get_lock (mop) != NULL_LOCK)
     {
-#if 0
-      /* Normally, use current version since the object was already locked. However, for safety reason when promote
-       * S_LOCK to X_LOCK is better to use dirty version. This is needed to protect against wrong cached S-locks on
-       * client (the server release S-lock and the S-lock is not decached on client side). */
-      if (lock == X_LOCK && ws_get_lock (mop) == S_LOCK && isclass == LC_INSTANCE)
-#else
       if (isclass == LC_INSTANCE)
-#endif
 	{
 	  fetch_version_type = LC_FETCH_DIRTY_VERSION;
 	}
@@ -3142,15 +3147,7 @@ locator_find_class_by_name (const char *classname, LOCK lock, MOP * class_mop)
 MOP
 locator_find_class (const char *classname)
 {
-  MOP class_mop;
-  LOCK lock = SCH_S_LOCK;	/* This is done to avoid some deadlocks caused by our parsing */
-
-  if (locator_find_class_by_name (classname, lock, &class_mop) != LC_CLASSNAME_EXIST)
-    {
-      class_mop = NULL;
-    }
-
-  return class_mop;
+  return locator_find_class_with_purpose (classname, false);
 }
 
 /*
@@ -3167,23 +3164,35 @@ locator_find_class (const char *classname)
 MOP
 locator_find_class_with_purpose (const char *classname, bool for_update)
 {
-  MOP class_mop;
+  MOP class_mop = NULL;
   LOCK lock = SCH_S_LOCK;	/* This is done to avoid some deadlocks caused by our parsing */
-  if (for_update == false)
+  LC_FIND_CLASSNAME found = LC_CLASSNAME_EXIST;
+
+  lock = for_update ? SCH_M_LOCK : SCH_S_LOCK;
+
+  found = locator_find_class_by_name (classname, lock, &class_mop);
+  if (found == LC_CLASSNAME_EXIST)
     {
-      lock = SCH_S_LOCK;
-    }
-  else
-    {
-      lock = SCH_M_LOCK;
+      return class_mop;
     }
 
-  if (locator_find_class_by_name (classname, lock, &class_mop) != LC_CLASSNAME_EXIST)
+  /* This is the case when the loaddb utility is executed with the --no-user-specified-name option as the dba user. */
+  if (db_get_client_type () == DB_CLIENT_TYPE_ADMIN_LOADDB_COMPAT)
     {
-      class_mop = NULL;
+      char other_class_name[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+
+      do_find_class_by_query (classname, other_class_name, DB_MAX_IDENTIFIER_LENGTH);
+      if (other_class_name[0] != '\0')
+	{
+	  found = locator_find_class_by_name (other_class_name, lock, &class_mop);
+	  if (found == LC_CLASSNAME_EXIST)
+	    {
+	      return class_mop;
+	    }
+	}
     }
 
-  return class_mop;
+  return NULL;
 }
 
 #if defined (ENABLE_UNUSED_FUNCTION)
@@ -4879,6 +4888,11 @@ locator_mflush (MOP mop, void *mf)
       LC_ONEOBJ_SET_HAS_UNIQUE_INDEX (mflush->obj);
     }
 
+  if (WS_IS_TRIGGER_INVOLVED (mop))
+    {
+      LC_ONEOBJ_SET_TRIGGER_INVOLVED (mflush->obj);
+    }
+
   HFID_COPY (&mflush->obj->hfid, hfid);
   COPY_OID (&mflush->obj->class_oid, ws_oid (class_mop));
   COPY_OID (&mflush->obj->oid, oid);
@@ -5739,6 +5753,11 @@ locator_create_heap_if_needed (MOP class_mop, bool reuse_oid)
 	}
 
       ws_dirty (class_mop);
+
+      if (locator_flush_class (class_mop) != NO_ERROR)
+	{
+	  return NULL;
+	}
     }
 
   assert (!OID_ISNULL (sm_ch_rep_dir (class_obj)));

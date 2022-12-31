@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -1094,6 +1093,61 @@ xvacuum (THREAD_ENTRY * thread_p)
 }
 
 /*
+ * xvacuum_dump - Dump the contents of vacuum
+ *
+ * return: nothing
+ *
+ *   outfp(in): FILE stream where to dump the vacuum. If NULL is given,
+ *            it is dumped to stdout.
+ */
+void
+xvacuum_dump (THREAD_ENTRY * thread_p, FILE * outfp)
+{
+  LOG_PAGEID min_log_pageid = NULL_PAGEID;
+  int archive_number;
+
+  assert (outfp != NULL);
+
+  if (!vacuum_Is_booted)
+    {
+      fprintf (outfp, "vacuum did not boot properly.\n");
+      return;
+    }
+
+  min_log_pageid = vacuum_min_log_pageid_to_keep (thread_p);
+  if (min_log_pageid == NULL_PAGEID)
+    {
+      /* this is an assertion case but ignore. */
+      fprintf (outfp, "vacuum did not boot properly.\n");
+      return;
+    }
+
+  fprintf (outfp, "\n");
+  fprintf (outfp, "*** Vacuum Dump ***\n");
+  fprintf (outfp, "First log page ID referenced = %lld ", min_log_pageid);
+
+  if (logpb_is_page_in_archive (min_log_pageid))
+    {
+      LOG_CS_ENTER_READ_MODE (thread_p);
+      archive_number = logpb_get_archive_number (thread_p, min_log_pageid);
+      if (archive_number < 0)
+	{
+	  /* this is an assertion case but ignore. */
+	  fprintf (outfp, "\n");
+	}
+      else
+	{
+	  fprintf (outfp, "(in %s%s%03d)\n", log_Prefix, FILEIO_SUFFIX_LOGARCHIVE, archive_number);
+	}
+      LOG_CS_EXIT (thread_p);
+    }
+  else
+    {
+      fprintf (outfp, "(in %s)\n", fileio_get_base_file_name (log_Name_active));
+    }
+}
+
+/*
  * vacuum_initialize () - Initialize necessary structures for vacuum.
  *
  * return			: Void.
@@ -1187,7 +1241,7 @@ vacuum_initialize (THREAD_ENTRY * thread_p, int vacuum_log_block_npages, VFID * 
       vacuum_Workers[i].log_zip_p = NULL;
       vacuum_Workers[i].undo_data_buffer = NULL;
       vacuum_Workers[i].undo_data_buffer_capacity = 0;
-      vacuum_Workers[i].private_lru_index = pgbuf_assign_private_lru (thread_p, true, i);
+      vacuum_Workers[i].private_lru_index = pgbuf_assign_private_lru (thread_p);
       vacuum_Workers[i].heap_objects = NULL;
       vacuum_Workers[i].heap_objects_capacity = 0;
       vacuum_Workers[i].prefetch_log_buffer = NULL;
@@ -1213,6 +1267,8 @@ vacuum_boot (THREAD_ENTRY * thread_p)
   if (prm_get_bool_value (PRM_ID_DISABLE_VACUUM))
     {
       /* for debug only */
+      (void) log_Gl.mvcc_table.update_global_oldest_visible ();
+
       return NO_ERROR;
     }
 
@@ -1586,7 +1642,9 @@ vacuum_heap_page (THREAD_ENTRY * thread_p, VACUUM_HEAP_OBJECT * heap_objects, in
 	}
     }
 
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, helper.home_page, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   helper.initial_home_free_space = spage_get_free_space_without_saving (thread_p, helper.home_page, NULL);
 
@@ -1800,7 +1858,9 @@ vacuum_heap_page (THREAD_ENTRY * thread_p, VACUUM_HEAP_OBJECT * heap_objects, in
 				   helper.home_vpid.volid, helper.home_vpid.pageid);
 	      goto end;
 	    }
+#if !defined (NDEBUG)
 	  (void) pgbuf_check_page_ptype (thread_p, helper.home_page, PAGE_HEAP);
+#endif /* !NDEBUG */
 	}
       /* Continue to next object. */
     }
@@ -2407,6 +2467,7 @@ vacuum_heap_get_hfid_and_file_type (THREAD_ENTRY * thread_p, VACUUM_HEAP_HELPER 
 {
   int error_code = NO_ERROR;	/* Error code. */
   OID class_oid = OID_INITIALIZER;	/* Class OID. */
+  FILE_DESCRIPTORS file_descriptor;
   FILE_TYPE ftype;
 
   assert (helper != NULL);
@@ -2427,34 +2488,18 @@ vacuum_heap_get_hfid_and_file_type (THREAD_ENTRY * thread_p, VACUUM_HEAP_HELPER 
   assert (!OID_ISNULL (&class_oid));
 
   /* Get HFID for class OID. */
-  error_code = heap_get_class_info (thread_p, &class_oid, &helper->hfid, &ftype, NULL);
-  if (error_code == ER_HEAP_UNKNOWN_OBJECT)
+  error_code = file_descriptor_get (thread_p, vfid, &file_descriptor);
+  if (error_code != NO_ERROR)
     {
-      FILE_DESCRIPTORS file_descriptor;
-
-      /* clear expected error */
-      er_clear ();
-      error_code = NO_ERROR;
-
-      error_code = file_descriptor_get (thread_p, vfid, &file_descriptor);
+      assert_release (false);
+    }
+  else
+    {
+      helper->hfid = file_descriptor.heap.hfid;
+      error_code = file_get_type (thread_p, vfid, &ftype);
       if (error_code != NO_ERROR)
 	{
 	  assert_release (false);
-	}
-      else
-	{
-	  helper->hfid = file_descriptor.heap.hfid;
-	  error_code = file_get_type (thread_p, vfid, &ftype);
-	  if (error_code != NO_ERROR)
-	    {
-	      assert_release (false);
-	    }
-	  else
-	    {
-	      vacuum_er_log_warning (VACUUM_ER_LOG_HEAP | VACUUM_ER_LOG_DROPPED_FILES, "%s",
-				     "vacuuming heap found deleted class oid, however hfid and file type "
-				     "have been successfully loaded from file header. ");
-	    }
 	}
     }
   if (error_code != NO_ERROR)
@@ -5557,7 +5602,14 @@ vacuum_recover_lost_block_data (THREAD_ENTRY * thread_p)
 VACUUM_LOG_BLOCKID
 vacuum_get_log_blockid (LOG_PAGEID pageid)
 {
-  return ((pageid == NULL_PAGEID) ? VACUUM_NULL_LOG_BLOCKID : (pageid / vacuum_Data.log_block_npages));
+  if (prm_get_bool_value (PRM_ID_DISABLE_VACUUM) || pageid == NULL_PAGEID)
+    {
+      return VACUUM_NULL_LOG_BLOCKID;
+    }
+
+  assert (vacuum_Data.log_block_npages != 0);
+
+  return pageid / vacuum_Data.log_block_npages;
 }
 
 /*
@@ -6683,7 +6735,7 @@ vacuum_rv_set_next_page_dropped_files (THREAD_ENTRY * thread_p, LOG_RCV * rcv)
   VPID_COPY (&page->next_page, (VPID *) rcv->data);
 
   /* Check recovery data is as expected */
-  assert (rcv->length = sizeof (VPID));
+  assert (rcv->length == sizeof (VPID));
 
   vacuum_er_log (VACUUM_ER_LOG_RECOVERY, "Set link for dropped files from page %d|%d to page %d|%d.",
 		 pgbuf_get_vpid_ptr (rcv->pgptr)->pageid, pgbuf_get_vpid_ptr (rcv->pgptr)->volid, page->next_page.volid,
@@ -8038,7 +8090,7 @@ vacuum_data_page::is_empty () const
 bool
 vacuum_data_page::is_index_valid (INT16 index) const
 {
-  return index >= index_unvacuumed || index < index_free;
+  return index >= index_unvacuumed && index < index_free;
 }
 
 INT16

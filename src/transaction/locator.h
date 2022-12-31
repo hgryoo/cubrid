@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -200,6 +199,8 @@ typedef enum
 #define LC_FLAG_HAS_INDEX	0x01	/* Used for flushing, set if object has index */
 #define LC_FLAG_UPDATED_BY_ME	0x02	/* Used by MVCC to identify that an object was updated by current transaction. */
 #define LC_FLAG_HAS_UNIQUE_INDEX 0x04	/* Used for flushing, set if object has unique index */
+#define LC_FLAG_TRIGGER_INVOLVED 0x08	/* Used for supplemental logging to know whether trigger is involved
+					   or not, set if do_Trigger_involved is true */
 
 #define LC_ONEOBJ_SET_HAS_INDEX(obj) \
   (obj)->flag |= LC_FLAG_HAS_INDEX
@@ -213,6 +214,11 @@ typedef enum
 #define LC_ONEOBJ_SET_UPDATED_BY_ME(obj) \
   (obj)->flag |= LC_FLAG_UPDATED_BY_ME
 
+#define LC_ONEOBJ_SET_TRIGGER_INVOLVED(obj) \
+  (obj)->flag |= LC_FLAG_TRIGGER_INVOLVED
+
+#define LC_ONEOBJ_IS_TRIGGER_INVOLVED(obj) \
+  (((obj)->flag & LC_FLAG_TRIGGER_INVOLVED) != 0)
 
 typedef struct lc_copyarea_oneobj LC_COPYAREA_ONEOBJ;
 struct lc_copyarea_oneobj

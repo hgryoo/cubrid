@@ -1,20 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation
- * Copyright (C) 2016 CUBRID Corporation
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -915,7 +913,7 @@ qo_top_plan_new (QO_PLAN * plan)
 
       /* GROUP BY */
       /* if we have rollup, we do not skip the group by */
-      if (group_by && !group_by->with_rollup)
+      if (group_by && !group_by->flag.with_rollup)
 	{
 	  PT_NODE *group_sort_list = NULL;
 
@@ -4219,18 +4217,17 @@ cost_cmp:
     {
       return PLAN_COMP_EQ;
     }
-  if (af <= bf && aa <= ba)
+  if (af + aa <= bf + ba)
     {
       QO_PLAN_CMP_CHECK_COST (af + aa, bf + ba);
       return PLAN_COMP_LT;
     }
-  if (bf <= af && ba <= aa)
+  else
     {
       QO_PLAN_CMP_CHECK_COST (bf + ba, af + aa);
       return PLAN_COMP_GT;
     }
 
-  return PLAN_COMP_UNK;
 #endif /* OLD_CODE */
 }
 
@@ -6483,6 +6480,7 @@ planner_visit_node (QO_PLANNER * planner, QO_PARTITION * partition, PT_HINT_ENUM
   QO_INFO *new_info = (QO_INFO *) NULL;
   int i, j;
   bool check_afj_terms = false;
+  bool is_dummy_term = false;
   BITSET_ITERATOR bi, bj;
   BITSET nl_join_terms;		/* nested-loop join terms */
   BITSET sm_join_terms;		/* sort merge join terms */
@@ -6745,9 +6743,15 @@ planner_visit_node (QO_PLANNER * planner, QO_PARTITION * partition, PT_HINT_ENUM
 	    edge_cnt++;
 
 	    /* set join type */
-	    if (join_type == NO_JOIN)
-	      {			/* the first time */
+	    if (join_type == NO_JOIN || is_dummy_term)
+	      {
+		/* the first time except dummy term */
 		join_type = QO_TERM_JOIN_TYPE (term);
+		is_dummy_term = QO_TERM_CLASS (term) == QO_TC_DUMMY_JOIN ? true : false;
+	      }
+	    else if (QO_TERM_CLASS (term) == QO_TC_DUMMY_JOIN)
+	      {
+		/* The dummy join term is excluded from the outer join check. */
 	      }
 	    else
 	      {			/* already assigned */
@@ -8348,7 +8352,7 @@ qo_search_planner (QO_PLANNER * planner)
       node = tree->info.query.q.select.group_by;
       if (node != NULL)
 	{
-	  if (node->with_rollup);
+	  if (node->flag.with_rollup);
 	  /* if we have group by and the hint, we allow the hint only if we have group by descending on first column.
 	   * Otherwise we clear it */
 	  else if (has_hint && node->info.sort_spec.asc_or_desc == PT_ASC)
@@ -8522,7 +8526,7 @@ qo_search_partition_join (QO_PLANNER * planner, QO_PARTITION * partition, BITSET
       QO_INFO *r_info, *f_info;
       QO_PLAN *r_plan, *f_plan;
       PT_NODE *entity;
-      bool found_f_edge, found_other_edge;
+      bool found_f_edge, found_other_edge, found_r_edge;
       BITSET_ITERATOR bi, bj, bt;
       QO_PLAN_COMPARE_RESULT cmp;
       BITSET derived_nodes;
@@ -8549,6 +8553,17 @@ qo_search_partition_join (QO_PLANNER * planner, QO_PARTITION * partition, BITSET
 	  if (entity->info.spec.derived_table)
 	    {			/* inline view */
 	      bitset_add (&derived_nodes, r);
+	      continue;		/* OK */
+	    }
+
+	  /*
+	   * The first node is not excluded up to 10 nodes.
+	   * In fact, the logic to exclude from the first node is not perfect because the cost of index scan is not compared.
+	   * TO_DO : remove routines related to excluding first node
+	   */
+	  if (nodes_cnt <= 10)
+	    {
+	      bitset_add (&first_nodes, r);
 	      continue;		/* OK */
 	    }
 
@@ -8615,6 +8630,48 @@ qo_search_partition_join (QO_PLANNER * planner, QO_PARTITION * partition, BITSET
 			{
 			  continue;	/* do not skip out index scan plan */
 			}
+		    }
+
+		  /* check for join-connectivity of r_node to f_node */
+		  found_r_edge = found_other_edge = false;	/* init */
+		  for (t = bitset_iterate (&remaining_terms, &bt); t != -1 && !found_other_edge;
+		       t = bitset_next_member (&bt))
+		    {
+		      term = QO_ENV_TERM (env, t);
+
+		      if (!QO_IS_EDGE_TERM (term))
+			{
+			  continue;
+			}
+
+		      if (!BITSET_MEMBER (QO_TERM_NODES (term), QO_NODE_IDX (r_node)))
+			{
+			  continue;
+			}
+
+		      /* check for f_node's edges */
+		      if (BITSET_MEMBER (QO_TERM_NODES (term), QO_NODE_IDX (f_node)))
+			{
+			  /* edge between f_node and r_node */
+
+			  for (i = 0; i < QO_TERM_CAN_USE_INDEX (term) && !found_r_edge; i++)
+			    {
+			      if (QO_NODE_IDX (QO_SEG_HEAD (QO_TERM_INDEX_SEG (term, i))) == QO_NODE_IDX (r_node))
+				{
+				  found_r_edge = true;	/* indexable edge */
+				}
+			    }
+			}
+		      else
+			{
+			  /* edge between f_node and other_node */
+			  found_other_edge = true;
+			}
+		    }
+
+		  if (!found_r_edge || found_other_edge)
+		    {
+		      continue;	/* do not skip out having other edge or non-inner index scan */
 		    }
 
 		  /* do not add r_node to the first_nodes */
@@ -10993,7 +11050,7 @@ qo_plan_compute_iscan_sort_list (QO_PLAN * root, PT_NODE * group_by, bool * is_i
       /* is for group_by skip */
       if (group_by != NULL)
 	{
-	  assert (!group_by->with_rollup);
+	  assert (!group_by->flag.with_rollup);
 
 	  /* check for constant col's group node */
 	  pt_to_pos_descr_groupby (parser, &pos_descr, node, tree);

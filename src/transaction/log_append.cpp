@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -30,14 +29,14 @@
 #include "thread_manager.hpp"
 #include "vacuum.h"
 
-static bool log_Zip_support = false;
-static int log_Zip_min_size_to_compress = 255;
 #if !defined(SERVER_MODE)
 static LOG_ZIP *log_zip_undo = NULL;
 static LOG_ZIP *log_zip_redo = NULL;
 static char *log_data_ptr = NULL;
 static int log_data_length = 0;
 #endif
+bool log_Zip_support = false;
+int log_Zip_min_size_to_compress = 255;
 
 size_t
 LOG_PRIOR_LSA_LAST_APPEND_OFFSET ()
@@ -71,8 +70,6 @@ static void prior_lsa_append_data (int length);
 static LOG_LSA prior_lsa_next_record_internal (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, LOG_TDES *tdes,
     int with_lock);
 static void prior_update_header_mvcc_info (const LOG_LSA &record_lsa, MVCCID mvccid);
-static LOG_ZIP *log_append_get_zip_undo (THREAD_ENTRY *thread_p);
-static LOG_ZIP *log_append_get_zip_redo (THREAD_ENTRY *thread_p);
 static char *log_append_get_data_ptr (THREAD_ENTRY *thread_p);
 static bool log_append_realloc_data_ptr (THREAD_ENTRY *thread_p, int length);
 
@@ -88,6 +85,7 @@ log_append_info::log_append_info ()
   , nxio_lsa (NULL_LSA)
   , prev_lsa (NULL_LSA)
   , log_pgptr (NULL)
+  , appending_page_tde_encrypted (false)
 {
 
 }
@@ -97,6 +95,7 @@ log_append_info::log_append_info (const log_append_info &other)
   , nxio_lsa {other.nxio_lsa.load ()}
   , prev_lsa (other.prev_lsa)
   , log_pgptr (other.log_pgptr)
+  , appending_page_tde_encrypted (other.appending_page_tde_encrypted)
 {
 
 }
@@ -284,6 +283,9 @@ prior_lsa_alloc_and_copy_data (THREAD_ENTRY *thread_p, LOG_RECTYPE rec_type, LOG
 
   node->log_header.type = rec_type;
 
+  node->tde_encrypted = false;
+
+  node->data_header_length = 0;
   node->data_header = NULL;
   node->ulength = 0;
   node->udata = NULL;
@@ -336,10 +338,12 @@ prior_lsa_alloc_and_copy_data (THREAD_ENTRY *thread_p, LOG_RECTYPE rec_type, LOG
     case LOG_DUMMY_HA_SERVER_STATE:
     case LOG_DUMMY_OVF_RECORD:
     case LOG_DUMMY_GENERIC:
+    case LOG_SUPPLEMENTAL_INFO:
 
     case LOG_2PC_COMMIT_DECISION:
     case LOG_2PC_ABORT_DECISION:
     case LOG_COMMIT_WITH_POSTPONE:
+    case LOG_COMMIT_WITH_POSTPONE_OBSOLETE:
     case LOG_SYSOP_START_POSTPONE:
     case LOG_COMMIT:
     case LOG_ABORT:
@@ -416,6 +420,8 @@ prior_lsa_alloc_and_copy_crumbs (THREAD_ENTRY *thread_p, LOG_RECTYPE rec_type, L
     }
 
   node->log_header.type = rec_type;
+
+  node->tde_encrypted = false;
 
   node->data_header_length = 0;
   node->data_header = NULL;
@@ -1248,6 +1254,10 @@ prior_lsa_gen_record (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, LOG_RECTYPE 
       node->data_header_length = sizeof (LOG_REC_START_POSTPONE);
       break;
 
+    case LOG_COMMIT_WITH_POSTPONE_OBSOLETE:
+      node->data_header_length = sizeof (LOG_REC_START_POSTPONE_OBSOLETE);
+      break;
+
     case LOG_SYSOP_START_POSTPONE:
       node->data_header_length = sizeof (LOG_REC_SYSOP_START_POSTPONE);
       break;
@@ -1274,7 +1284,9 @@ prior_lsa_gen_record (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, LOG_RECTYPE 
     case LOG_END_CHKPT:
       node->data_header_length = sizeof (LOG_REC_CHKPT);
       break;
-
+    case LOG_SUPPLEMENTAL_INFO:
+      node->data_header_length = sizeof (LOG_REC_SUPPLEMENT);
+      break;
     default:
       break;
     }
@@ -1452,7 +1464,8 @@ prior_lsa_next_record_internal (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, LO
 	  LSA_SET_NULL (&tdes->rcv.sysop_start_postpone_lsa);
 	}
     }
-  else if (node->log_header.type == LOG_COMMIT_WITH_POSTPONE)
+  else if (node->log_header.type == LOG_COMMIT_WITH_POSTPONE
+	   || node->log_header.type == LOG_COMMIT_WITH_POSTPONE_OBSOLETE)
     {
       /* we need the commit with postpone LSA for recovery. we have to save it under prior_lsa_mutex protection */
       tdes->rcv.tran_start_postpone_lsa = start_lsa;
@@ -1462,6 +1475,12 @@ prior_lsa_next_record_internal (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, LO
       /* same as with system op start postpone, we need to save these log records lsa */
       assert (LSA_ISNULL (&tdes->rcv.atomic_sysop_start_lsa));
       tdes->rcv.atomic_sysop_start_lsa = start_lsa;
+    }
+  else if (node->log_header.type == LOG_COMMIT || node->log_header.type == LOG_ABORT)
+    {
+      /* mark the commit/abort in the transaction,  */
+      assert (tdes->commit_abort_lsa.is_null ());
+      LSA_COPY (&tdes->commit_abort_lsa, &start_lsa);
     }
 
   log_prior_lsa_append_advance_when_doesnot_fit (node->data_header_length);
@@ -1538,6 +1557,28 @@ LOG_LSA
 prior_lsa_next_record_with_lock (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, log_tdes *tdes)
 {
   return prior_lsa_next_record_internal (thread_p, node, tdes, LOG_PRIOR_LSA_WITH_LOCK);
+}
+
+int
+prior_set_tde_encrypted (log_prior_node *node, LOG_RCVINDEX recvindex)
+{
+  if (!tde_is_loaded())
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_TDE_CIPHER_IS_NOT_LOADED, 0);
+      return ER_TDE_CIPHER_IS_NOT_LOADED;
+    }
+
+  tde_er_log ("prior_set_tde_encrypted(): rcvindex = %s\n", rv_rcvindex_string (recvindex));
+
+  node->tde_encrypted = true;
+
+  return NO_ERROR;
+}
+
+bool
+prior_is_tde_encrypted (const log_prior_node *node)
+{
+  return node->tde_encrypted;
 }
 
 /*
@@ -1678,7 +1719,7 @@ prior_lsa_append_data (int length)
   log_prior_lsa_append_align ();
 }
 
-static LOG_ZIP *
+LOG_ZIP *
 log_append_get_zip_undo (THREAD_ENTRY *thread_p)
 {
 #if defined (SERVER_MODE)
@@ -1704,7 +1745,7 @@ log_append_get_zip_undo (THREAD_ENTRY *thread_p)
 #endif
 }
 
-static LOG_ZIP *
+LOG_ZIP *
 log_append_get_zip_redo (THREAD_ENTRY *thread_p)
 {
 #if defined (SERVER_MODE)

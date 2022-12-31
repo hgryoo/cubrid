@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -71,6 +70,7 @@
 #include "db_value_printer.hpp"
 #include "log_append.hpp"
 #include "string_buffer.hpp"
+#include "tde.h"
 
 #include <set>
 
@@ -675,9 +675,6 @@ static int heap_estimate_avg_length (THREAD_ENTRY * thread_p, const HFID * hfid,
 static int heap_get_capacity (THREAD_ENTRY * thread_p, const HFID * hfid, INT64 * num_recs, INT64 * num_recs_relocated,
 			      INT64 * num_recs_inovf, INT64 * num_pages, int *avg_freespace, int *avg_freespace_nolast,
 			      int *avg_reclength, int *avg_overhead);
-#if 0				/* TODO: remove unused */
-static int heap_moreattr_attrinfo (int attrid, HEAP_CACHE_ATTRINFO * attr_info);
-#endif
 
 static int heap_attrinfo_recache_attrepr (HEAP_CACHE_ATTRINFO * attr_info, bool islast_reset);
 static int heap_attrinfo_recache (THREAD_ENTRY * thread_p, REPR_ID reprid, HEAP_CACHE_ATTRINFO * attr_info);
@@ -750,7 +747,6 @@ static int heap_class_get_partition_info (THREAD_ENTRY * thread_p, const OID * c
 static int heap_get_partition_attributes (THREAD_ENTRY * thread_p, const OID * cls_oid, ATTR_ID * type_id,
 					  ATTR_ID * values_id);
 static int heap_get_class_subclasses (THREAD_ENTRY * thread_p, const OID * class_oid, int *count, OID ** subclasses);
-
 static unsigned int heap_hash_vpid (const void *key_vpid, unsigned int htsize);
 static int heap_compare_vpid (const void *key_vpid1, const void *key_vpid2);
 static unsigned int heap_hash_hfid (const void *key_hfid, unsigned int htsize);
@@ -881,6 +877,8 @@ STATIC_INLINE int heap_copy_chain (THREAD_ENTRY * thread_p, PAGE_PTR page_heap, 
   __attribute__ ((ALWAYS_INLINE));
 STATIC_INLINE int heap_get_last_vpid (THREAD_ENTRY * thread_p, const HFID * hfid, VPID * last_vpid)
   __attribute__ ((ALWAYS_INLINE));
+
+STATIC_INLINE bool check_supplemental_log (THREAD_ENTRY * thread_p, OID * classoid) __attribute__ ((ALWAYS_INLINE));
 
 // *INDENT-OFF*
 static void heap_scancache_block_allocate (cubmem::block &b, size_t size);
@@ -1286,10 +1284,12 @@ heap_scan_pb_lock_and_fetch_debug (THREAD_ENTRY * thread_p, const VPID * vpid_pt
 #endif /* !NDEBUG */
     }
 
+#if !defined (NDEBUG)
   if (pgptr != NULL)
     {
       (void) pgbuf_check_page_ptype (thread_p, pgptr, PAGE_HEAP);
     }
+#endif /* !NDEBUG */
 
   return pgptr;
 }
@@ -3013,7 +3013,9 @@ heap_stats_update_internal (THREAD_ENTRY * thread_p, const HFID * hfid, VPID * l
       goto exit_on_error;
     }
 
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, hdr_pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   /*
    * Peek the header record to find statistics for insertion.
@@ -3534,7 +3536,9 @@ heap_stats_find_best_page (THREAD_ENTRY * thread_p, const HFID * hfid, int neede
     }
   assert (hdr_page_watcher.pgptr != NULL);
 
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, hdr_page_watcher.pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   if (spage_get_record (thread_p, hdr_page_watcher.pgptr, HEAP_HEADER_AND_CHAIN_SLOTID, &hdr_recdes, PEEK) != S_SUCCESS)
     {
@@ -3858,7 +3862,9 @@ heap_stats_sync_bestspace (THREAD_ENTRY * thread_p, const HFID * hfid, HEAP_HDR_
 	    {
 	      break;
 	    }
+#if !defined (NDEBUG)
 	  (void) pgbuf_check_page_ptype (thread_p, pg_watcher.pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
 	  if (old_pg_watcher.pgptr != NULL)
 	    {
@@ -4159,6 +4165,28 @@ heap_copy_chain (THREAD_ENTRY * thread_p, PAGE_PTR page_heap, HEAP_CHAIN * chain
   assert (recdes.length >= (int) sizeof (*chain));
   memcpy (chain, recdes.data, sizeof (*chain));
   return NO_ERROR;
+}
+
+/*
+ * check_supplemental_log () - check if appending supplemental log is available
+ *
+ * return	  : available or not
+ */
+STATIC_INLINE bool
+check_supplemental_log (THREAD_ENTRY * thread_p, OID * classoid)
+{
+  /* The value for PRM_ID_SUPPLEMENTAL_LOG is required to be greater than 0 if supplemental log is to be appended 
+   * no_supplemental_log is used to block duplicated supplemental logs. So this value should be false if supplemental log is to be appended 
+   */
+  if (prm_get_integer_value (PRM_ID_SUPPLEMENTAL_LOG) > 0 && !thread_p->no_supplemental_log && !OID_ISNULL (classoid))
+    {
+      if (!oid_is_system_class (classoid))
+	{
+	  return true;
+	}
+    }
+
+  return false;
 }
 
 /*
@@ -4988,7 +5016,9 @@ heap_vpid_next (THREAD_ENTRY * thread_p, const HFID * hfid, PAGE_PTR pgptr, VPID
   RECDES recdes;		/* Record descriptor to page header */
   int ret = NO_ERROR;
 
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   /* Get either the heap header or chain record */
   if (spage_get_record (thread_p, pgptr, HEAP_HEADER_AND_CHAIN_SLOTID, &recdes, PEEK) != S_SUCCESS)
@@ -5032,7 +5062,9 @@ heap_vpid_prev (THREAD_ENTRY * thread_p, const HFID * hfid, PAGE_PTR pgptr, VPID
   RECDES recdes;		/* Record descriptor to page header */
   int ret = NO_ERROR;
 
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   /* Get either the header or chain record */
   if (spage_get_record (thread_p, pgptr, HEAP_HEADER_AND_CHAIN_SLOTID, &recdes, PEEK) != S_SUCCESS)
@@ -5075,7 +5107,7 @@ heap_manager_initialize (void)
 #define HEAP_MAX_FIRSTSLOTID_LENGTH (sizeof (HEAP_HDR_STATS))
 
   heap_Maxslotted_reclength = (spage_max_record_size () - HEAP_MAX_FIRSTSLOTID_LENGTH);
-  heap_Slotted_overhead = spage_slot_size ();
+  heap_Slotted_overhead = SPAGE_SLOT_SIZE;
 
   /* Initialize the class representation cache */
   ret = heap_chnguess_initialize ();
@@ -5172,6 +5204,7 @@ heap_create_internal (THREAD_ENTRY * thread_p, HFID * hfid, const OID * class_oi
   const FILE_TYPE file_type = reuse_oid ? FILE_HEAP_REUSE_SLOTS : FILE_HEAP;
   PAGE_TYPE ptype = PAGE_HEAP;
   OID null_oid = OID_INITIALIZER;
+  TDE_ALGORITHM tde_algo = TDE_ALGORITHM_NONE;
 
   int error_code = NO_ERROR;
 
@@ -5187,7 +5220,7 @@ heap_create_internal (THREAD_ENTRY * thread_p, HFID * hfid, const OID * class_oi
 
   memset (&des, 0, sizeof (des));
 
-  if (prm_get_bool_value (PRM_ID_DONT_REUSE_HEAP_FILE) == false)
+  if (prm_get_bool_value (PRM_ID_DONT_REUSE_HEAP_FILE) == false && file_type == FILE_HEAP)
     {
       /*
        * Try to reuse an already mark deleted heap file
@@ -5208,13 +5241,7 @@ heap_create_internal (THREAD_ENTRY * thread_p, HFID * hfid, const OID * class_oi
 	      ASSERT_ERROR_AND_SET (error_code);
 	      goto error;
 	    }
-	  error_code = heap_cache_class_info (thread_p, class_oid, hfid, file_type, NULL);
-	  if (error_code != NO_ERROR)
-	    {
-	      /* could not cache */
-	      ASSERT_ERROR ();
-	      goto error;
-	    }
+
 	  /* reuse successful */
 	  goto end;
 	}
@@ -5235,6 +5262,7 @@ heap_create_internal (THREAD_ENTRY * thread_p, HFID * hfid, const OID * class_oi
       ASSERT_ERROR ();
       goto error;
     }
+
   error_code = file_alloc_sticky_first_page (thread_p, &hfid->vfid, file_init_page_type, &ptype, &vpid,
 					     &addr_hdr.pgptr);
   if (error_code != NO_ERROR)
@@ -5265,14 +5293,6 @@ heap_create_internal (THREAD_ENTRY * thread_p, HFID * hfid, const OID * class_oi
   error_code = file_descriptor_update (thread_p, &hfid->vfid, &des);
   if (error_code != NO_ERROR)
     {
-      ASSERT_ERROR ();
-      goto error;
-    }
-
-  error_code = heap_cache_class_info (thread_p, class_oid, hfid, file_type, NULL);
-  if (error_code != NO_ERROR)
-    {
-      /* Failed to cache HFID. */
       ASSERT_ERROR ();
       goto error;
     }
@@ -5359,6 +5379,18 @@ heap_create_internal (THREAD_ENTRY * thread_p, HFID * hfid, const OID * class_oi
     }
 
 end:
+  /* apply TDE to created heap file if needed */
+  if (heap_get_class_tde_algorithm (thread_p, class_oid, &tde_algo) == NO_ERROR)
+    {
+      error_code = file_apply_tde_algorithm (thread_p, &hfid->vfid, tde_algo);
+      if (error_code != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  goto error;
+	}
+    }
+  /* if heap_get_class_tde_algorithm() fails, just skip to apply with expectation that a higher layer do this later */
+
   assert (error_code == NO_ERROR);
 
   log_sysop_attach_to_outer (thread_p);
@@ -5529,7 +5561,9 @@ heap_reuse (THREAD_ENTRY * thread_p, const HFID * hfid, const OID * class_oid, c
       return NULL;
     }
 
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, hdr_pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   /*
    * Start scanning every page of the heap and removing the objects.
@@ -5556,7 +5590,9 @@ heap_reuse (THREAD_ENTRY * thread_p, const HFID * hfid, const OID * class_oid, c
 	  goto error;
 	}
 
+#if !defined (NDEBUG)
       (void) pgbuf_check_page_ptype (thread_p, pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
       is_header_page = (hdr_pgptr == pgptr) ? 1 : 0;
 
@@ -5796,12 +5832,13 @@ xheap_destroy (THREAD_ENTRY * thread_p, const HFID * hfid, const OID * class_oid
  *   return: NO_ERROR
  *   hfid(in): Object heap file identifier.
  *   class_oid(in): class OID
+ *   force (in): destroy the heap forcefully, not just marking delete  even if it is DONT_REUSE_OID
  *
  * Note: Destroy the heap file associated with the given heap
  * identifier if it is a newly created heap file.
  */
 int
-xheap_destroy_newly_created (THREAD_ENTRY * thread_p, const HFID * hfid, const OID * class_oid)
+xheap_destroy_newly_created (THREAD_ENTRY * thread_p, const HFID * hfid, const OID * class_oid, const bool force)
 {
   VFID vfid;
   FILE_TYPE file_type;
@@ -5814,7 +5851,7 @@ xheap_destroy_newly_created (THREAD_ENTRY * thread_p, const HFID * hfid, const O
       ASSERT_ERROR ();
       return ret;
     }
-  if (file_type == FILE_HEAP_REUSE_SLOTS)
+  if (file_type == FILE_HEAP_REUSE_SLOTS || force)
     {
       ret = xheap_destroy (thread_p, hfid, class_oid);
       return ret;
@@ -5987,7 +6024,9 @@ heap_flush (THREAD_ENTRY * thread_p, const OID * oid)
       return;
     }
 
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   type = spage_get_record_type (pgptr, oid->slotid);
   if (type == REC_UNKNOWN)
@@ -6033,7 +6072,9 @@ heap_flush (THREAD_ENTRY * thread_p, const OID * oid)
 	  return;
 	}
 
+#if !defined (NDEBUG)
       (void) pgbuf_check_page_ptype (thread_p, pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
       (void) pgbuf_flush_with_wal (thread_p, pgptr);
       break;
@@ -6137,7 +6178,9 @@ xheap_reclaim_addresses (THREAD_ENTRY * thread_p, const HFID * hfid)
       goto exit_on_error;
     }
 
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, hdr_page_watcher.pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   hdr_recdes.data = (char *) &heap_hdr;
   hdr_recdes.area_size = sizeof (heap_hdr);
@@ -6194,7 +6237,9 @@ xheap_reclaim_addresses (THREAD_ENTRY * thread_p, const HFID * hfid)
 	  goto exit_on_error;
 	}
 
+#if !defined (NDEBUG)
       (void) pgbuf_check_page_ptype (thread_p, curr_page_watcher.pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
       if (heap_vpid_prev (thread_p, hfid, curr_page_watcher.pgptr, &prv_vpid) != NO_ERROR)
 	{
@@ -6360,7 +6405,9 @@ heap_ovf_find_vfid (THREAD_ENTRY * thread_p, const HFID * hfid, VFID * ovf_vfid,
       return NULL;
     }
 
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, addr_hdr.pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   /* Peek the header record */
 
@@ -6376,6 +6423,7 @@ heap_ovf_find_vfid (THREAD_ENTRY * thread_p, const HFID * hfid, VFID * ovf_vfid,
       if (docreate == true)
 	{
 	  FILE_DESCRIPTORS des;
+	  TDE_ALGORITHM tde_algo = TDE_ALGORITHM_NONE;
 	  /* Create the overflow file. Try to create the overflow file in the same volume where the heap was defined */
 
 	  /* START A TOP SYSTEM OPERATION */
@@ -6385,21 +6433,34 @@ heap_ovf_find_vfid (THREAD_ENTRY * thread_p, const HFID * hfid, VFID * ovf_vfid,
 	  memset (&des, 0, sizeof (des));
 	  HFID_COPY (&des.heap_overflow.hfid, hfid);
 	  des.heap_overflow.class_oid = heap_hdr->class_oid;
-	  if (file_create_with_npages (thread_p, FILE_MULTIPAGE_OBJECT_HEAP, 1, &des, ovf_vfid) == NO_ERROR)
-	    {
-	      /* Log undo, then redo */
-	      log_append_undo_data (thread_p, RVHF_STATS, &addr_hdr, sizeof (*heap_hdr), heap_hdr);
-	      VFID_COPY (&heap_hdr->ovf_vfid, ovf_vfid);
-	      log_append_redo_data (thread_p, RVHF_STATS, &addr_hdr, sizeof (*heap_hdr), heap_hdr);
-	      pgbuf_set_dirty (thread_p, addr_hdr.pgptr, DONT_FREE);
-
-	      log_sysop_commit (thread_p);
-	    }
-	  else
+	  if (file_create_with_npages (thread_p, FILE_MULTIPAGE_OBJECT_HEAP, 1, &des, ovf_vfid) != NO_ERROR)
 	    {
 	      log_sysop_abort (thread_p);
 	      ovf_vfid = NULL;
+	      goto exit;
 	    }
+
+	  if (heap_get_class_tde_algorithm (thread_p, &heap_hdr->class_oid, &tde_algo) != NO_ERROR)
+	    {
+	      log_sysop_abort (thread_p);
+	      ovf_vfid = NULL;
+	      goto exit;
+	    }
+
+	  if (file_apply_tde_algorithm (thread_p, ovf_vfid, tde_algo) != NO_ERROR)
+	    {
+	      log_sysop_abort (thread_p);
+	      ovf_vfid = NULL;
+	      goto exit;
+	    }
+
+	  /* Log undo, then redo */
+	  log_append_undo_data (thread_p, RVHF_STATS, &addr_hdr, sizeof (*heap_hdr), heap_hdr);
+	  VFID_COPY (&heap_hdr->ovf_vfid, ovf_vfid);
+	  log_append_redo_data (thread_p, RVHF_STATS, &addr_hdr, sizeof (*heap_hdr), heap_hdr);
+	  pgbuf_set_dirty (thread_p, addr_hdr.pgptr, DONT_FREE);
+
+	  log_sysop_commit (thread_p);
 	}
       else
 	{
@@ -6411,6 +6472,7 @@ heap_ovf_find_vfid (THREAD_ENTRY * thread_p, const HFID * hfid, VFID * ovf_vfid,
       VFID_COPY (ovf_vfid, &heap_hdr->ovf_vfid);
     }
 
+exit:
   pgbuf_unfix_and_init (thread_p, addr_hdr.pgptr);
 
   return ovf_vfid;
@@ -8930,7 +8992,9 @@ heap_get_num_objects (THREAD_ENTRY * thread_p, const HFID * hfid, int *npages, i
       return ER_FAILED;
     }
 
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, hdr_pg_watcher.pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   if (spage_get_record (thread_p, hdr_pg_watcher.pgptr, HEAP_HEADER_AND_CHAIN_SLOTID, &hdr_recdes, PEEK) != S_SUCCESS)
     {
@@ -8995,7 +9059,9 @@ heap_estimate (THREAD_ENTRY * thread_p, const HFID * hfid, int *npages, int *nob
       return ER_FAILED;
     }
 
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, hdr_pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   if (spage_get_record (thread_p, hdr_pgptr, HEAP_HEADER_AND_CHAIN_SLOTID, &hdr_recdes, PEEK) != S_SUCCESS)
     {
@@ -9143,7 +9209,7 @@ heap_get_capacity (THREAD_ENTRY * thread_p, const HFID * hfid, INT64 * num_recs,
 
       *num_pages += 1;
       sum_freespace += last_freespace;
-      sum_overhead += j * spage_slot_size ();
+      sum_overhead += j * SPAGE_SLOT_SIZE;
 
       while ((j--) > 0)
 	{
@@ -9532,103 +9598,6 @@ exit_on_error:
   return (ret == NO_ERROR && (ret = er_errid ()) == NO_ERROR) ? ER_FAILED : ret;
 }
 
-#if 0				/* TODO: remove unused */
-/*
- * heap_moreattr_attrinfo () - Add another attribute to the attribute information
- *                           cache
- *   return: NO_ERROR
- *   attrid(in): The information of the attribute that will be needed
- *   attr_info(in/out): The attribute information structure
- *
- * Note: The given attribute is included as part of the reading or
- * transformation process.
- */
-static int
-heap_moreattr_attrinfo (int attrid, HEAP_CACHE_ATTRINFO * attr_info)
-{
-  HEAP_ATTRVALUE *new_values;	/* The new value attribute array */
-  HEAP_ATTRVALUE *value;	/* Disk value Attr info for a particular attr */
-  int i;
-  int ret = NO_ERROR;
-
-  /*
-   * If we get an empty HEAP_CACHE_ATTRINFO, this is an error.  We can
-   * not add more attributes to an improperly initialized HEAP_CACHE_ATTRINFO
-   * structure.
-   */
-  if (attr_info->num_values == -1)
-    {
-      return ER_FAILED;
-    }
-
-  /*
-   * Make sure that the attribute is not already included
-   */
-  for (i = 0; i < attr_info->num_values; i++)
-    {
-      value = &attr_info->values[i];
-      if (value != NULL && value->attrid == attrid)
-	{
-	  return NO_ERROR;
-	}
-    }
-
-  /*
-   * Resize the value attribute array and set the attribute identifier as
-   * as part of the desired attribute list
-   */
-  i = (attr_info->num_values + 1) * sizeof (*(attr_info->values));
-
-  new_values = (HEAP_ATTRVALUE *) db_private_realloc (NULL, attr_info->values, i);
-  if (new_values == NULL)
-    {
-      goto exit_on_error;
-    }
-
-  attr_info->values = new_values;
-
-  value = &attr_info->values[attr_info->num_values];
-  value->attrid = attrid;
-  value->state = HEAP_UNINIT_ATTRVALUE;
-  value->last_attrepr = NULL;
-  value->read_attrepr = NULL;
-  attr_info->num_values++;
-
-  /*
-   * Recache attribute representation and get default value specifications
-   * for new attribute. The default values are located on the last
-   * representation
-   */
-
-  if (heap_attrinfo_recache_attrepr (attr_info, true) != NO_ERROR
-      || db_value_domain_init (&value->dbvalue, value->read_attrepr->type, value->read_attrepr->domain->precision,
-			       value->read_attrepr->domain->scale) != NO_ERROR)
-    {
-      attr_info->num_values--;
-      value->attrid = -1;
-      goto exit_on_error;
-    }
-
-end:
-
-  return ret;
-
-exit_on_error:
-
-  assert (ret != NO_ERROR);
-  if (ret == NO_ERROR)
-    {
-      assert (er_errid () != NO_ERROR);
-      ret = er_errid ();
-      if (ret == NO_ERROR)
-	{
-	  ret = ER_FAILED;
-	}
-    }
-  goto end;
-}
-#endif
-
 /*
  * heap_attrinfo_recache_attrepr () - Recache attribute information for given attrinfo for
  *                     each attribute value
@@ -9655,7 +9624,6 @@ heap_attrinfo_recache_attrepr (HEAP_CACHE_ATTRINFO * attr_info, bool islast_rese
   int srch_num_class;		/* Num of class attrs that can be searched */
   OR_ATTRIBUTE *search_attrepr;	/* Information for disk attribute */
   int i, curr_attr;
-  bool isattr_found;
   int ret = NO_ERROR;
 
   /*
@@ -9680,7 +9648,6 @@ heap_attrinfo_recache_attrepr (HEAP_CACHE_ATTRINFO * attr_info, bool islast_rese
        * Go over the list of attributes (instance, shared, and class attrs)
        * until the desired attribute is found
        */
-      isattr_found = false;
       if (islast_reset == true)
 	{
 	  search_attrepr = attr_info->last_classrepr->attributes;
@@ -9698,7 +9665,7 @@ heap_attrinfo_recache_attrepr (HEAP_CACHE_ATTRINFO * attr_info, bool islast_rese
 	  value->attrid = search_attrepr[curr_attr].id;
 	}
 
-      for (i = 0; isattr_found == false && i < srch_num_attrs; i++, search_attrepr++)
+      for (i = 0; i < srch_num_attrs; i++, search_attrepr++)
 	{
 	  /*
 	   * Is this a desired instance attribute?
@@ -9709,7 +9676,6 @@ heap_attrinfo_recache_attrepr (HEAP_CACHE_ATTRINFO * attr_info, bool islast_rese
 	       * Found it.
 	       * Initialize the attribute value information
 	       */
-	      isattr_found = true;
 	      value->attr_type = HEAP_INSTANCE_ATTR;
 	      if (islast_reset == true)
 		{
@@ -9741,7 +9707,13 @@ heap_attrinfo_recache_attrepr (HEAP_CACHE_ATTRINFO * attr_info, bool islast_rese
 		}
 
 	      num_found_attrs++;
+	      break;
 	    }
+	}
+
+      if (i < srch_num_attrs)
+	{			// found it.
+	  continue;
 	}
 
       /*
@@ -9750,8 +9722,7 @@ heap_attrinfo_recache_attrepr (HEAP_CACHE_ATTRINFO * attr_info, bool islast_rese
        * for shared attributes.
        */
 
-      for (i = 0, search_attrepr = attr_info->last_classrepr->shared_attrs;
-	   isattr_found == false && i < srch_num_shared; i++, search_attrepr++)
+      for (i = 0, search_attrepr = attr_info->last_classrepr->shared_attrs; i < srch_num_shared; i++, search_attrepr++)
 	{
 	  /*
 	   * Is this a desired shared attribute?
@@ -9762,7 +9733,6 @@ heap_attrinfo_recache_attrepr (HEAP_CACHE_ATTRINFO * attr_info, bool islast_rese
 	       * Found it.
 	       * Initialize the attribute value information
 	       */
-	      isattr_found = true;
 	      value->attr_type = HEAP_SHARED_ATTR;
 	      value->last_attrepr = search_attrepr;
 	      /*
@@ -9779,7 +9749,13 @@ heap_attrinfo_recache_attrepr (HEAP_CACHE_ATTRINFO * attr_info, bool islast_rese
 					value->last_attrepr->domain->precision, value->last_attrepr->domain->scale);
 		}
 	      num_found_attrs++;
+	      break;
 	    }
+	}
+
+      if (i < srch_num_shared)
+	{			// found it.
+	  continue;
 	}
 
       /*
@@ -9788,8 +9764,7 @@ heap_attrinfo_recache_attrepr (HEAP_CACHE_ATTRINFO * attr_info, bool islast_rese
        * for class attributes.
        */
 
-      for (i = 0, search_attrepr = attr_info->last_classrepr->class_attrs; isattr_found == false && i < srch_num_class;
-	   i++, search_attrepr++)
+      for (i = 0, search_attrepr = attr_info->last_classrepr->class_attrs; i < srch_num_class; i++, search_attrepr++)
 	{
 	  /*
 	   * Is this a desired class attribute?
@@ -9801,7 +9776,6 @@ heap_attrinfo_recache_attrepr (HEAP_CACHE_ATTRINFO * attr_info, bool islast_rese
 	       * Found it.
 	       * Initialize the attribute value information
 	       */
-	      isattr_found = true;
 	      value->attr_type = HEAP_CLASS_ATTR;
 	      if (islast_reset == true)
 		{
@@ -9825,6 +9799,7 @@ heap_attrinfo_recache_attrepr (HEAP_CACHE_ATTRINFO * attr_info, bool islast_rese
 					value->last_attrepr->domain->precision, value->last_attrepr->domain->scale);
 		}
 	      num_found_attrs++;
+	      break;
 	    }
 	}
     }
@@ -10306,7 +10281,7 @@ heap_midxkey_get_value (RECDES * recdes, OR_ATTRIBUTE * att, DB_VALUE * value, H
  */
 int
 heap_attrinfo_read_dbvalues (THREAD_ENTRY * thread_p, const OID * inst_oid, RECDES * recdes,
-			     HEAP_SCANCACHE * scan_cache, HEAP_CACHE_ATTRINFO * attr_info)
+			     HEAP_CACHE_ATTRINFO * attr_info)
 {
   int i;
   REPR_ID reprid;		/* The disk representation of the object */
@@ -10696,6 +10671,51 @@ heap_get_class_subclasses (THREAD_ENTRY * thread_p, const OID * class_oid, int *
 }
 
 /*
+ * heap_get_class_tde_algorithm () - get TDE_ALGORITHM of a given class based on the class flags
+ * return : error code or NO_ERROR
+ * thread_p (in)  :
+ * class_oid (in) : OID of the class
+ * tde_algo (out)	: TDE_ALGORITHM_NONE, TDE_ALGORITHM_AES,TDE_ALGORITHM_ARIA
+ *
+ * NOTE: this function extracts tde encryption information from class record
+ */
+int
+heap_get_class_tde_algorithm (THREAD_ENTRY * thread_p, const OID * class_oid, TDE_ALGORITHM * tde_algo)
+{
+  HEAP_SCANCACHE scan_cache;
+  RECDES recdes;
+  int error = NO_ERROR;
+
+  assert (class_oid != NULL);
+  assert (tde_algo != NULL);
+
+  /* boot parameter heap file */
+  if (OID_ISNULL (class_oid))
+    {
+      *tde_algo = TDE_ALGORITHM_NONE;
+      return error;
+    }
+
+  error = heap_scancache_quick_start_root_hfid (thread_p, &scan_cache);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  if (heap_get_class_record (thread_p, class_oid, &recdes, &scan_cache, PEEK) != S_SUCCESS)
+    {
+      heap_scancache_end (thread_p, &scan_cache);
+      return ER_FAILED;
+    }
+
+  or_class_tde_algorithm (&recdes, tde_algo);
+
+  heap_scancache_end (thread_p, &scan_cache);
+
+  return error;
+}
+
+/*
  * heap_class_get_partition_info () - Get partition information for the class
  *				      identified by class_oid
  * return : error code or NO_ERROR
@@ -10720,13 +10740,6 @@ heap_class_get_partition_info (THREAD_ENTRY * thread_p, const OID * class_oid, O
   if (heap_scancache_quick_start_root_hfid (thread_p, &scan_cache) != NO_ERROR)
     {
       return ER_FAILED;
-    }
-
-  scan_cache.mvcc_snapshot = logtb_get_mvcc_snapshot (thread_p);
-  if (scan_cache.mvcc_snapshot == NULL)
-    {
-      error = ER_FAILED;
-      goto cleanup;
     }
 
   if (heap_get_class_record (thread_p, class_oid, &recdes, &scan_cache, PEEK) != S_SUCCESS)
@@ -11992,27 +12005,25 @@ heap_attrinfo_start_with_index (THREAD_ENTRY * thread_p, OID * class_oid, RECDES
    * Go over the list of attrs until all indexed attributes (OIDs, sets)
    * are found
    */
-  for (i = 0, num_found_attrs = 0, search_attrepr = classrepr->attributes; i < classrepr->n_attributes;
-       i++, search_attrepr++)
+  num_found_attrs = 0;
+  if (idx_info->has_single_col)
     {
-      if (search_attrepr->n_btids <= 0)
+      for (i = 0, search_attrepr = classrepr->attributes; i < classrepr->n_attributes; i++, search_attrepr++)
 	{
-	  continue;
-	}
-
-      if (idx_info->has_single_col)
-	{
-	  for (j = 0; j < *num_btids; j++)
+	  if (search_attrepr->n_btids > 0)
 	    {
-	      indexp = &classrepr->indexes[j];
-	      if (indexp->n_atts == 1 && indexp->atts[0]->id == search_attrepr->id)
+	      for (j = 0; j < *num_btids; j++)
 		{
-		  set_attrids[num_found_attrs++] = search_attrepr->id;
-		  break;
+		  indexp = &classrepr->indexes[j];
+		  if (indexp->n_atts == 1 && indexp->atts[0]->id == search_attrepr->id)
+		    {
+		      set_attrids[num_found_attrs++] = search_attrepr->id;
+		      break;
+		    }
 		}
 	    }
-	}
-    }				/* for (i = 0 ...) */
+	}			/* for (i = 0 ...) */
+    }
 
   if (idx_info->has_multi_col == 0 && num_found_attrs == 0)
     {
@@ -12518,8 +12529,8 @@ heap_midxkey_key_generate (THREAD_ENTRY * thread_p, RECDES * recdes, DB_MIDXKEY 
       num_vals = func_attr_index_start + 1;
     }
   or_advance (&buf, pr_midxkey_init_boundbits (nullmap_ptr, num_vals));
-  k = 0;
-  for (i = 0; i < num_vals && k < num_vals; i++)
+
+  for (k = 0, i = 0; k < num_vals; i++, k++)
     {
       if (i == func_col_id)
 	{
@@ -12529,12 +12540,12 @@ heap_midxkey_key_generate (THREAD_ENTRY * thread_p, RECDES * recdes, DB_MIDXKEY 
 	      domain->type->index_writeval (&buf, func_res);
 	      OR_ENABLE_BOUND_BIT (nullmap_ptr, k);
 	    }
-	  k++;
+	  if (++k == num_vals)
+	    {
+	      break;
+	    }
 	}
-      if (k == num_vals)
-	{
-	  break;
-	}
+
       att = heap_locate_attribute (att_ids[i], attrinfo);
 
       error = heap_midxkey_get_value (recdes, att, &value, attrinfo);
@@ -12548,8 +12559,6 @@ heap_midxkey_key_generate (THREAD_ENTRY * thread_p, RECDES * recdes, DB_MIDXKEY 
 	{
 	  pr_clear_value (&value);
 	}
-
-      k++;
     }
 
   if (value.need_clear == true)
@@ -12597,7 +12606,7 @@ heap_midxkey_key_generate (THREAD_ENTRY * thread_p, RECDES * recdes, DB_MIDXKEY 
 DB_VALUE *
 heap_attrinfo_generate_key (THREAD_ENTRY * thread_p, int n_atts, int *att_ids, int *atts_prefix_length,
 			    HEAP_CACHE_ATTRINFO * attr_info, RECDES * recdes, DB_VALUE * db_valuep, char *buf,
-			    FUNCTION_INDEX_INFO * func_index_info, TP_DOMAIN * midxkey_domain)
+			    FUNCTION_INDEX_INFO * func_index_info, TP_DOMAIN * midxkey_domain, OID * cur_oid)
 {
   DB_VALUE *ret_valp;
   DB_VALUE *fi_res = NULL;
@@ -12608,6 +12617,15 @@ heap_attrinfo_generate_key (THREAD_ENTRY * thread_p, int n_atts, int *att_ids, i
 
   if (func_index_info)
     {
+      if (func_index_info->expr)
+	{
+	  if (heap_attrinfo_read_dbvalues (thread_p, cur_oid, recdes, func_index_info->expr->cache_attrinfo) !=
+	      NO_ERROR)
+	    {
+	      return NULL;
+	    }
+	}
+
       fi_attr_index_start = func_index_info->attr_index_start;
       fi_col_id = func_index_info->col_id;
       if (heap_eval_function_index (thread_p, func_index_info, n_atts, att_ids, attr_info, recdes, -1, db_valuep,
@@ -12616,6 +12634,15 @@ heap_attrinfo_generate_key (THREAD_ENTRY * thread_p, int n_atts, int *att_ids, i
 	  return NULL;
 	}
       fi_res = db_valuep;
+    }
+
+  if (n_atts == 1)
+    {
+      /* Single column index. */
+      if (heap_attrinfo_read_dbvalues (thread_p, cur_oid, recdes, attr_info) != NO_ERROR)
+	{
+	  return NULL;
+	}
     }
 
   /*
@@ -13250,7 +13277,7 @@ heap_get_referenced_by (THREAD_ENTRY * thread_p, OID * class_oid, const OID * ob
     }
 
   if ((heap_attrinfo_start_refoids (thread_p, class_oid, &attr_info) != NO_ERROR)
-      || heap_attrinfo_read_dbvalues (thread_p, obj_oid, recdes, NULL, &attr_info) != NO_ERROR)
+      || heap_attrinfo_read_dbvalues (thread_p, obj_oid, recdes, &attr_info) != NO_ERROR)
     {
       goto error;
     }
@@ -13801,7 +13828,9 @@ heap_check_all_pages (THREAD_ENTRY * thread_p, HFID * hfid)
 	  return DISK_ERROR;
 	}
 
+#if !defined (NDEBUG)
       (void) pgbuf_check_page_ptype (thread_p, pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
       if (spage_get_record (thread_p, pgptr, HEAP_HEADER_AND_CHAIN_SLOTID, &hdr_recdes, PEEK) != S_SUCCESS)
 	{
@@ -14176,7 +14205,7 @@ heap_dump (THREAD_ENTRY * thread_p, FILE * fp, HFID * hfid, bool dump_records)
 	      fprintf (fp, "Object-OID = %2d|%4d|%2d,\n  Length on disk = %d,\n", oid.volid, oid.pageid, oid.slotid,
 		       peek_recdes.length);
 
-	      if (heap_attrinfo_read_dbvalues (thread_p, &oid, &peek_recdes, NULL, &attr_info) != NO_ERROR)
+	      if (heap_attrinfo_read_dbvalues (thread_p, &oid, &peek_recdes, &attr_info) != NO_ERROR)
 		{
 		  fprintf (fp, "  Error ... continue\n");
 		  continue;
@@ -15423,7 +15452,9 @@ heap_rv_undoredo_pagehdr (THREAD_ENTRY * thread_p, LOG_RCV * rcv)
   RECDES recdes;
   int sp_success;
 
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, rcv->pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   recdes.area_size = recdes.length = rcv->length;
   recdes.type = REC_HOME;
@@ -16214,7 +16245,9 @@ heap_rv_redo_reuse_page (THREAD_ENTRY * thread_p, LOG_RCV * rcv)
   int sp_success;
   const bool is_header_page = ((rcv->offset != 0) ? true : false);
 
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, rcv->pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   vpid.volid = pgbuf_get_volume_id (rcv->pgptr);
   vpid.pageid = pgbuf_get_page_id (rcv->pgptr);
@@ -16471,7 +16504,7 @@ heap_set_autoincrement_value (THREAD_ENTRY * thread_p, HEAP_CACHE_ATTRINFO * att
       if (att->is_autoincrement && (value->state == HEAP_UNINIT_ATTRVALUE))
 	{
 	  OID serial_obj_oid = att->auto_increment.serial_obj.load ().oid;
-	  if (OID_ISNULL (&serial_obj_oid))
+	  if (OID_ISNULL (&serial_obj_oid) || prm_get_integer_value (PRM_ID_SUPPLEMENTAL_LOG))
 	    {
 	      memset (serial_name, '\0', sizeof (serial_name));
 	      recdes.data = NULL;
@@ -16515,62 +16548,67 @@ heap_set_autoincrement_value (THREAD_ENTRY * thread_p, HEAP_CACHE_ATTRINFO * att
 
 	      SET_AUTO_INCREMENT_SERIAL_NAME (serial_name, classname, attr_name);
 
-	      if (string != NULL && alloced_string == 1)
+	      if (OID_ISNULL (&serial_obj_oid))
 		{
-		  db_private_free_and_init (thread_p, string);
-		}
+		  if (string != NULL && alloced_string == 1)
+		    {
+		      db_private_free_and_init (thread_p, string);
+		    }
 
-	      free_and_init (classname);
+		  free_and_init (classname);
 
-	      if (db_make_varchar (&key_val, DB_MAX_IDENTIFIER_LENGTH, serial_name, (int) strlen (serial_name),
-				   LANG_SYS_CODESET, LANG_SYS_COLLATION) != NO_ERROR)
-		{
-		  ret = ER_FAILED;
-		  goto exit_on_error;
-		}
-
-	      status = xlocator_find_class_oid (thread_p, CT_SERIAL_NAME, &serial_class_oid, NULL_LOCK);
-	      if (status == LC_CLASSNAME_ERROR || status == LC_CLASSNAME_DELETED)
-		{
-		  ret = ER_FAILED;
-		  goto exit_on_error;
-		}
-
-	      classrep = heap_classrepr_get (thread_p, &serial_class_oid, NULL, NULL_REPRID, &idx_in_cache);
-	      if (classrep == NULL)
-		{
-		  ret = ER_FAILED;
-		  goto exit_on_error;
-		}
-
-	      if (classrep->indexes)
-		{
-		  BTREE_SEARCH search_result;
-		  OID serial_oid;
-
-		  BTID_COPY (&serial_btid, &(classrep->indexes[0].btid));
-		  search_result =
-		    xbtree_find_unique (thread_p, &serial_btid, S_SELECT, &key_val, &serial_class_oid, &serial_oid,
-					false);
-		  heap_classrepr_free_and_init (classrep, &idx_in_cache);
-		  if (search_result != BTREE_KEY_FOUND)
+		  if (db_make_varchar (&key_val, DB_MAX_IDENTIFIER_LENGTH, serial_name, (int) strlen (serial_name),
+				       LANG_SYS_CODESET, LANG_SYS_COLLATION) != NO_ERROR)
 		    {
 		      ret = ER_FAILED;
 		      goto exit_on_error;
 		    }
 
-		  assert (!OID_ISNULL (&serial_oid));
-		  or_aligned_oid null_aligned_oid = { oid_Null_oid };
-		  or_aligned_oid serial_aligned_oid = { serial_oid };
-		  att->auto_increment.serial_obj.compare_exchange_strong (null_aligned_oid, serial_aligned_oid);
-		}
-	      else
-		{
-		  heap_classrepr_free_and_init (classrep, &idx_in_cache);
-		  ret = ER_FAILED;
-		  goto exit_on_error;
+		  status = xlocator_find_class_oid (thread_p, CT_SERIAL_NAME, &serial_class_oid, NULL_LOCK);
+		  if (status == LC_CLASSNAME_ERROR || status == LC_CLASSNAME_DELETED)
+		    {
+		      ret = ER_FAILED;
+		      goto exit_on_error;
+		    }
+
+		  classrep = heap_classrepr_get (thread_p, &serial_class_oid, NULL, NULL_REPRID, &idx_in_cache);
+		  if (classrep == NULL)
+		    {
+		      ret = ER_FAILED;
+		      goto exit_on_error;
+		    }
+
+		  if (classrep->indexes)
+		    {
+		      BTREE_SEARCH search_result;
+		      OID serial_oid;
+
+		      BTID_COPY (&serial_btid, &(classrep->indexes[0].btid));
+		      search_result =
+			xbtree_find_unique (thread_p, &serial_btid, S_SELECT, &key_val, &serial_class_oid, &serial_oid,
+					    false);
+		      heap_classrepr_free_and_init (classrep, &idx_in_cache);
+		      if (search_result != BTREE_KEY_FOUND)
+			{
+			  ret = ER_FAILED;
+			  goto exit_on_error;
+			}
+
+		      assert (!OID_ISNULL (&serial_oid));
+		      or_aligned_oid null_aligned_oid = { oid_Null_oid };
+		      or_aligned_oid serial_aligned_oid = { serial_oid };
+		      att->auto_increment.serial_obj.compare_exchange_strong (null_aligned_oid, serial_aligned_oid);
+		    }
+		  else
+		    {
+		      heap_classrepr_free_and_init (classrep, &idx_in_cache);
+		      ret = ER_FAILED;
+		      goto exit_on_error;
+		    }
 		}
 	    }
+
+	  thread_p->no_supplemental_log = true;
 
 	  if ((att->type == DB_TYPE_SHORT) || (att->type == DB_TYPE_INTEGER) || (att->type == DB_TYPE_BIGINT))
 	    {
@@ -16603,6 +16641,25 @@ heap_set_autoincrement_value (THREAD_ENTRY * thread_p, HEAP_CACHE_ATTRINFO * att
 
 	  *is_set = 1;
 	  value->state = HEAP_READ_ATTRVALUE;
+
+	  if (prm_get_integer_value (PRM_ID_SUPPLEMENTAL_LOG) > 0)
+	    {
+	      OID serial_obj_oid = att->auto_increment.serial_obj.load ().oid;
+
+	      LOG_TDES *tdes = LOG_FIND_CURRENT_TDES (thread_p);
+
+	      assert (tdes != NULL);
+
+	      if (!tdes->has_supplemental_log)
+		{
+		  log_append_supplemental_info (thread_p, LOG_SUPPLEMENT_TRAN_USER,
+						strlen (tdes->client.get_db_user ()), tdes->client.get_db_user ());
+		  tdes->has_supplemental_log = true;
+		}
+
+	      log_append_supplemental_serial (thread_p, serial_name, 1, &att->classoid, &serial_obj_oid);
+	      thread_p->no_supplemental_log = false;
+	    }
 	}
     }
 
@@ -16721,7 +16778,9 @@ heap_compact_pages (THREAD_ENTRY * thread_p, OID * class_oid)
       goto exit_on_error;
     }
 
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, pg_watcher.pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   lock_unlock_object (thread_p, class_oid, oid_Root_class_oid, IS_LOCK, true);
 
@@ -17351,7 +17410,7 @@ heap_eval_function_index (THREAD_ENTRY * thread_p, FUNCTION_INDEX_INFO * func_in
 	  attrinfo_end = true;
 	}
 
-      if (heap_attrinfo_read_dbvalues (thread_p, &attr_info->inst_oid, recdes, NULL, cache_attr_info) != NO_ERROR)
+      if (heap_attrinfo_read_dbvalues (thread_p, &attr_info->inst_oid, recdes, cache_attr_info) != NO_ERROR)
 	{
 	  error = ER_FAILED;
 	  goto end;
@@ -18417,7 +18476,7 @@ heap_get_record_info (THREAD_ENTRY * thread_p, const OID oid, RECDES * recdes, R
 	  pgbuf_ordered_unfix (thread_p, page_watcher);
 	}
       db_make_int (record_info[HEAP_RECORD_INFO_T_REPRID], or_rep_id (recdes));
-      db_make_int (record_info[HEAP_RECORD_INFO_T_REPRID], or_chn (recdes));
+      db_make_int (record_info[HEAP_RECORD_INFO_T_CHN], or_chn (recdes));
       or_mvcc_get_header (recdes, &mvcc_header);
       db_make_bigint (record_info[HEAP_RECORD_INFO_T_MVCC_INSID], MVCC_GET_INSID (&mvcc_header));
       if (MVCC_IS_HEADER_DELID_VALID (&mvcc_header))
@@ -18428,7 +18487,6 @@ heap_get_record_info (THREAD_ENTRY * thread_p, const OID oid, RECDES * recdes, R
 	{
 	  db_make_null (record_info[HEAP_RECORD_INFO_T_MVCC_DELID]);
 	}
-      db_make_int (record_info[HEAP_RECORD_INFO_T_CHN], OR_GET_MVCC_CHN (&mvcc_header));
       db_make_int (record_info[HEAP_RECORD_INFO_T_MVCC_FLAGS], MVCC_GET_FLAG (&mvcc_header));
       if (MVCC_IS_FLAG_SET (&mvcc_header, OR_MVCC_FLAG_VALID_PREV_VERSION))
 	{
@@ -18472,7 +18530,7 @@ heap_get_record_info (THREAD_ENTRY * thread_p, const OID oid, RECDES * recdes, R
 	  return S_ERROR;
 	}
       db_make_int (record_info[HEAP_RECORD_INFO_T_REPRID], or_rep_id (recdes));
-      db_make_int (record_info[HEAP_RECORD_INFO_T_REPRID], or_chn (recdes));
+      db_make_int (record_info[HEAP_RECORD_INFO_T_CHN], or_chn (recdes));
 
       or_mvcc_get_header (recdes, &mvcc_header);
       db_make_bigint (record_info[HEAP_RECORD_INFO_T_MVCC_INSID], MVCC_GET_INSID (&mvcc_header));
@@ -18484,7 +18542,6 @@ heap_get_record_info (THREAD_ENTRY * thread_p, const OID oid, RECDES * recdes, R
 	{
 	  db_make_null (record_info[HEAP_RECORD_INFO_T_MVCC_DELID]);
 	}
-      db_make_int (record_info[HEAP_RECORD_INFO_T_CHN], OR_GET_MVCC_CHN (&mvcc_header));
       db_make_int (record_info[HEAP_RECORD_INFO_T_MVCC_FLAGS], MVCC_GET_FLAG (&mvcc_header));
       if (MVCC_IS_FLAG_SET (&mvcc_header, OR_MVCC_FLAG_VALID_PREV_VERSION))
 	{
@@ -19372,6 +19429,8 @@ heap_clear_operation_context (HEAP_OPERATION_CONTEXT * context, HFID * hfid_p)
   context->is_bulk_op = false;
 
   context->time_track = NULL;
+
+  context->do_supplemental_log = false;
 }
 
 /*
@@ -19521,8 +19580,10 @@ heap_fix_header_page (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context)
       return rc;
     }
 
+#if !defined (NDEBUG)
   /* check page type */
   (void) pgbuf_check_page_ptype (thread_p, context->header_page_watcher_p->pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   /* all ok */
   return NO_ERROR;
@@ -19583,7 +19644,9 @@ heap_fix_forward_page (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context
 	}
       return ER_FAILED;
     }
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, context->forward_page_watcher_p->pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
 #if defined(CUBRID_DEBUG)
   if (spage_get_record_type (context->forward_page_watcher_p->pgptr, forward_oid.slotid) != REC_NEWHOME)
@@ -19942,6 +20005,12 @@ heap_insert_handle_multipage_record (THREAD_ENTRY * thread_p, HEAP_OPERATION_CON
       return ER_FAILED;
     }
 
+  /*SUPPLEMENT_INSERT REDO LSA, INSERT REC_BIGONE  */
+  if (context->do_supplemental_log)
+    {
+      LSA_COPY (&context->supp_redo_lsa, logtb_find_current_tran_lsa (thread_p));
+    }
+
   /* Add a map record to point to the record in overflow */
   /* NOTE: MVCC information is held in overflow record */
   heap_build_forwarding_recdes (&context->map_recdes, REC_BIGONE, &context->ovf_oid);
@@ -20147,7 +20216,9 @@ heap_find_location_and_insert_rec_newhome (THREAD_ENTRY * thread_p, HEAP_OPERATI
 #endif
 
   assert (context->home_page_watcher_p->pgptr != NULL);
+#if !defined (NDEBUG)
   (void) pgbuf_check_page_ptype (thread_p, context->home_page_watcher_p->pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
   sp_success =
     spage_insert (thread_p, context->home_page_watcher_p->pgptr, context->recdes_p, &context->res_oid.slotid);
@@ -20476,6 +20547,8 @@ heap_delete_bigone (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, b
   OID overflow_oid;
   int rc;
 
+  LOG_TDES *tdes = NULL;
+
   /* check input */
   assert (context != NULL);
   assert (context->type == HEAP_OPERATION_DELETE);
@@ -20485,11 +20558,31 @@ heap_delete_bigone (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, b
   assert (context->overflow_page_watcher_p != NULL);
   assert (context->overflow_page_watcher_p->pgptr == NULL);
 
+  if (context->do_supplemental_log)
+    {
+      tdes = LOG_FIND_CURRENT_TDES (thread_p);
+    }
+
   /* MVCC info is in overflow page, we only keep and OID in home */
   overflow_oid = *((OID *) context->home_recdes.data);
 
   /* reset overflow watcher rank */
   PGBUF_WATCHER_RESET_RANK (context->overflow_page_watcher_p, PGBUF_ORDERED_HEAP_OVERFLOW);
+
+  if (context->do_supplemental_log)
+    {
+      /* whether it is mvcc or not, undo image does not recorded in the log */
+      RECDES ovf_recdes = RECDES_INITIALIZER;
+      if ((rc =
+	   heap_get_bigone_content (thread_p, context->scan_cache_p, PEEK, &overflow_oid, &ovf_recdes)) != S_SUCCESS)
+	{
+	  return rc;
+	}
+
+      log_append_supplemental_undo_record (thread_p, &ovf_recdes);
+
+      LSA_COPY (&context->supp_undo_lsa, &tdes->tail_lsa);
+    }
 
   if (is_mvcc_op)
     {
@@ -20513,8 +20606,10 @@ heap_delete_bigone (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, b
 	  return rc;
 	}
 
+#if !defined (NDEBUG)
       /* check overflow page type */
       (void) pgbuf_check_page_ptype (thread_p, context->overflow_page_watcher_p->pgptr, PAGE_OVERFLOW);
+#endif /* !NDEBUG */
 
       /* fetch header from overflow */
       if (heap_get_mvcc_rec_header_from_overflow (context->overflow_page_watcher_p->pgptr, &overflow_header, NULL) !=
@@ -20530,6 +20625,7 @@ heap_delete_bigone (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, b
       log_addr.pgptr = context->overflow_page_watcher_p->pgptr;
       log_addr.vfid = &context->hfid.vfid;
       log_addr.offset = overflow_oid.slotid;
+
       heap_mvcc_log_delete (thread_p, &log_addr, RVHF_MVCC_DELETE_OVERFLOW);
 
       HEAP_PERF_TRACK_LOGGING (thread_p, context);
@@ -20633,6 +20729,8 @@ heap_delete_relocation (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * contex
   OID forward_oid;
   int rc;
 
+  LOG_TDES *tdes = NULL;
+
   /* check input */
   assert (context != NULL);
   assert (context->type == HEAP_OPERATION_DELETE);
@@ -20640,6 +20738,11 @@ heap_delete_relocation (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * contex
   assert (context->home_page_watcher_p != NULL);
   assert (context->home_page_watcher_p->pgptr != NULL);
   assert (context->forward_page_watcher_p != NULL);
+
+  if (context->do_supplemental_log)
+    {
+      tdes = LOG_FIND_CURRENT_TDES (thread_p);
+    }
 
   /* get forward oid */
   forward_oid = *((OID *) context->home_recdes.data);
@@ -20955,6 +21058,16 @@ heap_delete_relocation (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * contex
 	  forward_addr.vfid = &context->hfid.vfid;
 	  forward_addr.pgptr = context->forward_page_watcher_p->pgptr;
 	  forward_addr.offset = forward_oid.slotid;
+
+	  if (context->do_supplemental_log)
+	    {
+	      /* relocation -> relocation case does not have any undo image to refer */
+	      log_append_supplemental_undo_record (thread_p, &new_forward_recdes);
+
+	      /* SUPPLEMENT_DELETE UNDO LSA */
+	      LSA_COPY (&context->supp_undo_lsa, &tdes->tail_lsa);
+	    }
+
 	  heap_mvcc_log_delete (thread_p, &forward_addr, RVHF_MVCC_DELETE_REC_NEWHOME);
 
 	  HEAP_PERF_TRACK_LOGGING (thread_p, context);
@@ -20995,6 +21108,12 @@ heap_delete_relocation (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * contex
 	  forward_addr.offset = forward_oid.slotid;
 
 	  log_append_undoredo_recdes (thread_p, RVHF_DELETE, &forward_addr, &forward_recdes, NULL);
+/*SUPPLEMENT_DELETE UNDO LSA */
+	  if (context->do_supplemental_log)
+	    {
+	      LSA_COPY (&context->supp_undo_lsa, &tdes->tail_lsa);
+	    }
+
 	  if (heap_is_reusable_oid (context->file_type))
 	    {
 	      log_append_postpone (thread_p, RVHF_MARK_REUSABLE_SLOT, &forward_addr, 0, NULL);
@@ -21069,8 +21188,11 @@ heap_delete_relocation (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * contex
        * of the heap type (reusable OID or not) as the relocated record
        * should not be referenced anywhere in the database.
        */
+
+      /* if reusable slot is deleted, then postponed log (RVHF_MARK_REUSABLE_SLOT) will appended last. 
+       * So, current log lsa after heap_log_delete_physical can points unexpected log, other than delete log. */
       heap_log_delete_physical (thread_p, context->forward_page_watcher_p->pgptr, &context->hfid.vfid, &forward_oid,
-				&forward_recdes, true, NULL);
+				&forward_recdes, true, context->do_supplemental_log ? &context->supp_undo_lsa : NULL);
 
       HEAP_PERF_TRACK_LOGGING (thread_p, context);
 
@@ -21102,12 +21224,19 @@ heap_delete_home (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, boo
 {
   int error_code = NO_ERROR;
 
+  LOG_TDES *tdes = NULL;
+
   /* check input */
   assert (context != NULL);
   assert (context->record_type == REC_HOME || context->record_type == REC_ASSIGN_ADDRESS);
   assert (context->type == HEAP_OPERATION_DELETE);
   assert (context->home_page_watcher_p != NULL);
   assert (context->home_page_watcher_p->pgptr != NULL);
+
+  if (context->do_supplemental_log)
+    {
+      tdes = LOG_FIND_CURRENT_TDES (thread_p);
+    }
 
   if (context->home_page_watcher_p->page_was_unfixed)
     {
@@ -21322,6 +21451,12 @@ heap_delete_home (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, boo
 	  rec_address.offset = context->oid.slotid;
 	  heap_mvcc_log_home_change_on_delete (thread_p, &context->home_recdes, &forwarding_recdes, &rec_address);
 
+	  /* undo lsa for SUPPLEMENT_DELETE : when REC_HOME changes to REC_RELOCATION/BIGONE */
+	  if (context->do_supplemental_log)
+	    {
+	      LSA_COPY (&context->supp_undo_lsa, &tdes->tail_lsa);
+	    }
+
 	  HEAP_PERF_TRACK_LOGGING (thread_p, context);
 
 	  /* we'll update the home page with the forwarding record */
@@ -21338,6 +21473,7 @@ heap_delete_home (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, boo
 	  rec_address.pgptr = context->home_page_watcher_p->pgptr;
 	  rec_address.vfid = &context->hfid.vfid;
 	  rec_address.offset = context->oid.slotid;
+
 	  heap_mvcc_log_delete (thread_p, &rec_address, RVHF_MVCC_DELETE_REC_HOME);
 
 	  HEAP_PERF_TRACK_LOGGING (thread_p, context);
@@ -21346,6 +21482,14 @@ heap_delete_home (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, boo
 	  home_page_updated_recdes = &built_recdes;
 
 	  perfmon_inc_stat (thread_p, PSTAT_HEAP_HOME_MVCC_DELETES);
+
+	  /* undo lsa for SUPPLEMENT_DELETE : when REC_HOME is not changed  */
+	  if (context->do_supplemental_log)
+	    {
+	      log_append_supplemental_undo_record (thread_p, &built_recdes);
+	      LSA_COPY (&context->supp_undo_lsa, &tdes->tail_lsa);
+	    }
+
 	}
 
       /* update home page and check operation result */
@@ -21366,9 +21510,11 @@ heap_delete_home (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, boo
 
       HEAP_PERF_TRACK_EXECUTE (thread_p, context);
 
-      /* log operation */
+      /* if reusable slot is deleted, then postponed log (RVHF_MARK_REUSABLE_SLOT) will appended last. 
+       * So, current log lsa after heap_log_delete_physical can points unexpected log, other than delete log. */
       heap_log_delete_physical (thread_p, context->home_page_watcher_p->pgptr, &context->hfid.vfid, &context->oid,
-				&context->home_recdes, is_reusable, NULL);
+				&context->home_recdes, is_reusable,
+				context->do_supplemental_log ? &context->supp_undo_lsa : NULL);
 
       HEAP_PERF_TRACK_LOGGING (thread_p, context);
 
@@ -21496,6 +21642,9 @@ heap_update_bigone (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, b
   int error_code = NO_ERROR;
   bool is_old_home_updated;
   RECDES new_home_recdes;
+  VFID ovf_vfid;
+
+  LOG_TDES *tdes = NULL;
 
   assert (context != NULL);
   assert (context->type == HEAP_OPERATION_UPDATE);
@@ -21503,6 +21652,11 @@ heap_update_bigone (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, b
   assert (context->home_page_watcher_p != NULL);
   assert (context->home_page_watcher_p->pgptr != NULL);
   assert (context->overflow_page_watcher_p != NULL);
+
+  if (context->do_supplemental_log)
+    {
+      tdes = LOG_FIND_CURRENT_TDES (thread_p);
+    }
 
   /* read OID of overflow record */
   context->ovf_oid = *((OID *) context->home_recdes.data);
@@ -21541,8 +21695,20 @@ heap_update_bigone (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, b
 	  goto exit;
 	}
 
+      if (heap_ovf_find_vfid (thread_p, &context->hfid, &ovf_vfid, false, PGBUF_UNCONDITIONAL_LATCH) == NULL)
+	{
+	  error_code = ER_FAILED;
+	  goto exit;
+	}
+
       /* actual logging */
-      log_append_undo_recdes2 (thread_p, RVHF_MVCC_UPDATE_OVERFLOW, NULL, first_pgptr, -1, &ovf_recdes);
+      log_append_undo_recdes2 (thread_p, RVHF_MVCC_UPDATE_OVERFLOW, &ovf_vfid, first_pgptr, -1, &ovf_recdes);
+
+      if (context->do_supplemental_log)
+	{
+	  LSA_COPY (&context->supp_undo_lsa, &tdes->tail_lsa);
+	}
+
       HEAP_PERF_TRACK_LOGGING (thread_p, context);
 
       pgbuf_set_dirty (thread_p, first_pgptr, FREE);
@@ -21562,6 +21728,20 @@ heap_update_bigone (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, b
 	  ASSERT_ERROR_AND_SET (error_code);
 	  goto exit;
 	}
+
+      /* supplemental log for REC_BIGONE to REC_BIGONE case 
+       * 1. MVCC : redo lsa for SUPPLEMENT_UPDATE, undo lsa has been saved above
+       * 2. NON-MVCC : undo, redo lsa for SUPPLEMENT_UPDATE */
+      if (context->do_supplemental_log)
+	{
+	  LSA_COPY (&context->supp_redo_lsa, &tdes->tail_lsa);
+
+	  if (!is_mvcc_op)
+	    {
+	      LSA_COPY (&context->supp_undo_lsa, &tdes->tail_lsa);
+	    }
+	}
+
       HEAP_PERF_TRACK_EXECUTE (thread_p, context);
 
       if (is_mvcc_op)
@@ -21609,6 +21789,12 @@ heap_update_bigone (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, b
 	  goto exit;
 	}
 
+      /* redo lsa for SUPPLEMENT_UPDATE : REC_BIGONE to REC_RELOCATION case */
+      if (context->do_supplemental_log)
+	{
+	  LSA_COPY (&context->supp_redo_lsa, &tdes->tail_lsa);
+	}
+
       /* prepare record descriptor */
       heap_build_forwarding_recdes (&new_home_recdes, REC_RELOCATION, &newhome_oid);
 
@@ -21631,6 +21817,13 @@ heap_update_bigone (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, b
       heap_log_update_physical (thread_p, context->home_page_watcher_p->pgptr, &context->hfid.vfid,
 				&context->oid, &context->home_recdes, &new_home_recdes,
 				(is_mvcc_op ? RVHF_UPDATE_NOTIFY_VACUUM : RVHF_UPDATE));
+
+      /* redo lsa for SUPPLEMENT_UPDATE : REC_BIGONE to REC_HOME case */
+      if (context->do_supplemental_log)
+	{
+	  LSA_COPY (&context->supp_redo_lsa, &tdes->tail_lsa);
+	}
+
       HEAP_PERF_TRACK_LOGGING (thread_p, context);
 
       /* the old overflow record is no longer needed, it was linked only by old home */
@@ -21676,12 +21869,19 @@ heap_update_relocation (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * contex
   PGBUF_WATCHER newhome_pg_watcher;	/* fwd pg watcher required for heap_update_set_prev_version() */
   PGBUF_WATCHER *newhome_pg_watcher_p = NULL;
 
+  LOG_TDES *tdes = NULL;
+
   assert (context != NULL);
   assert (context->recdes_p != NULL);
   assert (context->type == HEAP_OPERATION_UPDATE);
   assert (context->home_page_watcher_p != NULL);
   assert (context->home_page_watcher_p->pgptr != NULL);
   assert (context->forward_page_watcher_p != NULL);
+
+  if (context->do_supplemental_log)
+    {
+      tdes = LOG_FIND_CURRENT_TDES (thread_p);
+    }
 
   /* get forward oid */
   forward_oid = *((OID *) context->home_recdes.data);
@@ -21734,6 +21934,12 @@ heap_update_relocation (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * contex
 	  goto exit;
 	}
 
+      /* redo lsa for SUPPLEMENT_UPDATE log : relocation to bigone */
+      if (context->do_supplemental_log)
+	{
+	  LSA_COPY (&context->supp_redo_lsa, &tdes->tail_lsa);
+	}
+
       /* home record descriptor will be an overflow OID and will be placed in original home page */
       heap_build_forwarding_recdes (&new_home_recdes, REC_BIGONE, &new_forward_oid);
 
@@ -21757,6 +21963,13 @@ heap_update_relocation (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * contex
       HEAP_PERF_TRACK_EXECUTE (thread_p, context);
       context->recdes_p->type = REC_NEWHOME;
       rc = heap_insert_newhome (thread_p, context, context->recdes_p, &new_forward_oid, newhome_pg_watcher_p);
+
+      /* redo lsa for SUPPLEMENT_UPDATE log : relocation to relocation */
+      if (context->do_supplemental_log)
+	{
+	  LSA_COPY (&context->supp_redo_lsa, &tdes->tail_lsa);
+	}
+
       if (rc != NO_ERROR)
 	{
 	  ASSERT_ERROR ();
@@ -21818,6 +22031,12 @@ heap_update_relocation (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * contex
 				(is_mvcc_op ? RVHF_UPDATE_NOTIFY_VACUUM : RVHF_UPDATE));
       HEAP_PERF_TRACK_LOGGING (thread_p, context);
 
+      /* redo lsa for SUPPLEMENT_UPDATE log : relocation to home */
+      if (context->do_supplemental_log)
+	{
+	  LSA_COPY (&context->supp_redo_lsa, &tdes->tail_lsa);
+	}
+
       /* update home record */
       rc = heap_update_physical (thread_p, context->home_page_watcher_p->pgptr, context->oid.slotid, &new_home_recdes);
       if (rc != NO_ERROR)
@@ -21854,6 +22073,18 @@ heap_update_relocation (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * contex
       /* log operation */
       heap_log_delete_physical (thread_p, context->forward_page_watcher_p->pgptr, &context->hfid.vfid, &forward_oid,
 				&forward_recdes, true, &prev_version_lsa);
+
+      /* undo lsa for SUPPLEMENT_UPDATE log 
+       * case : 1. relocation to home
+       *        2. relocation to bigone
+       *        3. relocation to relocation (new forward recdes doesn't fit in existing forward page) */
+      if (context->do_supplemental_log)
+	{
+	  /* is_reusable is true when heap_log_delete_physical, so tdes->tail_lsa will points at postponed log 
+	   * So, it copies prev_version_lsa to supp_undo_lsa which indicates delete log */
+	  LSA_COPY (&context->supp_undo_lsa, &prev_version_lsa);
+	}
+
       HEAP_PERF_TRACK_LOGGING (thread_p, context);
 
       /* physical removal of forward record */
@@ -21874,6 +22105,14 @@ heap_update_relocation (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * contex
       /* log operation */
       heap_log_update_physical (thread_p, context->forward_page_watcher_p->pgptr, &context->hfid.vfid, &forward_oid,
 				&forward_recdes, context->recdes_p, RVHF_UPDATE);
+
+      /* undo, redo lsa for SUPPLEMENT_UPDATE log : relocation to relocation (forward recdes fits in existing page) */
+      if (context->do_supplemental_log)
+	{
+	  LSA_COPY (&context->supp_undo_lsa, &tdes->tail_lsa);
+	  LSA_COPY (&context->supp_redo_lsa, &tdes->tail_lsa);
+	}
+
       LSA_COPY (&prev_version_lsa, logtb_find_current_tran_lsa (thread_p));
 
       if (is_mvcc_op)
@@ -21951,12 +22190,19 @@ heap_update_home (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, boo
   PGBUF_WATCHER newhome_pg_watcher;	/* fwd pg watcher required for heap_update_set_prev_version() */
   PGBUF_WATCHER *newhome_pg_watcher_p = NULL;
 
+  LOG_TDES *tdes = NULL;
+
   assert (context != NULL);
   assert (context->recdes_p != NULL);
   assert (context->type == HEAP_OPERATION_UPDATE);
   assert (context->home_page_watcher_p != NULL);
   assert (context->home_page_watcher_p->pgptr != NULL);
   assert (context->forward_page_watcher_p != NULL);
+
+  if (context->do_supplemental_log)
+    {
+      tdes = LOG_FIND_CURRENT_TDES (thread_p);
+    }
 
   if (!HEAP_IS_UPDATE_INPLACE (context->update_in_place) && context->home_recdes.type == REC_ASSIGN_ADDRESS)
     {
@@ -22004,6 +22250,11 @@ heap_update_home (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, boo
 	  ASSERT_ERROR_AND_SET (error_code);
 	  goto exit;
 	}
+      /* redo lsa for SUPPLEMENT_UPDATE : REC_HOME to REC_BIGONE case */
+      if (context->do_supplemental_log)
+	{
+	  LSA_COPY (&context->supp_redo_lsa, &tdes->tail_lsa);
+	}
 
       /* forwarding record is REC_BIGONE */
       heap_build_forwarding_recdes (&forwarding_recdes, REC_BIGONE, &forward_oid);
@@ -22037,6 +22288,13 @@ heap_update_home (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, boo
       HEAP_PERF_TRACK_PREPARE (thread_p, context);
       context->recdes_p->type = REC_NEWHOME;
       error_code = heap_insert_newhome (thread_p, context, context->recdes_p, &forward_oid, newhome_pg_watcher_p);
+
+      /* redo lsa for SUPPLEMENT_UPDATE : REC_HOME to REC_RELOCATION */
+      if (context->do_supplemental_log)
+	{
+	  LSA_COPY (&context->supp_redo_lsa, &tdes->tail_lsa);
+	}
+
       if (error_code != NO_ERROR)
 	{
 	  ASSERT_ERROR ();
@@ -22085,6 +22343,19 @@ heap_update_home (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, boo
   /* log home update */
   heap_log_update_physical (thread_p, context->home_page_watcher_p->pgptr, &context->hfid.vfid, &context->oid,
 			    &context->home_recdes, home_page_updated_recdes_p, undo_rcvindex);
+
+  /* undo lsa for SUPPLEMENT_UPDATE : REC_HOME to REC_RELOCATION/BIGONE 
+   * if redo lsa is NULL , then append redo lsa :update REC_HOME to REC_HOME case */
+  if (context->do_supplemental_log)
+    {
+      LSA_COPY (&context->supp_undo_lsa, &tdes->tail_lsa);
+
+      if (LSA_ISNULL (&context->supp_redo_lsa))
+	{
+	  LSA_COPY (&context->supp_redo_lsa, &tdes->tail_lsa);
+	}
+    }
+
   LSA_COPY (&prev_version_lsa, logtb_find_current_tran_lsa (thread_p));
 
   HEAP_PERF_TRACK_LOGGING (thread_p, context);
@@ -22349,6 +22620,8 @@ heap_insert_logical (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, 
   PERF_UTIME_TRACKER time_track;
   bool is_mvcc_class;
 
+  LOG_TDES *tdes = NULL;
+
   /* check required input */
   assert (context != NULL);
   assert (context->type == HEAP_OPERATION_INSERT);
@@ -22392,6 +22665,25 @@ heap_insert_logical (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, 
 	{
 	  return ER_FAILED;
 	}
+    }
+
+  if (check_supplemental_log (thread_p, &context->class_oid) == true)
+    {
+      tdes = LOG_FIND_CURRENT_TDES (thread_p);
+
+      if (!tdes->has_supplemental_log)
+	{
+	  log_append_supplemental_info (thread_p, LOG_SUPPLEMENT_TRAN_USER, strlen (tdes->client.get_db_user ()),
+					tdes->client.get_db_user ());
+	  tdes->has_supplemental_log = true;
+	}
+
+      context->do_supplemental_log = true;
+      LSA_SET_NULL (&context->supp_redo_lsa);
+    }
+  else
+    {
+      context->do_supplemental_log = false;
     }
 
 #if defined(ENABLE_SYSTEMTAP)
@@ -22450,6 +22742,12 @@ heap_insert_logical (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, 
     {
       heap_log_insert_physical (thread_p, context->home_page_watcher_p->pgptr, &context->hfid.vfid, &context->res_oid,
 				context->recdes_p, is_mvcc_op, context->is_redistribute_insert_with_delid);
+
+      /* redo lsa for SUPPLEMENT_INSERT log */
+      if (context->do_supplemental_log && context->recdes_p->type != REC_BIGONE)
+	{
+	  LSA_COPY (&context->supp_redo_lsa, &tdes->tail_lsa);
+	}
     }
 
   HEAP_PERF_TRACK_LOGGING (thread_p, context);
@@ -22500,6 +22798,15 @@ heap_insert_logical (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context, 
     {
       perfmon_inc_stat (thread_p, PSTAT_HEAP_ASSIGN_INSERTS);
     }
+
+  if (context->do_supplemental_log && !LSA_ISNULL (&context->supp_redo_lsa)
+      && context->recdes_p->type != REC_ASSIGN_ADDRESS)
+    {
+      (void) log_append_supplemental_lsa (thread_p,
+					  thread_p->trigger_involved ? LOG_SUPPLEMENT_TRIGGER_INSERT :
+					  LOG_SUPPLEMENT_INSERT, &context->class_oid, NULL, &context->supp_redo_lsa);
+    }
+
 
 error:
 
@@ -22629,6 +22936,24 @@ heap_delete_logical (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context)
 
   HEAP_PERF_TRACK_PREPARE (thread_p, context);
 
+  if (check_supplemental_log (thread_p, &context->class_oid) == true)
+    {
+      LOG_TDES *tdes = LOG_FIND_CURRENT_TDES (thread_p);
+      if (!tdes->has_supplemental_log)
+	{
+	  log_append_supplemental_info (thread_p, LOG_SUPPLEMENT_TRAN_USER, strlen (tdes->client.get_db_user ()),
+					tdes->client.get_db_user ());
+	  tdes->has_supplemental_log = true;
+	}
+
+      context->do_supplemental_log = true;
+      LSA_SET_NULL (&context->supp_undo_lsa);
+    }
+  else
+    {
+      context->do_supplemental_log = false;
+    }
+
   /*
    * Physical deletion and logging
    */
@@ -22653,6 +22978,14 @@ heap_delete_logical (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context)
       rc = ER_FAILED;
       goto error;
     }
+
+  if (context->do_supplemental_log == true)
+    {
+      (void) log_append_supplemental_lsa (thread_p,
+					  thread_p->trigger_involved ? LOG_SUPPLEMENT_TRIGGER_DELETE :
+					  LOG_SUPPLEMENT_DELETE, &context->class_oid, &context->supp_undo_lsa, NULL);
+    }
+
 
 error:
 
@@ -22820,6 +23153,25 @@ heap_update_logical (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context)
 
   HEAP_PERF_TRACK_PREPARE (thread_p, context);
 
+  if (check_supplemental_log (thread_p, &context->class_oid) == true)
+    {
+      LOG_TDES *tdes = LOG_FIND_CURRENT_TDES (thread_p);
+      if (!tdes->has_supplemental_log)
+	{
+	  log_append_supplemental_info (thread_p, LOG_SUPPLEMENT_TRAN_USER, strlen (tdes->client.get_db_user ()),
+					tdes->client.get_db_user ());
+	  tdes->has_supplemental_log = true;
+	}
+
+      context->do_supplemental_log = true;
+      LSA_SET_NULL (&context->supp_undo_lsa);
+      LSA_SET_NULL (&context->supp_redo_lsa);
+    }
+  else
+    {
+      context->do_supplemental_log = false;
+    }
+
   /*
    * Update record
    */
@@ -22867,6 +23219,15 @@ heap_update_logical (THREAD_ENTRY * thread_p, HEAP_OPERATION_CONTEXT * context)
 	  goto exit;
 	}
     }
+
+  if (context->do_supplemental_log == true)
+    {
+      (void) log_append_supplemental_lsa (thread_p,
+					  thread_p->trigger_involved ? LOG_SUPPLEMENT_TRIGGER_UPDATE :
+					  LOG_SUPPLEMENT_UPDATE, &context->class_oid, &context->supp_undo_lsa,
+					  &context->supp_redo_lsa);
+    }
+
 
 exit:
 
@@ -23243,7 +23604,9 @@ heap_vacuum_all_objects (THREAD_ENTRY * thread_p, HEAP_SCANCACHE * upd_scancache
 	  goto exit;
 	}
 
+#if !defined (NDEBUG)
       (void) pgbuf_check_page_ptype (thread_p, pg_watcher.pgptr, PAGE_HEAP);
+#endif /* !NDEBUG */
 
       if (old_pg_watcher.pgptr != NULL)
 	{
@@ -23504,6 +23867,63 @@ heap_hfid_cache_get (THREAD_ENTRY * thread_p, const OID * class_oid, HFID * hfid
   heap_hfid_table_log (thread_p, class_oid, "heap_hfid_cache_get hfid=%d|%d|%d, ftype = %s, classname = %s",
 		       HFID_AS_ARGS (&entry->hfid), file_type_to_string (entry->ftype), entry->classname.load ());
   return error_code;
+}
+
+/*
+ * heap_get_hfid_if_cached () - get HFID and file type for class if cached.
+ 
+ *   return: error code
+ *   thread_p  (in)     :
+ *   class_oid (in)     : the class OID for which the entry will be returned
+ *   hfid_out (out)     : output heap file identifier
+ *   ftype_out (out)    : output heap file type
+ *   classname_out (out): output classname
+ *   success  (out)     : true if found from cache
+ */
+int
+heap_get_hfid_if_cached (THREAD_ENTRY * thread_p, const OID * class_oid, HFID * hfid_out, FILE_TYPE * ftype_out,
+			 char **classname_out, bool * success)
+{
+  int error_code = NO_ERROR;
+  LF_TRAN_ENTRY *t_entry = thread_get_tran_entry (thread_p, THREAD_TS_HFID_TABLE);
+  HEAP_HFID_TABLE_ENTRY *entry = NULL;
+
+  assert (class_oid != NULL && !OID_ISNULL (class_oid));
+  assert (success != NULL);
+
+  *success = false;
+
+  error_code = lf_hash_find (t_entry, &heap_Hfid_table->hfid_hash, (void *) class_oid, (void **) &entry);
+  if (error_code != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      return error_code;
+    }
+
+  if (entry)
+    {
+      assert (entry->hfid.hpgid != NULL_PAGEID && entry->hfid.vfid.fileid != NULL_FILEID
+	      && entry->hfid.vfid.volid != NULL_VOLID && entry->classname != NULL);
+
+      if (hfid_out != NULL)
+	{
+	  *hfid_out = entry->hfid;
+	}
+      if (ftype_out != NULL)
+	{
+	  *ftype_out = entry->ftype;
+	}
+      if (classname_out != NULL)
+	{
+	  *classname_out = entry->classname;
+	}
+
+      *success = true;
+
+      lf_tran_end_with_mb (t_entry);
+    }
+
+  return NO_ERROR;
 }
 
 /*

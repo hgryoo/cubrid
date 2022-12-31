@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -610,7 +609,7 @@ qo_optimize_helper (QO_ENV * env)
   qo_get_optimization_param (&level, QO_PARAM_LEVEL);
   if (plan && PLAN_DUMP_ENABLED (level) && DETAILED_DUMP (level) && env->plan_dump_enabled)
     {
-      qo_env_dump (env, query_Plan_dump_fp);
+      qo_env_dump (env, db_query_get_plan_dump_fp ());
     }
   if (plan == NULL)
     {
@@ -1314,6 +1313,10 @@ qo_add_node (PT_NODE * entity, QO_ENV * env)
 		    }
 		}
 	      break;
+	    case PT_DBLINK_TABLE:
+	      QO_NODE_NCARD (node) = 1000;	/* just guess for dblink */
+	      QO_NODE_TCARD (node) = 100;	/* just guess for dblink */
+
 	    default:
 	      break;
 	    }
@@ -1477,6 +1480,10 @@ static QO_SEGMENT *
 qo_insert_segment (QO_NODE * head, QO_NODE * tail, PT_NODE * node, QO_ENV * env, const char *expr_str)
 {
   QO_SEGMENT *seg = NULL;
+  PT_NODE *entity;
+  MOP cls;
+  SM_CLASS_CONSTRAINT *constraints;
+  SM_ATTRIBUTE *attrp;
 
   QO_ASSERT (env, head != NULL);
   QO_ASSERT (env, env->nsegs < env->Nsegs);
@@ -1488,13 +1495,12 @@ qo_insert_segment (QO_NODE * head, QO_NODE * tail, PT_NODE * node, QO_ENV * env,
   QO_SEG_HEAD (seg) = head;
   QO_SEG_TAIL (seg) = tail;
   QO_SEG_IDX (seg) = env->nsegs;
-  /* add dummy name to segment example: dummy attr from view transfrom select count(*) from v select count(*) from
-   * (select {v}, 1 from t) v (v, 1) here, '1' is dummy attr set empty string to avoid core crash
-   */
   if (node)
     {
+      /* If it is not PT_NAME, an empty string is used for name. */
       QO_SEG_NAME (seg) =
-	node->info.name.original ? node->info.name.original : pt_append_string (QO_ENV_PARSER (env), NULL, "");
+	(node->node_type == PT_NAME && node->info.name.original) ?
+	node->info.name.original : pt_append_string (QO_ENV_PARSER (env), NULL, "");
       if (PT_IS_OID_NAME (node))
 	{
 	  /* this is an oid segment */
@@ -1519,6 +1525,42 @@ qo_insert_segment (QO_NODE * head, QO_NODE * tail, PT_NODE * node, QO_ENV * env,
     }
 
   bitset_add (&(QO_NODE_SEGS (head)), QO_SEG_IDX (seg));
+
+  /* check is_not_null */
+  entity = QO_NODE_ENTITY_SPEC (head);
+  if (pt_is_name_node (node) && PT_SPEC_IS_ENTITY (entity))
+    {
+      int i;
+      bool found = false;
+      cls = sm_find_class (entity->info.spec.entity_name->info.name.original);
+      constraints = sm_class_constraints (cls);
+
+      while (constraints != NULL)
+	{
+	  if (!SM_IS_CONSTRAINT_NOT_NULL_FAMILY (constraints->type))
+	    {
+	      constraints = constraints->next;
+	      continue;
+	    }
+
+	  /* check columns on this constraint */
+	  for (i = 0; constraints->attributes[i]; i++)
+	    {
+	      attrp = constraints->attributes[i];
+	      if (intl_identifier_casecmp (node->info.name.original, attrp->header.name) == 0)
+		{
+		  QO_SEG_IS_NOT_NULL (seg) = true;
+		  found = true;
+		  break;
+		}
+	    }
+	  if (found)
+	    {
+	      break;
+	    }
+	  constraints = constraints->next;
+	}
+    }
 
   env->nsegs++;
 
@@ -1851,7 +1893,9 @@ qo_add_dep_term (QO_NODE * derived_node, BITSET * depend_nodes, BITSET * depend_
 static QO_TERM *
 qo_add_dummy_join_term (QO_ENV * env, QO_NODE * p_node, QO_NODE * on_node)
 {
-  QO_TERM *term;
+  int i;
+  QO_TERM *term, *temp_term;
+  QO_NODE *temp_node;
 
   QO_ASSERT (env, env->nterms < env->Nterms);
   QO_ASSERT (env, QO_NODE_IDX (p_node) >= 0);
@@ -1875,12 +1919,31 @@ qo_add_dummy_join_term (QO_ENV * env, QO_NODE * p_node, QO_NODE * on_node)
     {
     case PT_JOIN_INNER:
       QO_TERM_JOIN_TYPE (term) = JOIN_INNER;
+      QO_ADD_RIGHT_DEP_SET (on_node, p_node);
       break;
     case PT_JOIN_LEFT_OUTER:
       QO_TERM_JOIN_TYPE (term) = JOIN_LEFT;
+      QO_ADD_RIGHT_DEP_SET (on_node, p_node);
+      for (i = 0; i < env->nterms; i++)
+	{
+	  temp_term = QO_ENV_TERM (env, i);
+	  temp_node = QO_ENV_NODE (env, QO_TERM_LOCATION (temp_term));
+	  if (temp_node == on_node && QO_OUTER_JOIN_TERM (temp_term))
+	    {
+	      break;
+	    }
+	}
+      if (i == env->nterms)
+	{
+	  /* if join term does not exists, add outer dep set */
+	  QO_ADD_OUTER_DEP_SET (on_node, p_node);
+	}
       break;
     case PT_JOIN_RIGHT_OUTER:
       QO_TERM_JOIN_TYPE (term) = JOIN_RIGHT;
+      QO_ADD_RIGHT_DEP_SET (on_node, p_node);
+      QO_ADD_OUTER_DEP_SET (on_node, p_node);
+      QO_ADD_RIGHT_TO_OUTER (on_node, p_node);
       break;
     case PT_JOIN_FULL_OUTER:	/* not used */
       QO_TERM_JOIN_TYPE (term) = JOIN_OUTER;
@@ -1895,15 +1958,6 @@ qo_add_dummy_join_term (QO_ENV * env, QO_NODE * p_node, QO_NODE * on_node)
   QO_TERM_IDX (term) = env->nterms;
 
   env->nterms++;
-
-  /* record outer join dependecy */
-  if (QO_ON_COND_TERM (term))
-    {
-      QO_ASSERT (env, QO_TERM_LOCATION (term) == QO_NODE_LOCATION (on_node));
-
-      bitset_union (&(QO_NODE_OUTER_DEP_SET (on_node)), &(QO_NODE_OUTER_DEP_SET (p_node)));
-      bitset_add (&(QO_NODE_OUTER_DEP_SET (on_node)), QO_NODE_IDX (p_node));
-    }
 
   QO_ASSERT (env, QO_TERM_CAN_USE_INDEX (term) == 0);
 
@@ -2606,19 +2660,25 @@ qo_analyze_term (QO_TERM * term, int term_type)
 	      if (QO_NODE_PT_JOIN_TYPE (on_node) == PT_JOIN_LEFT_OUTER)
 		{
 		  QO_TERM_JOIN_TYPE (term) = JOIN_LEFT;
+		  QO_ADD_RIGHT_DEP_SET (on_node, head_node);
+		  QO_ADD_OUTER_DEP_SET (on_node, head_node);
 		}
 	      else if (QO_NODE_PT_JOIN_TYPE (on_node) == PT_JOIN_RIGHT_OUTER)
 		{
 		  QO_TERM_JOIN_TYPE (term) = JOIN_RIGHT;
+		  QO_ADD_RIGHT_DEP_SET (on_node, head_node);
+		  QO_ADD_OUTER_DEP_SET (on_node, head_node);
+		  QO_ADD_RIGHT_TO_OUTER (on_node, head_node);
 		}
 	      else if (QO_NODE_PT_JOIN_TYPE (on_node) == PT_JOIN_FULL_OUTER)
 		{		/* not used */
 		  QO_TERM_JOIN_TYPE (term) = JOIN_OUTER;
 		}
-
-	      /* record explicit join dependecy */
-	      bitset_union (&(QO_NODE_OUTER_DEP_SET (on_node)), &(QO_NODE_OUTER_DEP_SET (head_node)));
-	      bitset_add (&(QO_NODE_OUTER_DEP_SET (on_node)), QO_NODE_IDX (head_node));
+	      else if (QO_NODE_PT_JOIN_TYPE (on_node) == PT_JOIN_INNER)
+		{
+		  QO_TERM_JOIN_TYPE (term) = JOIN_INNER;
+		  QO_ADD_RIGHT_DEP_SET (on_node, head_node);
+		}
 	    }
 	  else
 	    {
@@ -2817,6 +2877,10 @@ set_seg_expr (PARSER_CONTEXT * parser, PT_NODE * tree, void *arg, int *continue_
       *continue_walk = PT_LIST_WALK;
       break;
 
+    case PT_DBLINK_TABLE:
+      *continue_walk = PT_LIST_WALK;
+      break;
+
     default:
       break;
     }
@@ -2951,6 +3015,9 @@ is_dependent_table (PT_NODE * entity)
       return true;
 
     case PT_DERIVED_JSON_TABLE:
+      return true;
+
+    case PT_DERIVED_DBLINK_TABLE:
       return true;
 
     case PT_IS_SUBQUERY:
@@ -3681,6 +3748,13 @@ pt_is_pseudo_const (PT_NODE * expr)
        */
       return true;
 
+    case PT_METHOD_CALL:
+      /*
+       * Even if there are columns(PT_NAME) in the parameter of the Java Stored Procedure(METHOD_CALL),
+       * it can be guaranteed to be evaluated by the time it is referenced.
+       */
+      return true;
+
     case PT_DOT_:
       /*
        * It would be nice if we could use expressions that are
@@ -4273,6 +4347,11 @@ add_hint (QO_ENV * env, PT_NODE * tree)
   int last_ordered_idx = 0;
 
   hint = tree->info.query.q.select.hint;
+
+  if (hint == PT_HINT_NONE)
+    {
+      return;
+    }
 
   if (hint & PT_HINT_ORDERED)
     {
@@ -5747,7 +5826,7 @@ qo_env_new (PARSER_CONTEXT * parser, PT_NODE * query)
 
   assert (query->node_type == PT_SELECT);
   if (PT_SELECT_INFO_IS_FLAGED (query, PT_SELECT_INFO_COLS_SCHEMA)
-      || PT_SELECT_INFO_IS_FLAGED (query, PT_SELECT_FULL_INFO_COLS_SCHEMA) || query->is_system_generated_stmt
+      || PT_SELECT_INFO_IS_FLAGED (query, PT_SELECT_FULL_INFO_COLS_SCHEMA) || query->flag.is_system_generated_stmt
       || ((spec = query->info.query.q.select.from) != NULL && spec->info.spec.derived_table_type == PT_IS_SHOWSTMT))
     {
       env->plan_dump_enabled = false;
@@ -8102,6 +8181,7 @@ qo_node_clear (QO_ENV * env, int idx)
   bitset_init (&(QO_NODE_SUBQUERIES (node)), env);
   bitset_init (&(QO_NODE_SEGS (node)), env);
   bitset_init (&(QO_NODE_OUTER_DEP_SET (node)), env);
+  bitset_init (&(QO_NODE_RIGHT_DEP_SET (node)), env);
 
   QO_NODE_HINT (node) = PT_HINT_NONE;
 }
@@ -8120,6 +8200,7 @@ qo_node_free (QO_NODE * node)
   bitset_delset (&(QO_NODE_SEGS (node)));
   bitset_delset (&(QO_NODE_SUBQUERIES (node)));
   bitset_delset (&(QO_NODE_OUTER_DEP_SET (node)));
+  bitset_delset (&(QO_NODE_RIGHT_DEP_SET (node)));
   qo_free_class_info (QO_NODE_ENV (node), QO_NODE_INFO (node));
   if (QO_NODE_INDEXES (node))
     {
@@ -8162,7 +8243,7 @@ qo_node_fprint (QO_NODE * node, FILE * f)
 {
   if (QO_NODE_NAME (node))
     {
-      fprintf (f, "%s", QO_NODE_NAME (node));
+      fprintf (f, "%s", pt_get_name_without_current_user_name (QO_NODE_NAME (node)));
     }
   fprintf (f, " node[%d]", QO_NODE_IDX (node));
 }
@@ -8240,6 +8321,12 @@ qo_node_dump (QO_NODE * node, FILE * f)
       bitset_print (&(QO_NODE_DEP_SET (node)), f);
       fputs (")", f);
     }
+  if (!bitset_is_empty (&(QO_NODE_RIGHT_DEP_SET (node))))
+    {
+      fputs (" (right-dep-set ", f);
+      bitset_print (&(QO_NODE_RIGHT_DEP_SET (node)), f);
+      fputs (")", f);
+    }
 
   fprintf (f, " (loc %d)", entity->info.spec.location);
 }
@@ -8267,6 +8354,7 @@ qo_seg_clear (QO_ENV * env, int idx)
   QO_SEG_SHARED_ATTR (seg) = false;
   QO_SEG_IDX (seg) = idx;
   QO_SEG_FUNC_INDEX (seg) = false;
+  QO_SEG_IS_NOT_NULL (seg) = false;
   bitset_init (&(QO_SEG_INDEX_TERMS (seg)), env);
 }
 
@@ -8494,6 +8582,11 @@ qo_discover_sort_limit_nodes (QO_ENV * env)
   bitset_init (&order_nodes, env);
   bitset_init (&QO_ENV_SORT_LIMIT_NODES (env), env);
 
+  if (pt_has_error (QO_ENV_PARSER (env)))
+    {
+      goto error;
+    }
+
   query = QO_ENV_PT_TREE (env);
   if (!PT_IS_SELECT (query))
     {
@@ -8665,6 +8758,14 @@ sort_limit_possible:
   return;
 
 abandon_stop_limit:
+  /* remove error which is occured in this function */
+  if (pt_has_error (QO_ENV_PARSER (env)))
+    {
+      pt_reset_error (QO_ENV_PARSER (env));
+      (QO_ENV_PARSER (env))->flag.has_internal_error = 0;
+    }
+
+error:
   bitset_delset (&order_nodes);
   bitset_delset (&QO_ENV_SORT_LIMIT_NODES (env));
   env->use_sort_limit = QO_SL_INVALID;
@@ -9560,6 +9661,12 @@ qo_is_pk_fk_full_join (QO_ENV * env, QO_NODE * fk_node, QO_NODE * pk_node)
 	{
 	  pk_seg = QO_TERM_INDEX_SEG (term, 0);
 	  fk_seg = QO_TERM_INDEX_SEG (term, 1);
+	}
+
+      /* fk must have the NOT_NULL constraint */
+      if (!QO_SEG_IS_NOT_NULL (fk_seg))
+	{
+	  return false;
 	}
 
       /* make sure pk_seg and fk_seg reference the same position in the two indexes */

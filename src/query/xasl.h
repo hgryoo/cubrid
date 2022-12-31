@@ -1,20 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation
- * Copyright (C) 2016 CUBRID Corporation
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -133,6 +131,7 @@ typedef struct list_spec_node LIST_SPEC_TYPE;
 typedef struct showstmt_spec_node SHOWSTMT_SPEC_TYPE;
 typedef struct set_spec_node SET_SPEC_TYPE;
 typedef struct method_spec_node METHOD_SPEC_TYPE;
+typedef struct dblink_spec_node DBLINK_SPEC_TYPE;
 typedef struct reguval_list_spec_node REGUVAL_LIST_SPEC_TYPE;
 typedef union hybrid_node HYBRID_NODE;
 
@@ -375,6 +374,7 @@ struct update_proc_node
   UPDATE_ASSIGNMENT *assigns;	/* assignments array */
   int wait_msecs;		/* lock timeout in milliseconds */
   int no_logging;		/* no logging */
+  int no_supplemental_log;	/* no supplemental log */
   int num_orderby_keys;		/* no of keys for ORDER_BY */
   int num_assign_reev_classes;
   int num_reev_classes;		/* no of classes involved in mvcc condition and assignment reevaluation */
@@ -410,6 +410,7 @@ struct delete_proc_node
   int num_classes;		/* total number of classes involved */
   int wait_msecs;		/* lock timeout in milliseconds */
   int no_logging;		/* no logging */
+  int no_supplemental_log;	/* no supplemental log */
   int num_reev_classes;		/* no of classes involved in mvcc condition */
   int *mvcc_reev_classes;	/* array of indexes into the SELECT list that references pairs of OID - CLASS OID used
 				 * in conditions */
@@ -492,6 +493,7 @@ struct cte_proc_node
 #define XASL_RETURN_GENERATED_KEYS    0x2000	/* return generated keys */
 #define XASL_NO_FIXED_SCAN	      0x4000	/* disable fixed scan for this proc */
 #define XASL_NEED_SINGLE_TUPLE_SCAN   0x8000	/* for exists operation */
+#define XASL_INCLUDES_TDE_CLASS	      0x10000	/* is any tde class related */
 
 #define XASL_IS_FLAGED(x, f)        (((x)->flag & (int) (f)) != 0)
 #define XASL_SET_FLAG(x, f)         (x)->flag |= (int) (f)
@@ -682,7 +684,8 @@ typedef enum
   TARGET_JSON_TABLE,
   TARGET_METHOD,
   TARGET_REGUVAL_LIST,
-  TARGET_SHOWSTMT
+  TARGET_SHOWSTMT,
+  TARGET_DBLINK
 } TARGET_TYPE;
 
 typedef enum
@@ -775,6 +778,18 @@ struct method_spec_node
   METHOD_SIG_LIST *method_sig_list;	/* method signature list */
 };
 
+struct dblink_spec_node
+{
+  REGU_VARIABLE_LIST dblink_regu_list_pred;	/* regu list for the predicate */
+  REGU_VARIABLE_LIST dblink_regu_list_rest;	/* regu list for rest of attrs */
+  int host_var_count;		/* host variable count for dblink spec */
+  int *host_var_index;		/* host variable indexes for dblink spec */
+  char *conn_url;		/* connection URL for remote DB server */
+  char *conn_user;		/* user name for remote DB server */
+  char *conn_password;		/* password for remote user */
+  char *conn_sql;		/* SQL command text for remote database */
+};
+
 struct reguval_list_spec_node
 {
   VALPTR_LIST *valptr_list;	/* point to xasl.outptr_list */
@@ -787,6 +802,7 @@ union hybrid_node
   SHOWSTMT_SPEC_TYPE showstmt_node;	/* show stmt specification */
   SET_SPEC_TYPE set_node;	/* set specification */
   METHOD_SPEC_TYPE method_node;	/* method specification */
+  DBLINK_SPEC_TYPE dblink_node;	/* dblink specification */
   REGUVAL_LIST_SPEC_TYPE reguval_list_node;	/* reguval_list specification */
   json_table_spec_node json_table_node;	/* json_table specification */
 };				/* class/list access specification */
@@ -824,6 +840,9 @@ union hybrid_node
 
 #define ACCESS_SPEC_LIST_ID(ptr) \
         (ACCESS_SPEC_XASL_NODE(ptr)->list_id)
+
+#define ACCESS_SPEC_CONNECT_BY_LIST_ID(ptr) \
+        (ACCESS_SPEC_XASL_NODE(ptr)->proc.connect_by.input_list_id)
 
 #define ACCESS_SPEC_RLIST_VALPTR_LIST(ptr) \
         ((ptr)->s.reguval_list_node.valptr_list)
@@ -863,6 +882,15 @@ union hybrid_node
 
 #define ACCESS_SPEC_JSON_TABLE_M_NODE_COUNT(ptr) \
         ((ptr)->s.json_table_node.m_node_count)
+
+#define ACCESS_SPEC_DBLINK_SPEC(ptr) \
+	((ptr)->s.dblink_node)
+
+#define ACCESS_SPEC_DBLINK_XASL_NODE(ptr) \
+	((ptr)->s.dblink_node.xasl_node)
+
+#define ACCESS_SPEC_DBLINK_LIST_ID(ptr) \
+	(ACCESS_SPEC_DBLINK_XASL_NODE(ptr)->list_id)
 
 #if defined (SERVER_MODE) || defined (SA_MODE)
 struct orderby_stat
@@ -993,12 +1021,6 @@ struct xasl_node
 
   ACCESS_SPEC_TYPE *curr_spec;	/* current spec. node */
   int instnum_flag;		/* stop or continue scan? */
-  int next_scan_on;		/* next scan is initiated ? */
-  int next_scan_block_on;	/* next scan block is initiated ? */
-
-  int cat_fetched;		/* catalog information fetched? */
-  int query_in_progress;	/* flag which tells if the query is currently executing.  Used by
-				 * qmgr_clear_trans_wakeup() to determine how much of the xasl tree to clean up. */
 
   SCAN_OPERATION_TYPE scan_op_type;	/* scan type */
   int upd_del_class_cnt;	/* number of classes affected by update or delete (used only in case of UPDATE or
@@ -1025,11 +1047,8 @@ struct xasl_node
     CTE_PROC_NODE cte;		/* CTE_PROC */
   } proc;
 
-  double cardinality;		/* estimated cardinality of result */
-
   /* XASL cache related information */
   OID creator_oid;		/* OID of the user who created this XASL */
-  int projected_size;		/* # of bytes per result tuple */
   int n_oid_list;		/* size of the referenced OID list */
   OID *class_oid_list;		/* list of class/serial OIDs referenced in the XASL */
   int *class_locks;		/* list of locks for class_oid_list. */
@@ -1038,7 +1057,10 @@ struct xasl_node
   int dbval_cnt;		/* number of host variables in this XASL */
   bool iscan_oid_order;
 
-  int max_iterations;		/* Number of maximum iterations (used during run-time for recursive CTE) */
+#if defined (CS_MODE) || defined (SA_MODE)
+  int projected_size;		/* # of bytes per result tuple */
+  double cardinality;		/* estimated cardinality of result */
+#endif
 
 #if defined (SERVER_MODE) || defined (SA_MODE)
   ORDERBY_STATS orderby_stats;
@@ -1048,6 +1070,12 @@ struct xasl_node
   TOPN_TUPLES *topn_items;	/* top-n tuples for orderby limit */
 
   XASL_STATUS status;		/* current status */
+
+  int query_in_progress;	/* flag which tells if the query is currently executing.  Used by
+				 * qmgr_clear_trans_wakeup() to determine how much of the xasl tree to clean up. */
+  int next_scan_on;		/* next scan is initiated ? */
+  int next_scan_block_on;	/* next scan block is initiated ? */
+  int max_iterations;		/* Number of maximum iterations (used during run-time for recursive CTE) */
 #endif				/* defined (SERVER_MODE) || defined (SA_MODE) */
 };
 

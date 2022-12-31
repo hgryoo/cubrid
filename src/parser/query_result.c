@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -496,7 +495,7 @@ pt_get_select_list (PARSER_CONTEXT * parser, PT_NODE * query)
 	      for (col = select_list; col && col->next; col = next)
 		{
 		  next = col->next;
-		  if (next->is_hidden_column)
+		  if (next->flag.is_hidden_column)
 		    {
 		      parser_free_tree (parser, next);
 		      col->next = NULL;
@@ -644,6 +643,7 @@ pt_get_titles (PARSER_CONTEXT * parser, PT_NODE * query)
 {
   DB_QUERY_TYPE *q, *t, *tail;
   PT_NODE *s, *f;
+  unsigned int save_custom;
 
   s = pt_get_select_list (parser, query);
   if (pt_length_of_select_list (s, EXCLUDE_HIDDEN_COLUMNS) <= 0)
@@ -654,15 +654,17 @@ pt_get_titles (PARSER_CONTEXT * parser, PT_NODE * query)
 
   for (q = NULL, tail = NULL; s; s = s->next)
     {
-      if (s->is_hidden_column)
+      if (s->flag.is_hidden_column)
 	{
 	  continue;
 	}
       else
 	{
+	  save_custom = parser->custom_print;
 	  parser->custom_print |= PT_SUPPRESS_CHARSET_PRINT;
+	  parser->custom_print |= PT_PRINT_NO_CURRENT_USER_NAME;
 	  t = pt_get_node_title (parser, s, f);
-	  parser->custom_print &= ~PT_SUPPRESS_CHARSET_PRINT;
+	  parser->custom_print = save_custom;
 
 	  if (t == NULL)
 	    {
@@ -704,6 +706,7 @@ pt_get_node_title (PARSER_CONTEXT * parser, const PT_NODE * col, const PT_NODE *
   unsigned int save_custom;
   PT_NODE *node, *spec, *range_var;
   char *original_name;
+  const char *tmp_name = NULL;
 
   save_custom = parser->custom_print;
   parser->custom_print |= PT_SUPPRESS_QUOTES;
@@ -733,17 +736,48 @@ pt_get_node_title (PARSER_CONTEXT * parser, const PT_NODE * col, const PT_NODE *
 	    {
 	      if (col->info.name.meta_class == PT_META_ATTR)
 		{
-		  name =
-		    pt_append_string (parser, pt_append_string (parser, (char *) col->info.name.resolved, "."), name);
-		  name = pt_append_string (parser, pt_append_string (parser, NULL, "class "), name);
+		  name = pt_append_string (parser, NULL, "class ");
+		  if (parser->custom_print & PT_PRINT_NO_SPECIFIED_USER_NAME)
+		    {
+		      name = pt_append_string (parser, name,
+					       pt_get_name_with_qualifier_removed (col->info.name.resolved));
+		    }
+		  else if (parser->custom_print & PT_PRINT_NO_CURRENT_USER_NAME)
+		    {
+		      name =
+			pt_append_string (parser, name,
+					  pt_get_name_without_current_user_name (col->info.name.resolved));
+		    }
+		  else
+		    {
+		      name = pt_append_string (parser, name, col->info.name.resolved);
+		    }
+		  name = pt_append_string (parser, name, ".");
+		  name = pt_append_string (parser, name, original_name);
 		  original_name = name;
 		}
 	      else if (PT_NAME_INFO_IS_FLAGED (col, PT_NAME_INFO_DOT_NAME))
 		{
 		  /* PT_NAME comes from PT_DOT_ */
-		  original_name =
-		    pt_append_string (parser, pt_append_string (parser, (char *) col->info.name.resolved, "."),
-				      original_name);
+		  if (parser->custom_print & PT_PRINT_NO_SPECIFIED_USER_NAME)
+		    {
+		      tmp_name =
+			pt_append_string (parser, pt_get_name_with_qualifier_removed (col->info.name.resolved), ".");
+		      original_name = pt_append_string (parser, tmp_name, original_name);
+		    }
+		  else if (parser->custom_print & PT_PRINT_NO_CURRENT_USER_NAME)
+		    {
+		      tmp_name = pt_append_string (parser,
+						   pt_get_name_without_current_user_name (col->info.name.resolved),
+						   ".");
+		      original_name = pt_append_string (parser, tmp_name, original_name);
+		    }
+		  else
+		    {
+		      original_name =
+			pt_append_string (parser, pt_append_string (parser, col->info.name.resolved, "."),
+					  original_name);
+		    }
 		}
 	      else if (PT_NAME_INFO_IS_FLAGED (col, PT_NAME_INFO_DOT_STAR))
 		{
@@ -772,18 +806,20 @@ pt_get_node_title (PARSER_CONTEXT * parser, const PT_NODE * col, const PT_NODE *
 		{
 		  if (node->info.name.meta_class == PT_META_ATTR)
 		    {
-		      name =
-			pt_append_string (parser, pt_append_string (parser, (char *) node->info.name.resolved, "."),
-					  name);
+		      tmp_name = pt_append_string (parser,
+						   pt_get_name_without_current_user_name (node->info.name.resolved),
+						   ".");
+		      name = pt_append_string (parser, tmp_name, name);
 		      name = pt_append_string (parser, pt_append_string (parser, NULL, "class "), name);
 		      original_name = name;
 		    }
 		  else if (PT_NAME_INFO_IS_FLAGED (node, PT_NAME_INFO_DOT_NAME))
 		    {
 		      /* PT_NAME comes from PT_DOT_ */
-		      original_name =
-			pt_append_string (parser, pt_append_string (parser, (char *) node->info.name.resolved, "."),
-					  original_name);
+		      tmp_name = pt_append_string (parser,
+						   pt_get_name_without_current_user_name (node->info.name.resolved),
+						   ".");
+		      original_name = pt_append_string (parser, tmp_name, original_name);
 		    }
 		}
 	      else if (node->info.name.meta_class == PT_NORMAL)
@@ -797,12 +833,20 @@ pt_get_node_title (PARSER_CONTEXT * parser, const PT_NODE * col, const PT_NODE *
 
 		      if (pt_check_path_eq (parser, range_var, node) == 0)
 			{
-
-
 			  if (original_name)
 			    {
 			      /* strip off classname.* */
-			      name = strchr (original_name, '.');
+			      if (strchr (node->info.name.original, '.'))
+				{
+				  name = strchr (original_name, '.');
+				  name++;
+				}
+			      else
+				{
+				  name = original_name;
+				}
+
+			      name = strchr (name, '.');
 			      if (name == NULL || name[0] == '\0')
 				{
 				  name = original_name;
@@ -817,7 +861,6 @@ pt_get_node_title (PARSER_CONTEXT * parser, const PT_NODE * col, const PT_NODE *
 			    {
 			      name = NULL;
 			    }
-
 			}
 		    }
 		}
@@ -1094,7 +1137,7 @@ pt_new_query_result_descriptor (PARSER_CONTEXT * parser, PT_NODE * query)
   r->res.s.cursor_id.query_id = parser->query_id;
   r->res.s.cursor_id.buffer = NULL;
   r->res.s.cursor_id.tuple_record.tpl = NULL;
-  r->res.s.holdable = parser->is_holdable;
+  r->res.s.holdable = parser->flag.is_holdable;
 
   list_id = (QFILE_LIST_ID *) query->etc;
   r->type_cnt = degree;
@@ -1154,7 +1197,7 @@ pt_free_query_etc_area (PARSER_CONTEXT * parser, PT_NODE * query)
       && (pt_node_to_cmd_type (query) == CUBRID_STMT_SELECT || pt_node_to_cmd_type (query) == CUBRID_STMT_DO
 	  || pt_is_server_insert_with_generated_keys (parser, query)))
     {
-      cursor_free_self_list_id ((QFILE_LIST_ID *) query->etc);
+      cursor_free_self_list_id (query->etc);
     }
 }
 
@@ -1431,7 +1474,10 @@ pt_find_users_class (PARSER_CONTEXT * parser, PT_NODE * name)
     }
   name->info.name.db_object = object;
 
+#if defined (ENABLE_UNUSED_FUNCTION)
+  /* The code below is no longer needed because it finds objects by unique_name that includes the owner's name. */
   pt_check_user_owns_class (parser, name);
+#endif
 
   return object;
 }
@@ -1447,7 +1493,7 @@ pt_find_users_class (PARSER_CONTEXT * parser, PT_NODE * name)
 int
 pt_is_server_insert_with_generated_keys (PARSER_CONTEXT * parser, PT_NODE * statement)
 {
-  if (statement && statement->node_type == PT_INSERT && parser && parser->return_generated_keys
+  if (statement && statement->node_type == PT_INSERT && parser && parser->flag.return_generated_keys
       && statement->info.insert.server_allowed == SERVER_INSERT_IS_ALLOWED)
     {
       return 1;

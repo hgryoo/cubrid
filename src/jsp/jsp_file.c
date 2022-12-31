@@ -1,20 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation
- * Copyright (C) 2016 CUBRID Corporation
- * 
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -85,6 +83,18 @@ javasp_open_info (const char *db_name, const char *mode)
   return fp;
 }
 
+void
+javasp_unlink_info (const char *db_name)
+{
+  char file_name[PATH_MAX] = { 0 };
+  char file_path[PATH_MAX] = { 0 };
+
+  snprintf (file_name, PATH_MAX, "javasp/javasp_%s.info", db_name);
+  envvar_vardir_file (file_path, PATH_MAX, file_name);
+
+  unlink (file_path);
+}
+
 bool
 javasp_get_info_file (char *buf, size_t len, const char *db_name)
 {
@@ -149,23 +159,22 @@ javasp_read_info (const char *db_name, JAVASP_SERVER_INFO & info)
 bool
 javasp_write_info (const char *db_name, JAVASP_SERVER_INFO info)
 {
+  bool result = false;
   FILE *fp = NULL;
 
-  fp = javasp_open_info (db_name, "w");
+  fp = javasp_open_info (db_name, "w+");
   if (fp)
     {
       fprintf (fp, "%d %d", info.pid, info.port);
       fclose (fp);
-      return true;
+      result = true;
     }
-  return false;
+  return result;
 }
 
 bool
 javasp_reset_info (const char *db_name)
 {
-  JAVASP_SERVER_INFO reset_info
-  {
-  -1, -1};
+  JAVASP_SERVER_INFO reset_info = JAVASP_SERVER_INFO_INITIALIZER;
   return javasp_write_info (db_name, reset_info);
 }

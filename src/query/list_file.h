@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -39,6 +38,8 @@
 #include "query_list.h"
 #include "storage_common.h"
 #include "thread_compat.hpp"
+
+#include "xasl_cache.h"
 
 #include <stdio.h>
 
@@ -91,11 +92,13 @@ struct qfile_list_cache_entry
 				 * MAX_NTRANS */
   size_t last_ta_idx;		/* index of the last element in TIDs array */
 #endif				/* SERVER_MODE */
+  XASL_CACHE_ENTRY *xcache_entry;	/* xasl_cache entry */
   const char *query_string;	/* query string; information purpose only */
   struct timeval time_created;	/* when this entry created */
   struct timeval time_last_used;	/* when this entry used lastly */
   int ref_count;		/* how many times this query used */
   bool deletion_marker;		/* this entry will be deleted if marker set */
+  bool invalidate;		/* related xcache entry is erased */
 };
 
 enum
@@ -151,18 +154,21 @@ extern QFILE_LIST_ID *qfile_sort_list (THREAD_ENTRY * thread_p, QFILE_LIST_ID * 
 /* Query result(list file) cache routines */
 extern int qfile_initialize_list_cache (THREAD_ENTRY * thread_p);
 extern int qfile_finalize_list_cache (THREAD_ENTRY * thread_p);
-extern int qfile_clear_list_cache (THREAD_ENTRY * thread_p, int list_ht_no, bool release);
+extern int qfile_clear_list_cache (THREAD_ENTRY * thread_p, XASL_CACHE_ENTRY * xcache_entry, bool invalidate);
 extern int qfile_dump_list_cache_internal (THREAD_ENTRY * thread_p, FILE * fp);
 #if defined (CUBRID_DEBUG)
 extern int qfile_dump_list_cache (THREAD_ENTRY * thread_p, const char *fname);
 #endif
 /* query result(list file) cache entry manipulation functions */
 void qfile_clear_uncommited_list_cache_entry (THREAD_ENTRY * thread_p, int tran_index);
-QFILE_LIST_CACHE_ENTRY *qfile_lookup_list_cache_entry (THREAD_ENTRY * thread_p, int list_ht_no,
-						       const DB_VALUE_ARRAY * params);
-QFILE_LIST_CACHE_ENTRY *qfile_update_list_cache_entry (THREAD_ENTRY * thread_p, int *list_ht_no_ptr,
+QFILE_LIST_CACHE_ENTRY *qfile_lookup_list_cache_entry (THREAD_ENTRY * thread_p, XASL_CACHE_ENTRY * xasl,
+						       const DB_VALUE_ARRAY * params, bool * result_cached);
+QFILE_LIST_CACHE_ENTRY *qfile_update_list_cache_entry (THREAD_ENTRY * thread_p, int list_ht_no,
 						       const DB_VALUE_ARRAY * params, const QFILE_LIST_ID * list_id,
-						       const char *query_string);
+						       XASL_CACHE_ENTRY * xasl);
+int qcache_get_new_ht_no (THREAD_ENTRY * thread_p);
+void qcache_free_ht_no (THREAD_ENTRY * thread_p, int ht_no);
+
 int qfile_end_use_of_list_cache_entry (THREAD_ENTRY * thread_p, QFILE_LIST_CACHE_ENTRY * lent, bool marker);
 
 /* Scan related routines */
@@ -171,7 +177,8 @@ extern void qfile_clear_list_id (QFILE_LIST_ID * list_id);
 
 extern void qfile_load_xasl_node_header (THREAD_ENTRY * thread_p, char *xasl_stream, xasl_node_header * xasl_header_p);
 extern QFILE_LIST_ID *qfile_open_list (THREAD_ENTRY * thread_p, QFILE_TUPLE_VALUE_TYPE_LIST * type_list,
-				       SORT_LIST * sort_list, QUERY_ID query_id, int flag);
+				       SORT_LIST * sort_list, QUERY_ID query_id, int flag,
+				       QFILE_LIST_ID * existing_list_id);
 extern int qfile_reopen_list_as_append_mode (THREAD_ENTRY * thread_p, QFILE_LIST_ID * list_id_p);
 extern int qfile_save_tuple (QFILE_TUPLE_DESCRIPTOR * tuple_descr_p, QFILE_TUPLE_TYPE tuple_type, char *page_p,
 			     int *tuple_length_p);
@@ -218,4 +225,8 @@ extern int qfile_set_tuple_column_value (THREAD_ENTRY * thread_p, QFILE_LIST_ID 
 extern int qfile_overwrite_tuple (THREAD_ENTRY * thread_p, PAGE_PTR first_page, QFILE_TUPLE tuplep,
 				  QFILE_TUPLE_RECORD * tplrec, QFILE_LIST_ID * list_idp);
 extern void qfile_update_qlist_count (THREAD_ENTRY * thread_p, const QFILE_LIST_ID * list_p, int inc);
+extern int qfile_get_list_cache_number_of_entries (int ht_no);
+extern bool qfile_has_no_cache_entries ();
+
+
 #endif /* _LIST_FILE_H_ */

@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -45,6 +44,7 @@
 #include "partition.h"
 #include "db_json.hpp"
 #include "object_primitive.h"
+#include "db_client_type.hpp"
 
 #include "dbtype.h"
 #define PT_CHAIN_LENGTH 10
@@ -192,6 +192,10 @@ static void pt_check_create_view (PARSER_CONTEXT * parser, PT_NODE * stmt);
 static void pt_check_create_entity (PARSER_CONTEXT * parser, PT_NODE * node);
 static void pt_check_create_user (PARSER_CONTEXT * parser, PT_NODE * node);
 static void pt_check_create_index (PARSER_CONTEXT * parser, PT_NODE * node);
+static void pt_check_alter_synonym (PARSER_CONTEXT * parser, PT_NODE * node);
+static void pt_check_create_synonym (PARSER_CONTEXT * parser, PT_NODE * node);
+static void pt_check_drop_synonym (PARSER_CONTEXT * parser, PT_NODE * node);
+static void pt_check_rename_synonym (PARSER_CONTEXT * parser, PT_NODE * node);
 static void pt_check_drop (PARSER_CONTEXT * parser, PT_NODE * node);
 static void pt_check_grant_revoke (PARSER_CONTEXT * parser, PT_NODE * node);
 static void pt_check_method (PARSER_CONTEXT * parser, PT_NODE * node);
@@ -210,6 +214,7 @@ static PT_NODE *pt_path_chain (PARSER_CONTEXT * parser, PT_NODE * node, void *ar
 static PT_NODE *pt_expand_isnull_preds_helper (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk);
 static PT_NODE *pt_expand_isnull_preds (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk);
 static PT_NODE *pt_check_and_replace_hostvar (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk);
+static PT_NODE *pt_check_with_clause (PARSER_CONTEXT * parser, PT_NODE * node);
 static PT_NODE *pt_check_with_info (PARSER_CONTEXT * parser, PT_NODE * node, SEMANTIC_CHK_INFO * info);
 static DB_OBJECT *pt_find_class (PARSER_CONTEXT * parser, PT_NODE * p, bool for_update);
 static void pt_check_unique_attr (PARSER_CONTEXT * parser, const char *entity_name, PT_NODE * att,
@@ -716,7 +721,7 @@ pt_make_cast_with_compatible_info (PARSER_CONTEXT * parser, PT_NODE * att, PT_NO
       temp_expr->arg1 = att;
       new_att->next = next_att;
       new_att->etc = cinfo;	/* to make this as system added */
-      new_att->is_value_query = att->is_value_query;
+      new_att->flag.is_value_query = att->flag.is_value_query;
 
       new_att->data_type = parser_copy_tree_list (parser, new_dt);
       PT_EXPR_INFO_SET_FLAG (new_att, PT_EXPR_INFO_CAST_SHOULD_FOLD);
@@ -1322,20 +1327,21 @@ pt_check_cast_op (PARSER_CONTEXT * parser, PT_NODE * node)
 static DB_OBJECT *
 pt_check_user_exists (PARSER_CONTEXT * parser, PT_NODE * cls_ref)
 {
-  const char *usr;
+  const char *user_name = NULL;
   DB_OBJECT *result;
 
   assert (parser != NULL);
 
-  if (!cls_ref || cls_ref->node_type != PT_NAME || (usr = cls_ref->info.name.resolved) == NULL || usr[0] == '\0')
+  user_name = pt_get_qualifier_name (parser, cls_ref);
+  if (user_name == NULL || user_name[0] == '\0')
     {
       return NULL;
     }
 
-  result = db_find_user (usr);
+  result = db_find_user (user_name);
   if (!result)
     {
-      PT_ERRORmf (parser, cls_ref, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_USER_IS_NOT_IN_DB, usr);
+      PT_ERRORmf (parser, cls_ref, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_USER_IS_NOT_IN_DB, user_name);
     }
 
   return result;
@@ -1355,6 +1361,12 @@ pt_check_user_owns_class (PARSER_CONTEXT * parser, PT_NODE * cls_ref)
   if ((result = pt_check_user_exists (parser, cls_ref)) == NULL || (cls = cls_ref->info.name.db_object) == NULL)
     {
       return NULL;
+    }
+
+  /* This is the case when the loaddb utility is executed with the --no-user-specified-name option as the dba user. */
+  if (db_get_client_type () == DB_CLIENT_TYPE_ADMIN_LOADDB_COMPAT)
+    {
+      return result;
     }
 
   owner = db_get_owner (cls);
@@ -1633,7 +1645,7 @@ pt_number_of_attributes (PARSER_CONTEXT * parser, PT_NODE * stmt, PT_NODE ** att
 	  PT_NODE *const name = i_attr->info.attr_def.attr_name;
 
 	  if (pt_str_compare (resolv_attr->info.name.original, name->info.name.original, CASE_INSENSITIVE) == 0
-	      && pt_str_compare (resolv_class->info.name.original, name->info.name.resolved, CASE_INSENSITIVE) == 0)
+	      && pt_user_specified_name_compare (resolv_class->info.name.original, name->info.name.resolved) == 0)
 	    {
 	      name->info.name.original = new_name->info.name.original;
 	    }
@@ -1664,7 +1676,7 @@ pt_number_of_attributes (PARSER_CONTEXT * parser, PT_NODE * stmt, PT_NODE ** att
 	    }
 	  else
 	    {
-	      if (pt_str_compare (resolv_class->info.name.original, name->info.name.resolved, CASE_INSENSITIVE) == 0)
+	      if (pt_user_specified_name_compare (resolv_class->info.name.original, name->info.name.resolved) == 0)
 		{
 		  /* i_attr is a keeper. keep the user-specified inherited attribute */
 		  t_attr = i_attr;
@@ -3213,7 +3225,7 @@ pt_append_statements_on_change_default (PARSER_CONTEXT * parser, PT_NODE * state
   /* redefine the default value */
   save_next = value->next;
   parser_free_subtrees (parser, value);
-  parser_init_node (value);
+  parser_reinit_node (value);
   value->type_enum = PT_TYPE_NULL;
   value->next = save_next;
 
@@ -3349,7 +3361,7 @@ pt_append_statements_on_insert (PARSER_CONTEXT * parser, PT_NODE * stmt_node, co
   /* redefine the insert value */
   save_next = value->next;
   parser_free_subtrees (parser, value);
-  parser_init_node (value);
+  parser_reinit_node (value);
   value->node_type = PT_VALUE;
   value->type_enum = PT_TYPE_NULL;
   value->next = save_next;
@@ -3503,7 +3515,7 @@ pt_append_statements_on_update (PARSER_CONTEXT * parser, PT_NODE * stmt_node, co
   /* redefine the assignment value */
   save_next = value->next;
   parser_free_subtrees (parser, value);
-  parser_init_node (value);
+  parser_reinit_node (value);
   value->node_type = PT_NAME;
   value->info.name.original = pt_append_string (parser, NULL, attr_name);
   PT_NAME_INFO_SET_FLAG (value, PT_NAME_INFO_EXTERNAL);
@@ -3713,7 +3725,7 @@ pt_resolve_insert_external (PARSER_CONTEXT * parser, PT_NODE * insert)
 	      rhs = a->info.expr.arg2;
 	      *a = *lhs;
 	      a->next = save_next;
-	      parser_init_node (lhs);	/* not to free subtrees */
+	      parser_reinit_node (lhs);	/* not to free subtrees */
 	      parser_free_tree (parser, lhs);
 	      parser_free_tree (parser, rhs);
 
@@ -3754,7 +3766,7 @@ pt_resolve_insert_external (PARSER_CONTEXT * parser, PT_NODE * insert)
 	      rhs = a->info.expr.arg2;
 	      *a = *lhs;
 	      a->next = save_next;
-	      parser_init_node (lhs);	/* not to free subtrees */
+	      parser_reinit_node (lhs);	/* not to free subtrees */
 	      parser_free_tree (parser, lhs);
 	      parser_free_tree (parser, rhs);
 
@@ -4697,6 +4709,7 @@ static void
 pt_check_alter (PARSER_CONTEXT * parser, PT_NODE * alter)
 {
   DB_OBJECT *db, *super;
+  SM_CLASS *class_ = NULL;
   PT_ALTER_CODE code;
   PT_MISC_TYPE type;
   PT_NODE *name, *sup, *att, *qry, *attr;
@@ -4725,6 +4738,28 @@ pt_check_alter (PARSER_CONTEXT * parser, PT_NODE * alter)
   else
     {
       for_update = true;
+    }
+
+  /* We cannot change the schema of a class by using synonym names. */
+  if (db_find_synonym (cls_nam) != NULL)
+    {
+      PT_ERRORmf (parser, alter->info.alter.entity_name, MSGCAT_SET_PARSER_SEMANTIC,
+		  MSGCAT_SEMANTIC_CLASS_DOES_NOT_EXIST, cls_nam);
+      return;
+    }
+  else
+    {
+      /* db_find_synonym () == NULL */
+      ASSERT_ERROR ();
+
+      if (er_errid () == ER_SYNONYM_NOT_EXIST)
+	{
+	  er_clear ();
+	}
+      else
+	{
+	  return;
+	}
     }
 
   db = pt_find_class (parser, name, for_update);
@@ -6571,11 +6606,11 @@ pt_check_alter_partition (PARSER_CONTEXT * parser, PT_NODE * stmt, MOP dbobj)
 
 	  for (names = name_list, chkflag = 0; names; names = names->next)
 	    {
-	      if (!names->partition_pruned
+	      if (!names->flag.partition_pruned
 		  && !intl_identifier_casecmp (names->info.name.original, subcls->partition->pname))
 		{
 		  chkflag = 1;
-		  names->partition_pruned = 1;	/* existence marking */
+		  names->flag.partition_pruned = 1;	/* existence marking */
 		  names->info.name.db_object = objs->op;
 
 		  if (smclass->partition->partition_type == DB_PARTITION_RANGE && cmd == PT_REORG_PARTITION)
@@ -6654,10 +6689,10 @@ pt_check_alter_partition (PARSER_CONTEXT * parser, PT_NODE * stmt, MOP dbobj)
 
 	  for (parts = part_list; parts; parts = parts->next)
 	    {
-	      if (!parts->partition_pruned
+	      if (!parts->flag.partition_pruned
 		  && !intl_identifier_casecmp (parts->info.parts.name->info.name.original, subcls->partition->pname))
 		{
-		  parts->partition_pruned = 1;	/* existence marking */
+		  parts->flag.partition_pruned = 1;	/* existence marking */
 		}
 	    }
 	}
@@ -6667,7 +6702,7 @@ pt_check_alter_partition (PARSER_CONTEXT * parser, PT_NODE * stmt, MOP dbobj)
     {				/* checks unknown partition */
       for (names = name_list; names; names = names->next)
 	{
-	  if (!names->partition_pruned)
+	  if (!names->flag.partition_pruned)
 	    {
 	      PT_ERRORmf (parser, stmt, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_PARTITION_DOES_NOT_EXIST,
 			  names->info.name.original);
@@ -6828,7 +6863,7 @@ pt_check_alter_partition (PARSER_CONTEXT * parser, PT_NODE * stmt, MOP dbobj)
 	    }
 
 	  parts_cnt++;
-	  if (parts->partition_pruned)
+	  if (parts->flag.partition_pruned)
 	    {
 	      if (name_list)
 		{
@@ -6836,7 +6871,7 @@ pt_check_alter_partition (PARSER_CONTEXT * parser, PT_NODE * stmt, MOP dbobj)
 		    {
 		      if (!intl_identifier_casecmp (part_name, names->info.name.original))
 			{
-			  names->partition_pruned = 0;
+			  names->flag.partition_pruned = 0;
 			  break;	/* REORG partition name reuse */
 			}
 		    }
@@ -7067,7 +7102,7 @@ pt_attr_refers_to_self (PARSER_CONTEXT * parser, PT_NODE * attr, const char *sel
   for (type = attr->data_type->info.data_type.entity; type && type->node_type == PT_NAME; type = type->next)
     {
       /* self is a string because in the create case, self does not exist yet */
-      if (!intl_identifier_casecmp (self, type->info.name.original))
+      if (!pt_user_specified_name_compare (self, type->info.name.original))
 	{
 	  return true;
 	}
@@ -7406,7 +7441,6 @@ pt_check_vclass_query_spec (PARSER_CONTEXT * parser, PT_NODE * qry, PT_NODE * at
 
   if (do_semantic_check)
     {
-      qry->do_not_replace_orderby = 1;
       qry = pt_semantic_check (parser, qry);
       if (pt_has_error (parser) || qry == NULL)
 	{
@@ -7928,6 +7962,7 @@ pt_check_create_view (PARSER_CONTEXT * parser, PT_NODE * stmt)
   PT_NODE *prev_qry;
   const char *name = NULL;
   int attr_count = 0;
+  bool do_not_replace_orderby;
 
   assert (parser != NULL);
 
@@ -7984,7 +8019,9 @@ pt_check_create_view (PARSER_CONTEXT * parser, PT_NODE * stmt)
 
       /* TODO This seems to flag too many queries as view specs because it also traverses the tree to subqueries. It
        * might need a pre_function that returns PT_STOP_WALK for subqueries. */
-      result_stmt = parser_walk_tree (parser, crt_qry, pt_set_is_view_spec, NULL, NULL, NULL);
+      do_not_replace_orderby = true;
+      result_stmt =
+	parser_walk_tree (parser, crt_qry, pt_set_is_view_spec, (void *) &do_not_replace_orderby, NULL, NULL);
       if (result_stmt == NULL)
 	{
 	  assert (false);
@@ -7993,7 +8030,6 @@ pt_check_create_view (PARSER_CONTEXT * parser, PT_NODE * stmt)
 	}
       crt_qry = result_stmt;
 
-      crt_qry->do_not_replace_orderby = 1;
       result_stmt = pt_semantic_check (parser, crt_qry);
       if (pt_has_error (parser))
 	{
@@ -8192,11 +8228,14 @@ pt_check_create_entity (PARSER_CONTEXT * parser, PT_NODE * node)
   PT_NODE *tbl_opt = NULL;
   PT_MISC_TYPE entity_type;
   DB_OBJECT *db_obj, *existing_entity;
+  DB_OBJECT *owner = NULL;
+  const char *owner_name = NULL;
   int found, partition_status = DB_NOT_PARTITIONED_CLASS;
   int collation_id, charset;
   bool found_reuse_oid_option = false, reuse_oid = false;
   bool found_auto_increment = false;
   bool found_tbl_comment = false;
+  bool found_tbl_encrypt = false;
   int error = NO_ERROR;
 
   entity_type = node->info.create_entity.entity_type;
@@ -8310,6 +8349,20 @@ pt_check_create_entity (PARSER_CONTEXT * parser, PT_NODE * node)
 	      }
 	  }
 	  break;
+	case PT_TABLE_OPTION_ENCRYPT:
+	  {
+	    if (found_tbl_encrypt)
+	      {
+		PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_DUPLICATE_TABLE_OPTION,
+			    parser_print_tree (parser, tbl_opt));
+		return;
+	      }
+	    else
+	      {
+		found_tbl_encrypt = true;
+	      }
+	  }
+	  break;
 	default:
 	  /* should never arrive here */
 	  assert (false);
@@ -8343,8 +8396,58 @@ pt_check_create_entity (PARSER_CONTEXT * parser, PT_NODE * node)
       return;
     }
 
-  /* check name doesn't already exist as a class */
   name = node->info.create_entity.entity_name;
+  owner_name = pt_get_qualifier_name (parser, name);
+  if (owner_name)
+    {
+      owner = db_find_user (owner_name);
+      if (owner == NULL)
+	{
+	  ASSERT_ERROR_AND_SET (error);
+
+	  if (er_errid () == ER_AU_INVALID_USER)
+	    {
+	      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_USER_IS_NOT_IN_DB, owner_name);
+	    }
+
+	  return;
+	}
+
+      if (!ws_is_same_object (owner, Au_user) && !au_is_dba_group_member (Au_user))
+	{
+	  PT_ERRORm (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_CREATE_TABLE_VIEW_NOT_OWNER);
+	  return;
+	}
+    }
+  else
+    {
+      /* In system class names, owner name can be NULL. Otherwise, owner name must not be NULL. */
+      assert (au_is_dba_group_member (Au_user));
+      assert (sm_check_system_class_by_name (PT_NAME_ORIGINAL (name)));
+    }
+
+  /* We cannot use an existing synonym name as a class name. */
+  if (db_find_synonym (name->info.name.original) != NULL)
+    {
+      PT_ERRORmf (parser, name, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_CLASS_EXISTS, name->info.name.original);
+      return;
+    }
+  else
+    {
+      /* db_find_synonym () == NULL */
+      ASSERT_ERROR ();
+
+      if (er_errid () == ER_SYNONYM_NOT_EXIST)
+	{
+	  er_clear ();
+	}
+      else
+	{
+	  return;
+	}
+    }
+
+  /* check name doesn't already exist as a class */
   existing_entity = pt_find_class (parser, name, false);
   if (existing_entity != NULL)
     {
@@ -8452,7 +8555,7 @@ pt_check_create_entity (PARSER_CONTEXT * parser, PT_NODE * node)
 
 	  for (parent = node->info.create_entity.supclass_list; parent && !found; parent = parent->next)
 	    {
-	      found = !pt_str_compare (resolv_class->info.name.original, parent->info.name.original, CASE_INSENSITIVE);
+	      found = !pt_user_specified_name_compare (resolv_class->info.name.original, parent->info.name.original);
 	    }
 
 	  if (!found)
@@ -8483,7 +8586,10 @@ pt_check_create_entity (PARSER_CONTEXT * parser, PT_NODE * node)
   qry_specs = node->info.create_entity.as_query_list;
   if (node->info.create_entity.entity_type == PT_CLASS)
     {
-      PT_NODE *select = NULL;
+      PT_NODE *select = node->info.create_entity.create_select;
+      PT_NODE *crt_attr = NULL;
+      PT_NODE *const qspec_attr = pt_get_select_list (parser, select);
+
       /* simple CLASSes must not have any query specs */
       if (qry_specs)
 	{
@@ -8491,12 +8597,29 @@ pt_check_create_entity (PARSER_CONTEXT * parser, PT_NODE * node)
 	  return;
 	}
       /* user variables are not allowed in select list for CREATE ... AS SELECT ... */
-      select = node->info.create_entity.create_select;
       if (select != NULL)
 	{
+	  for (crt_attr = qspec_attr; crt_attr != NULL; crt_attr = crt_attr->next)
+	    {
+	      if (crt_attr->alias_print == NULL && crt_attr->node_type != PT_NAME && crt_attr->node_type != PT_DOT_)
+		{
+		  PT_ERRORmf (parser, qry_specs, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_MISSING_ATTR_NAME,
+			      pt_short_print (parser, crt_attr));
+		  return;
+		}
+	    }
+
 	  if (select->info.query.with != NULL)
 	    {
 	      // run semantic check only for CREATE ... AS WITH ...
+	      if ((crt_attr = pt_check_with_clause (parser, select)) != NULL)
+		{
+		  /* no alias for CTE select list */
+		  PT_ERRORmf (parser, qry_specs, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_MISSING_ATTR_NAME,
+			      pt_short_print (parser, crt_attr));
+		  return;
+		}
+
 	      select = pt_semantic_check (parser, select);
 	    }
 
@@ -8578,8 +8701,29 @@ pt_check_create_index (PARSER_CONTEXT * parser, PT_NODE * node)
 
   /* check that there trying to create an index on a class */
   name = node->info.index.indexed_class->info.spec.entity_name;
-  db_obj = db_find_class (name->info.name.original);
 
+  /* We cannot create index of a class by using synonym names. */
+  if (db_find_synonym (name->info.name.original) != NULL)
+    {
+      PT_ERRORmf (parser, name, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_IS_NOT_A_CLASS, name->info.name.original);
+      return;
+    }
+  else
+    {
+      /* db_find_synonym () == NULL */
+      ASSERT_ERROR ();
+
+      if (er_errid () == ER_SYNONYM_NOT_EXIST)
+	{
+	  er_clear ();
+	}
+      else
+	{
+	  return;
+	}
+    }
+
+  db_obj = db_find_class (name->info.name.original);
   if (db_obj == NULL)
     {
       PT_ERRORmf (parser, name, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_IS_NOT_A_CLASS, name->info.name.original);
@@ -8723,6 +8867,394 @@ pt_check_create_index (PARSER_CONTEXT * parser, PT_NODE * node)
   pt_check_filter_index_expr (parser, node->info.index.column_names, node->info.index.where, db_obj);
 }
 
+static void
+pt_check_alter_synonym (PARSER_CONTEXT * parser, PT_NODE * node)
+{
+  DB_OBJECT *synonym_obj = NULL;
+  DB_OBJECT *owner_obj = NULL;
+  const char *name = NULL;
+  const char *owner_name = NULL;
+
+  if (parser == NULL || node == NULL)
+    {
+      return;
+    }
+
+  assert (node->node_type == PT_ALTER_SYNONYM);
+
+  /* syntax is not supported. */
+  assert (PT_SYNONYM_ACCESS_MODIFIER (node) != PT_PUBLIC);
+
+  /* synonym_name */
+  name = PT_NAME_ORIGINAL (PT_SYNONYM_NAME (node));
+  assert (name != NULL && *name != '\0');
+  if (sm_check_system_class_by_name (name) == true)
+    {
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_INVALID_NAME, name);
+      return;
+    }
+
+  /* synonym_owner_name */
+  owner_name = PT_NAME_ORIGINAL (PT_SYNONYM_OWNER_NAME (node));
+  assert (owner_name != NULL && *owner_name != '\0');
+  owner_obj = db_find_user (owner_name);
+  if (owner_obj == NULL)
+    {
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_USER_IS_NOT_IN_DB, owner_name);
+      return;
+    }
+
+  if (ws_is_same_object (owner_obj, Au_user) == false && au_is_dba_group_member (Au_user) == false)
+    {
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_NOT_OWNER, "ALTER SYNONYM");
+      return;
+    }
+
+  /* Check if a synonym exists. */
+  synonym_obj = db_find_synonym (name);
+  if (synonym_obj == NULL)
+    {
+      ASSERT_ERROR ();
+
+      if (er_errid () == ER_SYNONYM_NOT_EXIST)
+	{
+	  PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_NOT_EXIST, name);
+	}
+
+      return;
+    }
+
+  /* synonym_obj != NULL */
+
+  if (PT_SYNONYM_TARGET_NAME (node) == NULL)
+    {
+      /* If only the comment is changed, PT_SYNONYM_TARGET_NAME (node) can be NULL.
+       * If both PT_SYNONYM_TARGET_NAME (node) and PT_SYNONYM_COMMENT (node) are NULL,
+       * an error occurred in yyparse() and it should not have come here. */
+      assert (PT_SYNONYM_COMMENT (node) != NULL);
+    }
+  else
+    {
+      /* PT_SYNONYM_TARGET_NAME (node) != NULL */
+
+      /* target_owner_name */
+      owner_name = PT_NAME_ORIGINAL (PT_SYNONYM_TARGET_OWNER_NAME (node));
+      assert (owner_name != NULL && *owner_name != '\0');
+      owner_obj = db_find_user (owner_name);
+      if (owner_obj == NULL)
+	{
+	  PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_USER_IS_NOT_IN_DB, owner_name);
+	  return;
+	}
+    }
+}
+
+static void
+pt_check_create_synonym (PARSER_CONTEXT * parser, PT_NODE * node)
+{
+  DB_OBJECT *synonym_obj = NULL;
+  DB_OBJECT *owner_obj = NULL;
+  const char *name = NULL;
+  const char *owner_name = NULL;
+
+  if (parser == NULL || node == NULL)
+    {
+      return;
+    }
+
+  assert (node->node_type == PT_CREATE_SYNONYM);
+
+  /* syntax is not supported. */
+  assert (PT_SYNONYM_ACCESS_MODIFIER (node) != PT_PUBLIC);
+
+  /* synonym_name */
+  name = PT_NAME_ORIGINAL (PT_SYNONYM_NAME (node));
+  assert (name != NULL && *name != '\0');
+  if (sm_check_system_class_by_name (name) == true)
+    {
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_INVALID_NAME, name);
+      return;
+    }
+
+  /* synonym_owner_name */
+  owner_name = PT_NAME_ORIGINAL (PT_SYNONYM_OWNER_NAME (node));
+  assert (owner_name != NULL && *owner_name != '\0');
+  owner_obj = db_find_user (owner_name);
+  if (owner_obj == NULL)
+    {
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_USER_IS_NOT_IN_DB, owner_name);
+      return;
+    }
+
+  if (ws_is_same_object (owner_obj, Au_user) == false && au_is_dba_group_member (Au_user) == false)
+    {
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_NOT_OWNER, "CREATE SYNONYM");
+      return;
+    }
+
+  /* or_replace */
+  synonym_obj = db_find_synonym (name);
+  if (synonym_obj != NULL)
+    {
+      if (PT_SYNONYM_OR_REPLACE (node) == FALSE)
+	{
+	  PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_ALREADY_EXIST, name);
+	  return;
+	}
+    }
+  else
+    {
+      /* synonym_obj == NULL */
+      ASSERT_ERROR ();
+
+      if (er_errid () == ER_SYNONYM_NOT_EXIST)
+	{
+	  er_clear ();
+	}
+      else
+	{
+	  return;
+	}
+
+      /* Check if class exists by name. */
+      if (db_find_class (name) != NULL)
+	{
+	  PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_CLASS_EXISTS, name);
+	  return;
+	}
+      else
+	{
+	  /* db_find_class () == NULL */
+	  ASSERT_ERROR ();
+
+	  if (er_errid () == ER_LC_UNKNOWN_CLASSNAME)
+	    {
+	      er_clear ();
+	    }
+	  else
+	    {
+	      return;
+	    }
+	}
+    }
+
+  /* (synonym_obj != NULL && PT_SYNONYM_OR_REPLACE () == TRUE)
+   * || (synonym_obj == NULL && db_find_class () == NULL && er_errid () == ER_LC_UNKNOWN_CLASSNAME) */
+
+  /* target_owner_name */
+  owner_name = PT_NAME_ORIGINAL (PT_SYNONYM_TARGET_OWNER_NAME (node));
+  assert (owner_name != NULL && *owner_name != '\0');
+  owner_obj = db_find_user (owner_name);
+  if (owner_obj == NULL)
+    {
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_USER_IS_NOT_IN_DB, owner_name);
+      return;
+    }
+}
+
+static void
+pt_check_drop_synonym (PARSER_CONTEXT * parser, PT_NODE * node)
+{
+  DB_OBJECT *synonym_obj = NULL;
+  DB_OBJECT *owner_obj = NULL;
+  const char *name = NULL;
+  const char *owner_name = NULL;
+
+  if (parser == NULL || node == NULL)
+    {
+      return;
+    }
+
+  assert (node->node_type == PT_DROP_SYNONYM);
+
+  /* syntax is not supported. */
+  assert (PT_SYNONYM_ACCESS_MODIFIER (node) != PT_PUBLIC);
+
+  /* synonym_name */
+  name = PT_NAME_ORIGINAL (PT_SYNONYM_NAME (node));
+  assert (name != NULL && *name != '\0');
+  if (sm_check_system_class_by_name (name) == true)
+    {
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_INVALID_NAME, name);
+      return;
+    }
+
+  /* synonym_owner_name */
+  owner_name = PT_NAME_ORIGINAL (PT_SYNONYM_OWNER_NAME (node));
+  assert (owner_name != NULL && *owner_name != '\0');
+  owner_obj = db_find_user (owner_name);
+  if (owner_obj == NULL)
+    {
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_USER_IS_NOT_IN_DB, owner_name);
+      return;
+    }
+
+  if (ws_is_same_object (owner_obj, Au_user) == false && au_is_dba_group_member (Au_user) == false)
+    {
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_NOT_OWNER, "DROP SYNONYM");
+      return;
+    }
+
+  /* if_exists */
+  synonym_obj = db_find_synonym (name);
+  if (synonym_obj == NULL)
+    {
+      ASSERT_ERROR ();
+
+      if (er_errid () != ER_SYNONYM_NOT_EXIST)
+	{
+	  return;
+	}
+
+      if (PT_SYNONYM_IF_EXISTS (node) == FALSE)
+	{
+	  PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_NOT_EXIST, name);
+	  return;
+	}
+
+      er_clear ();
+    }
+
+  /* (synonym_obj != NULL) || (synonym_obj == NULL && PT_SYNONYM_IF_EXISTS () == TRUE) */
+}
+
+static void
+pt_check_rename_synonym (PARSER_CONTEXT * parser, PT_NODE * node)
+{
+  DB_OBJECT *old_synonym_obj = NULL;
+  DB_OBJECT *new_synonym_obj = NULL;
+  DB_OBJECT *old_owner_obj = NULL;
+  DB_OBJECT *new_owner_obj = NULL;
+  const char *old_name = NULL;
+  const char *new_name = NULL;
+  const char *old_owner_name = NULL;
+  const char *new_owner_name = NULL;
+
+  if (parser == NULL || node == NULL)
+    {
+      return;
+    }
+
+  assert (node->node_type == PT_RENAME_SYNONYM);
+
+  /* syntax is not supported. */
+  assert (PT_SYNONYM_ACCESS_MODIFIER (node) != PT_PUBLIC);
+
+  /* old_synonym_name */
+  old_name = PT_NAME_ORIGINAL (PT_SYNONYM_OLD_NAME (node));
+  assert (old_name != NULL && *old_name != '\0');
+  if (sm_check_system_class_by_name (old_name) == true)
+    {
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_INVALID_NAME, old_name);
+      return;
+    }
+
+  /* old_synonym_owner_name */
+  old_owner_name = PT_NAME_ORIGINAL (PT_SYNONYM_OLD_OWNER_NAME (node));
+  assert (old_owner_name != NULL && *old_owner_name != '\0');
+  old_owner_obj = db_find_user (old_owner_name);
+  if (old_owner_obj == NULL)
+    {
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_USER_IS_NOT_IN_DB, old_owner_name);
+      return;
+    }
+
+  if (ws_is_same_object (old_owner_obj, Au_user) == false && au_is_dba_group_member (Au_user) == false)
+    {
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_NOT_OWNER, "RENAME SYNONYM");
+      return;
+    }
+
+  old_synonym_obj = db_find_synonym (old_name);
+  if (old_synonym_obj == NULL)
+    {
+      ASSERT_ERROR ();
+
+      if (er_errid () == ER_SYNONYM_NOT_EXIST)
+	{
+	  PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_NOT_EXIST, old_name);
+	}
+
+      return;
+    }
+
+  /* old_synonym_obj != NULL */
+
+  /* new_synonym_name */
+  new_name = PT_NAME_ORIGINAL (PT_SYNONYM_NEW_NAME (node));
+  assert (new_name != NULL && *new_name != '\0');
+  if (sm_check_system_class_by_name (new_name) == true)
+    {
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_INVALID_NAME, new_name);
+      return;
+    }
+
+  /* new_synonym_owner_name */
+  new_owner_name = PT_NAME_ORIGINAL (PT_SYNONYM_NEW_OWNER_NAME (node));
+  assert (new_owner_name != NULL && *new_owner_name != '\0');
+  new_owner_obj = db_find_user (new_owner_name);
+  if (new_owner_obj == NULL)
+    {
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_USER_IS_NOT_IN_DB, new_owner_name);
+      return;
+    }
+
+  if (ws_is_same_object (old_owner_obj, new_owner_obj) == false)
+    {
+      PT_ERRORm (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_RENAME_CANNOT_CHANGE_OWNER);
+      return;
+    }
+
+  new_synonym_obj = db_find_synonym (new_name);
+  if (new_synonym_obj != NULL)
+    {
+      if (ws_is_same_object (old_synonym_obj, new_synonym_obj) == true)
+	{
+	  PT_ERRORm (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_RENAME_CANNOT_SAME_NAME);
+	  return;
+	}
+
+      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SYNONYM_ALREADY_EXIST, new_name);
+      return;
+    }
+  else
+    {
+      /* new_synonym_obj == NULL */
+      ASSERT_ERROR ();
+
+      if (er_errid () == ER_SYNONYM_NOT_EXIST)
+	{
+	  er_clear ();
+	}
+      else
+	{
+	  return;
+	}
+
+      /* Check if class exists by name. */
+      if (db_find_class (new_name) != NULL)
+	{
+	  PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_CLASS_EXISTS, new_name);
+	  return;
+	}
+      else
+	{
+	  ASSERT_ERROR ();
+
+	  if (er_errid () == ER_LC_UNKNOWN_CLASSNAME)
+	    {
+	      er_clear ();
+	    }
+	  else
+	    {
+	      return;
+	    }
+	}
+    }
+
+  /* old_synonym_obj != NULL && new_synonym_obj == NULL && er_errid () == ER_LC_UNKNOWN_CLASSNAME */
+}
+
 /*
  * pt_check_drop () - do semantic checks on the drop statement
  *   return:  none
@@ -8752,9 +9284,32 @@ pt_check_drop (PARSER_CONTEXT * parser, PT_NODE * node)
 	  const char *cls_name;
 	  /* check if class name exists. if not, we remove the corresponding node from spec_list. */
 	  if ((name = free_node->info.spec.entity_name) != NULL && name->node_type == PT_NAME
-	      && (cls_name = name->info.name.original) != NULL
-	      && (db_obj = db_find_class_with_purpose (cls_name, true)) == NULL)
+	      && (cls_name = name->info.name.original) != NULL)
 	    {
+	      /* We cannot change the schema of a class by using synonym names. */
+	      if (db_find_synonym (cls_name) == NULL)
+		{
+		  ASSERT_ERROR ();
+
+		  if (er_errid () == ER_SYNONYM_NOT_EXIST)
+		    {
+		      er_clear ();
+		    }
+		  else
+		    {
+		      return;
+		    }
+
+		  if ((db_obj = db_find_class_with_purpose (cls_name, true)) != NULL)
+		    {
+		      prev_node = free_node;
+		      free_node = free_node->next;
+
+		      continue;
+		    }
+		}
+
+	      /* db_find_synonym () != NULL || db_find_class_with_purpose () == NULL */
 	      if (free_node == node->info.drop.spec_list)
 		{
 		  node->info.drop.spec_list = node->info.drop.spec_list->next;
@@ -8863,24 +9418,48 @@ pt_check_drop (PARSER_CONTEXT * parser, PT_NODE * node)
       for (temp = node->info.drop.spec_list; temp && temp->node_type == PT_SPEC; temp = temp->next)
 	{
 	  if ((name = temp->info.spec.entity_name) != NULL && name->node_type == PT_NAME
-	      && (cls_nam = name->info.name.original) != NULL && (db_obj = db_find_class (cls_nam)) != NULL)
+	      && (cls_nam = name->info.name.original) != NULL)
 	    {
-	      if (typ != PT_MISC_DUMMY)
+	      /* We cannot change the schema of a class by using synonym names. */
+	      if (db_find_synonym (cls_nam) != NULL)
 		{
-		  name->info.name.db_object = db_obj;
-		  pt_check_user_owns_class (parser, name);
-		  if ((typ == PT_CLASS && db_is_class (db_obj) <= 0)
-		      || (typ == PT_VCLASS && db_is_vclass (db_obj) <= 0))
+		  PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_CLASS_DOES_NOT_EXIST, cls_nam);
+		  return;
+		}
+	      else
+		{
+		  /* db_find_synonym () == NULL */
+		  ASSERT_ERROR ();
+
+		  if (er_errid () == ER_SYNONYM_NOT_EXIST)
 		    {
-		      PT_ERRORmf2 (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_IS_NOT_A, cls_nam,
-				   pt_show_misc_type (typ));
+		      er_clear ();
+		    }
+		  else
+		    {
+		      return;
 		    }
 		}
 
-	      if (node->info.drop.is_cascade_constraints && db_is_vclass (db_obj) > 0)
+	      if ((db_obj = db_find_class (cls_nam)) != NULL)
 		{
-		  PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC,
-			      MSGCAT_SEMANTIC_VIEW_CASCADE_CONSTRAINTS_NOT_ALLOWED, cls_nam);
+		  if (typ != PT_MISC_DUMMY)
+		    {
+		      name->info.name.db_object = db_obj;
+		      pt_check_user_owns_class (parser, name);
+		      if ((typ == PT_CLASS && db_is_class (db_obj) <= 0)
+			  || (typ == PT_VCLASS && db_is_vclass (db_obj) <= 0))
+			{
+			  PT_ERRORmf2 (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_IS_NOT_A, cls_nam,
+				       pt_show_misc_type (typ));
+			}
+		    }
+
+		  if (node->info.drop.is_cascade_constraints && db_is_vclass (db_obj) > 0)
+		    {
+		      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC,
+				  MSGCAT_SEMANTIC_VIEW_CASCADE_CONSTRAINTS_NOT_ALLOWED, cls_nam);
+		    }
 		}
 	    }
 	}
@@ -9107,14 +9686,38 @@ pt_check_truncate (PARSER_CONTEXT * parser, PT_NODE * node)
       const char *cls_nam;
 
       if ((name = temp->info.spec.entity_name) != NULL && name->node_type == PT_NAME
-	  && (cls_nam = name->info.name.original) != NULL && (db_obj = db_find_class (cls_nam)) != NULL)
+	  && (cls_nam = name->info.name.original) != NULL)
 	{
-	  name->info.name.db_object = db_obj;
-	  pt_check_user_owns_class (parser, name);
-	  if (db_is_class (db_obj) <= 0)
+	  /* We cannot change the schema of a class by using synonym names. */
+	  if (db_find_synonym (cls_nam) != NULL)
 	    {
-	      PT_ERRORmf2 (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_IS_NOT_A, cls_nam,
-			   pt_show_misc_type (PT_CLASS));
+	      PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_CLASS_DOES_NOT_EXIST, cls_nam);
+	      return;
+	    }
+	  else
+	    {
+	      /* db_find_synonym () == NULL */
+	      ASSERT_ERROR ();
+
+	      if (er_errid () == ER_SYNONYM_NOT_EXIST)
+		{
+		  er_clear ();
+		}
+	      else
+		{
+		  return;
+		}
+	    }
+
+	  if ((db_obj = db_find_class (cls_nam)) != NULL)
+	    {
+	      name->info.name.db_object = db_obj;
+	      pt_check_user_owns_class (parser, name);
+	      if (db_is_class (db_obj) <= 0)
+		{
+		  PT_ERRORmf2 (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_IS_NOT_A, cls_nam,
+			       pt_show_misc_type (PT_CLASS));
+		}
 	    }
 	}
     }
@@ -9515,9 +10118,9 @@ pt_semantic_check_local (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int
       /* Every type of node that can appear at the highest level should be listed here, unless no semantic check is
        * required. */
     case PT_DELETE:
-      if (top_node->cannot_prepare == 1)
+      if (top_node->flag.cannot_prepare == 1)
 	{
-	  node->cannot_prepare = 1;
+	  node->flag.cannot_prepare = 1;
 	}
 
       entity = NULL;
@@ -9569,9 +10172,9 @@ pt_semantic_check_local (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int
       break;
 
     case PT_INSERT:
-      if (top_node && top_node->cannot_prepare == 1)
+      if (top_node && top_node->flag.cannot_prepare == 1)
 	{
-	  node->cannot_prepare = 1;
+	  node->flag.cannot_prepare = 1;
 	}
 
       if (node->info.insert.into_var != NULL && node->info.insert.value_clauses->next != NULL)
@@ -9678,9 +10281,9 @@ pt_semantic_check_local (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int
     case PT_UNION:
     case PT_INTERSECTION:
     case PT_DIFFERENCE:
-      if (top_node->cannot_prepare == 1)
+      if (top_node->flag.cannot_prepare == 1)
 	{
-	  node->cannot_prepare = 1;
+	  node->flag.cannot_prepare = 1;
 	}
 
       /* semantic check {union|intersection|difference} operands */
@@ -9757,12 +10360,12 @@ pt_semantic_check_local (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int
       break;
 
     case PT_SELECT:
-      if (top_node->cannot_prepare == 1)
+      if (top_node->flag.cannot_prepare == 1)
 	{
-	  node->cannot_prepare = 1;
+	  node->flag.cannot_prepare = 1;
 	}
 
-      if (node->info.query.single_tuple == 1)
+      if (node->info.query.flag.single_tuple == 1)
 	{
 	  if (pt_length_of_select_list (node->info.query.q.select.list, EXCLUDE_HIDDEN_COLUMNS) != 1)
 	    {
@@ -9870,7 +10473,7 @@ pt_semantic_check_local (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int
 	  break;		/* error */
 	}
 
-      if (node->info.query.q.select.group_by != NULL && node->info.query.q.select.group_by->with_rollup)
+      if (node->info.query.q.select.group_by != NULL && node->info.query.q.select.group_by->flag.with_rollup)
 	{
 	  bool has_gbynum = false;
 
@@ -9957,9 +10560,9 @@ pt_semantic_check_local (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int
       break;
 
     case PT_UPDATE:
-      if (top_node->cannot_prepare == 1)
+      if (top_node->flag.cannot_prepare == 1)
 	{
-	  node->cannot_prepare = 1;
+	  node->flag.cannot_prepare = 1;
 	}
 
       if (pt_has_aggregate (parser, node))
@@ -10119,9 +10722,9 @@ pt_semantic_check_local (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int
 	  break;
 	}
 
-      if (top_node->cannot_prepare == 1)
+      if (top_node->flag.cannot_prepare == 1)
 	{
-	  node->cannot_prepare = 1;
+	  node->flag.cannot_prepare = 1;
 	}
 
       if (pt_has_aggregate (parser, node))
@@ -10217,6 +10820,14 @@ pt_semantic_check_local (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int
 	{
 	  ASSERT_ERROR ();
 	  PT_ERRORc (parser, node, er_msg ());
+	}
+
+      break;
+
+    case PT_DBLINK_TABLE:
+      if (pt_has_error (parser))
+	{
+	  break;
 	}
 
       break;
@@ -10637,8 +11248,8 @@ pt_check_and_replace_hostvar (PARSER_CONTEXT * parser, PT_NODE * node, void *arg
     }
 
   /* replace input host var/parameter with its value if given */
-  if ((pt_is_input_hostvar (node) && parser->host_var_count > node->info.host_var.index && parser->set_host_var == 1)
-      || pt_is_input_parameter (node))
+  if ((pt_is_input_hostvar (node) && parser->host_var_count > node->info.host_var.index
+       && parser->flag.set_host_var == 1) || pt_is_input_parameter (node))
     {
       type = pt_node_to_db_type (node);
       if (type == DB_TYPE_OBJECT || type == DB_TYPE_VOBJ || TP_IS_SET_TYPE (type))
@@ -10675,6 +11286,57 @@ pt_check_and_replace_hostvar (PARSER_CONTEXT * parser, PT_NODE * node, void *arg
     }
 
   return node;
+}
+
+/*
+ * pt_check_with_clause () -  
+ *   do semantic checks on "create entity" has "with clause"
+ *   this function is called from pt_check_create_entity only
+ *   so, not needed to check NULL for node
+ *
+ *   return:  NULL if no errors, attribute of CTE otherwise
+ *   node(in): a "with" statement that needs to be checked.
+ */
+
+static PT_NODE *
+pt_check_with_clause (PARSER_CONTEXT * parser, PT_NODE * node)
+{
+  PT_NODE *cte = node->info.query.with->info.with_clause.cte_definition_list;
+
+  if (cte)
+    {
+      PT_NODE *cte_part;
+      PT_NODE *cte_attr;
+
+      if (cte->info.cte.as_attr_list == NULL)
+	{
+	  cte_part = cte->info.cte.non_recursive_part;
+	  if (cte_part)
+	    {
+	      for (cte_attr = pt_get_select_list (parser, cte_part); cte_attr != NULL; cte_attr = cte_attr->next)
+		{
+		  if (cte_attr->alias_print == NULL && cte_attr->node_type != PT_NAME && cte_attr->node_type != PT_DOT_)
+		    {
+		      return cte_attr;
+		    }
+		}
+	    }
+
+	  cte_part = cte->info.cte.recursive_part;
+	  if (cte_part)
+	    {
+	      for (cte_attr = pt_get_select_list (parser, cte_part); cte_attr != NULL; cte_attr = cte_attr->next)
+		{
+		  if (cte_attr->alias_print == NULL && cte_attr->node_type != PT_NAME && cte_attr->node_type != PT_DOT_)
+		    {
+		      return cte_attr;
+		    }
+		}
+	    }
+	}
+    }
+
+  return NULL;
 }
 
 /*
@@ -10777,10 +11439,10 @@ pt_check_with_info (PARSER_CONTEXT * parser, PT_NODE * node, SEMANTIC_CHK_INFO *
 	  if (sc_info_ptr->system_class && PT_IS_QUERY (node))
 	    {
 	      /* do not cache the result if a system class is involved in the query */
-	      node->info.query.reexecute = 1;
-	      node->info.query.do_cache = 0;
-	      node->info.query.do_not_cache = 1;
-	      node->info.query.has_system_class = 1;
+	      node->info.query.flag.reexecute = 1;
+	      node->info.query.flag.do_cache = 0;
+	      node->info.query.flag.do_not_cache = 1;
+	      node->info.query.flag.has_system_class = 1;
 	    }
 
 	  if (node->node_type == PT_UPDATE || node->node_type == PT_DELETE || node->node_type == PT_INSERT
@@ -10794,13 +11456,13 @@ pt_check_with_info (PARSER_CONTEXT * parser, PT_NODE * node, SEMANTIC_CHK_INFO *
 	      node = parser_walk_tree (parser, node, pt_check_and_replace_hostvar, &check, pt_continue_walk, NULL);
 	      if (check)
 		{
-		  node->cannot_prepare = 1;
+		  node->flag.cannot_prepare = 1;
 		}
 
 	      /* because the statement has some object type PT_PARAMETER, it cannot be prepared */
 	      if (parent_parser != NULL)
 		{
-		  node->cannot_prepare = 1;
+		  node->flag.cannot_prepare = 1;
 		}
 	    }
 
@@ -10953,6 +11615,12 @@ pt_check_with_info (PARSER_CONTEXT * parser, PT_NODE * node, SEMANTIC_CHK_INFO *
     case PT_UPDATE_STATS:
       break;
 
+    case PT_CREATE_SERVER:
+    case PT_DROP_SERVER:
+    case PT_RENAME_SERVER:
+    case PT_ALTER_SERVER:
+      break;
+
     case PT_ALTER:
       pt_check_alter (parser, node);
 
@@ -11020,6 +11688,22 @@ pt_check_with_info (PARSER_CONTEXT * parser, PT_NODE * node, SEMANTIC_CHK_INFO *
 
     case PT_CREATE_USER:
       pt_check_create_user (parser, node);
+      break;
+
+    case PT_ALTER_SYNONYM:
+      pt_check_alter_synonym (parser, node);
+      break;
+
+    case PT_CREATE_SYNONYM:
+      pt_check_create_synonym (parser, node);
+      break;
+
+    case PT_DROP_SYNONYM:
+      pt_check_drop_synonym (parser, node);
+      break;
+
+    case PT_RENAME_SYNONYM:
+      pt_check_rename_synonym (parser, node);
       break;
 
     default:
@@ -11337,7 +12021,15 @@ pt_assignment_compatible (PARSER_CONTEXT * parser, PT_NODE * lhs, PT_NODE * rhs)
 
 		  if (rhs->node_type != PT_HOST_VAR)
 		    {
-		      d = tp_domain_resolve_default (lhs_dbtype);
+		      // TODO: It should be considered for parameterized types, refer to PT_IS_PARAMETERIZED_TYPE()
+		      if (lhs->type_enum == PT_TYPE_NUMERIC && lhs->data_type != NULL)
+			{
+			  d = tp_domain_resolve (lhs_dbtype, NULL, sci.prec, sci.scale, NULL, 0);
+			}
+		      else
+			{
+			  d = tp_domain_resolve_default (lhs_dbtype);
+			}
 		    }
 		  else
 		    {
@@ -11370,7 +12062,15 @@ pt_assignment_compatible (PARSER_CONTEXT * parser, PT_NODE * lhs, PT_NODE * rhs)
 			    }
 			  else
 			    {
-			      d = tp_domain_resolve_default (lhs_dbtype);
+			      // TODO: It should be considered for parameterized types, refer to PT_IS_PARAMETERIZED_TYPE()
+			      if (lhs->type_enum == PT_TYPE_NUMERIC && lhs->data_type != NULL)
+				{
+				  d = tp_domain_resolve (lhs_dbtype, NULL, sci.prec, sci.scale, NULL, 0);
+				}
+			      else
+				{
+				  d = tp_domain_resolve_default (lhs_dbtype);
+				}
 			    }
 
 			  if (PT_HAS_COLLATION (lhs->type_enum))
@@ -11589,7 +12289,7 @@ pt_check_assignments (PARSER_CONTEXT * parser, PT_NODE * stmt)
 		    {
 		      for (; list && rhs_list; rhs_list = rhs_list->next)
 			{
-			  if (rhs_list->is_hidden_column)
+			  if (rhs_list->flag.is_hidden_column)
 			    {
 			      /* skip hidden column */
 			      continue;
@@ -12734,7 +13434,7 @@ pt_check_order_by (PARSER_CONTEXT * parser, PT_NODE * query)
 		    }
 
 		  /* sorting node should be either an existing select node or an hidden column added by system */
-		  assert (n <= select_list_len || col->is_hidden_column);
+		  assert (n <= select_list_len || col->flag.is_hidden_column);
 
 		  if (col->node_type == PT_EXPR && col->info.expr.op == PT_ORDERBY_NUM)
 		    {
@@ -12811,7 +13511,7 @@ pt_check_order_by (PARSER_CONTEXT * parser, PT_NODE * query)
 		{
 		  /* when check order by clause in create/alter view, do not change order_by and select_list. The order
 		   * by clause will be replaced in mq_translate_subqueries() again. */
-		  if (query->do_not_replace_orderby)
+		  if (query->flag.do_not_replace_orderby)
 		    {
 		      continue;
 		    }
@@ -12826,7 +13526,7 @@ pt_check_order_by (PARSER_CONTEXT * parser, PT_NODE * query)
 		  else
 		    {
 		      /* mark as a hidden column */
-		      col->is_hidden_column = 1;
+		      col->flag.is_hidden_column = 1;
 		      parser_append_node (col, select_list);
 		    }
 		}
@@ -12964,13 +13664,21 @@ pt_check_path_eq (PARSER_CONTEXT * parser, const PT_NODE * p, const PT_NODE * q)
   n = p->node_type;
   switch (n)
     {
-      /* if a name, the original and resolved fields must match */
+      /* 
+       * if a name, the original and resolved fields must match
+       *
+       * In order to distinguish User Schema, the original, resolved name may contain a user name
+       * with a dot(.) as a separator. It is not necessary to attach a user name to its own table,
+       * but the user name currently connected internally is attached. So, when comparing original and resolved names,
+       * we need to compare names after dot(.). 
+       * 
+       */
     case PT_NAME:
-      if (pt_str_compare (p->info.name.original, q->info.name.original, CASE_INSENSITIVE))
+      if (pt_user_specified_name_compare (p->info.name.original, q->info.name.original))
 	{
 	  return 1;
 	}
-      if (pt_str_compare (p->info.name.resolved, q->info.name.resolved, CASE_INSENSITIVE))
+      if (pt_user_specified_name_compare (p->info.name.resolved, q->info.name.resolved))
 	{
 	  return 1;
 	}
@@ -13369,6 +14077,7 @@ pt_validate_query_spec (PARSER_CONTEXT * parser, PT_NODE * s, DB_OBJECT * c)
 {
   PT_NODE *attrs = NULL;
   int error_code = NO_ERROR;
+  bool do_not_replace_orderby;
 
   assert (parser != NULL && s != NULL && c != NULL);
 
@@ -13387,7 +14096,8 @@ pt_validate_query_spec (PARSER_CONTEXT * parser, PT_NODE * s, DB_OBJECT * c)
       goto error_exit;
     }
 
-  s = parser_walk_tree (parser, s, pt_set_is_view_spec, NULL, NULL, NULL);
+  do_not_replace_orderby = true;
+  s = parser_walk_tree (parser, s, pt_set_is_view_spec, (void *) &do_not_replace_orderby, NULL, NULL);
   assert (s != NULL);
 
   attrs = pt_get_attributes (parser, c);
@@ -14654,7 +15364,7 @@ pt_check_analytic_function (PARSER_CONTEXT * parser, PT_NODE * func, void *arg, 
       /* try to match with something in the select list */
       for (col = select_list, index = 1; col; col = col->next, index++)
 	{
-	  if (col->is_hidden_column)
+	  if (col->flag.is_hidden_column)
 	    {
 	      /* skip hidden columns; they might disappear later on */
 	      continue;
@@ -16006,12 +16716,12 @@ pt_try_remove_order_by (PARSER_CONTEXT * parser, PT_NODE * query)
       /* no column is ORDERBY_NUM, order_by can be removed */
       parser_free_tree (parser, query->info.query.order_by);
       query->info.query.order_by = NULL;
-      query->info.query.order_siblings = 0;
+      query->info.query.flag.order_siblings = 0;
 
       for (col = pt_get_select_list (parser, query); col && col->next; col = next)
 	{
 	  next = col->next;
-	  if (next->is_hidden_column)
+	  if (next->flag.is_hidden_column)
 	    {
 	      parser_free_tree (parser, next);
 	      col->next = NULL;
@@ -16152,7 +16862,7 @@ pt_fold_union (PARSER_CONTEXT * parser, PT_NODE * union_node, STATEMENT_SET_FOLD
       pt_move_node (union_orderby, union_node->info.query.order_by);
       pt_move_node (union_orderby_for, union_node->info.query.orderby_for);
       pt_move_node (union_limit, union_node->info.query.limit);
-      union_rewrite_limit = union_node->info.query.rewrite_limit;
+      union_rewrite_limit = union_node->info.query.flag.rewrite_limit;
       pt_move_node (union_with_clause, union_node->info.query.with);
 
       /* When active node has a limit or orderby_for clause and union node has a limit or ORDERBY clause, need a
@@ -16189,7 +16899,7 @@ pt_fold_union (PARSER_CONTEXT * parser, PT_NODE * union_node, STATEMENT_SET_FOLD
       if (union_limit != NULL)
 	{
 	  new_node->info.query.limit = union_limit;
-	  new_node->info.query.rewrite_limit = union_rewrite_limit;
+	  new_node->info.query.flag.rewrite_limit = union_rewrite_limit;
 	}
       if (union_with_clause)
 	{

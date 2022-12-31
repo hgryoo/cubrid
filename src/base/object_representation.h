@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -498,6 +497,7 @@ OR_PUT_DOUBLE (char *ptr, double val)
 #define OR_BOUND_BIT_FLAG   0x80000000
 
 #define BIG_VAR_OFFSET_SIZE OR_INT_SIZE	/* 4byte */
+#define SHORT_VAR_OFFSET_SIZE OR_SHORT_SIZE	/* 2byte */
 
 /* OBJECT HEADER ACCESS MACROS */
 
@@ -737,7 +737,6 @@ OR_PUT_DOUBLE (char *ptr, double val)
 
 #define OR_GET_VARIABLE_TYPE(ptr) (OR_GET_INT ((int *) (ptr)))
 
-
 /* class */
 enum
 {
@@ -752,7 +751,8 @@ enum
   ORC_SHARED_COUNT_OFFSET = 48,
   ORC_CLASS_ATTR_COUNT_OFFSET = 60,
   ORC_CLASS_FLAGS = 64,
-  ORC_CLASS_TYPE = 68
+  ORC_CLASS_TYPE = 68,
+  ORC_CLASS_TDE_ALGORITHM = 84
 };
 
 enum
@@ -1215,6 +1215,8 @@ extern char *or_unpack_elo (char *ptr, void **elo_ptr);
 #endif
 extern char *or_pack_ptr (char *ptr, UINTPTR ptrval);
 extern char *or_unpack_ptr (char *ptr, UINTPTR * ptrval);
+extern char *or_pack_key_val_range (char *ptr, const void *key_val_range_ptr);
+extern char *or_unpack_key_val_range (char *ptr, void *key_val_range_ptr);
 
 extern char *or_pack_bool_array (char *ptr, const bool * bools, int size);
 extern char *or_unpack_bool_array (char *ptr, bool ** bools);

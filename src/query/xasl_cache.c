@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -39,6 +38,7 @@
 #include "thread_lockfree_hash_map.hpp"
 #include "thread_manager.hpp"
 #include "xasl_unpack_info.hpp"
+#include "list_file.h"
 
 #include <algorithm>
 #include <assert.h>
@@ -89,7 +89,7 @@ typedef struct xcache_cleanup_candidate XCACHE_CLEANUP_CANDIDATE;
 struct xcache_cleanup_candidate
 {
   XASL_ID xid;
-  struct timeval time_last_used;
+  XASL_CACHE_ENTRY *xcache;
 };
 
 // *INDENT-OFF*
@@ -406,6 +406,9 @@ xcache_entry_alloc (void)
     }
   xcache_entry->init_clone_cache ();
   pthread_mutex_init (&xcache_entry->cache_clones_mutex, NULL);
+
+  xcache_entry->list_ht_no = -1;
+
   return xcache_entry;
 }
 
@@ -444,6 +447,7 @@ xcache_entry_init (void *entry)
   /* Add here if anything should be initialized. */
   xcache_entry->related_objects = NULL;
   xcache_entry->ref_count = 0;
+  xcache_entry->clr_count = 0;
 
   xcache_entry->sql_info.sql_hash_text = NULL;
   xcache_entry->sql_info.sql_user_text = NULL;
@@ -842,6 +846,7 @@ xcache_find_sha1 (THREAD_ENTRY * thread_p, const SHA1Hash * sha1, const XASL_CAC
 	  if (recompile_needed)
 	    {
 	      /* We need to recompile. */
+	      /* and we need to clear the list cache entry first */
 	      xcache_unfix (thread_p, *xcache_entry);
 	      *xcache_entry = NULL;
 	      if (search_mode == XASL_CACHE_SEARCH_FOR_EXECUTE)
@@ -1149,6 +1154,11 @@ xcache_unfix (THREAD_ENTRY * thread_p, XASL_CACHE_ENTRY * xcache_entry)
 	  xcache_clone_decache (thread_p, &xcache_entry->cache_clones[--xcache_entry->n_cache_clones]);
 	}
 
+      /* need to clear list-cache first */
+      if (xcache_entry->list_ht_no >= 0)
+	{
+	  (void) qfile_clear_list_cache (thread_p, xcache_entry, true);
+	}
       if (!xcache_Hashmap.erase (thread_p, xcache_entry->xasl_id))
 	{
 	  /* Failure is not expected. */
@@ -1466,6 +1476,7 @@ xcache_insert (THREAD_ENTRY * thread_p, const compile_context * context, XASL_ST
       (*xcache_entry)->stream = *stream;
       (*xcache_entry)->time_last_rt_check = (INT64) time_stored.tv_sec;
       (*xcache_entry)->time_last_used = time_stored;
+      (*xcache_entry)->list_ht_no = -1;
 
       /* Now that new entry is initialized, we can try to insert it. */
 
@@ -1667,9 +1678,64 @@ error:
 }
 
 /*
+ * xcache_invalidate_qcaches () - Invalidate all query cache entries which pass the invalidation check.
+ *				  all invalidated query cache entries are removed.
+ *
+ * return		 : Void.
+ * thread_p (in)	 : Thread entry.
+ * invalidate_check (in) : Invalidation check function.
+ * arg (in)		 : Argument for invalidation check function.
+ */
+int
+xcache_invalidate_qcaches (THREAD_ENTRY * thread_p, const OID * oid)
+{
+  bool finished = false;
+  XASL_CACHE_ENTRY *xcache_entry = NULL;
+
+  if (!xcache_Enabled)
+    {
+      return NO_ERROR;
+    }
+
+  xcache_hashmap_iterator iter = { thread_p, xcache_Hashmap };
+
+  while (!finished)
+    {
+      /* make sure to start from beginning */
+      iter.restart ();
+
+      /* Iterate through hash, check entry OID's and if one matches the argument, mark the entry for delete and save
+       * it in delete_xids buffer. We cannot delete them from hash while iterating, because the one lock-free
+       * transaction can be used for one hash entry only.
+       */
+      while (true)
+	{
+	  int num_entries;
+
+	  xcache_entry = iter.iterate ();
+	  if (xcache_entry == NULL)
+	    {
+	      finished = true;
+	      break;
+	    }
+	  if (xcache_entry->list_ht_no < 0)
+	    {
+	      continue;
+	    }
+
+	  if (xcache_entry_is_related_to_oid (xcache_entry, oid))
+	    {
+	      (void) qfile_clear_list_cache (thread_p, xcache_entry, false);
+	    }
+	}
+    }
+
+  return NO_ERROR;
+}
+
+/*
  * xcache_invalidate_entries () - Invalidate all cache entries which pass the invalidation check. If there is no
  *				  invalidation check, all cache entries are removed.
- *
  * return		 : Void.
  * thread_p (in)	 : Thread entry.
  * invalidate_check (in) : Invalidation check function.
@@ -1685,6 +1751,7 @@ xcache_invalidate_entries (THREAD_ENTRY * thread_p, bool (*invalidate_check) (XA
   int n_delete_xids = 0;
   int xid_index = 0;
   bool finished = false;
+  bool del_mark;
 
   if (!xcache_Enabled)
     {
@@ -1714,8 +1781,17 @@ xcache_invalidate_entries (THREAD_ENTRY * thread_p, bool (*invalidate_check) (XA
 	  /* Check invalidation conditions. */
 	  if (invalidate_check == NULL || invalidate_check (xcache_entry, arg))
 	    {
+	      del_mark = xcache_entry_mark_deleted (thread_p, xcache_entry);
+	      if (xcache_entry->list_ht_no >= 0)
+		{
+		  /* delete query cache even though del_makr is false */
+		  {
+		    qfile_clear_list_cache (thread_p, xcache_entry, true);
+		  }
+		}
+
 	      /* Mark entry as deleted. */
-	      if (xcache_entry_mark_deleted (thread_p, xcache_entry))
+	      if (del_mark)
 		{
 		  /*
 		   * Successfully marked for delete. Save it to delete after the iteration.
@@ -2125,9 +2201,8 @@ xcache_cleanup (THREAD_ENTRY * thread_p)
       while ((xcache_entry = iter.iterate ()) != NULL)
 	{
 	  candidate.xid = xcache_entry->xasl_id;
-	  candidate.time_last_used = xcache_entry->time_last_used;
-
-	  if (candidate.xid.cache_flag & XCACHE_ENTRY_FLAGS_MASK)
+	  candidate.xcache = xcache_entry;
+	  if (candidate.xid.cache_flag > 0 || (candidate.xid.cache_flag & XCACHE_ENTRY_FLAGS_MASK))
 	    {
 	      /* Either marked for delete or recompile, or already recompiled. Not a valid candidate. */
 	      continue;
@@ -2147,10 +2222,10 @@ xcache_cleanup (THREAD_ENTRY * thread_p)
       while ((xcache_entry = iter.iterate ()) != NULL && count < xcache_Soft_capacity)
 	{
 	  candidate.xid = xcache_entry->xasl_id;
-	  candidate.time_last_used = xcache_entry->time_last_used;
-
-	  if (candidate.xid.cache_flag & XCACHE_ENTRY_FLAGS_MASK
-	      || TIME_DIFF_SEC (current_time, candidate.time_last_used) <= xcache_Time_threshold)
+	  candidate.xcache = xcache_entry;
+	  if (candidate.xid.cache_flag > 0
+	      || (candidate.xid.cache_flag & XCACHE_ENTRY_FLAGS_MASK)
+	      || TIME_DIFF_SEC (current_time, candidate.xcache->time_last_used) <= xcache_Time_threshold)
 	    {
 	      continue;
 	    }
@@ -2175,6 +2250,12 @@ xcache_cleanup (THREAD_ENTRY * thread_p)
 	}
       /* Set intention to cleanup the entry. */
       candidate.xid.cache_flag = XCACHE_ENTRY_CLEANUP;
+
+      /* clear list cache entries first */
+      if (candidate.xcache->list_ht_no >= 0)
+	{
+	  (void) qfile_clear_list_cache (thread_p, candidate.xcache, true);
+	}
 
       /* Try delete. Would be better to decache the clones here. For simplicity, since is not an usual case,
        * clone decache is postponed - is decached when retired list will be cleared.
@@ -2240,8 +2321,8 @@ xcache_cleanup (THREAD_ENTRY * thread_p)
 static BH_CMP_RESULT
 xcache_compare_cleanup_candidates (const void *left, const void *right, BH_CMP_ARG ignore_arg)
 {
-  struct timeval left_timeval = ((XCACHE_CLEANUP_CANDIDATE *) left)->time_last_used;
-  struct timeval right_timeval = ((XCACHE_CLEANUP_CANDIDATE *) right)->time_last_used;
+  struct timeval left_timeval = ((XCACHE_CLEANUP_CANDIDATE *) left)->xcache->time_last_used;
+  struct timeval right_timeval = ((XCACHE_CLEANUP_CANDIDATE *) right)->xcache->time_last_used;
 
   /* Lesser means placed in binary heap. So return BH_LT for older timeval. */
   if (left_timeval.tv_sec < right_timeval.tv_sec)
@@ -2325,11 +2406,21 @@ xcache_check_recompilation_threshold (THREAD_ENTRY * thread_p, XASL_CACHE_ENTRY 
 	}
       assert (!VFID_ISNULL (&cls_info_p->ci_hfid.vfid));
 
-      if (file_get_num_user_pages (thread_p, &cls_info_p->ci_hfid.vfid, &npages) != NO_ERROR)
+      if (!prm_get_bool_value (PRM_ID_USE_STAT_ESTIMATION))
 	{
-	  ASSERT_ERROR ();
-	  catalog_free_class_info_and_init (cls_info_p);
-	  return false;
+	  /* Consider recompiling the plan when statistic is updated. */
+	  npages = cls_info_p->ci_tot_pages;
+	}
+      else
+	{
+	  /* Because statistics are automatically updated, number of real pages of file can be used */
+	  /* default of use_stat_estimation is 'false' because btree statistics estimations is so inaccurate. */
+	  if (file_get_num_user_pages (thread_p, &cls_info_p->ci_hfid.vfid, &npages) != NO_ERROR)
+	    {
+	      ASSERT_ERROR ();
+	      catalog_free_class_info_and_init (cls_info_p);
+	      return false;
+	    }
 	}
       if (npages > XCACHE_RT_FACTOR * xcache_entry->related_objects[relobj].tcard
 	  || npages < xcache_entry->related_objects[relobj].tcard / XCACHE_RT_FACTOR)

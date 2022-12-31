@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -82,6 +81,11 @@ namespace cubpacking
   unpacker::unpacker (const char *storage, const size_t amount)
   {
     set_buffer (storage, amount);
+  }
+
+  unpacker::unpacker (const cubmem::block &blk)
+  {
+    set_buffer (blk.ptr, blk.dim);
   }
 
   void
@@ -403,16 +407,14 @@ namespace cubpacking
   void
   packer::pack_db_value (const db_value &value)
   {
-    char *old_ptr;
-
     size_t value_size = or_packed_value_size (&value, 1, 1, 0);
 
     align (MAX_ALIGNMENT);
     check_range (m_ptr, m_end_ptr, value_size);
-    old_ptr = m_ptr;
 
-    m_ptr = or_pack_value (m_ptr, (db_value *) &value);
-    assert (old_ptr + value_size == m_ptr);
+    OR_BUF orbuf;
+    delegate_to_or_buf (value_size, orbuf);
+    or_put_value (&orbuf, (db_value *) &value, 1, 1, 0);
 
     check_range (m_ptr, m_end_ptr, 0);
   }
@@ -812,6 +814,29 @@ namespace cubpacking
     return unpack_oid (oid);
   }
 
+  void unpacker::peek_unpack_block_length (int &value)
+  {
+    return peek_unpack_int (value);
+  }
+
+  size_t
+  packer::get_packed_size_overloaded (const cubmem::block &blk, size_t curr_offset)
+  {
+    return get_packed_buffer_size (blk.ptr, blk.dim, curr_offset);
+  }
+
+  void
+  packer::pack_overloaded (const cubmem::block &blk)
+  {
+    pack_buffer_with_length (blk.ptr, blk.dim);
+  }
+
+  void
+  unpacker::unpack_overloaded (cubmem::block &blk)
+  {
+    return unpack_buffer_with_length (blk.ptr, blk.dim);
+  }
+
   const char *
   unpacker::get_curr_ptr (void)
   {
@@ -923,8 +948,8 @@ namespace cubpacking
   packer::delegate_to_or_buf (const size_t size, or_buf &buf)
   {
     check_range (m_ptr, m_end_ptr, size);
-    m_ptr += size;
     OR_BUF_INIT (buf, m_ptr, size);
+    m_ptr += size;
   }
 
   const char *
@@ -967,9 +992,9 @@ namespace cubpacking
   unpacker::delegate_to_or_buf (const size_t size, or_buf &buf)
   {
     check_range (m_ptr, m_end_ptr, size);
-    m_ptr += size;
     // promise you won't write on it!
     OR_BUF_INIT (buf, const_cast <char *> (m_ptr), size);
+    m_ptr += size;
   }
 
 } /* namespace cubpacking */

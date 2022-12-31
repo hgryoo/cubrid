@@ -1,20 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation
- * Copyright (C) 2016 CUBRID Corporation
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -39,7 +37,8 @@
 
 #include "btree.h"		/* TODO: for BTREE_SCAN */
 #include "heap_file.h"		/* for HEAP_SCANCACHE */
-#include "method_scan.h"	/* for METHOD_SCAN_BUFFER */
+#include "method_scan.hpp"	/* METHOD_SCAN_ID */
+#include "dblink_scan.h"
 #include "oid.h"		/* for OID */
 #include "query_evaluator.h"
 #include "query_list.h"
@@ -89,8 +88,16 @@ typedef enum
 				 * through all slots even if they do not contain data. */
   S_HEAP_PAGE_SCAN,		/* scans heap pages and queries for page information */
   S_INDX_KEY_INFO_SCAN,		/* scans b-tree and queries for key info */
-  S_INDX_NODE_INFO_SCAN		/* scans b-tree nodes for info */
+  S_INDX_NODE_INFO_SCAN,	/* scans b-tree nodes for info */
+  S_DBLINK_SCAN			/* scans dblink */
 } SCAN_TYPE;
+
+typedef struct dblink_scan_id DBLINK_SCAN_ID;
+struct dblink_scan_id
+{
+  DBLINK_SCAN_INFO scan_info;	/* information for dblink */
+  SCAN_PRED scan_pred;		/* scan predicates(filters) */
+};
 
 typedef struct heap_scan_id HEAP_SCAN_ID;
 struct heap_scan_id
@@ -286,12 +293,6 @@ struct set_scan_id
   SCAN_PRED scan_pred;		/* scan predicates(filters) */
 };
 
-typedef struct va_scan_id VA_SCAN_ID;
-struct va_scan_id
-{
-  METHOD_SCAN_BUFFER scan_buf;	/* value array buffer */
-};
-
 /* Note: Scan position is currently supported only for list file scans. */
 typedef struct scan_pos SCAN_POS;
 struct scan_pos
@@ -309,19 +310,20 @@ struct scan_stats
   UINT64 num_ioreads;
 
   /* for heap & list scan */
-  int read_rows;		/* # of rows read */
-  int qualified_rows;		/* # of rows qualified by data filter */
+  UINT64 read_rows;		/* # of rows read */
+  UINT64 qualified_rows;	/* # of rows qualified by data filter */
 
   /* for btree scan */
-  int read_keys;		/* # of keys read */
-  int qualified_keys;		/* # of keys qualified by key filter */
-  int key_qualified_rows;	/* # of rows qualified by key filter */
-  int data_qualified_rows;	/* # of rows qualified by data filter */
+  UINT64 read_keys;		/* # of keys read */
+  UINT64 qualified_keys;	/* # of keys qualified by key filter */
+  UINT64 key_qualified_rows;	/* # of rows qualified by key filter */
+  UINT64 data_qualified_rows;	/* # of rows qualified by data filter */
   struct timeval elapsed_lookup;
   bool covered_index;
   bool multi_range_opt;
   bool index_skip_scan;
   bool loose_index_scan;
+  bool agg_optimized_scan;
 
   /* hash list scan */
   struct timeval elapsed_hash_build;
@@ -357,10 +359,11 @@ struct scan_id_struct
     INDX_SCAN_ID isid;		/* Indexed Heap File Scan Identifier */
     INDEX_NODE_SCAN_ID insid;	/* Scan b-tree nodes */
     SET_SCAN_ID ssid;		/* Set Scan Identifier */
-    VA_SCAN_ID vaid;		/* Value Array Identifier */
+    DBLINK_SCAN_ID dblid;	/* DBLink Array Identifier */
     REGU_VALUES_SCAN_ID rvsid;	/* regu_variable list identifier */
     SHOWSTMT_SCAN_ID stsid;	/* show stmt identifier */
     JSON_TABLE_SCAN_ID jtid;
+    METHOD_SCAN_ID msid;
   } s;
 
   SCAN_STATS scan_stats;
@@ -463,6 +466,11 @@ extern int scan_open_method_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 				  val_list_node * val_list, val_descr * vd,
 				  /* */
 				  QFILE_LIST_ID * list_id, method_sig_list * meth_sig_list);
+
+extern int scan_open_dblink_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
+				  struct access_spec_node *spec,
+				  VAL_DESCR * vd, val_list_node * val_list, DBLINK_HOST_VARS * host_vars);
+
 extern int scan_start_scan (THREAD_ENTRY * thread_p, SCAN_ID * s_id);
 extern SCAN_CODE scan_reset_scan_block (THREAD_ENTRY * thread_p, SCAN_ID * s_id);
 extern SCAN_CODE scan_next_scan_block (THREAD_ENTRY * thread_p, SCAN_ID * s_id);

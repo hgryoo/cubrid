@@ -1,19 +1,21 @@
+
 $
-$ Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
-$
-$   This program is free software; you can redistribute it and/or modify
-$   it under the terms of the GNU General Public License as published by
-$   the Free Software Foundation; either version 2 of the License, or
-$   (at your option) any later version.
-$
-$  This program is distributed in the hope that it will be useful,
-$  but WITHOUT ANY WARRANTY; without even the implied warranty of
-$  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-$  GNU General Public License for more details.
-$
-$  You should have received a copy of the GNU General Public License
-$  along with this program; if not, write to the Free Software
-$  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+$  Copyright 2008 Search Solution Corporation
+$  Copyright 2016 CUBRID Corporation
+$ 
+$   Licensed under the Apache License, Version 2.0 (the "License");
+$   you may not use this file except in compliance with the License.
+$   You may obtain a copy of the License at
+$ 
+$       http://www.apache.org/licenses/LICENSE-2.0
+$ 
+$   Unless required by applicable law or agreed to in writing, software
+$   distributed under the License is distributed on an "AS IS" BASIS,
+$   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+$   See the License for the specific language governing permissions and
+$   limitations under the License.
+$ 
+$ 
 $
 
 $
@@ -72,6 +74,8 @@ $       52      dump_tz
 $       53      restoreslave
 $       54      delvoldb
 $       56      checksumdb
+$       57      tde
+$       58      flashback
 
 $set 1 MSGCAT_UTIL_SET_GENERIC
 1 在数据库名 '%2$s' 中有无效的长度或字符 '%1$c' \n
@@ -83,7 +87,7 @@ $set 1 MSGCAT_UTIL_SET_GENERIC
 9 \
 %1$s (CUBRID 应用工具)\n\
 %2$s\n\
-Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.\n
+Copyright (C) 2008 Search Solution Corporation.\nCopyright (C) 2016 CUBRID Corporation.\n
 10 \
 cubrid 管理工具，版本 %1$s\n\
 用法: %2$s <工具名> [参数]\n\
@@ -124,6 +128,8 @@ cubrid 管理工具，版本 %1$s\n\
     dump_tz\n\
     restoreslave\n\
     vacuumdb\n\
+    tde\n\
+    flashback\n\
 \n\
 %4$s 是一个 DBMS 工具.\n\
 要寻找额外的信息, 可浏览 http://www.cubrid.org\n
@@ -146,6 +152,7 @@ cubrid 管理工具，版本 %1$s\n\
     service\n\
     server\n\
     broker\n\
+    gateway\n\
     manager\n\
     heartbeat\n\
     javasp\n\
@@ -183,6 +190,8 @@ cubrid 管理工具，版本 %1$s\n\
     dump_tz\n\
     vacuumdb\n\
     checksumdb\n\
+    tde\n\
+    flashback\n\
 \n\
 %4$s 是一个 DBMS 工具.\n\
 要寻找额外的信息, 可浏览 http://www.cubrid.org\n
@@ -257,10 +266,31 @@ cubrid 管理工具，版本 %1$s\n\
     stop        [数据库名]\n\
     restart     [数据库名]\n\
     status      [数据库名]\n
+45 cubrid 应用工具, 版本 %1$s\n\
+用法: %2$s gateway <命令> [参数]\n\
+\n\
+可用命令:\n\
+    start\n\
+    stop\n\
+    restart\n\
+    info\n\
+    status      [-b] [-f] [-q] [-t] [-s <sec>] [-c] [-u] [<expr>]\n\
+    on          gateway-name\n\
+    off         gateway-name\n\
+    reset       gateway-name\n\
+    acl         <status|reload> [gateway-name]\n
+46 owner_name 的长度要求小于 %1$d，class_name 的长度要求小于 %2$d 个字节。\n
+47 owner_name.class_name ('%1$s') 的格式无效。\n
 
 $set 2 MSGCAT_UTIL_SET_BACKUPDB
 30 警告: 在单机模式下 -t 选项将被忽略.\n
 31 错误: 目标路径不存在或不是目录.\n
+32 通过使用--separate-keys选项，它将密钥文件（_keys）与备份卷分开。\n\
+如果密钥文件丢失，即使有备份卷，还原（restoredb）也可能无法正常进行。\n
+33 备份卷包括密钥文件（_keys）。\n\
+如果表经过TDE加密，则可能导致该数据的安全性问题。\n\
+要分离密钥文件以防止该文件，请使用--separate-keys选项。\n
+34 错误:无法将FIFO文件用作带有分隔键的目标路径。\n
 60 \
 backupdb: 备份一个数据库.\n\
 用法: %1$s backupdb [选项] 数据库名\n\
@@ -278,8 +308,9 @@ backupdb: 备份一个数据库.\n\
   -C, --CS-mode                客户端-服务器模式执行\n\
       --no-check               不检测数据库的一致性; 默认: 检测\n\
   -t, --thread-count=COUNT     线程数; 默认: 0(auto)\n\
-  -z, --compress               压缩备份卷; 默认: 不压缩\n\
-      --sleep-msecs=N          每读 1M 休眠 N  毫秒; 默认: 0\n
+      --no-compress            不要压缩备份卷；默认值：压缩\n\
+      --sleep-msecs=N          每读 1M 休眠 N  毫秒; 默认: 0\n\
+  -k, --separate-keys          TDE的密钥文件（_keys）不包含在备份卷中，而是被分成一个文件\n
 71 不兼容的参数, \"%1$s\", 和 \"%2$s\"\n
 
 
@@ -397,7 +428,8 @@ restoredb: 恢复一个数据库.\n\
   -l, --level=LEVEL                 指定将要被恢复的备份的等级为 LEVEL ; 查看 backup 的使用说明; 默认: 0(full backup)\n\
   -p, --partial-recovery            执行部分恢复，如果有任何日志档案存在\n\
   -o, --output-file=FILE            将输出信息重定向到FILE; 默认: 空\n\
-  -u, --use-database-location-path  将数据库和日志文件恢复到数据库位置文件中指定的路径中去\n
+  -u, --use-database-location-path  将数据库和日志文件恢复到数据库位置文件中指定的路径中去\n\
+  -k, --keys-file-path              还原期间要使用的TDE的密钥文件（_keys）路径\n
 
 
 $set 12 MSGCAT_UTIL_SET_LOADDB
@@ -451,11 +483,12 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 115 在加载过程中输入文件来控制错误
 116 共插入了 %1$ld 个对象, 其中 %2$ld 个对象插入失败.\n
 117 装载失败.\n
-118 类名的最大长度是 %1$d 字节.\n
+118 Maximum length of class name is %1$d bytes.\n
 119 共检查 %1$8d 个对象, %2$d 个对象失败.\n
 120 数据文件未包含'%%class'说明符或未指定'--table'选项\n
 121 忽略%1$s对象\n
-122 \
+122 Maximum length of user name is %1$d bytes.\n
+123 \
 loaddb: 将对象和结构导入到数据库.\n\
 用法: %1$s loaddb [选项] 数据库名[@主机名]\n\
 \n\
@@ -490,30 +523,36 @@ $set 13 MSGCAT_UTIL_SET_UNLOADDB
 47 输出目录过长.\n
 48 LSA : %1$d %2$d \n
 49 密码:
+50 Maximum length of class name is %1$d bytes.\n
+51 Maximum length of user name is %1$d bytes.\n
+52 Class %1$s not found.\n
 60 \
 unloaddb: 从数据库导出对象和结构.\n\
 用法: %1$s unloaddb [选项] 数据库名\n\
 \n\
 可用选项:\n\
-  -u, --user=ID               访问数据库的用户ID; 默认: "dba"\n\
-  -p, --password=PASS         用户密码; 默认: 空\n\
-  -i, --input-class-file=FILE 指定包含表名的输入文件; 默认: 转储所有类\n\
-      --include-reference     和-i选项一起使用.当卸载了指定数据库类，卸载对象的引用; 默认: disabled\n\
-      --input-class-only      和-i选项一起使用. 只创建与输入文件中的表相关的方案(schema)文件; 默认: 未启用\n\
-      --lo-count=COUNT        指明一个目录中要被创建的大对象(large object)文件的数目; 默认: 0\n\
-      --estimated-size=NUMBER 指定预期的实例数目; 默认: 自动计算\n\
-      --cached-pages=NUMBER   配置要被缓存进内存的对象数目; 默认: 100\n\
-  -O, --output-path=PATH      用 PATH 作为输出目录; 默认: 工作目录\n\
-  -s, --schema-only           只转储结构(schema); 默认: 结构和对象\n\
-  -d, --data-only             只转储对象; 默认: 结构和对象\n\
-      --output-prefix=PREFIEX 指定输出文件的前缀; 默认: 数据库名\n\
-      --hash-file=FILE        指定hash文件名称; 默认: 由 tmpnam() 生成\n\
-  -v, --verbose               开启详细状态信息; 默认: 不可用\n\
-      --use-delimiter         用 '"' 作为一个标示符的开始和结束; 默认: 不使用\n\
-  -S, --SA-mode               单机模式执行\n\
-  -C, --CS-mode               客户端-服务器模式执行\n\
-      --datafile-per-class    为每个表创建一个对象文件; 默认: 禁止\n
-
+  -u, --user=ID                访问数据库的用户ID; 默认: "dba"\n\
+  -p, --password=PASS          用户密码; 默认: 空\n\
+  -i, --input-class-file=FILE  指定包含表名的输入文件; 默认: 转储所有类\n\
+      --include-reference      和-i选项一起使用.当卸载了指定数据库类，卸载对象的引用; 默认: disabled\n\
+      --input-class-only       和-i选项一起使用. 只创建与输入文件中的表相关的方案(schema)文件; 默认: 未启用\n\
+      --lo-count=COUNT         指明一个目录中要被创建的大对象(large object)文件的数目; 默认: 0\n\
+      --estimated-size=NUMBER  指定预期的实例数目; 默认: 自动计算\n\
+      --cached-pages=NUMBER    配置要被缓存进内存的对象数目; 默认: 100\n\
+  -O, --output-path=PATH       用 PATH 作为输出目录; 默认: 工作目录\n\
+  -s, --schema-only            只转储结构(schema); 默认: 结构和对象\n\
+  -d, --data-only              只转储对象; 默认: 结构和对象\n\
+      --output-prefix=PREFIEX  指定输出文件的前缀; 默认: 数据库名\n\
+      --hash-file=FILE         指定hash文件名称; 默认: 由 tmpnam() 生成\n\
+      --latest-image           转储对象时，它转储数据卷中对象的最新图像，而不是指日志卷（忽略 MVCC）\n\
+                               它可能包括未提交的数据和未清除的已删除数据； 默认值：禁用\n\
+  -v, --verbose                开启详细状态信息; 默认: 不可用\n\
+      --use-delimiter          用 '"' 作为一个标示符的开始和结束; 默认: 不使用\n\
+  -S, --SA-mode                单机模式执行\n\
+  -C, --CS-mode                客户端-服务器模式执行\n\
+      --datafile-per-class     为每个表创建一个对象文件; 默认: 禁止\n\
+      --no-user-specified-name Find classes, serials, and triggers by their object names without their owner names.\n\
+                               This is to load files generated by cubrid before version 11.2.\n
 
 
 $set 14 MSGCAT_UTIL_SET_COMPACTDB
@@ -553,6 +592,8 @@ $set 14 MSGCAT_UTIL_SET_COMPACTDB
 44 \n传递 3\n\n
 45 heap压缩失败...\n
 46 heap压缩成功...\n
+47 Maximum length of class name is %1$d bytes.\n
+48 Maximum length of user name is %1$d bytes.\n
 60 \
 compactdb: 释放数据库中未使用的空间.\n\
 用法: %1$s compactdb [选项] 数据库名 [类名1 类名2 ...]\n\
@@ -611,6 +652,7 @@ cub_commdb: 这个工具不赞成使用. 用 'cubrid' 命令来代替.\n\
 39 选项 -i(--immediately) 必须与选项 --deact-stop-all 一起使用.\n
 
 $set 16 MSGCAT_UTIL_SET_PATCHDB
+1 请在没有 --recreate-log 选项的情况下运行或手动删除活动日志卷。\n
 60 \
 emergency_patchlog: 紧急情况下修补一个数据库.\n\
 usage: %1$s emergency_patchlog [OPTION] database-name [database-locale]\n\
@@ -631,7 +673,7 @@ addvoldb: 为数据库添加一个卷文件.\n\
       --db-volume-size=SIZE        指定附加卷大小; 默认: db_volume_size 在 cubrid.conf 文件中\n\
       --max-writesize-in-sec=SIZE  指定每秒写卷文件的上限值; (例如. 512K, 1M, 10M); 默认: 不指定; 最小值: 160K\n\
   -n, --volume-name=NAME           信息卷的名称; 默认: 像这样生成 "db"_ext1)\n\
-  -F, --file-path=PATH             为将被添加的卷文件指定一个创建目录; 默认: 工作目录\n\
+  -F, --file-path=PATH             为将被添加的卷文件指定一个创建目录; 默认: volume_extension_path\n\
       --comment=COMMENT            给添加的卷文件加注释; 默认: 无\n\
   -p, --purpose=PURPOSE            指明添加卷文件的目的; 允许的值:\n\
                                            DATA - 为了数据\n\
@@ -952,6 +994,7 @@ statdump: 转储全局统计信息.\n\
 $set 44 MSGCAT_UTIL_SET_APPLYINFO
 21 输入 DBA 密码:
 22 服务没有被设置为HA模式.\n
+57 由于 -L 选项的路径无效或 db_ha_apply_info 目录表中没有相关信息，无法生成应用信息.\n
 58 HA 特性在这个平台上不被支持..\n
 59 applylogdb 无法以单机模式运行.\n
 60 \
@@ -960,9 +1003,9 @@ applyinfo: 显示 CUBRID HA 应用信息.\n\
 \n\
 可用选项:\n\
   -r, --remote-host-name      远程主机名; 显示远程节点的活动日志信息 \n\
-  -a, --applied-info 	      显示运用的信息 \n\
   -L, --copied-log-path=PATH  设置复制的日志卷路径; 显示复制的日志信息 \n\
-  -p, --page=ID               页 id; 默认: 0\n\
+  -a, --applied-info 	      显示运用的信息; -L 选项是必需的 \n\
+  -p, --page=ID               页 id; -L 选项是必需的; 默认: 0\n\
   -v, --verbose               显示详细状态信息; 默认 : 关闭\n\
   -i, --interval=S            设置每 S 秒打印一次信息\n
 
@@ -1129,7 +1172,8 @@ restoreslave: 恢复一个从数据库.\n\
       --list                        显示一个未恢复的备份卷的列表\n\
   -B, --backup-file-path=PATH       指定一个将被恢复的备份卷的路径\n\
   -o, --output-file=FILE            重定向输出信息到FILE; 默认: 无\n\
-  -u, --use-database-location-path  恢复数据库和日志卷到数据库位置文件指定的路径\n
+  -u, --use-database-location-path  恢复数据库和日志卷到数据库位置文件指定的路径\n\
+  -k, --keys-file-path              还原期间要使用的TDE的密钥文件（_keys）路径\n
 
 $set 54 MSGCAT_UTIL_SET_DELVOLDB
 21 准备删除下面的卷:\n\n
@@ -1152,17 +1196,21 @@ delvoldb: 删除一个空的数据库卷文件.\n\
 $set 55 MSGCAT_UTIL_SET_VACUUMDB
 20 Vacuumdb 对于客户端-服务器模式临时不可用\n
 21 清空(vacuum)操作失败\n
+22 无法打开输出文件 '%1$s'\n
 60 \
 vacuumdb: 清空(vacuum)数据库中的死记录.\n\
 用法: %1$s vacuumdb [选项] 数据库名\n\
 \n\
 可用选项:\n\
   -S, --SA-mode                单机模式执行\n\
-  -C, --CS-mode                客户端-服务器模式执行\n
+  -C, --CS-mode                客户端-服务器模式执行\n\
+      --dump                   转储当前真空状态\n\
+  -o, --output-file=FILE       重定向输出信息到文件 FILE ; 默认: 空\n
 
 $set 56 MSGCAT_UTIL_SET_CHECKSUMDB
 1 在 %1$s 中装载表名字失败.\n
 2 checksumdb 必须运行在一个HA活动服务器上. %1$s (当前状态: %2$s)\n
+3 保存校验和结果的表的所有者必须是 DBA。\n
 58 HA 特性在这个平台上不被支持.\n
 59 checksumdb 无法以单机模式运行.\n
 60 \
@@ -1176,9 +1224,67 @@ checksumdb: 检查复制完整性.\n\
   -i, --include-class-file=FILE 指定要包含的表名的文件\n\
   -e, --exclude-class-file=FILE 指定要排除的表名的文件; -i 或者 -e 只能用其一, 不能同时使用.\n\
   -t, --timeout=NUMBER          查询超时(毫秒计); 默认: 1000 毫秒\n\
-  -n, --table-name=NAME         保存校验和结果的表名; 默认: db_ha_checksums\n\
+  -n, --table-name=NAME         保存校验和结果的表名; 默认: dba.db_ha_checksum\n\
   -r, --report-only             报告基于校验和计算的复制完整性\n\
                                 除--table-name之外的其它选项将被忽略\n\
       --resume                  重新开始计算校验和\n\
       --schema-only             只检查结构(schema)的一致性\n\
       --cont-on-error           计算过程中遇到错误时仍然继续\n
+
+$set 57 MSGCAT_UTIL_SET_TDE
+21 输入DBA密码:
+25 无法获取在数据库上设置的密钥信息\n
+26 试图将键从键（索引: %1$d）更改为键（索引: %2$d）.. \n
+27 密钥已从密钥（索引: %1$d）更改为密钥（索引: %2$d）\n
+28 无法删除数据库上设置的密钥\n
+29 键（索引: %1$d）已被删除\n
+30 生成了一个新密钥-密钥索引:在%2$s上创建了%1$d
+60 \
+tde: 透明数据加密（TDE）管理\n\
+用法: %1$s tde OPERATION（-s|-n|-d|-c）[OPTION]数据库名称\n\
+\n\
+有效选项:\n\
+    -p, --dba-password=PASS    DBA用户的密码；如果未指定，则会提示\n\
+\n\
+操作:必须给出一种操作，并且它们是唯一的\n\
+    -s, --show-keys            打印在数据库和密钥文件（_keys）上设置的密钥信息\n\
+    -n, --generate-new-key     在密钥文件（_keys）中生成一个新密钥；最大计数:128\n\
+    -d, --delete-key=KEY_INDEX 删除密钥文件（_keys）中的密钥\n\
+    -c, --change-key=KEY_INDEX 将数据库中设置的密钥更改为密钥文件（_keys）中的另一个密钥\n
+
+$set 58 MSGCAT_UTIL_SET_FLASHBACK
+1 输入 DBA 密码：
+2 日期格式无效，有效格式为 dd-mm-yyyy:hh:mm:ss\n
+3 开始日期 (%1$s) 必须小于结束日期 (%2$s)\n
+4 请尝试使用当前 (%1$s) 之前或数据库创建之后 (%2$s) 的日期\n
+5 表 (%1$s) 在数据库中不存在\n
+6 闪回的事务太多。请缩短开始日期和结束日期之间的间隔\n
+7 无法获得闪回，因为架构 (%1$s) 已更改。\n
+8 日志卷已被删除。请稍后再试\n
+9 无法打开输出文件 '%1$s'\n
+10 交易 ID (%1$d) 不存在\n
+11 请在“cubrid.conf”中设置“supplemental_log”。只有设置 'supplemental_log' 后执行的 SQL 日志才能被闪回。\n
+12 事务 ID 应在 %1$d 秒内输入。可以通过“cubrid.conf”中的“flashback_timeout”设置来调整超时。\n
+13 闪回已在运行。闪回不能由两个进程运行。\n
+14 闪回不能作为独立模式运行。\n
+15 闪回不支持系统目录类 (%1$s)。\n
+60 \
+flashback：提供用于闪回特定事务的语句。\n\
+用法：%1$s flashback [OPTION] 数据库名称 owner_name.class_name1 [owner_name.class_name2 ...]\n\
+\n\
+有效选项：\n\
+    -o, --output-file=FILE      将输出消息重定向到 FILE；默认值：无。\n\
+    -u, --user=ID               指定执行闪回SQL语句的用户；默认值：全部。\n\
+    -p, --dba-password          DBA用户的密码；不指定会提示\n\
+    -s, --start-date=DATE       指定闪回的开始日期。 SQL 日志是从 DATE 中提取的。\n\
+                                DATE 如下所示：dd-mm-yyyy:hh:mm:ss。\n\
+    -e, --end-date=DATE         指定闪回的结束日期。 SQL 日志提取到 DATE。\n\
+                                如果未指定开始日期，则 ((END - 10min) ~ END) 设置为范围，\n\
+                                否则，如果未指定 END，则设置 (start ~ (start + 10min))。\n\
+                                并且既没有指定开始日期也没有指定结束日期，\n\
+                                提取在（当前时间 - 10 分钟）和当前时间之间执行的 SQL 日志。\n\
+    --detail                    输出每条 SQL 语句的详细信息。\n\
+                                事务 ID、用户名和原始 SQL 语句将与 SQL 语句一起返回\n\
+                                用于闪回；默认值：只输出闪回的 SQL 语句\n\
+    --oldest                    对从开始时间到结束时间执行的SQL语句按时间顺序进行闪回；\n\
+                                默认值：最新\n

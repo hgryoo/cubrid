@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -93,9 +92,9 @@
 
 /* compare two object identifiers */
 #define OIDCMP(n1, n2) \
-  ((n1).volid == (n2).volid \
-   && (n1).pageid == (n2).pageid \
-   && (n1).slotid == (n2).slotid)
+  ((n1).pageid == (n2).pageid \
+   && (n1).slotid == (n2).slotid \
+   && (n1).volid == (n2).volid)
 
 /* Header (Oth) record of the page */
 #define HEADER 0
@@ -145,7 +144,7 @@
   (BTREE_MAX_OIDCOUNT_IN_SIZE (btid, BTREE_MAX_OIDLEN_INPAGE))
 
 #define BTREE_MAX_OVERFLOW_RECORD_SIZE \
-  (DB_PAGESIZE - DB_ALIGN (spage_header_size (), BTREE_MAX_ALIGN) \
+  (DB_PAGESIZE - DB_ALIGN (SPAGE_HEADER_SIZE, BTREE_MAX_ALIGN) \
    - DB_ALIGN (sizeof (BTREE_OVERFLOW_HEADER), BTREE_MAX_ALIGN))
 #define BTREE_MAX_OIDCOUNT_IN_OVERFLOW_RECORD(btid) \
   (BTREE_MAX_OIDCOUNT_IN_SIZE (btid, BTREE_MAX_OVERFLOW_RECORD_SIZE))
@@ -211,7 +210,13 @@ struct btree_root_header
   int num_keys;			/* Number of unique keys in the Btree */
   OID topclass_oid;		/* topclass oid or NULL OID(non unique index) */
   int unique_pk;		/* unique or non-unique, is primary key */
-  int reverse_reserved;		/* reverse or normal *//* not used */
+  struct
+  {
+    int over:2;			/* for checking to over 32 bit */
+    int num_oids:10;		/* extend 10 bit for num_oids */
+    int num_nulls:10;		/* extend 10 bit for num_nulls */
+    int num_keys:10;		/* extend 10 bit for num_keys */
+  } _64;
   int rev_level;		/* Btree revision level */
   VFID ovfid;			/* Overflow file */
   MVCCID creator_mvccid;	/* MVCCID of creator transaction. */
@@ -253,8 +258,8 @@ struct btree_node
 
 /* Recovery routines */
 extern void btree_rv_nodehdr_dump (FILE * fp, int length, void *data);
-extern void btree_rv_mvcc_save_increments (const BTID * btid, int key_delta, int oid_delta, int null_delta,
-					   RECDES * recdes);
+extern void btree_rv_mvcc_save_increments (const BTID * btid, long long key_delta, long long oid_delta,
+					   long long null_delta, RECDES * recdes);
 
 extern bool btree_clear_key_value (bool * clear_flag, DB_VALUE * key_value);
 extern void btree_init_temp_key_value (bool * clear_flag, DB_VALUE * key_value);
@@ -269,12 +274,13 @@ extern BTREE_ROOT_HEADER *btree_get_root_header (THREAD_ENTRY * thread_p, PAGE_P
 extern BTREE_OVERFLOW_HEADER *btree_get_overflow_header (THREAD_ENTRY * thread_p, PAGE_PTR page_ptr);
 extern int btree_node_header_undo_log (THREAD_ENTRY * thread_p, VFID * vfid, PAGE_PTR page_ptr);
 extern int btree_node_header_redo_log (THREAD_ENTRY * thread_p, VFID * vfid, PAGE_PTR page_ptr);
-extern int btree_change_root_header_delta (THREAD_ENTRY * thread_p, VFID * vfid, PAGE_PTR page_ptr, int null_delta,
-					   int oid_delta, int key_delta);
+extern int btree_change_root_header_delta (THREAD_ENTRY * thread_p, VFID * vfid, PAGE_PTR page_ptr,
+					   long long null_delta, long long oid_delta, long long key_delta);
 
 extern int btree_get_disk_size_of_key (DB_VALUE *);
 extern TP_DOMAIN *btree_generate_prefix_domain (BTID_INT * btid);
-extern int btree_glean_root_header_info (THREAD_ENTRY * thread_p, BTREE_ROOT_HEADER * root_header, BTID_INT * btid);
+extern int btree_glean_root_header_info (THREAD_ENTRY * thread_p, BTREE_ROOT_HEADER * root_header, BTID_INT * btid,
+					 bool is_key_type);
 extern DISK_ISVALID btree_verify_tree (THREAD_ENTRY * thread_p, const OID * class_oid_p, BTID_INT * btid,
 				       const char *btname);
 extern int btree_get_prefix_separator (const DB_VALUE * key1, const DB_VALUE * key2, DB_VALUE * prefix_key,

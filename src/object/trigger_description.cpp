@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -139,7 +138,7 @@ int trigger_description::init (struct db_object *trobj)
 
       /* format the full event specification so csql can display it without being dependent on syntax */
 
-      char buffer[ (SM_MAX_IDENTIFIER_LENGTH * 2) + 32];
+      char buffer[SM_MAX_IDENTIFIER_LENGTH * 2 + 32];
 
       if (this->attribute != NULL)
 	{
@@ -243,6 +242,9 @@ tr_dump_trigger (print_output &output_ctx, DB_OBJECT *trigger_object)
   DB_TRIGGER_TIME time;
   int save;
   const char *name;
+  char owner_name[DB_MAX_USER_LENGTH] = { '\0' };
+  const char *trigger_name = NULL;
+  const char *class_name = NULL;
 
   AU_DISABLE (save);
 
@@ -255,9 +257,8 @@ tr_dump_trigger (print_output &output_ctx, DB_OBJECT *trigger_object)
   else if (trigger->status != TR_STATUS_INVALID)
     {
       /* automatically filter out invalid triggers */
-
       output_ctx ("CREATE TRIGGER ");
-      output_ctx ("[%s]\n", trigger->name);
+      output_ctx ("[%s]\n", sm_remove_qualifier_name (trigger->name));
       output_ctx ("  STATUS %s\n", tr_status_as_string (trigger->status));
       output_ctx ("  PRIORITY %f\n", trigger->priority);
 
@@ -277,8 +278,14 @@ tr_dump_trigger (print_output &output_ctx, DB_OBJECT *trigger_object)
       if (trigger->class_mop != NULL)
 	{
 	  name = db_get_class_name (trigger->class_mop);
+	  if (sm_qualifier_name (name, owner_name, DB_MAX_USER_LENGTH) == NULL)
+	    {
+	      ASSERT_ERROR_AND_SET (error);
+	      return error;
+	    }
+	  class_name = sm_remove_qualifier_name (name);
 	  output_ctx (" ON ");
-	  output_ctx ("[%s]", name);
+	  output_ctx ("[%s].[%s]", owner_name, class_name);
 
 	  if (trigger->attribute != NULL)
 	    {
@@ -410,7 +417,7 @@ tr_dump_selective_triggers (print_output &output_ctx, DB_OBJLIST *classes)
 			{
 			  tr_dump_trigger (output_ctx, trigger_object);
 			  output_ctx ("call [change_trigger_owner]('%s'," " '%s') on class [db_root];\n\n",
-				      trigger->name, get_user_name (trigger->owner));
+				      sm_remove_qualifier_name (trigger->name), get_user_name (trigger->owner));
 			}
 		    }
 		  else if (is_system_class < 0)

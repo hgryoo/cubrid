@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -44,6 +43,7 @@
 #define DWB_SLOTS_HASH_SIZE		    1000
 #define DWB_SLOTS_FREE_LIST_SIZE	    100
 
+/* These values must be power of two. */
 #define DWB_MIN_SIZE			    (512 * 1024)
 #define DWB_MAX_SIZE			    (32 * 1024 * 1024)
 #define DWB_MIN_BLOCKS			    1
@@ -338,8 +338,10 @@ STATIC_INLINE void dwb_signal_waiting_threads (DWB_WAIT_QUEUE * wait_queue, pthr
 STATIC_INLINE void dwb_destroy_wait_queue (DWB_WAIT_QUEUE * wait_queue, pthread_mutex_t * mutex);
 
 /* DWB functions */
-STATIC_INLINE void dwb_adjust_write_buffer_values (unsigned int *p_double_write_buffer_size,
-						   unsigned int *p_num_blocks) __attribute__ ((ALWAYS_INLINE));
+STATIC_INLINE void dwb_power2_ceil (unsigned int min, unsigned int max, unsigned int *p_value)
+  __attribute__ ((ALWAYS_INLINE));
+STATIC_INLINE bool dwb_load_buffer_size (unsigned int *p_double_write_buffer_size) __attribute__ ((ALWAYS_INLINE));
+STATIC_INLINE bool dwb_load_block_count (unsigned int *p_num_blocks) __attribute__ ((ALWAYS_INLINE));
 STATIC_INLINE int dwb_wait_for_block_completion (THREAD_ENTRY * thread_p, unsigned int block_no)
   __attribute__ ((ALWAYS_INLINE));
 STATIC_INLINE int dwb_signal_waiting_thread (void *data) __attribute__ ((ALWAYS_INLINE));
@@ -718,81 +720,94 @@ dwb_destroy_wait_queue (DWB_WAIT_QUEUE * wait_queue, pthread_mutex_t * mutex)
 }
 
 /*
- * dwb_adjust_write_buffer_values () - Adjust double write buffer values.
+ * dwb_power2_ceil () - Adjust value to power of 2.
  *
  * return   : Error code.
- * p_double_write_buffer_size (in/out) : Double write buffer size.
- * p_num_blocks (in/out): The number of blocks.
+ * min (in) : minimum of value to be adjusted.
+ * max (in) : maximum of value to be adjusted.
+ * p_value (in/out) : value to be adjusted.
  *
- *  Note: The buffer size must be a multiple of 512 K. The number of blocks must be a power of 2.
+ *  Note: The adjusted value is a power of 2 that is greater than the value.
  */
 STATIC_INLINE void
-dwb_adjust_write_buffer_values (unsigned int *p_double_write_buffer_size, unsigned int *p_num_blocks)
+dwb_power2_ceil (unsigned int min, unsigned int max, unsigned int *p_value)
 {
-  unsigned int min_size;
-  unsigned int max_size;
+  unsigned int limit;
 
-  assert (p_double_write_buffer_size != NULL && p_num_blocks != NULL
-	  && *p_double_write_buffer_size > 0 && *p_num_blocks > 0);
-
-  min_size = DWB_MIN_SIZE;
-  max_size = DWB_MAX_SIZE;
-
-  if (*p_double_write_buffer_size < min_size)
+  if (*p_value < min)
     {
-      *p_double_write_buffer_size = min_size;
+      *p_value = min;
     }
-  else if (*p_double_write_buffer_size > min_size)
+  else if (*p_value > max)
     {
-      if (*p_double_write_buffer_size > max_size)
-	{
-	  *p_double_write_buffer_size = max_size;
-	}
-      else
-	{
-	  /* find smallest number multiple of 512 k */
-	  unsigned int limit1 = min_size;
+      *p_value = max;
+    }
+  else if (!IS_POWER_OF_2 (*p_value))
+    {
+      limit = min << 1;
 
-	  while (*p_double_write_buffer_size > limit1)
-	    {
-	      assert (limit1 <= DWB_MAX_SIZE);
-	      if (limit1 == DWB_MAX_SIZE)
-		{
-		  break;
-		}
-	      limit1 = limit1 << 1;
-	    }
-
-	  *p_double_write_buffer_size = limit1;
+      while (limit < *p_value)
+	{
+	  limit = limit << 1;
 	}
+
+      *p_value = limit;
     }
 
-  min_size = DWB_MIN_BLOCKS;
-  max_size = DWB_MAX_BLOCKS;
+  assert (IS_POWER_OF_2 (*p_value));
+  assert (*p_value >= min && *p_value <= max);
+}
 
-  assert (*p_num_blocks >= min_size);
+/*
+ * dwb_load_buffer_size () - Load the buffer size value of double write buffer.
+ *
+ * return   : true or false.
+ * p_double_write_buffer_size (in/out): the buffer size of double write buffer.
+ *
+ *  Note: The buffer size must be a multiple of 512 K.
+ */
+STATIC_INLINE bool
+dwb_load_buffer_size (unsigned int *p_double_write_buffer_size)
+{
+  assert (IS_POWER_OF_2 (DWB_MIN_SIZE) && IS_POWER_OF_2 (DWB_MAX_SIZE));
+  assert (DWB_MAX_SIZE >= DWB_MIN_SIZE);
 
-  if (*p_num_blocks > min_size)
+  *p_double_write_buffer_size = prm_get_integer_value (PRM_ID_DWB_SIZE);
+  if (*p_double_write_buffer_size == 0)
     {
-      if (*p_num_blocks > max_size)
-	{
-	  *p_num_blocks = max_size;
-	}
-      else if (!IS_POWER_OF_2 (*p_num_blocks))
-	{
-	  unsigned int num_blocks = *p_num_blocks;
-
-	  do
-	    {
-	      num_blocks = num_blocks & (num_blocks - 1);
-	    }
-	  while (!IS_POWER_OF_2 (num_blocks));
-
-	  *p_num_blocks = num_blocks << 1;
-
-	  assert (*p_num_blocks <= max_size);
-	}
+      /* Do not use double write buffer. */
+      return false;
     }
+
+  dwb_power2_ceil (DWB_MIN_SIZE, DWB_MAX_SIZE, p_double_write_buffer_size);
+
+  return true;
+}
+
+/*
+ * dwb_load_block_count () - Load the block count value of double write buffer.
+ *
+ * return   : true or false.
+ * p_num_blocks (in/out): the block count of double write buffer.
+ *
+ *  Note: The number of blocks must be a power of 2.
+ */
+STATIC_INLINE bool
+dwb_load_block_count (unsigned int *p_num_blocks)
+{
+  assert (IS_POWER_OF_2 (DWB_MIN_BLOCKS) && IS_POWER_OF_2 (DWB_MAX_BLOCKS));
+  assert (DWB_MAX_BLOCKS >= DWB_MIN_BLOCKS);
+
+  *p_num_blocks = prm_get_integer_value (PRM_ID_DWB_BLOCKS);
+  if (*p_num_blocks == 0)
+    {
+      /* Do not use double write buffer. */
+      return false;
+    }
+
+  dwb_power2_ceil (DWB_MIN_BLOCKS, DWB_MAX_BLOCKS, p_num_blocks);
+
+  return true;
 }
 
 /*
@@ -1160,15 +1175,11 @@ dwb_create_internal (THREAD_ENTRY * thread_p, const char *dwb_volume_name, UINT6
 
   assert (dwb_volume_name != NULL && current_position_with_flags != NULL);
 
-  double_write_buffer_size = prm_get_integer_value (PRM_ID_DWB_SIZE);
-  num_blocks = prm_get_integer_value (PRM_ID_DWB_BLOCKS);
-  if (double_write_buffer_size == 0 || num_blocks == 0)
+  if (!dwb_load_buffer_size (&double_write_buffer_size) || !dwb_load_block_count (&num_blocks))
     {
       /* Do not use double write buffer. */
       return NO_ERROR;
     }
-
-  dwb_adjust_write_buffer_values (&double_write_buffer_size, &num_blocks);
 
   num_pages = double_write_buffer_size / IO_PAGESIZE;
   num_block_pages = num_pages / num_blocks;
@@ -2054,9 +2065,7 @@ dwb_write_block (THREAD_ENTRY * thread_p, DWB_BLOCK * block, DWB_SLOT * p_dwb_or
 
       assert (last_written_vol_fd != NULL_VOLDES);
 
-      assert (p_dwb_ordered_slots[i].io_page->prv.pflag_reserve_1 == '\0');
       assert (p_dwb_ordered_slots[i].io_page->prv.p_reserve_2 == 0);
-      assert (p_dwb_ordered_slots[i].io_page->prv.p_reserve_3 == 0);
       assert (p_dwb_ordered_slots[i].vpid.pageid == p_dwb_ordered_slots[i].io_page->prv.pageid
 	      && p_dwb_ordered_slots[i].vpid.volid == p_dwb_ordered_slots[i].io_page->prv.volid);
 
@@ -2214,9 +2223,7 @@ dwb_flush_block (THREAD_ENTRY * thread_p, DWB_BLOCK * block, bool file_sync_help
       s1 = &p_dwb_ordered_slots[i];
       s2 = &p_dwb_ordered_slots[i + 1];
 
-      assert (s1->io_page->prv.pflag_reserve_1 == '\0');
       assert (s1->io_page->prv.p_reserve_2 == 0);
-      assert (s1->io_page->prv.p_reserve_3 == 0);
 
       if (!VPID_ISNULL (&s1->vpid) && VPID_EQ (&s1->vpid, &s2->vpid))
 	{
@@ -2592,9 +2599,7 @@ dwb_set_slot_data (THREAD_ENTRY * thread_p, DWB_SLOT * dwb_slot, FILEIO_PAGE * i
 {
   assert (dwb_slot != NULL && io_page_p != NULL);
 
-  assert (io_page_p->prv.pflag_reserve_1 == '\0');
   assert (io_page_p->prv.p_reserve_2 == 0);
-  assert (io_page_p->prv.p_reserve_3 == 0);
 
   if (io_page_p->prv.pageid != NULL_PAGEID)
     {
@@ -3381,15 +3386,11 @@ start:
       /* Flush all pages from current block */
       assert (flush_block != NULL && flush_block->count_wb_pages == DWB_BLOCK_NUM_PAGES);
 
-      if (DWB_GET_PREV_BLOCK (flush_block->block_no)->version < flush_block->version
-	  || ((DWB_GET_PREV_BLOCK (flush_block->block_no)->version == flush_block->version)
-	      && (flush_block->block_no > DWB_GET_PREV_BLOCK_NO (flush_block->block_no))))
-	{
-	  if (DWB_GET_PREV_BLOCK (flush_block->block_no)->count_wb_pages != 0)
-	    {
-	      assert_release (false);
-	    }
-	}
+      assert ((DWB_GET_PREV_BLOCK (flush_block->block_no)->version > flush_block->version) ||
+	      (flush_block->block_no == 0
+	       && (DWB_GET_PREV_BLOCK (flush_block->block_no)->version == flush_block->version))
+	      || (flush_block->version == UINT64_MAX
+		  && (DWB_GET_PREV_BLOCK (flush_block->block_no)->version < flush_block->version)));
 
       error_code = dwb_flush_block (thread_p, flush_block, true, NULL);
       if (error_code != NO_ERROR)

@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -199,7 +198,7 @@ namespace cubload
 		msg_type = LOADDB_MSG_COMMITTED_INSTANCES;
 	      }
 
-	    m_session.append_log_msg (msg_type, class_name.c_str (), m_session.stats_get_rows_committed ());
+	    m_session.append_log_msg (msg_type, class_name.c_str (), rows_number);
 	  }
 
 	// Clear the clientids.
@@ -255,12 +254,37 @@ namespace cubload
 	// just set class id to 1 since only one table can be specified as command line argument
 	cubthread::entry &thread_ref = cubthread::get_entry ();
 
-	if (intl_identifier_lower_string_size (m_args.table_name.c_str ()) >= SM_MAX_IDENTIFIER_LENGTH)
-	  {
-	    // This is an error.
-	    m_driver->get_error_handler ().on_error (LOADDB_MSG_EXCEED_MAX_LEN, SM_MAX_IDENTIFIER_LENGTH - 1);
-	    return;
-	  }
+	{
+	  const char *dot = NULL;
+	  const char *class_name = NULL;
+	  int len = 0;
+
+	  class_name = m_args.table_name.c_str ();
+	  len = STATIC_CAST (int, strlen (class_name));
+
+	  dot = strchr (class_name, '.');
+	  if (dot)
+	    {
+	      /* user specified name */
+
+	      /* user name of user specified name */
+	      len = STATIC_CAST (int, dot - class_name);
+	      if (len >= DB_MAX_USER_LENGTH)
+		{
+		  m_driver->get_error_handler ().on_error (LOADDB_MSG_EXCEED_MAX_USER_LEN, DB_MAX_USER_LENGTH - 1);
+		  return;
+		}
+
+	      /* class name of user specified name */
+	      len = STATIC_CAST (int, strlen (dot + 1));
+	    }
+
+	  if (len >= DB_MAX_IDENTIFIER_LENGTH - DB_MAX_USER_LENGTH)
+	    {
+	      m_driver->get_error_handler ().on_error (LOADDB_MSG_EXCEED_MAX_LEN, DB_MAX_IDENTIFIER_LENGTH - DB_MAX_USER_LENGTH - 1);
+	      return;
+	    }
+	}
 
 	thread_ref.m_loaddb_driver = m_driver;
 	m_driver->get_class_installer ().set_class_id (FIRST_CLASS_ID);

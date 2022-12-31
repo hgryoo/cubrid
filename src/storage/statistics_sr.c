@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -111,12 +110,13 @@ xstats_update_statistics (THREAD_ENTRY * thread_p, OID * class_id_p, bool with_f
   DISK_ATTR *disk_attr_p = NULL;
   BTREE_STATS *btree_stats_p = NULL;
   OID dir_oid;
-  int npages, estimated_nobjs;
+  int npages, nobjs, length;
   char *class_name = NULL;
   int i, j;
   OID *partitions = NULL;
   int count = 0, error_code = NO_ERROR;
   int lk_grant_code = 0;
+  int nobjs_from_unique_index = 0;
   CATALOG_ACCESS_INFO catalog_access_info = CATALOG_ACCESS_INFO_INITIALIZER;
 
   thread_p->push_resource_tracks ();
@@ -230,29 +230,7 @@ xstats_update_statistics (THREAD_ENTRY * thread_p, OID * class_id_p, bool with_f
     }
   (void) catalog_end_access_with_dir_oid (thread_p, &catalog_access_info, NO_ERROR);
 
-  npages = estimated_nobjs = 0;
-
-  /* do not use estimated npages, get correct info */
-  if (file_get_num_user_pages (thread_p, &(cls_info_p->ci_hfid.vfid), &npages) != NO_ERROR)
-    {
-      goto error;
-    }
-  assert (npages > 0);
-  cls_info_p->ci_tot_pages = MAX (npages, 0);
-
-  estimated_nobjs = heap_estimate_num_objects (thread_p, &(cls_info_p->ci_hfid));
-  if (estimated_nobjs == -1)
-    {
-      /* cannot get estimates from the heap, use old info */
-      assert (cls_info_p->ci_tot_objects >= 0);
-    }
-  else
-    {
-      cls_info_p->ci_tot_objects = estimated_nobjs;
-    }
-
   /* update the index statistics for each attribute */
-
   for (i = 0; i < disk_repr_p->n_fixed + disk_repr_p->n_variable; i++)
     {
       if (i < disk_repr_p->n_fixed)
@@ -275,9 +253,34 @@ xstats_update_statistics (THREAD_ENTRY * thread_p, OID * class_id_p, bool with_f
 	      goto error;
 	    }
 
+	  /* check using nobjs from unique index */
+	  if (xbtree_get_unique_pk (thread_p, &btree_stats_p->btid))
+	    {
+	      nobjs_from_unique_index = MAX (nobjs_from_unique_index, btree_stats_p->keys);
+	    }
+
 	  assert_release (btree_stats_p->keys >= 0);
 	}			/* for (j = 0; ...) */
     }				/* for (i = 0; ...) */
+
+  /* get npages and nobjs. do not use estimation, get correct info */
+  npages = nobjs = length = 0;
+  if (nobjs_from_unique_index > 0)
+    {
+      /* use number of unique index key */
+      nobjs = nobjs_from_unique_index;
+      if (file_get_num_user_pages (thread_p, &(cls_info_p->ci_hfid.vfid), &npages) != NO_ERROR)
+	{
+	  goto error;
+	}
+    }
+  else
+    {
+      /* full scan for number of object */
+      heap_get_num_objects (thread_p, &(cls_info_p->ci_hfid), &npages, &nobjs, &length);
+    }
+  cls_info_p->ci_tot_pages = MAX (npages, 0);
+  cls_info_p->ci_tot_objects = MAX (nobjs, 0);
 
   error_code = catalog_start_access_with_dir_oid (thread_p, &catalog_access_info, X_LOCK);
   if (error_code != NO_ERROR)
@@ -395,7 +398,7 @@ xstats_update_all_statistics (THREAD_ENTRY * thread_p, bool with_fullscan)
 #if !defined(NDEBUG)
       classname = or_class_name (&recdes);
       assert (classname != NULL);
-      assert (strlen (classname) < 255);
+      assert (strlen (classname) < DB_MAX_IDENTIFIER_LENGTH);
 #endif
 
       error = xstats_update_statistics (thread_p, &class_oid, with_fullscan);
@@ -449,7 +452,7 @@ xstats_get_statistics_from_server (THREAD_ENTRY * thread_p, OID * class_id_p, un
   DISK_ATTR *disk_attr_p;
   BTREE_STATS *btree_stats_p;
   OID dir_oid;
-  int npages, estimated_nobjs, max_unique_keys;
+  int npages, estimated_nobjs;
   int i, j, k, size, n_attrs, tot_n_btstats, tot_key_info_size;
   char *buf_p, *start_p;
   int key_size;
@@ -568,8 +571,6 @@ xstats_get_statistics_from_server (THREAD_ENTRY * thread_p, OID * class_id_p, un
 
   size += tot_key_info_size;	/* key_type, pkeys[] of BTREE_STATS */
 
-  size += OR_INT_SIZE;		/* max_unique_keys */
-
   start_p = buf_p = (char *) malloc (size);
   if (buf_p == NULL)
     {
@@ -580,7 +581,7 @@ xstats_get_statistics_from_server (THREAD_ENTRY * thread_p, OID * class_id_p, un
   OR_PUT_INT (buf_p, cls_info_p->ci_time_stamp);
   buf_p += OR_INT_SIZE;
 
-  npages = estimated_nobjs = max_unique_keys = -1;
+  npages = estimated_nobjs = -1;
 
   assert (cls_info_p->ci_tot_objects >= 0);
   assert (cls_info_p->ci_tot_pages >= 0);
@@ -667,12 +668,6 @@ xstats_get_statistics_from_server (THREAD_ENTRY * thread_p, OID * class_id_p, un
 
       for (j = 0, btree_stats_p = disk_attr_p->bt_stats; j < disk_attr_p->n_btstats; j++, btree_stats_p++)
 	{
-	  /* collect maximum unique keys info */
-	  if (xbtree_get_unique_pk (thread_p, &btree_stats_p->btid))
-	    {
-	      max_unique_keys = MAX (max_unique_keys, btree_stats_p->keys);
-	    }
-
 	  OR_PUT_BTID (buf_p, &btree_stats_p->btid);
 	  buf_p += OR_BTID_ALIGNED_SIZE;
 
@@ -774,10 +769,6 @@ xstats_get_statistics_from_server (THREAD_ENTRY * thread_p, OID * class_id_p, un
 	    }
 	}			/* for (j = 0, ...) */
     }
-
-  OR_PUT_INT (buf_p, max_unique_keys);
-  buf_p += OR_INT_SIZE;
-
   catalog_free_representation_and_init (disk_repr_p);
   catalog_free_class_info_and_init (cls_info_p);
 

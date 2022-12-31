@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -3574,10 +3573,12 @@ put_class_varinfo (OR_BUF * buf, SM_CLASS * class_)
 
   /* compute the variable offsets relative to the end of the header (beginning of variable table) */
   offset = tf_Metaclass_class.mc_fixed_size + OR_VAR_TABLE_SIZE (tf_Metaclass_class.mc_n_variable);
+
   /* name */
   or_put_offset (buf, offset);
 
   offset += string_disk_size (sm_ch_name ((MOBJ) class_));
+
   or_put_offset (buf, offset);
 
   offset += string_disk_size (class_->loader_commands);
@@ -3694,9 +3695,12 @@ put_class_attributes (OR_BUF * buf, SM_CLASS * class_)
   or_pack_mop (buf, class_->owner);
   or_put_int (buf, (int) class_->collation_id);
 
+  or_put_int (buf, class_->tde_algorithm);
+
 
   /* 0: NAME */
   put_string (buf, sm_ch_name ((MOBJ) class_));
+
   put_string (buf, class_->loader_commands);
 
   put_substructure_set (buf, (DB_LIST *) class_->representations, representation_to_disk_lwriter,
@@ -4032,6 +4036,8 @@ disk_to_class (OR_BUF * buf, SM_CLASS ** class_ptr)
   tp_Object.data_readval (buf, &value, NULL, -1, true, NULL, 0);
   class_->owner = db_get_object (&value);
   class_->collation_id = or_get_int (buf, &rc);
+
+  class_->tde_algorithm = or_get_int (buf, &rc);
 
   /* variable 0 */
   class_->header.ch_name = get_string (buf, vars[ORC_NAME_INDEX].length);

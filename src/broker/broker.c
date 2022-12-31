@@ -1,20 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation
- * Copyright (C) 2016 CUBRID Corporation
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -196,7 +194,7 @@
 	  write_to_client(FD, (char*) &write_val, 4);	\
 	} while (0)
 
-#define JOB_COUNT_MAX		1000000
+#define JOB_COUNT_MAX		130000000
 
 /* num of collecting counts per monitoring interval */
 #define NUM_COLLECT_COUNT_PER_INTVL     4
@@ -267,6 +265,8 @@ static int write_to_client (SOCKET sock_fd, char *buf, int size);
 static int write_to_client_with_timeout (SOCKET sock_fd, char *buf, int size, int timeout_sec);
 static int read_from_client (SOCKET sock_fd, char *buf, int size);
 static int read_from_client_with_timeout (SOCKET sock_fd, char *buf, int size, int timeout_sec);
+static int read_buffer_async (SOCKET sock_fd, char *buf, int size, int timeout);
+static int write_buffer_async (SOCKET sock_fd, char *buf, int size, int timeout);
 static int run_appl_server (T_APPL_SERVER_INFO * as_info_p, int br_index, int as_index);
 static int stop_appl_server (T_APPL_SERVER_INFO * as_info_p, int br_index, int as_index);
 static void restart_appl_server (T_APPL_SERVER_INFO * as_info_p, int br_index, int as_index);
@@ -734,6 +734,18 @@ cleanup (int signo)
   exit (0);
 }
 
+static bool
+di_understand_renewed_error_code (const char *driver_info)
+{
+#define IS_SET_BIT(C,B)	(((C) & (B)) == (B))
+  if (!IS_SET_BIT (driver_info[SRV_CON_MSG_IDX_PROTO_VERSION], CAS_PROTO_INDICATOR))
+    {
+      return false;
+    }
+
+  return IS_SET_BIT (driver_info[DRIVER_INFO_FUNCTION_FLAG], BROKER_RENEWED_ERROR_CODE);
+}
+
 static void
 send_error_to_driver (int sock, int error, char *driver_info)
 {
@@ -748,7 +760,7 @@ send_error_to_driver (int sock, int error, char *driver_info)
     }
   else
     {
-      if (driver_version == CAS_PROTO_MAKE_VER (PROTOCOL_V2) || cas_di_understand_renewed_error_code (driver_info))
+      if (driver_version == CAS_PROTO_MAKE_VER (PROTOCOL_V2) || di_understand_renewed_error_code (driver_info))
 	{
 	  write_val = htonl (error);
 	}
@@ -768,7 +780,8 @@ static const char *cas_client_type_str[] = {
   "JDBC",			/* CAS_CLIENT_JDBC */
   "PHP",			/* CAS_CLIENT_PHP */
   "OLEDB",			/* CAS_CLIENT_OLEDB */
-  "INTERNAL_JDBC"		/* CAS_CLIENT_SERVER_SIDE_JDBC */
+  "INTERNAL_JDBC",		/* CAS_CLIENT_SERVER_SIDE_JDBC */
+  "GATEWAY_CCI"			/* CAS_CLIENT_GATEWAY */
 };
 
 static THREAD_FUNC
@@ -1409,50 +1422,31 @@ read_from_client (SOCKET sock_fd, char *buf, int size)
 static int
 read_from_client_with_timeout (SOCKET sock_fd, char *buf, int size, int timeout_sec)
 {
+  int len = size;
   int read_len;
-#ifdef ASYNC_MODE
-  SELECT_MASK read_mask;
-  int nfound;
-  int maxfd;
-  struct timeval timeout_val, *timeout_ptr;
 
-  if (timeout_sec < 0)
-    {
-      timeout_ptr = NULL;
-    }
-  else
-    {
-      timeout_val.tv_sec = timeout_sec;
-      timeout_val.tv_usec = 0;
-      timeout_ptr = &timeout_val;
-    }
-#endif
-
-#ifdef ASYNC_MODE
-  FD_ZERO (&read_mask);
-  FD_SET (sock_fd, (fd_set *) (&read_mask));
-  maxfd = (int) sock_fd + 1;
-  nfound = select (maxfd, &read_mask, (SELECT_MASK *) 0, (SELECT_MASK *) 0, timeout_ptr);
-  if (nfound < 0)
+  if (IS_INVALID_SOCKET (sock_fd))
     {
       return -1;
     }
-#endif
 
 #ifdef ASYNC_MODE
-  if (FD_ISSET (sock_fd, (fd_set *) (&read_mask)))
+  while (size > 0)
     {
-#endif
-      read_len = READ_FROM_SOCKET (sock_fd, buf, size);
-#ifdef ASYNC_MODE
+      read_len = read_buffer_async (sock_fd, buf, size, timeout_sec);
+      if (read_len <= 0)
+	{
+	  return -1;
+	}
+
+      buf += read_len;
+      size -= read_len;
     }
-  else
-    {
-      return -1;
-    }
+#else
+  read_len = READ_FROM_SOCKET (sock_fd, buf, size);
 #endif
 
-  return read_len;
+  return len;
 }
 
 static int
@@ -1464,53 +1458,32 @@ write_to_client (SOCKET sock_fd, char *buf, int size)
 static int
 write_to_client_with_timeout (SOCKET sock_fd, char *buf, int size, int timeout_sec)
 {
-  int write_len;
-#ifdef ASYNC_MODE
-  SELECT_MASK write_mask;
-  int nfound;
-  int maxfd;
-  struct timeval timeout_val, *timeout_ptr;
-
-  if (timeout_sec < 0)
-    {
-      timeout_ptr = NULL;
-    }
-  else
-    {
-      timeout_val.tv_sec = timeout_sec;
-      timeout_val.tv_usec = 0;
-      timeout_ptr = &timeout_val;
-    }
-#endif
+  int len = size;
+  int write_len = -1;
 
   if (IS_INVALID_SOCKET (sock_fd))
-    return -1;
-
-#ifdef ASYNC_MODE
-  FD_ZERO (&write_mask);
-  FD_SET (sock_fd, (fd_set *) (&write_mask));
-  maxfd = (int) sock_fd + 1;
-  nfound = select (maxfd, (SELECT_MASK *) 0, &write_mask, (SELECT_MASK *) 0, timeout_ptr);
-  if (nfound < 0)
     {
       return -1;
     }
-#endif
 
 #ifdef ASYNC_MODE
-  if (FD_ISSET (sock_fd, (fd_set *) (&write_mask)))
+  while (size > 0)
     {
-#endif
-      write_len = WRITE_TO_SOCKET (sock_fd, buf, size);
-#ifdef ASYNC_MODE
+      write_len = write_buffer_async (sock_fd, buf, size, timeout_sec);
+
+      if (write_len <= 0)
+	{
+	  return -1;
+	}
+
+      buf += write_len;
+      size -= write_len;
     }
-  else
-    {
-      return -1;
-    }
+#else
+  len = WRITE_TO_SOCKET (sock_fd, buf, size);
 #endif
 
-  return write_len;
+  return len;
 }
 
 /*
@@ -3355,4 +3328,62 @@ get_as_slow_log_filename (char *log_filename, int len, char *broker_name, T_APPL
       // bad name
       log_filename[0] = '\0';
     }
+}
+
+static int
+read_buffer_async (SOCKET sock_fd, char *buf, int size, int timeout)
+{
+  int read_len = -1;
+  struct pollfd po[1] = { {0, 0, 0} };
+  int ret;
+
+  po[0].fd = sock_fd;
+  po[0].events = POLLIN;
+
+  do
+    {
+      ret = poll (po, 1, timeout * 1000);
+    }
+  while (ret < 0 && errno == EINTR);
+
+  if (ret < 1)			/* ERROR OR TIMEOUT */
+    {
+      return -1;
+    }
+
+  if (po[0].revents & POLLIN)	/* RECEIVE NEW REQUEST */
+    {
+      read_len = READ_FROM_SOCKET (sock_fd, buf, size);
+    }
+
+  return read_len;
+}
+
+static int
+write_buffer_async (SOCKET sock_fd, char *buf, int size, int timeout)
+{
+  int write_len = -1;
+  struct pollfd po[1] = { {0, 0, 0} };
+  int ret;
+
+  po[0].fd = sock_fd;
+  po[0].events = POLLOUT;
+
+  do
+    {
+      ret = poll (po, 1, timeout * 1000);
+    }
+  while (ret < 0 && errno == EINTR);
+
+  if (ret < 1)			/* ERROR OR TIMEOUT */
+    {
+      return -1;
+    }
+
+  if (po[0].revents & POLLOUT)	/* RECEIVE NEW REQUEST */
+    {
+      write_len = WRITE_TO_SOCKET (sock_fd, buf, size);
+    }
+
+  return write_len;
 }

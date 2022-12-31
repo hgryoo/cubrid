@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -311,6 +310,98 @@ utility_get_option_string_table_size (UTIL_ARG_MAP * arg_map)
       return arg_map[arg_index].value_info.num_strings;
     }
   return 0;
+}
+
+/*
+ * utility_check_class_name() - Check if class name is valid.
+ *   return: error code
+ *   class_name(in): the name of the class
+ */
+int
+utility_check_class_name (const char *class_name)
+{
+  int class_name_len = 0;
+  int sub_len = 0;
+  const char *dot = NULL;
+
+  if (class_name == NULL || class_name[0] == '\0')
+    {
+      PRINT_AND_LOG_ERR_MSG (msgcat_message
+			     (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_GENERIC, MSGCAT_UTIL_GENERIC_INVALID_ARGUMENT));
+      util_log_write_errid (MSGCAT_UTIL_GENERIC_INVALID_ARGUMENT);
+      return ER_FAILED;
+    }
+
+  class_name_len = STATIC_CAST (int, strlen (class_name));
+  if (class_name_len >= SM_MAX_IDENTIFIER_LENGTH)
+    {
+      PRINT_AND_LOG_ERR_MSG (msgcat_message
+			     (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_GENERIC,
+			      MSGCAT_UTIL_GENERIC_CLASSNAME_EXCEED_MAX_LENGTH), SM_MAX_USER_LENGTH,
+			     SM_MAX_IDENTIFIER_LENGTH - SM_MAX_USER_LENGTH);
+      util_log_write_errid (MSGCAT_UTIL_GENERIC_CLASSNAME_EXCEED_MAX_LENGTH, SM_MAX_USER_LENGTH,
+			    SM_MAX_IDENTIFIER_LENGTH - SM_MAX_USER_LENGTH);
+      return ER_FAILED;
+    }
+
+  dot = strchr (class_name, '.');
+  if (dot == NULL)
+    {
+      /* owner name or class name is not specified */
+      PRINT_AND_LOG_ERR_MSG (msgcat_message
+			     (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_GENERIC,
+			      MSGCAT_UTIL_GENERIC_CLASSNAME_INVALID_FORMAT), class_name);
+      util_log_write_errid (MSGCAT_UTIL_GENERIC_CLASSNAME_INVALID_FORMAT, class_name);
+      return ER_FAILED;
+    }
+
+  /* check length of owner name */
+  sub_len = STATIC_CAST (int, dot - class_name);
+  if (sub_len < 1)
+    {
+      /* owner name is not specified (e.g. '.class_name') */
+      PRINT_AND_LOG_ERR_MSG (msgcat_message
+			     (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_GENERIC,
+			      MSGCAT_UTIL_GENERIC_CLASSNAME_INVALID_FORMAT), class_name);
+      util_log_write_errid (MSGCAT_UTIL_GENERIC_CLASSNAME_INVALID_FORMAT, class_name);
+      return ER_FAILED;
+    }
+
+  if (sub_len >= SM_MAX_USER_LENGTH)
+    {
+      PRINT_AND_LOG_ERR_MSG (msgcat_message
+			     (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_GENERIC,
+			      MSGCAT_UTIL_GENERIC_CLASSNAME_EXCEED_MAX_LENGTH), SM_MAX_USER_LENGTH,
+			     SM_MAX_IDENTIFIER_LENGTH - SM_MAX_USER_LENGTH);
+      util_log_write_errid (MSGCAT_UTIL_GENERIC_CLASSNAME_EXCEED_MAX_LENGTH, SM_MAX_USER_LENGTH,
+			    SM_MAX_IDENTIFIER_LENGTH - SM_MAX_USER_LENGTH);
+      return ER_FAILED;
+    }
+
+  /* check length of class name */
+  sub_len = STATIC_CAST (int, strlen (dot + 1));
+  if (sub_len < 1)
+    {
+      /* class name is not specified (e.g. 'owner_name.') */
+      PRINT_AND_LOG_ERR_MSG (msgcat_message
+			     (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_GENERIC,
+			      MSGCAT_UTIL_GENERIC_CLASSNAME_INVALID_FORMAT), class_name);
+      util_log_write_errid (MSGCAT_UTIL_GENERIC_CLASSNAME_INVALID_FORMAT, class_name);
+      return ER_FAILED;
+    }
+
+  if (sub_len >= SM_MAX_IDENTIFIER_LENGTH - SM_MAX_USER_LENGTH)
+    {
+      PRINT_AND_LOG_ERR_MSG (msgcat_message
+			     (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_GENERIC,
+			      MSGCAT_UTIL_GENERIC_CLASSNAME_EXCEED_MAX_LENGTH), SM_MAX_USER_LENGTH,
+			     SM_MAX_IDENTIFIER_LENGTH - SM_MAX_USER_LENGTH);
+      util_log_write_errid (MSGCAT_UTIL_GENERIC_CLASSNAME_EXCEED_MAX_LENGTH, SM_MAX_USER_LENGTH,
+			    SM_MAX_IDENTIFIER_LENGTH - SM_MAX_USER_LENGTH);
+      return ER_FAILED;
+    }
+
+  return NO_ERROR;
 }
 
 /*
@@ -1245,6 +1336,14 @@ util_get_table_list_from_file (char *fname, dynamic_array * darray)
 	  if (p != 0)
 	    {
 	      name[p] = '\0';
+
+	      if (utility_check_class_name (name) != NO_ERROR)
+		{
+		  fclose (fp);
+		  /* The util_log_write_errid function is called inside the utility_check_class_name function. */
+		  return ER_GENERIC_ERROR;
+		}
+
 	      if (da_add (darray, name) != NO_ERROR)
 		{
 		  fclose (fp);
@@ -1264,9 +1363,12 @@ util_get_table_list_from_file (char *fname, dynamic_array * darray)
       if (p == SM_MAX_IDENTIFIER_LENGTH)
 	{
 	  /* too long table name */
-	  util_log_write_errid (MSGCAT_UTIL_GENERIC_INVALID_ARGUMENT);
-	  fclose (fp);
-	  return ER_GENERIC_ERROR;
+	  if (utility_check_class_name (name) != NO_ERROR)
+	    {
+	      fclose (fp);
+	      /* The util_log_write_errid function is called inside the utility_check_class_name function. */
+	      return ER_GENERIC_ERROR;
+	    }
 	}
     }
   fclose (fp);

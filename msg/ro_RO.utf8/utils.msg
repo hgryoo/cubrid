@@ -1,19 +1,21 @@
+
 $
-$ Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
-$
-$   This program is free software; you can redistribute it and/or modify
-$   it under the terms of the GNU General Public License as published by
-$   the Free Software Foundation; either version 2 of the License, or
-$   (at your option) any later version.
-$
-$  This program is distributed in the hope that it will be useful,
-$  but WITHOUT ANY WARRANTY; without even the implied warranty of
-$  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-$  GNU General Public License for more details.
-$
-$  You should have received a copy of the GNU General Public License
-$  along with this program; if not, write to the Free Software
-$  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+$  Copyright 2008 Search Solution Corporation
+$  Copyright 2016 CUBRID Corporation
+$ 
+$   Licensed under the Apache License, Version 2.0 (the "License");
+$   you may not use this file except in compliance with the License.
+$   You may obtain a copy of the License at
+$ 
+$       http://www.apache.org/licenses/LICENSE-2.0
+$ 
+$   Unless required by applicable law or agreed to in writing, software
+$   distributed under the License is distributed on an "AS IS" BASIS,
+$   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+$   See the License for the specific language governing permissions and
+$   limitations under the License.
+$ 
+$ 
 $
 
 $
@@ -72,6 +74,8 @@ $       52      dump_tz
 $       53      restoreslave
 $       54      delvoldb
 $       56      checksumdb
+$       57      tde
+$       58      flashback
 
 $set 1 MSGCAT_UTIL_SET_GENERIC
 1 Lungime sau caracter invalid '%1$c' în numele bazei de date '%2$s'\n
@@ -83,7 +87,7 @@ $set 1 MSGCAT_UTIL_SET_GENERIC
 9 \
 %1$s (Utilitare CUBRID)\n\
 %2$s\n\
-Copyright (C) 2008 Search Solution Corporation. Toate drepturile rezervate de către Search Solution.\n
+Copyright (C) 2008 Search Solution Corporation.\nCopyright (C) 2016 CUBRID Corporation.\n
 10 \
 utilitar de administrare CUBRID, versiunea %1$s\n\
 utilizare: %2$s <nume-utilitar> [argumente]\n\
@@ -124,6 +128,8 @@ Nume de utilitare de administrare disponibile:\n\
     dump_tz\n\
     restoreslave\n\
     vacuumdb\n\
+    tde\n\
+    flashback\n\
 \n\
 %4$s este un utilitar pentru SGDB.\n\
 Pentru informaţii suplimentare, accesaţi http://www.cubrid.org\n
@@ -146,6 +152,7 @@ Utilitare de serviciu disponibile:\n\
     service\n\
     server\n\
     broker\n\
+    gateway\n\
     manager\n\
     heartbeat\n\
     javasp\n\
@@ -183,6 +190,8 @@ Utilitare de administrare disponibile:\n\
     dump_tz\n\
     vacuumdb\n\
     checksumdb\n\
+    tde\n\
+    flashback\n\
 \n\
 %4$s este un utilitar pentru SGBD.\n\
 Pentru informaţii suplimentare, accesaţi http://www.cubrid.org\n
@@ -257,10 +266,31 @@ Comenzi disponibile:\n\
     stop        [database-name]\n\
     restart     [database-name]\n\
     status      [database-name]\n
+45 cubrid utility, version %1$s\n\
+usage: %2$s gateway <command> [args]\n\
+\n\
+Available command:\n\
+    start\n\
+    stop\n\
+    restart\n\
+    info\n\
+    status      [-b] [-f] [-q] [-t] [-s <sec>] [-c] [-u] [<expr>]\n\
+    on          gateway-name\n\
+    off         gateway-name\n\
+    reset       gateway-name\n\
+    acl         <status|reload> [gateway-name]\n
+46 Lungimea numelui_proprietarului trebuie să fie mai mică de %1$d, iar lungimea numelui_clasei trebuie să fie mai mică de %2$d octeți.\n
+47 Format nevalid pentru proprietar_name.class_name ('%1$s').\n
 
 $set 2 MSGCAT_UTIL_SET_BACKUPDB
 30 AVERTIESMENT: opţiunea -t este ignorată în modul de execuţie independent.\n
 31 EROARE: Calea destinaţie nu există sau nu este un director.\n
+32 Utilizând opțiunea --separate-keys, separă fișierul cheie (_keys) de volumul de rezervă.\n\
+Dacă fișierul cheie este pierdut, este posibil ca restaurarea (restaurat) să nu funcționeze corect, chiar dacă există volumul de rezervă.\n
+33 Volumul de rezervă include fișierul cheie (_keys).\n\
+Dacă un tabel este criptat TDE, acesta poate cauza o problemă de securitate pentru datele respective.\n\
+Pentru a separa fișierul cheie pentru al preveni, utilizați opțiunea --separate-keys.\n
+34 EROARE: Nu se poate utiliza fișierul FIFO ca cale de destinație cu cheie separată.\n
 60 \
 backupdb: Creează o copie de rezervă a bazei de date.\n\
 utilizare: %1$s backupdb [optiune] nume-bază-de-date\n\
@@ -279,8 +309,9 @@ opţiuni valide:\n\
   -C, --CS-mode                mod de execuţie client-server\n\
       --no-check               nu se efectuează o verificare de consistenţă a bazei de date; implicit: verificare\n\
   -t, --thread-count=NUMAR     număr de fire de excuţie; implicit: 0(auto)\n\
-  -z, --compress               compresia volumelor de backup; implicit: decompresie\n\
-      --sleep-msecs=N          asteapta N milisecunde la fiecare 1MB citit; implicit: 0\n
+      --no-compress            nu comprimați volumele de rezervă; implicit: compresie\n\
+      --sleep-msecs=N          asteapta N milisecunde la fiecare 1MB citit; implicit: 0\n\
+  -k, --separate-keys          cheie file (_keys) for TDE is not included in the backup volume, but is separate into a file\n
 71 Argumente incompatibile, \"%1$s\", şi \"%2$s\"\n
 
 
@@ -409,7 +440,8 @@ opţiuni valide:\n\
   -p, --partial-recovery            efectueaza restaurare parţială dacă există arhive de log lipsă\n\
   -o, --output-file=FIŞIER          redirecţionează mesajele de ieşire către FISIER; implicit: nul\n\
   -u, --use-database-location-path  restaurează baza de date şi volumele de log în calea specificată\n\
-                                    în fişierul de locaţie al bazei de date\n
+                                    în fişierul de locaţie al bazei de date\n\
+  -k, --keys-file-path              Calea fișierului cheie (_keys) pentru ca TDE să fie utilizat în timpul restaurării\n
 
 
 $set 12 MSGCAT_UTIL_SET_LOADDB
@@ -463,11 +495,12 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 115 una sau mai multe erori la încărcarea fişierului de intrare de control
 116 Total %ld obiect(e) inserate, %2$ld obiect(e) fără success.\n
 117 Încărcarea a eşuat.\n
-118 Lungimea maximă permisă pentru numele clasei este de %1$d octeţi.\n
+118 Maximum length of class name is %1$d bytes.\n
 119 Total %1$8d obiect(e) verificate, %2$d obiect(e) fără success.\n
 120 Fişierul de date nu conţine specificatorul '%%class' şi opţiunea '--table' lispeşte\n
 121 Clasa %1$s este ignorată.\n
-122 \
+122 Maximum length of user name is %1$d bytes.\n
+123 \
 loaddb: Importă obiecte şi scheme în baza de date.\n\
 utilizare: %1$s loaddb [OPŢIUNI] nume-bază-de-date[@host]\n\
 \n\
@@ -491,7 +524,9 @@ opţiuni valide:\n\
   -d, --data-file=FIŞIER            incarcă datele din FIŞIER\n\
   -t, --table=TABELA                numele tabelei înlocuite pentru antetul de clasă absent din fişierul de date\n\
       --error-control-file=FIŞIER   FIŞIER de control al erorilor în timpul încărcării\n\
-      --ignore-class-file=FIŞIER    FIŞIER de intrare cu numele claselor ce nu vor fi încărcate\n
+      --ignore-class-file=FIŞIER    FIŞIER de intrare cu numele claselor ce nu vor fi încărcate\n\
+      --no-user-specified-name      Find classes, serials, and triggers by their object names without their owner names.\n\
+                                    This is to load files generated by cubrid before version 11.2.\n
 
 
 $set 13 MSGCAT_UTIL_SET_UNLOADDB
@@ -504,6 +539,9 @@ $set 13 MSGCAT_UTIL_SET_UNLOADDB
 47 directorul de ieşire este prea lung.\n
 48 LSA : %1$d %2$d \n
 49 Parola:
+50 Maximum length of class name is %1$d bytes.\n
+51 Maximum length of user name is %1$d bytes.\n
+52 Class %1$s not found.\n
 60 \
 unloaddb: Exportă obiecte şi scheme din baza de date.\n\
 utilizare: %1$s unloaddb [OPŢIUNI] nume-bază-de-date\n\
@@ -522,6 +560,8 @@ opţiuni valide:\n\
   -d, --data-only                varsă doar obiectele; implicit: schema şi obiectele\n\
       --output-prefix=PREFIEX    PREFIX pentru fişierele de ieşire; implicit: numele bazei de date\n\
       --hash-file=FIŞIER         FIŞIER pentru hash; implicit: generat cu tmpnam()\n\
+      --latest-image             când aruncă obiecte, aruncă cea mai recentă imagine a obiectelor din volumele de date, fără a se referi la volumele de jurnal (ignorând MVCC)\n\
+                                 Ar putea include date neangajate și date șterse care nu sunt aspirate; implicit: dezactivat\n\
   -v, --verbose                  activează mesaje de stare detaliate; implicit: dezactivate\n\
       --use-delimiter            foloseşte '"' unde începe şi se termina un identificator;\n\
                                  implicit: nu se foloseşte delimitator\n\
@@ -568,6 +608,8 @@ $set 14 MSGCAT_UTIL_SET_COMPACTDB
 44 \nTrecerea 3\n\n
 45 Compactare eşuată a heap-ului...\n
 46 Compactarea heap-ului s-a realizat cu succes...\n
+47 Maximum length of class name is %1$d bytes.\n
+48 Maximum length of user name is %1$d bytes.\n
 60 \
 compactdb: Eliberează spaţiul neutilizat dintr-o bază de date.\n\
 utilizare: %1$s compactdb [OPŢIUNI] nume-bază-de-date [nume_clasă1 nume_clasă2 ...]\n\
@@ -626,6 +668,7 @@ opţiuni valide:\n\
 39 Opţiunea -i(--immediately) trebuie folosită împreună cu opţiunea --deact-stop-all.\n
 
 $set 16 MSGCAT_UTIL_SET_PATCHDB
+1 Rulați fără opțiunea --recreate-log sau eliminați manual volumul de jurnal activ.\n
 60 \
 emergency_patchlog: Efectuează un patch asupra bazei de date în caz de urgenţă.\n\
 usage: %1$s emergency_patchlog [OPTION] database-name [database-locale]\n\
@@ -647,7 +690,7 @@ opţiuni valide:\n\
       --max-writesize-in-sec=MĂRIME  dimensiunea volumului de date scris pe secundă; (ex. 512K, 1M, 10M);\n\
                                      implicit: neutilizat; minim: 160K\n\
   -n, --volume-name=NUME             NUMELE volumului de informaţii; implicit: generat (după modelul "db"_ext1)\n\
-  -F, --file-path=CALE               CALEA unde se va adăuga fişierul pentru noul volum; implicit: directorul de lucru\n\
+  -F, --file-path=CALE               CALEA unde se va adăuga fişierul pentru noul volum; implicit: volume_extension_path\n\
       --comment=COMENTARIU           COMENTARIU pentru adăugarea fişierului de volum; implicit: absent\n\
   -p, --purpose=SCOP                 SCOP pentru adăugarea fişierului de volum; valori permise:\n\
                                            DATA - doar pentru date\n\
@@ -969,6 +1012,7 @@ opţiuni valide:\n\
 $set 44 MSGCAT_UTIL_SET_APPLYINFO
 21 Introduceţi parola de administrator (DBA):
 22 Serverul nu a fost configurat pentru HA.\n
+57 Nu se pot genera informațiile aplicate din cauza unei căi nevalide a opțiunii -L sau a lipsei informațiilor asociate din tabelul de catalog db_ha_apply_info.\n
 58 Funcţionalitatea HA nu este suportată pe această platformă.\n
 59 applyinfo nu poate fi executat în modul independent.\n
 60 \
@@ -977,9 +1021,9 @@ utilizare: %1$s applyinfo [OPŢIUNI] nume-bază-de-date\n\
 \n\
 opţiuni valide:\n\
   -r, --remote-host-name      numele gazdei remote; afişează informaţii despre logul activ al nodului departat \n\
-  -a, --applied-info 	      afişează informaţiile aplicate \n\
   -L, --copied-log-path=CALE  calea către volumele de log copiate; afişează informaţii despre logurile copiate\n\
-  -p, --page=ID               id de pagina; implicit : 0\n\
+  -a, --applied-info 	      afişează informaţiile aplicate; este necesară opțiunea -L \n\
+  -p, --page=ID               id de pagina; este necesară opțiunea -L; implicit : 0\n\
   -v, --verbose               activează mesaje de stare detaliate; implicit : dezactivate\n\
   -i, --interval=S            afişează informaţii la fiecare S secunde\n
 
@@ -1162,6 +1206,7 @@ opțiuni valide:\n\
   -u, --use-database-location-path  restaurează baza de date și volumele de log\n\
                                     în calea specificată în fișierul cu locațiile\n\
                                     bazelor de date\n\
+  -k, --keys-file-path              Calea fișierului cheie (_keys) pentru ca TDE să fie utilizat în timpul restaurării\n
 
 $set 54 MSGCAT_UTIL_SET_DELVOLDB
 21 Urmează să fie șterse următoarele volume:\n\n
@@ -1184,17 +1229,21 @@ opțiuni valide:\n\
 $set 55 MSGCAT_UTIL_SET_VACUUMDB
 20 Momentan, vacuumdb nu este disponibil în modul client-server \n
 21 Operația de vacuum nu a reușit\n
+22 Fişierul de ieşire '%1$s' nu a putut fi deschis\n
 60 \
 vacuumdb: Șterge înregistrări nenecesare din baza de date\n\
 utilizare: %1$s vacuumdb [OPTION] database-name\n\
 \n\
 opțiuni valide:\n\
   -S, --SA-mode                execuție în modul stand-alone\n\
-  -C, --CS-mode                execuție în modul client-server\n
+  -C, --CS-mode                execuție în modul client-server\n\
+      --dump                   descărcați starea curentă de vid\n\
+  -o, --output-file=FIŞIER     redirecţionează mesajele de ieşire către un FIŞIER; implicit: nul\n
 
 $set 56 MSGCAT_UTIL_SET_CHECKSUMDB
 1 Încărcarea numelor tabelelor nu a reușit în %1$s.\n
 2 checksumdb poate fi rulat doar pe un server activ HA. %1$s (status curent: %2$s)\n
+3 Proprietarul tabelului pentru a salva rezultatul sumei de control trebuie să fie DBA.\n
 58 opțiunea HA nu este disponibilă pe această platformă.\n
 59 checksumdb nu poate fi rulat în modul stand-alone.\n
 60 \
@@ -1213,9 +1262,67 @@ opțiuni valide:\n\
   -t, --timeout=NUMĂR           numărul de milisecunde până la timeout;\n\
                                 implicit: 1000 ms\n\
   -n, --table-name=NUME         numele tabelului unude vor fi salvate rezultatele;\n\
-                                implicit: db_ha_checksums\n\
+                                implicit: dba.db_ha_checksum\n\
   -r, --report-only             raportare informații rezultate în urma checksum\n\
                                 toate opțiunile diferite de --table-name sunt ignorate\n\
       --resume                  reluare checksum\n\
       --schema-only             verificare doar consistență schemă\n\
       --cont-on-error           ignorare erori de calcul\n
+
+$set 57 MSGCAT_UTIL_SET_TDE
+21 Introduceți parola DBA:
+25 Nu a reușit să obțină informațiile cheie setate în baza de date\n
+26 Încercarea de a schimba cheia de la cheie (index: %1$d) la cheie (index: %2$d) ..\n
+27 Cheia a fost schimbată de la cheie (index: %1$d) la cheie (index: %2$d)\n
+28 Cheia setată în baza de date nu poate fi ștearsă\n
+29 Cheia (index: %1$d) a fost ștearsă\n
+30 A fost generată o nouă cheie - index cheie: %1$d creat pe%2$s
+60 \
+tde: gestionarea criptării transparente a datelor (TDE)\n\
+utilizare: %1$s tde OPERARE (-s|-n|-d|-c) [OPȚIUNE] nume bază de date\n\
+\n\
+opțiuni valide:\n\
+    -p, --dba-password=PASS      parola utilizatorului DBA; va solicita dacă nu specificați\n\
+\n\
+OPERAȚII: trebuie dată una dintre operațiuni și sunt exclusive\n\
+    -s, --show-keys              imprimă informațiile cheie setate în baza de date și fișierul cheie (_keys)\n\
+    -n, --generate-new-key       generează o nouă cheie în fișierul cheie (_keys); număr maxim: 128\n\
+    -d, --delete-key=KEY_INDEX   șterge o cheie din fișierul cheie (_keys)\n\
+    -c, --change-key=KEY_INDEX   schimba setul de chei din baza de date pentru o altă cheie din fișierul de chei (_keys)\n
+
+$set 58 MSGCAT_UTIL_SET_FLASHBACK
+1 Introduceți parola DBA:
+2 Format de dată nevalid, formatul valid este zz-mm-aaaa:hh:mm:ss\n
+3 Data de început (%1$s) trebuie să fie mai mică decât data de încheiere (%2$s)\n
+4 Vă rugăm să încercați cu o dată înainte de data curentă (%1$s) sau după crearea bazei de date (%2$s)\n
+5 Tabelul (%1$s) nu există în baza de date\n
+6 Prea multe tranzacții pentru flashback. Vă rugăm să scurtați intervalul dintre data de început și data de încheiere\n
+7 Nu se poate obține flashback deoarece schema (%1$s) a fost modificată.\n
+8 Volumul jurnalului a fost eliminat. Vă rugăm să încercați cu data ulterioară\n
+9 Nu s-a putut deschide fișierul de ieșire „%1$s”\n
+10 ID-ul tranzacției (%1$d) nu există\n
+11 Vă rugăm să setați „supplemental_log” în „cubrid.conf”. Numai jurnalele SQL executate după setarea „supplemental_log” pot fi flashback.\n
+12 ID-ul tranzacției trebuie introdus în %1$d secunde. Timeout-ul poate fi ajustat prin setarea „flashback_timeout” din „cubrid.conf”.\n
+13 Flashback rulează deja. Flashback nu poate fi rulat de două procese.\n
+14 Flashback nu poate rula ca mod independent.\n
+15 Clasa de catalog de sistem (%1$s) nu este acceptată în flashback.\n
+60 \
+flashback: furnizează declarații pentru a flashback o anumită tranzacție.\n\
+utilizare: %1$s flashback [OPȚIUNE] bază de date proprietar_name.nume_clasă1 [proprietar_name.nume_clasă2 ...]\n\
+\n\
+opțiuni valide:\n\
+    -o, --output-file=FILE        redirecționează mesajul de ieșire către FILE; implicit: niciunul.\n\
+    -u, --user=ID                 specifică utilizatorul care a executat instrucțiunea SQL pentru flashback; implicit: TOATE.\n\
+    -p, --dba-password            utilizatorului DBA; va solicita dacă nu specificați\n\
+    -s, --start-date=DATE         specifică DATA de începere pentru flashback. Jurnalele SQL sunt extrase din DATA.\n\
+                                  DATA este dată după cum urmează: zz-mm-aaaa:hh:mm:ss.\n\
+    -e, --end-date=DATE           specifică DATA de încheiere pentru flashback. Jurnalele SQL sunt extrase până la DATA.\n\
+                                  dacă nu este specificată data de început, atunci ((END - 10min) ~ END) este setat la interval,\n\
+                                  iar dacă nu este specificat END, atunci (start ~ (start + 10min)) este setat.\n\
+                                  Și nu este specificată nici o dată de început, nici o dată de încheiere,\n\
+                                  jurnalele SQL, executate între (ora curentă - 10min) și ora curentă, sunt extrase.\n\
+    --detail                      afișează informații detaliate pentru fiecare instrucțiune SQL.\n\
+                                  ID-ul tranzacției, numele de utilizator și instrucțiunea SQL originală vor fi returnate cu instrucțiunea SQL\n\
+                                  pentru flashback; implicit: scoate numai instrucțiuni SQL pentru flashback\n\
+    --oldest                      flashback-ul este efectuat în ordine cronologică pentru instrucțiunile SQL executate de la ora de\n\
+                                  început până la ora de sfârșit; implicit: cel mai recent\n

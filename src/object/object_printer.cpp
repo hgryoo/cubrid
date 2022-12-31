@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -40,8 +39,33 @@
 #include "string_buffer.hpp"
 #include "trigger_manager.h"
 #include "work_space.h"
+#include "tde.h"
 
 #include <assert.h>
+
+//--------------------------------------------------------------------------------
+void object_printer::describe_comment_for_session_cmd (const char *comment)
+{
+  db_value comment_value;
+
+  assert (comment != NULL);
+
+  db_make_null (&comment_value);
+  db_make_string (&comment_value, comment);
+
+  m_buf ("COMMENT ");
+  if (comment != NULL && comment[0] != '\0')
+    {
+      db_value_printer printer (m_buf);
+      printer.describe_comment_value (&comment_value);
+    }
+  else
+    {
+      m_buf ("''");
+    }
+
+  pr_clear_value (&comment_value);
+}
 
 //--------------------------------------------------------------------------------
 void object_printer::describe_comment (const char *comment)
@@ -121,7 +145,14 @@ void object_printer::describe_partition_parts (const sm_partition &parts, class_
   if (parts.comment != NULL && parts.comment[0] != '\0')
     {
       m_buf (" ");
-      describe_comment (parts.comment);
+      if (prt_type == class_description::CSQL_SCHEMA_COMMAND)
+	{
+	  describe_comment_for_session_cmd (parts.comment);
+	}
+      else
+	{
+	  describe_comment (parts.comment);
+	}
     }
 
   pr_clear_value (&ele);
@@ -584,7 +615,14 @@ void object_printer::describe_attribute (const struct db_object &cls, const sm_a
   if (attribute.comment != NULL && attribute.comment[0] != '\0')
     {
       m_buf (" ");
-      describe_comment (attribute.comment);
+      if (prt_type == class_description::CSQL_SCHEMA_COMMAND)
+	{
+	  describe_comment_for_session_cmd (attribute.comment);
+	}
+      else
+	{
+	  describe_comment (attribute.comment);
+	}
     }
 }
 
@@ -801,7 +839,14 @@ void object_printer::describe_constraint (const sm_class &cls, const sm_class_co
   if (constraint.comment != NULL && constraint.comment[0] != '\0')
     {
       m_buf (" ");
-      describe_comment (constraint.comment);
+      if (prt_type == class_description::CSQL_SCHEMA_COMMAND)
+	{
+	  describe_comment_for_session_cmd (constraint.comment);
+	}
+      else
+	{
+	  describe_comment (constraint.comment);
+	}
     }
 
   if (constraint.index_status == SM_INVISIBLE_INDEX)
@@ -894,7 +939,7 @@ void object_printer::describe_class_trigger (const tr_trigger &trigger)
   if (trigger.comment != NULL && trigger.comment[0] != '\0')
     {
       m_buf (" ");
-      describe_comment (trigger.comment);
+      describe_comment_for_session_cmd (trigger.comment);
     }
 }
 
@@ -951,6 +996,8 @@ void object_printer::describe_class (struct db_object *class_op)
   m_buf.clear ();
 
   class_description class_descr;
+  TDE_ALGORITHM tde_algo;
+  const char *tde_algo_str;
 
   if (class_descr.init (class_op, class_description::SHOW_CREATE_TABLE, m_buf) != NO_ERROR)
     {
@@ -1055,6 +1102,17 @@ void object_printer::describe_class (struct db_object *class_op)
   if (class_descr.collation != NULL)
     {
       m_buf (", COLLATE %s", class_descr.collation);
+    }
+
+  /* tde_algorithm */
+  if (sm_get_class_tde_algorithm (class_op, &tde_algo) == NO_ERROR)
+    {
+      if (tde_algo != TDE_ALGORITHM_NONE)
+	{
+	  tde_algo_str = tde_get_algorithm_name (tde_algo);
+	  assert (tde_algo_str != NULL);
+	  m_buf (" ENCRYPT=%s", tde_algo_str);
+	}
     }
 
   /* methods and class_methods */

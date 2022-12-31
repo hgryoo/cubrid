@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -55,8 +54,12 @@ qdata_initialize_analytic_func (cubthread::entry *thread_p, ANALYTIC_TYPE *func_
       return ER_FAILED;
     }
 
-  if (func_p->function == PT_COUNT_STAR || func_p->function == PT_COUNT || func_p->function == PT_ROW_NUMBER
-      || func_p->function == PT_RANK || func_p->function == PT_DENSE_RANK)
+  const FUNC_TYPE fcode = func_p->function;
+  if (fcode == PT_COUNT_STAR || fcode == PT_COUNT)
+    {
+      db_make_bigint (func_p->value, 0);
+    }
+  else if (fcode == PT_ROW_NUMBER || fcode == PT_RANK || fcode == PT_DENSE_RANK)
     {
       db_make_int (func_p->value, 0);
     }
@@ -77,7 +80,7 @@ qdata_initialize_analytic_func (cubthread::entry *thread_p, ANALYTIC_TYPE *func_
 	}
       type_list.domp[0] = func_p->operand.domain;
 
-      list_id_p = qfile_open_list (thread_p, &type_list, NULL, query_id, QFILE_FLAG_DISTINCT);
+      list_id_p = qfile_open_list (thread_p, &type_list, NULL, query_id, QFILE_FLAG_DISTINCT, NULL);
       if (list_id_p == NULL)
 	{
 	  db_private_free_and_init (thread_p, type_list.domp);
@@ -140,7 +143,7 @@ qdata_evaluate_analytic_func (cubthread::entry *thread_p, ANALYTIC_TYPE *func_p,
 	{
 	case PT_COUNT:
 	case PT_COUNT_STAR:
-	  func_p->domain = tp_domain_resolve_default (DB_TYPE_INTEGER);
+	  func_p->domain = tp_domain_resolve_default (DB_TYPE_BIGINT);
 	  break;
 
 	case PT_AVG:
@@ -393,11 +396,11 @@ qdata_evaluate_analytic_func (cubthread::entry *thread_p, ANALYTIC_TYPE *func_p,
     case PT_COUNT:
       if (func_p->curr_cnt < 1)
 	{
-	  db_make_int (func_p->value, 1);
+	  db_make_bigint (func_p->value, 1);
 	}
       else
 	{
-	  db_make_int (func_p->value, db_get_int (func_p->value) + 1);
+	  db_make_bigint (func_p->value, db_get_bigint (func_p->value) + 1);
 	}
       break;
 
@@ -783,7 +786,7 @@ qdata_finalize_analytic_func (cubthread::entry *thread_p, ANALYTIC_TYPE *func_p,
   /* set count-star aggregate values */
   if (func_p->function == PT_COUNT_STAR)
     {
-      db_make_int (func_p->value, func_p->curr_cnt);
+      db_make_bigint (func_p->value, (INT64) func_p->curr_cnt);
     }
 
   /* process list file for distinct */
@@ -809,7 +812,7 @@ qdata_finalize_analytic_func (cubthread::entry *thread_p, ANALYTIC_TYPE *func_p,
 
       if (func_p->function == PT_COUNT)
 	{
-	  db_make_int (func_p->value, list_id_p->tuple_cnt);
+	  db_make_bigint (func_p->value, list_id_p->tuple_cnt);
 	}
       else
 	{
@@ -1099,7 +1102,7 @@ qdata_analytic_interpolation (cubthread::entry *thread_p, cubxasl::analytic_list
 			      QFILE_LIST_SCAN_ID *scan_id)
 {
   int error = NO_ERROR;
-  int tuple_count;
+  INT64 tuple_count;
   double row_num_d, f_row_num_d, c_row_num_d, percentile_d;
   FUNC_TYPE function;
   double cur_group_percentile;

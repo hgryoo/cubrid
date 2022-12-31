@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -1090,7 +1089,7 @@ db_dump_query_result (DB_QUERY_RESULT * r)
     {
       fprintf (stdout, "Query_id: %lld \n", (long long) r->res.s.query_id);
       fprintf (stdout, "Stmt_id: %d \n", r->res.s.stmt_id);
-      fprintf (stdout, "Tuple Cnt: %d \n", r->res.s.cursor_id.list_id.tuple_cnt);
+      fprintf (stdout, "Tuple Cnt: %lld \n", (long long) r->res.s.cursor_id.list_id.tuple_cnt);
       fprintf (stdout, "Stmt_type: %d \n", r->res.s.stmt_type);
     }				/* if */
   else if (r->type == T_GET)
@@ -1837,8 +1836,18 @@ int
 db_execute (const char *CSQL_query, DB_QUERY_RESULT ** result, DB_QUERY_ERROR * query_error)
 {
   int retval;
+  char *sql_buf = strdup (CSQL_query);
 
-  retval = db_compile_and_execute_queries_internal (CSQL_query, result, query_error, DB_NO_OIDS, 1, true);
+  if (sql_buf == NULL)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, strlen (CSQL_query));
+      return er_errid ();
+    }
+
+  retval = db_compile_and_execute_queries_internal (sql_buf, result, query_error, DB_NO_OIDS, 1, true);
+
+  free (sql_buf);
+
   return (retval);
 }
 
@@ -2483,7 +2492,12 @@ db_query_seek_tuple (DB_QUERY_RESULT * result, int offset, int seek_mode)
 
 	/* find the optimal relative position for the scan: relative to the beginning, current tuple position or end. */
 	curr_tplno = result->res.s.cursor_id.tuple_no;
-	tpl_cnt = result->res.s.cursor_id.list_id.tuple_cnt;
+
+	// TODO: list_id.tuple_cnt could have over INT_MAX. But higher layers (CAS function, API, etc) that use this function are not supporting INT64 range.
+	// To support results beyond the int range, offset and tuple count have be extended to INT64 types
+	assert (result->res.s.cursor_id.list_id.tuple_cnt <= INT_MAX);
+
+	tpl_cnt = MIN (result->res.s.cursor_id.list_id.tuple_cnt, INT_MAX);
 	switch (seek_mode)
 	  {
 	  case DB_CURSOR_SEEK_SET:
@@ -3102,7 +3116,9 @@ db_query_tuple_count (DB_QUERY_RESULT * result)
   switch (result->type)
     {
     case T_SELECT:
-      retval = result->res.s.cursor_id.list_id.tuple_cnt;
+      // TODO: To support results beyond the int range, offset and tuple count have be extended to INT64 types
+      assert (result->res.s.cursor_id.list_id.tuple_cnt <= INT_MAX);
+      retval = MIN (result->res.s.cursor_id.list_id.tuple_cnt, INT_MAX);
       break;
 
     case T_CALL:
@@ -3554,6 +3570,91 @@ db_query_plan_dump_file (char *filename)
     }
 
   return NO_ERROR;
+}
+
+/*
+ * db_query_get_plan_dump_file() -
+ * return : query dump file
+ */
+char *
+db_query_get_plan_dump_file ()
+{
+  return query_Plan_dump_filename;
+}
+
+/*
+ * db_query_is_plan_dump_opened() -
+ * return : is fp opened
+ */
+bool
+db_query_is_plan_dump_opened ()
+{
+  return query_Plan_dump_fp_open;
+}
+
+/*
+ * db_query_plan_dump_fp_open() -
+ * return : FILE *
+ */
+FILE *
+db_query_plan_dump_fp_open ()
+{
+  if (query_Plan_dump_fp_open)
+    {
+      return query_Plan_dump_fp;
+    }
+
+  if (query_Plan_dump_filename != NULL)
+    {
+      if (query_Plan_dump_fp == NULL || query_Plan_dump_fp == stdout)
+	{
+	  query_Plan_dump_fp = fopen (query_Plan_dump_filename, "a");
+	  if (query_Plan_dump_fp != NULL)
+	    {
+	      query_Plan_dump_fp_open = true;
+	    }
+	}
+    }
+
+  if (query_Plan_dump_fp == NULL)
+    {
+      query_Plan_dump_fp = stdout;
+    }
+
+  return query_Plan_dump_fp;
+}
+
+/*
+ * db_query_plan_dump_fp_close() -
+ * return : void
+ */
+void
+db_query_plan_dump_fp_close ()
+{
+  /* close file handle if this function open it */
+  if (query_Plan_dump_fp_open)
+    {
+      assert (query_Plan_dump_fp != NULL && query_Plan_dump_fp != stdout);
+
+      fclose (query_Plan_dump_fp);
+      query_Plan_dump_fp = NULL;
+      query_Plan_dump_fp_open = false;
+    }
+}
+
+/*
+ * db_query_get_plan_dump_fp() -
+ * return : FILE *
+ */
+FILE *
+db_query_get_plan_dump_fp ()
+{
+  if (query_Plan_dump_fp == NULL)
+    {
+      return stdout;
+    }
+
+  return query_Plan_dump_fp;
 }
 
 /*

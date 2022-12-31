@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -324,6 +323,8 @@ TP_DOMAIN tp_Json_domain = { NULL, NULL, &tp_Json, 0, 0,
   DOMAIN_INIT2 (INTL_CODESET_UTF8, LANG_COLL_UTF8_BINARY)
 };
 
+TP_DOMAIN tp_Resultset_domain = { NULL, NULL, &tp_ResultSet, DOMAIN_INIT4 (DB_BIGINT_PRECISION, 0) };
+
 /* These must be in DB_TYPE order */
 static TP_DOMAIN *tp_Domains[] = {
   &tp_Null_domain,
@@ -354,7 +355,7 @@ static TP_DOMAIN *tp_Domains[] = {
   &tp_Char_domain,
   &tp_NChar_domain,
   &tp_VarNChar_domain,
-  &tp_Null_domain,		/* result set */
+  &tp_Resultset_domain,		/* result set */
   &tp_Midxkey_domain_list_heads[0],
   &tp_Null_domain,
   &tp_Bigint_domain,
@@ -3392,6 +3393,7 @@ tp_domain_resolve_value (const DB_VALUE * val, TP_DOMAIN * dbuf)
 	case DB_TYPE_SUB:
 	case DB_TYPE_VARIABLE:
 	case DB_TYPE_DB_VALUE:
+	case DB_TYPE_RESULTSET:
 	  /*
 	   * These are internal domains, they shouldn't be seen, in case they
 	   * are, match to a built-in
@@ -3446,7 +3448,6 @@ tp_domain_resolve_value (const DB_VALUE * val, TP_DOMAIN * dbuf)
 	case DB_TYPE_SEQUENCE:
 	case DB_TYPE_MIDXKEY:
 	  break;
-	case DB_TYPE_RESULTSET:
 	case DB_TYPE_TABLE:
 	  break;
 	case DB_TYPE_ELO:
@@ -4111,7 +4112,7 @@ tp_domain_select (const TP_DOMAIN * domain_list, const DB_VALUE * value, int all
   best = NULL;
 
   bool ti = true;
-  bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
+  static bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
 
   /*
    * NULL values are allowed in any domain, a NULL domain means that any value
@@ -7093,7 +7094,7 @@ tp_value_cast_internal (const DB_VALUE * src, DB_VALUE * dest, const TP_DOMAIN *
   TZ_ID ses_tz_id;
 
   bool ti = true;
-  bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
+  static bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
 
   DB_VALUE src_replacement;
 
@@ -10317,24 +10318,17 @@ tp_value_change_coll_and_codeset (DB_VALUE * src, DB_VALUE * dest, int coll_id, 
 static DB_VALUE_COMPARE_RESULT
 oidcmp (OID * oid1, OID * oid2)
 {
-  DB_VALUE_COMPARE_RESULT status;
-  int c;
-
-  c = oid_compare (oid1, oid2);
+  int c = oid_compare (oid1, oid2);
   if (c < 0)
     {
-      status = DB_LT;
+      return DB_LT;
     }
   else if (c > 0)
     {
-      status = DB_GT;
-    }
-  else
-    {
-      status = DB_EQ;
+      return DB_GT;
     }
 
-  return status;
+  return DB_EQ;
 }
 
 /*

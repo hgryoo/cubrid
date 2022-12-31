@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -349,11 +348,11 @@ help_class_names (const char *qualifier)
 {
   DB_OBJLIST *mops, *m;
   char **names;
-  const char *cname, *tmp;
   int count, i, outcount;
   DB_OBJECT *requested_owner, *owner;
   char buffer[2 * DB_MAX_IDENTIFIER_LENGTH + 4];
-  DB_VALUE owner_name;
+  const char *unique_name;
+  const char *class_name;
 
   requested_owner = NULL;
   owner = NULL;
@@ -383,31 +382,27 @@ help_class_names (const char *qualifier)
 	{
 	  for (i = 0, m = mops; i < count; i++, m = m->next)
 	    {
-	      owner = db_get_owner (m->op);
-	      if (!requested_owner || ws_is_same_object (requested_owner, owner))
-		{
-		  cname = db_get_class_name (m->op);
-		  buffer[0] = '\0';
-		  if (!requested_owner && db_get (owner, "name", &owner_name) >= 0)
-		    {
-		      tmp = db_get_string (&owner_name);
-		      if (tmp)
-			{
-			  snprintf (buffer, sizeof (buffer) - 1, "%s.%s", tmp, cname);
-			}
-		      else
-			{
-			  snprintf (buffer, sizeof (buffer) - 1, "%s.%s", "unknown_user", cname);
-			}
-		      db_value_clear (&owner_name);
-		    }
-		  else
-		    {
-		      snprintf (buffer, sizeof (buffer) - 1, "%s", cname);
-		    }
+	      unique_name = db_get_class_name (m->op);
+	      buffer[0] = '\0';
 
+	      if (!requested_owner && sm_check_name (unique_name))
+		{
+		  snprintf (buffer, sizeof (buffer) - 1, "%s", unique_name);
 		  names[outcount++] = object_print::copy_string (buffer);
+		  continue;
 		}
+
+	      owner = db_get_owner (m->op);
+	      class_name = sm_remove_qualifier_name (unique_name);
+	      if (ws_is_same_object (requested_owner, owner) && sm_check_name (class_name))
+		{
+		  snprintf (buffer, sizeof (buffer) - 1, "%s", class_name);
+		  names[outcount++] = object_print::copy_string (buffer);
+		  continue;
+		}
+
+	      snprintf (buffer, sizeof (buffer) - 1, "%s", "unknown_class");
+	      names[outcount++] = object_print::copy_string (buffer);
 	    }
 	  names[outcount] = NULL;
 	}

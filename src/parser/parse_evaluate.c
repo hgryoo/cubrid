@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -48,6 +47,7 @@
 #include "network_interface_cl.h"
 #include "transform.h"
 #include "dbtype.h"
+#include "optimizer.h"		/* qo_need_skip_execution () */
 
 /* associates labels with DB_VALUES */
 static MHT_TABLE *pt_Label_table = NULL;
@@ -1305,7 +1305,7 @@ pt_evaluate_tree_internal (PARSER_CONTEXT * parser, PT_NODE * tree, DB_VALUE * d
 		}
 	    }
 
-	  cursor_free_self_list_id ((QFILE_LIST_ID *) temp->etc);
+	  cursor_free_self_list_id (temp->etc);
 	  pt_end_query (parser, query_id_self);
 	}
       else
@@ -1356,7 +1356,17 @@ pt_evaluate_tree_internal (PARSER_CONTEXT * parser, PT_NODE * tree, DB_VALUE * d
       break;
 
     case PT_METHOD_CALL:
-      error = do_call_method (parser, tree);
+      if (qo_need_skip_execution ())
+	{
+	  // It is for the get_query_info.
+	  // Do not call method by constant folding
+	  db_make_null (db_values);
+	  error = NO_ERROR;
+	}
+      else
+	{
+	  error = do_call_method (parser, tree);
+	}
       if (error >= NO_ERROR)
 	{
 	  if ((val = (DB_VALUE *) (tree->etc)) != NULL)

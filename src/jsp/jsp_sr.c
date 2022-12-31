@@ -1,20 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation
- * Copyright (C) 2016 CUBRID Corporation
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -46,6 +44,7 @@
 
 #include "jsp_sr.h"
 #include "jsp_file.h"
+#include "jsp_comm.h"
 
 #include "boot_sr.h"
 #include "environment_variable.h"
@@ -56,32 +55,42 @@
 
 #if defined(sparc)
 #define JVM_LIB_PATH "jre/lib/sparc/client"
+#define JVM_LIB_PATH_JDK11 "lib/server"
 #elif defined(WINDOWS)
 #if __WORDSIZE == 32
 #define JVM_LIB_PATH_JDK "jre\\bin\\client"
 #define JVM_LIB_PATH_JRE "bin\\client"
+#define JVM_LIB_PATH_JDK11 ""	/* JDK 11 does not support for Windows x64 */
 #else
 #define JVM_LIB_PATH_JDK "jre\\bin\\server"
 #define JVM_LIB_PATH_JRE "bin\\server"
+#define JVM_LIB_PATH_JDK11 "bin\\server"
 #endif
 #elif defined(HPUX) && defined(IA64)
 #define JVM_LIB_PATH "jre/lib/IA64N/hotspot"
+#define JVM_LIB_PATH_JDK11 "lib/IA64N/server"
 #elif defined(HPUX) && !defined(IA64)
 #define JVM_LIB_PATH "jre/lib/PA_RISC2.0/hotspot"
+#define JVM_LIB_PATH_JDK11 "lib/PA_RISC2.0/server"
 #elif defined(AIX)
 #if __WORDSIZE == 32
 #define JVM_LIB_PATH "jre/bin/classic"
+#define JVM_LIB_PATH_JDK11 "lib/server"
 #elif __WORDSIZE == 64
 #define JVM_LIB_PATH "jre/lib/ppc64/classic"
+#define JVM_LIB_PATH_JDK11 "lib/server"
 #endif
 #elif defined(__i386) || defined(__x86_64)
 #if __WORDSIZE == 32
 #define JVM_LIB_PATH "jre/lib/i386/client"
+#define JVM_LIB_PATH_JDK11 "lib/server"
 #else
 #define JVM_LIB_PATH "jre/lib/amd64/server"
+#define JVM_LIB_PATH_JDK11 "lib/server"
 #endif
 #else /* ETC */
 #define JVM_LIB_PATH ""
+#define JVM_LIB_PATH_JDK11 ""
 #endif /* ETC */
 
 #if !defined(WINDOWS)
@@ -101,7 +110,6 @@
 #define BUF_SIZE        2048
 typedef jint (*CREATE_VM_FUNC) (JavaVM **, void **, void *);
 
-#ifdef __cplusplus
 #define JVM_GetEnv(JVM, ENV, VER)	\
 	(JVM)->GetEnv(ENV, VER)
 #define JVM_AttachCurrentThread(JVM, ENV, ARGS)	\
@@ -132,41 +140,12 @@ typedef jint (*CREATE_VM_FUNC) (JavaVM **, void **, void *);
 	(ENV)->ReleaseStringUTFChars(JSTRING, CSTRING)
 #define JVM_GetStringUTFLength(ENV, STRING)	\
 	(ENV)->GetStringUTFLength(STRING)
-#else
-#define JVM_GetEnv(JVM, ENV, VER)	\
-	(*JVM)->GetEnv(JVM, ENV, VER)
-#define JVM_AttachCurrentThread(JVM, ENV, ARGS)	\
-	(*JVM)->AttachCurrentThread(JVM, ENV, ARGS)
-#define JVM_DetachCurrentThread(JVM)	\
-	(*JVM)->DetachCurrentThread(JVM)
-#define JVM_ExceptionOccurred(ENV)	\
-	(*ENV)->ExceptionOccurred(ENV)
-#define JVM_FindClass(ENV, NAME)	\
-	(*ENV)->FindClass(ENV, NAME)
-#define JVM_GetStaticMethodID(ENV, CLAZZ, NAME, SIG)	\
-	(*ENV)->GetStaticMethodID(ENV, CLAZZ, NAME, SIG)
-#define JVM_NewStringUTF(ENV, BYTES)	\
-	(*ENV)->NewStringUTF(ENV, BYTES);
-#define JVM_NewObjectArray(ENV, LENGTH, ELEMENTCLASS, INITIALCLASS)	\
-	(*ENV)->NewObjectArray(ENV, LENGTH, ELEMENTCLASS, INITIALCLASS)
-#define JVM_SetObjectArrayElement(ENV, ARRAY, INDEX, VALUE)	\
-	(*ENV)->SetObjectArrayElement(ENV, ARRAY, INDEX, VALUE)
-#define JVM_CallStaticVoidMethod(ENV, CLAZZ, METHODID, ARGS)	\
-	(*ENV)->CallStaticVoidMethod(ENV, CLAZZ, METHODID, ARGS)
-#define JVM_CallStaticIntMethod(ENV, CLAZZ, METHODID, ARGS)	\
-	(*ENV)->CallStaticIntMethod(ENV, CLAZZ, METHODID, ARGS)
-#define JVM_CallStaticObjectMethod(ENV, CLAZZ, METHODID, ARGS)	\
-	(*ENV)->CallStaticObjectMethod(ENV, CLAZZ, METHODID, ARGS)
-#define JVM_GetStringUTF(ENV, STRING)	\
-	(*ENV)->GetStringUTFChars(ENV, STRING, NULL)
-#define JVM_ReleaseStringUTF(ENV, JSTRING, CSTRING)	\
-	(*ENV)->ReleaseStringUTFChars(ENV, JSTRING, CSTRING)
-#define JVM_GetStringUTFLength(ENV, STRING)	\
-	(*ENV)->GetStringUTFLength(ENV, STRING)
-#endif
 
-JavaVM *jvm = NULL;
-jint sp_port = -1;
+static JavaVM *jvm = NULL;
+static jint sp_port = -1;
+// *INDENT-OFF*
+static std::string err_msgs;
+// *INDENT-ON*
 
 #if defined(WINDOWS)
 int get_java_root_path (char *path);
@@ -269,11 +248,30 @@ delay_load_hook (unsigned dliNotify, PDelayLoadInfo pdli)
     {
     case dliFailLoadLib:
       {
-	char *java_home = NULL, *tmp = NULL, *tail;
-	char jvm_lib_path[BUF_SIZE];
-	void *libVM;
+	char *java_home = NULL, *jvm_path = NULL, *tmp = NULL, *tail;
+	void *libVM = NULL;
 
+	jvm_path = getenv ("JVM_PATH");
 	java_home = getenv ("JAVA_HOME");
+
+	if (jvm_path)
+	  {
+	    err_msgs.append ("\n\tFailed to load libjvm from 'JVM_PATH' envirnment variable: ");
+	    err_msgs.append ("\n\t\t");
+	    err_msgs.append (jvm_path);
+
+	    libVM = LoadLibrary (jvm_path);
+	    if (libVM)
+	      {
+		fp = (FARPROC) (HMODULE) libVM;
+		return fp;
+	      }
+	  }
+	else
+	  {
+	    err_msgs.append ("\n\tFailed to get 'JVM_PATH' environment variable");
+	  }
+
 	tail = JVM_LIB_PATH_JDK;
 	if (java_home == NULL)
 	  {
@@ -290,13 +288,37 @@ delay_load_hook (unsigned dliNotify, PDelayLoadInfo pdli)
 
 	if (java_home)
 	  {
+	    err_msgs.append ("\n\tFailed to load libjvm from 'JAVA_HOME' environment variable: ");
+
+	    char jvm_lib_path[BUF_SIZE];
 	    sprintf (jvm_lib_path, "%s\\%s\\jvm.dll", java_home, tail);
+
+	    err_msgs.append ("\n\t\t");
+	    err_msgs.append (jvm_lib_path);
+
 	    libVM = LoadLibrary (jvm_lib_path);
 
 	    if (libVM)
 	      {
 		fp = (FARPROC) (HMODULE) libVM;
 	      }
+	    else
+	      {
+		tail = JVM_LIB_PATH_JDK11;
+
+		memset (jvm_lib_path, BUF_SIZE, 0);
+		sprintf (jvm_lib_path, "%s\\%s\\jvm.dll", java_home, tail);
+
+		err_msgs.append ("\n\t\t");
+		err_msgs.append (jvm_lib_path);
+
+		libVM = LoadLibrary (jvm_lib_path);
+		fp = (FARPROC) (HMODULE) libVM;
+	      }
+	  }
+	else
+	  {
+	    err_msgs.append ("\n\tFailed to get 'JAVA_HOME' environment variable");
 	  }
 
 	if (tmp)
@@ -328,7 +350,7 @@ delay_load_dll_exception_filter (PEXCEPTION_POINTERS pep)
     {
     case VcppException (ERROR_SEVERITY_ERROR, ERROR_MOD_NOT_FOUND):
     case VcppException (ERROR_SEVERITY_ERROR, ERROR_PROC_NOT_FOUND):
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_JVM_LIB_NOT_FOUND, 1, "Failed to load jvm.dll");
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_JVM_LIB_NOT_FOUND, 1, err_msgs.c_str ());
       break;
 
     default:
@@ -348,38 +370,68 @@ delay_load_dll_exception_filter (PEXCEPTION_POINTERS pep)
  */
 
 static void *
-jsp_get_create_java_vm_function_ptr (void)
+jsp_get_create_java_vm_function_ptr ()
 {
-  char *java_home = NULL;
-  char jvm_library_path[PATH_MAX] = { 0 };
-  void *libVM_p;
+  void *libVM_p = NULL;
 
-  libVM_p = dlopen (JVM_LIB_FILE, RTLD_NOW | RTLD_LOCAL);
-  if (libVM_p == NULL)
+  char *jvm_path = getenv ("JVM_PATH");
+  if (jvm_path != NULL)
     {
-      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, ER_SP_JVM_LIB_NOT_FOUND, 1, dlerror ());
-
-      java_home = getenv ("JAVA_HOME");
-      if (java_home != NULL)
+      libVM_p = dlopen (jvm_path, RTLD_NOW | RTLD_LOCAL);
+      if (libVM_p != NULL)
 	{
-	  snprintf (jvm_library_path, PATH_MAX - 1, "%s/%s/%s", java_home, JVM_LIB_PATH, JVM_LIB_FILE);
-	  libVM_p = dlopen (jvm_library_path, RTLD_NOW | RTLD_LOCAL);
-
-	  if (libVM_p == NULL)
-	    {
-	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_JVM_LIB_NOT_FOUND, 1, dlerror ());
-	      return NULL;
-	    }
+	  return dlsym (libVM_p, "JNI_CreateJavaVM");
 	}
       else
 	{
-	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_JVM_LIB_NOT_FOUND, 1,
-		  "Failed to find 'JAVA_HOME' environment variable");
-	  return NULL;
+	  err_msgs.append ("\n\tFailed to load libjvm from 'JVM_PATH' environment variable: ");
+	  err_msgs.append ("\n\t\t");
+	  err_msgs.append (dlerror ());
 	}
     }
+  else
+    {
+      err_msgs.append ("\n\tFailed to get 'JVM_PATH' environment variable");
+    }
 
-  return dlsym (libVM_p, "JNI_CreateJavaVM");
+  char *java_home = getenv ("JAVA_HOME");
+  if (java_home != NULL)
+    {
+      char jvm_library_path[PATH_MAX];
+      err_msgs.append ("\n\tFailed to load libjvm from 'JAVA_HOME' environment variable: ");
+
+      // under jdk 11
+      snprintf (jvm_library_path, PATH_MAX - 1, "%s/%s/%s", java_home, JVM_LIB_PATH, JVM_LIB_FILE);
+      libVM_p = dlopen (jvm_library_path, RTLD_NOW | RTLD_LOCAL);
+      if (libVM_p != NULL)
+	{
+	  return dlsym (libVM_p, "JNI_CreateJavaVM");
+	}
+      else
+	{
+	  err_msgs.append ("\n\t\t");
+	  err_msgs.append (dlerror ());
+	}
+
+      // from jdk 11
+      snprintf (jvm_library_path, PATH_MAX - 1, "%s/%s/%s", java_home, JVM_LIB_PATH_JDK11, JVM_LIB_FILE);
+      libVM_p = dlopen (jvm_library_path, RTLD_NOW | RTLD_LOCAL);
+      if (libVM_p != NULL)
+	{
+	  return dlsym (libVM_p, "JNI_CreateJavaVM");
+	}
+      else
+	{
+	  err_msgs.append ("\n\t\t");
+	  err_msgs.append (dlerror ());
+	}
+    }
+  else
+    {
+      err_msgs.append ("\n\tFailed to get 'JAVA_HOME' environment variable");
+    }
+
+  return NULL;
 }
 
 #endif /* !WINDOWS */
@@ -412,9 +464,11 @@ jsp_create_java_vm (JNIEnv ** env_p, JavaVMInitArgs * vm_arguments)
     }
   else
     {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_JVM_LIB_NOT_FOUND, 1, err_msgs.c_str ());
       res = -1;
     }
 #endif /* WINDOWS */
+  err_msgs.clear ();
   return res;
 }
 
@@ -453,7 +507,7 @@ jsp_start_server (const char *db_name, const char *path, int port)
   jclass cls, string_cls;
   JNIEnv *env_p = NULL;
   jmethodID mid;
-  jstring jstr_dbname, jstr_path, jstr_version, jstr_envroot, jstr_port;
+  jstring jstr_dbname, jstr_path, jstr_version, jstr_envroot, jstr_port, jstr_uds_path;
   jobjectArray args;
   JavaVMInitArgs vm_arguments;
   JavaVMOption *options;
@@ -465,18 +519,29 @@ jsp_start_server (const char *db_name, const char *path, int port)
   char debug_jdwp[] = "-agentlib:jdwp=transport=dt_socket,server=y,address=%d,suspend=n";
   char disable_sig_handle[] = "-Xrs";
   const char *envroot;
+  const char *uds_path;
   char jsp_file_path[PATH_MAX];
   char port_str[6] = { 0 };
   char *loc_p, *locale;
   char *jvm_opt_sysprm = NULL;
   int debug_port = -1;
+  const bool is_uds_mode = (port == JAVASP_PORT_UDS_MODE);
   {
     if (jvm != NULL)
       {
-	return NO_ERROR;	/* already created */
+	return ER_SP_ALREADY_EXIST;	/* already created */
       }
 
     envroot = envvar_root ();
+
+    if (is_uds_mode)
+      {
+	uds_path = jsp_get_socket_file_path (db_name);
+      }
+    else
+      {
+	uds_path = "";
+      }
 
     snprintf (classpath, sizeof (classpath) - 1, "-Djava.class.path=%s",
 	      envvar_javadir_file (jsp_file_path, PATH_MAX, "jspserver.jar"));
@@ -557,8 +622,6 @@ jsp_start_server (const char *db_name, const char *path, int port)
 
     if (res < 0)
       {
-	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_CANNOT_START_JVM, 1,
-		"Failed to load or initialize Java VM by JNI_CreateJavaVM()");
 	jvm = NULL;
 	return er_errid ();
       }
@@ -610,6 +673,14 @@ jsp_start_server (const char *db_name, const char *path, int port)
 	goto error;
       }
 
+    jstr_uds_path = JVM_NewStringUTF (env_p, uds_path);
+    if (jstr_uds_path == NULL)
+      {
+	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_CANNOT_START_JVM, 1,
+		"Failed to construct a new 'java.lang.String object' by NewStringUTF()");
+	goto error;
+      }
+
     sprintf (port_str, "%d", port);
     jstr_port = JVM_NewStringUTF (env_p, port_str);
     if (jstr_port == NULL)
@@ -626,7 +697,7 @@ jsp_start_server (const char *db_name, const char *path, int port)
 	goto error;
       }
 
-    args = JVM_NewObjectArray (env_p, 5, string_cls, NULL);
+    args = JVM_NewObjectArray (env_p, 6, string_cls, NULL);
     if (args == NULL)
       {
 	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_CANNOT_START_JVM, 1,
@@ -638,10 +709,11 @@ jsp_start_server (const char *db_name, const char *path, int port)
     JVM_SetObjectArrayElement (env_p, args, 1, jstr_path);
     JVM_SetObjectArrayElement (env_p, args, 2, jstr_version);
     JVM_SetObjectArrayElement (env_p, args, 3, jstr_envroot);
-    JVM_SetObjectArrayElement (env_p, args, 4, jstr_port);
+    JVM_SetObjectArrayElement (env_p, args, 4, jstr_uds_path);
+    JVM_SetObjectArrayElement (env_p, args, 5, jstr_port);
 
     sp_port = JVM_CallStaticIntMethod (env_p, cls, mid, args);
-    if (JVM_ExceptionOccurred (env_p) || sp_port == -1)
+    if (JVM_ExceptionOccurred (env_p))
       {
 	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_CANNOT_START_JVM, 1,
 		"Error occured while starting Java SP Server by CallStaticIntMethod()");
@@ -657,8 +729,9 @@ error:
 
 /*
  * jsp_server_port
- *   return: if disable jsp function and return -1
- *              enable jsp function and return jsp server port
+ *   return: if jsp is disabled return -2 (JAVASP_PORT_DISABLED)
+ *           else if jsp is UDS mode return -1
+ *           else return a port (TCP mode)
  *
  * Note:
  */
@@ -666,13 +739,31 @@ error:
 int
 jsp_server_port (void)
 {
+  return sp_port;
+}
+
+/*
+ * jsp_server_port_from_info
+ *   return: if jsp is disabled return -2 (JAVASP_PORT_DISABLED)
+ *           else if jsp is UDS mode return -1
+ *           else return a port (TCP mode)
+ * 
+ *
+ * Note:
+ */
+
+int
+jsp_server_port_from_info (void)
+{
 #if defined (SA_MODE)
   return sp_port;
 #else
   // check $CUBRID/var/javasp_<db_name>.info
-  JAVASP_SERVER_INFO jsp_info = { -1, -1 };
+// *INDENT-OFF*
+  JAVASP_SERVER_INFO jsp_info {-1, -1};
+// *INDENT-ON*
   javasp_read_info (boot_db_name (), jsp_info);
-  return jsp_info.port;
+  return sp_port = jsp_info.port;
 #endif
 }
 

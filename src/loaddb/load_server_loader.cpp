@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -116,7 +115,131 @@ namespace cubload
   server_class_installer::locate_class (const char *class_name, OID &class_oid)
   {
     cubthread::entry &thread_ref = cubthread::get_entry ();
-    return xlocator_find_class_oid (&thread_ref, class_name, &class_oid, BU_LOCK);
+    LC_FIND_CLASSNAME found = LC_CLASSNAME_EXIST;
+    LC_FIND_CLASSNAME found_again = LC_CLASSNAME_EXIST;
+
+    found = xlocator_find_class_oid (&thread_ref, class_name, &class_oid, BU_LOCK);
+    if (found == LC_CLASSNAME_EXIST)
+      {
+	return found;
+      }
+
+#if defined(SERVER_MODE)
+    /* This is the case when the loaddb utility is executed with the --no-user-specified-name option as the dba user. */
+    if (thread_ref.conn_entry->client_type == DB_CLIENT_TYPE_ADMIN_LOADDB_COMPAT)
+      {
+	found_again = locate_class_for_all_users (class_name, class_oid);
+	if (found_again == LC_CLASSNAME_EXIST)
+	  {
+	    return found_again;
+	  }
+      }
+#endif
+
+    return found;
+  }
+
+  LC_FIND_CLASSNAME
+  server_class_installer::locate_class_for_all_users (const char *class_name, OID &class_oid)
+  {
+#define CATCLS_USER_ATTR_IDX_NAME 7
+    cubthread::entry &thread_ref = cubthread::get_entry ();
+    LC_FIND_CLASSNAME found = LC_CLASSNAME_EXIST;
+    HEAP_CACHE_ATTRINFO attr_info;
+    HEAP_SCANCACHE scan_cache;
+    SCAN_CODE scan_code = S_SUCCESS;
+    RECDES recdes = RECDES_INITIALIZER;
+    HFID hfid = HFID_INITIALIZER;
+    OID inst_oid = OID_INITIALIZER;
+    HEAP_ATTRVALUE *heap_value = NULL;
+    const char *dot = NULL;
+    const char *class_name_p = NULL;
+    int error = NO_ERROR;
+    int i = 0;
+
+    error = heap_attrinfo_start (&thread_ref, oid_User_class_oid, -1, NULL, &attr_info);
+    assert (attr_info.num_values != -1);
+    if (error != NO_ERROR)
+      {
+	ASSERT_ERROR ();
+	return LC_CLASSNAME_ERROR;
+      }
+
+    error = heap_get_class_info (&thread_ref, oid_User_class_oid, &hfid, NULL, NULL);
+    if (error != NO_ERROR)
+      {
+	ASSERT_ERROR ();
+	heap_attrinfo_end (&thread_ref, &attr_info);
+	return LC_CLASSNAME_ERROR;
+      }
+
+    error = heap_scancache_start (&thread_ref, &scan_cache, &hfid, NULL, true, false, NULL);
+    if (error != NO_ERROR)
+      {
+	ASSERT_ERROR ();
+	heap_attrinfo_end (&thread_ref, &attr_info);
+	return LC_CLASSNAME_ERROR;
+      }
+
+    /* If it is user_specified_name, remove user_name. */
+    dot = strchr (class_name, '.');
+    class_name_p = dot ? dot + 1 : class_name;
+
+    while (true)
+      {
+	scan_code = heap_next (&thread_ref, &hfid, NULL, &inst_oid, &recdes, &scan_cache, PEEK);
+	if (scan_code == S_SUCCESS)
+	  {
+	    error = heap_attrinfo_read_dbvalues (&thread_ref, &inst_oid, &recdes, &attr_info);
+	    if (error != NO_ERROR)
+	      {
+		ASSERT_ERROR ();
+		heap_scancache_end (&thread_ref, &scan_cache);
+		heap_attrinfo_end (&thread_ref, &attr_info);
+		return LC_CLASSNAME_ERROR;
+	      }
+
+	    for (i = 0, heap_value = attr_info.values; i < attr_info.num_values; i++, heap_value++)
+	      {
+		if (heap_value->attrid == CATCLS_USER_ATTR_IDX_NAME)
+		  {
+		    const char *user_name = NULL;
+		    char downcase_user_name[DB_MAX_USER_LENGTH] = { '\0' };
+		    char user_specified_name[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+
+		    user_name = db_get_string (&heap_value->dbvalue);
+		    intl_identifier_lower (user_name, downcase_user_name);
+		    snprintf (user_specified_name, DB_MAX_IDENTIFIER_LENGTH, "%s.%s", downcase_user_name, class_name_p);
+
+		    found = xlocator_find_class_oid (&thread_ref, user_specified_name, &class_oid, BU_LOCK);
+		    if (found == LC_CLASSNAME_EXIST)
+		      {
+			heap_scancache_end (&thread_ref, &scan_cache);
+			heap_attrinfo_end (&thread_ref, &attr_info);
+			return found;
+		      }
+
+		    break;
+		  }
+	      }
+	  }
+	else if (scan_code == S_END)
+	  {
+	    break;
+	  }
+	else
+	  {
+	    ASSERT_ERROR ();
+	    heap_scancache_end (&thread_ref, &scan_cache);
+	    heap_attrinfo_end (&thread_ref, &attr_info);
+	    return LC_CLASSNAME_ERROR;
+	  }
+      }
+
+    heap_scancache_end (&thread_ref, &scan_cache);
+    heap_attrinfo_end (&thread_ref, &attr_info);
+    return LC_CLASSNAME_DELETED;
+#undef CATCLS_USER_ATTR_IDX_NAME
   }
 
   void
@@ -281,9 +404,9 @@ namespace cubload
       {
 	if (attr.second->is_notnull)
 	  {
-	    char class_attr[512];
+	    char class_attr[DB_MAX_IDENTIFIER_LENGTH * 2];
 
-	    snprintf (class_attr, 512, "%s.%s", class_name, attr.first.c_str ());
+	    snprintf (class_attr, DB_MAX_IDENTIFIER_LENGTH * 2, "%s.%s", class_name, attr.first.c_str ());
 	    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OBJ_ATTRIBUTE_CANT_BE_NULL, 1, class_attr);
 	    heap_scancache_end (&thread_ref, &scancache);
 	    heap_attrinfo_end (&thread_ref, &attrinfo);
@@ -704,12 +827,12 @@ namespace cubload
 	m_error_handler.log_date_time_conversion_error (token, pr_type_name (attr.get_domain ().type->get_id ()));
       }
     else if (error_code == ER_OBJ_ATTRIBUTE_CANT_BE_NULL)
-           {
-              char class_attr[512];
+      {
+	char class_attr[DB_MAX_IDENTIFIER_LENGTH * 2];
 
-              snprintf (class_attr, 512, "%s.%s", m_class_entry->get_class_name (), attr.get_name ());
-              er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_code, 1, class_attr);
-           }
+	snprintf (class_attr, DB_MAX_IDENTIFIER_LENGTH * 2, "%s.%s", m_class_entry->get_class_name (), attr.get_name ());
+	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_code, 1, class_attr);
+      }
 
     return error_code;
   }
@@ -746,10 +869,10 @@ namespace cubload
 
 	if (error_code == ER_OBJ_ATTRIBUTE_CANT_BE_NULL)
 	  {
-            char class_attr[512];
+	    char class_attr[DB_MAX_IDENTIFIER_LENGTH * 2];
 
-            snprintf (class_attr, 512, "%s.%s", m_class_entry->get_class_name (), attr.get_name ());
-            er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_code, 1, class_attr);
+	    snprintf (class_attr, DB_MAX_IDENTIFIER_LENGTH * 2, "%s.%s", m_class_entry->get_class_name (), attr.get_name ());
+	    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error_code, 1, class_attr);
 	  }
 
 	return error_code;

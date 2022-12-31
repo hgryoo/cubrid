@@ -1,20 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation
- * Copyright (C) 2016 CUBRID Corporation
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -112,7 +110,11 @@ static GENERIC_FUNCTION_RECORD pt_Generic_functions[] = {
 
 /* Two types are comparable if they are NUMBER types or same CHAR type */
 #define PT_ARE_COMPARABLE(typ1, typ2) \
-  ((typ1 == typ2) || PT_ARE_COMPARABLE_CHAR_TYPE (typ1, typ2) || PT_ARE_COMPARABLE_NUMERIC_TYPE (typ1, typ2))
+  ((typ1 == typ2) || PT_ARE_COMPARABLE_CHAR_TYPE(typ1, typ2) || PT_ARE_COMPARABLE_NUMERIC_TYPE (typ1, typ2))
+
+/* Two types are comparable if they are NUMBER types without CHAR type */
+#define PT_ARE_COMPARABLE_NO_CHAR(typ1, typ2) \
+  ((typ1 == typ2) || PT_ARE_COMPARABLE_NUMERIC_TYPE (typ1, typ2))
 
 #define PT_IS_RECURSIVE_EXPRESSION(node) \
   ((node)->node_type == PT_EXPR && (PT_IS_LEFT_RECURSIVE_EXPRESSION (node) || PT_IS_RIGHT_RECURSIVE_EXPRESSION (node)))
@@ -205,6 +207,7 @@ static PT_NODE *pt_coerce_expr_arguments (PARSER_CONTEXT * parser, PT_NODE * exp
 					  PT_NODE * arg3, EXPRESSION_SIGNATURE sig);
 static PT_NODE *pt_coerce_range_expr_arguments (PARSER_CONTEXT * parser, PT_NODE * expr, PT_NODE * arg1, PT_NODE * arg2,
 						PT_NODE * arg3, EXPRESSION_SIGNATURE sig);
+static bool pt_is_range_comp_op (const PT_OP_TYPE op);
 static bool pt_is_range_expression (const PT_OP_TYPE op);
 static bool pt_are_unmatchable_types (const PT_ARG_TYPE def_type, const PT_TYPE_ENUM op_type);
 static PT_TYPE_ENUM pt_get_equivalent_type_with_op (const PT_ARG_TYPE def_type, const PT_TYPE_ENUM arg_type,
@@ -240,6 +243,9 @@ static int pt_check_and_coerce_to_date (PARSER_CONTEXT * parser, PT_NODE * src);
 static int pt_coerce_str_to_time_date_utime_datetime (PARSER_CONTEXT * parser, PT_NODE * src,
 						      PT_TYPE_ENUM * result_type);
 static int pt_coerce_3args (PARSER_CONTEXT * parser, PT_NODE * arg1, PT_NODE * arg2, PT_NODE * arg3);
+
+static bool pt_is_function_no_arg (FUNC_TYPE code);
+static bool pt_is_function_new_type_checking (PT_NODE * node);
 static PT_NODE *pt_eval_function_type (PARSER_CONTEXT * parser, PT_NODE * node);
 static PT_NODE *pt_eval_function_type_new (PARSER_CONTEXT * parser, PT_NODE * node);
 static PT_NODE *pt_eval_function_type_old (PARSER_CONTEXT * parser, PT_NODE * node);
@@ -1372,7 +1378,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
       sig.arg2_type.val.generic_type = PT_GENERIC_TYPE_CHAR;
       /* return type */
       sig.return_type.type = pt_arg_type::GENERIC;
-      sig.return_type.val.generic_type = PT_GENERIC_TYPE_CHAR;
+      sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
       def->overloads[num++] = sig;
 
       /* arg1 */
@@ -1383,7 +1389,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
       sig.arg2_type.val.generic_type = PT_GENERIC_TYPE_NCHAR;
       /* return type */
       sig.return_type.type = pt_arg_type::GENERIC;
-      sig.return_type.val.generic_type = PT_GENERIC_TYPE_NCHAR;
+      sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
       def->overloads[num++] = sig;
 
       def->overloads_count = num;
@@ -1405,7 +1411,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
       sig.arg3_type.val.generic_type = PT_GENERIC_TYPE_CHAR;
       /* return type */
       sig.return_type.type = pt_arg_type::GENERIC;
-      sig.return_type.val.generic_type = PT_GENERIC_TYPE_CHAR;
+      sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
       def->overloads[num++] = sig;
 
       /* arg1 */
@@ -1419,7 +1425,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
       sig.arg3_type.val.generic_type = PT_GENERIC_TYPE_NCHAR;
       /* return type */
       sig.return_type.type = pt_arg_type::GENERIC;
-      sig.return_type.val.generic_type = PT_GENERIC_TYPE_NCHAR;
+      sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
       def->overloads[num++] = sig;
 
       def->overloads_count = num;
@@ -1622,7 +1628,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
 	  sig.arg2_type.type = pt_arg_type::GENERIC;
 	  sig.arg2_type.val.generic_type = PT_GENERIC_TYPE_CHAR;
 	  sig.return_type.type = pt_arg_type::GENERIC;
-	  sig.return_type.val.generic_type = PT_GENERIC_TYPE_CHAR;
+	  sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
 	  def->overloads[num++] = sig;
 
 	  /* nchar + nchar */
@@ -1631,7 +1637,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
 	  sig.arg2_type.type = pt_arg_type::GENERIC;
 	  sig.arg2_type.val.generic_type = PT_GENERIC_TYPE_NCHAR;
 	  sig.return_type.type = pt_arg_type::GENERIC;
-	  sig.return_type.val.generic_type = PT_GENERIC_TYPE_NCHAR;
+	  sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
 	  def->overloads[num++] = sig;
 
 	  /* bit + bit */
@@ -2244,7 +2250,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
 
       /* return type */
       sig.return_type.type = pt_arg_type::GENERIC;
-      sig.return_type.val.generic_type = PT_GENERIC_TYPE_CHAR;
+      sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
       def->overloads[num++] = sig;
 
       /* arg1 */
@@ -2257,7 +2263,7 @@ pt_get_expression_definition (const PT_OP_TYPE op, EXPRESSION_DEFINITION * def)
 
       /* return type */
       sig.return_type.type = pt_arg_type::GENERIC;
-      sig.return_type.val.generic_type = PT_GENERIC_TYPE_NCHAR;
+      sig.return_type.val.generic_type = PT_GENERIC_TYPE_STRING_VARYING;
       def->overloads[num++] = sig;
 
       def->overloads_count = num;
@@ -5276,6 +5282,11 @@ pt_coerce_range_expr_arguments (PARSER_CONTEXT * parser, PT_NODE * expr, PT_NODE
       pt_try_remove_order_by (parser, arg2);
 
       arg2_list = pt_get_select_list (parser, arg2);
+      if (arg2_list == NULL)
+	{
+	  return NULL;
+	}
+
       if (PT_IS_COLLECTION_TYPE (arg2_list->type_enum) && arg2_list->node_type == PT_FUNCTION)
 	{
 	  expr->type_enum = PT_TYPE_LOGICAL;
@@ -5345,6 +5356,7 @@ pt_coerce_range_expr_arguments (PARSER_CONTEXT * parser, PT_NODE * expr, PT_NODE
        * correctly on the expression during expression evaluation. This means that we consider that the user knew what
        * he was doing in the first case but wanted to write something else in the second case. */
       PT_TYPE_ENUM collection_type = PT_TYPE_NONE;
+      PT_TYPE_ENUM arg1_type = arg1->type_enum;
       bool should_cast = false;
       PT_NODE *data_type = NULL;
 
@@ -5362,7 +5374,11 @@ pt_coerce_range_expr_arguments (PARSER_CONTEXT * parser, PT_NODE * expr, PT_NODE
 	      common_type = pt_common_type_op (arg1_eq_type, op, common_type);
 	      if (common_type != PT_TYPE_NONE)
 		{
-		  arg1_eq_type = common_type;
+		  /* collection's common type is STRING type, casting may not be needed */
+		  if (!PT_IS_CHAR_STRING_TYPE (common_type) || !PT_IS_CHAR_STRING_TYPE (arg1_eq_type))
+		    {
+		      arg1_eq_type = common_type;
+		    }
 		}
 	    }
 	}
@@ -5370,33 +5386,68 @@ pt_coerce_range_expr_arguments (PARSER_CONTEXT * parser, PT_NODE * expr, PT_NODE
 	{
 	  /* we cannot make a cast decision here. to keep backwards compatibility we will call pt_coerce_value which
 	   * will only work on constants */
-	  PT_NODE *temp = NULL, *msg_temp = NULL;
-	  msg_temp = parser->error_msgs;
-	  (void) pt_coerce_value (parser, arg2, arg2, PT_TYPE_SET, arg2->data_type);
-	  if (pt_has_error (parser))
-	    {
-	      /* ignore errors */
-	      parser_free_tree (parser, parser->error_msgs);
-	      parser->error_msgs = msg_temp;
-	    }
+	  PT_NODE *temp = NULL, *msg_temp = NULL, *temp2 = NULL, *elem = NULL;
+	  int idx;
+
 	  if (pt_coerce_value (parser, arg1, arg1, common_type, NULL) != NO_ERROR)
 	    {
 	      expr->type_enum = PT_TYPE_NONE;
 	    }
-	  if (arg2->node_type == PT_VALUE)
+
+	  /* case of "(col1,col2) in (('a','a'),('a ','a '))" */
+	  /* In this case, Reset ('a','a') type from CHAR to VARCHAR based on (col1,col2) type. */
+	  /* TO_DO: A set of set type evaluation routine should be added. */
+	  if (pt_is_set_type (arg1) && PT_IS_FUNCTION (arg1) && pt_is_set_type (arg2) && PT_IS_VALUE_NODE (arg2))
 	    {
-	      for (temp = arg2->info.value.data_value.set; temp; temp = temp->next)
+	      for (temp = arg1->info.function.arg_list, idx = 0; temp; temp = temp->next, idx++)
 		{
-		  if (common_type != temp->type_enum)
+		  if (temp->type_enum == PT_TYPE_VARCHAR || temp->type_enum == PT_TYPE_VARNCHAR)
 		    {
-		      msg_temp = parser->error_msgs;
-		      parser->error_msgs = NULL;
-		      (void) pt_coerce_value (parser, temp, temp, common_type, NULL);
-		      if (pt_has_error (parser))
+		      for (temp2 = arg2->info.value.data_value.set; temp2; temp2 = temp2->next)
 			{
-			  parser_free_tree (parser, parser->error_msgs);
+			  if (pt_is_set_type (temp2) && PT_IS_VALUE_NODE (temp2))
+			    {
+			      elem = temp2->info.value.data_value.set;
+			      for (int i = 0; i < idx && elem; i++)
+				{
+				  elem = elem->next;
+				}
+			      if (elem && (elem->type_enum == PT_TYPE_CHAR || elem->type_enum == PT_TYPE_NCHAR))
+				{
+				  (void) pt_coerce_value (parser, elem, elem, temp->type_enum, elem->data_type);
+				}
+			    }
 			}
-		      parser->error_msgs = msg_temp;
+		    }
+		}
+	      /*
+	         (void) pt_coerce_value (parser, arg2, arg2, PT_TYPE_SET, arg2->data_type);
+	         This routine is disabled.
+	         Because arg2->data_type(set of set) might not be evaluated correctly, the corresponding routine is disabled.
+	         Enable it after the data type of set of set is evaluated correctly.
+	         The same routine is performed in eliminate_duplicated_keys().
+	         Here, the type is kept to MULTISET"
+	       */
+	    }
+	  else
+	    {
+	      msg_temp = parser->error_msgs;
+	      (void) pt_coerce_value (parser, arg2, arg2, PT_TYPE_SET, arg2->data_type);
+	      if (arg2->node_type == PT_VALUE)
+		{
+		  for (temp = arg2->info.value.data_value.set; temp; temp = temp->next)
+		    {
+		      if (common_type != temp->type_enum)
+			{
+			  msg_temp = parser->error_msgs;
+			  parser->error_msgs = NULL;
+			  (void) pt_coerce_value (parser, temp, temp, common_type, NULL);
+			  if (pt_has_error (parser))
+			    {
+			      parser_free_tree (parser, parser->error_msgs);
+			    }
+			  parser->error_msgs = msg_temp;
+			}
 		    }
 		}
 	    }
@@ -5423,8 +5474,7 @@ pt_coerce_range_expr_arguments (PARSER_CONTEXT * parser, PT_NODE * expr, PT_NODE
       if (common_type == PT_TYPE_NONE	/* check if there is a valid common type between members of arg2 and arg1. */
 	  || (!should_cast	/* check if there are at least two different types in arg2 */
 	      && (collection_type == common_type
-		  || (PT_IS_NUMERIC_TYPE (collection_type) && PT_IS_NUMERIC_TYPE (common_type))
-		  || (PT_IS_CHAR_STRING_TYPE (collection_type) && PT_IS_CHAR_STRING_TYPE (common_type)))))
+		  || (PT_IS_NUMERIC_TYPE (collection_type) && PT_IS_NUMERIC_TYPE (common_type)))))
 	{
 	  return expr;
 	}
@@ -5442,6 +5492,8 @@ pt_coerce_range_expr_arguments (PARSER_CONTEXT * parser, PT_NODE * expr, PT_NODE
 	{
 	  PT_NODE *temp = NULL;
 	  int precision = 0, scale = 0;
+	  int units = LANG_SYS_CODESET;	/* code set */
+	  int collation_id = LANG_SYS_COLLATION;	/* collation_id */
 	  bool keep_searching = true;
 	  for (temp = arg2->data_type; temp != NULL && keep_searching; temp = temp->next)
 	    {
@@ -5455,9 +5507,8 @@ pt_coerce_range_expr_arguments (PARSER_CONTEXT * parser, PT_NODE * expr, PT_NODE
 		case PT_TYPE_CHAR:
 		case PT_TYPE_NCHAR:
 		case PT_TYPE_BIT:
-		  /* CHAR, NCHAR and BIT are common types only if all arguments are of type NCHAR or CHAR */
-		  assert (temp->type_enum == PT_TYPE_CHAR || temp->type_enum == PT_TYPE_NCHAR);
-		  if (precision > temp->info.data_type.precision)
+		  /* CHAR, NCHAR types can be common type for one of all arguments is string type */
+		  if (precision < temp->info.data_type.precision)
 		    {
 		      precision = temp->info.data_type.precision;
 		    }
@@ -5473,7 +5524,7 @@ pt_coerce_range_expr_arguments (PARSER_CONTEXT * parser, PT_NODE * expr, PT_NODE
 		      keep_searching = false;
 		      break;
 		    }
-		  if (precision > temp->info.data_type.precision)
+		  if (precision < temp->info.data_type.precision)
 		    {
 		      precision = temp->info.data_type.precision;
 		    }
@@ -5488,7 +5539,7 @@ pt_coerce_range_expr_arguments (PARSER_CONTEXT * parser, PT_NODE * expr, PT_NODE
 		      keep_searching = false;
 		      break;
 		    }
-		  if (precision > temp->info.data_type.precision)
+		  if (precision < temp->info.data_type.precision)
 		    {
 		      precision = temp->info.data_type.precision;
 		    }
@@ -5523,9 +5574,22 @@ pt_coerce_range_expr_arguments (PARSER_CONTEXT * parser, PT_NODE * expr, PT_NODE
 		  assert (false);
 		  break;
 		}
+
+	      if (PT_IS_STRING_TYPE (common_type) && PT_IS_STRING_TYPE (temp->type_enum))
+		{
+		  /* A bigger codesets's number can represent more characters. */
+		  /* to_do : check to use functions pt_common_collation() or pt_make_cast_with_compatble_info(). */
+		  if (units < temp->info.data_type.units)
+		    {
+		      units = temp->info.data_type.units;
+		      collation_id = temp->info.data_type.collation_id;
+		    }
+		}
 	    }
 	  data_type->info.data_type.precision = precision;
 	  data_type->info.data_type.dec_precision = scale;
+	  data_type->info.data_type.units = units;
+	  data_type->info.data_type.collation_id = collation_id;
 	}
 
       arg2 = pt_wrap_collection_with_cast_op (parser, arg2, sig.arg2_type.val.type, data_type, false);
@@ -5675,9 +5739,43 @@ pt_coerce_expr_arguments (PARSER_CONTEXT * parser, PT_NODE * expr, PT_NODE * arg
 		  arg1_eq_type = PT_TYPE_DOUBLE;
 		}
 	    }
+	  else if (PT_ARE_COMPARABLE_CHAR_TYPE (arg1_type, arg2_type))
+	    {
+	      if (PT_IS_NAME_NODE (arg1) && !PT_IS_NAME_NODE (arg2))
+		{
+		  arg1_eq_type = arg2_eq_type = arg1_type;
+		  if (arg3_type != PT_TYPE_NONE)
+		    {
+		      arg3_eq_type = arg1_type;
+		    }
+		}
+	      if (PT_IS_NAME_NODE (arg2) && !PT_IS_NAME_NODE (arg1))
+		{
+		  arg1_eq_type = arg2_eq_type = arg2_type;
+		  if (arg3_type != PT_TYPE_NONE)
+		    {
+		      arg3_eq_type = arg2_type;
+		    }
+		}
+	    }
 	}
 
-      if (pt_is_comp_op (op))
+      if (pt_is_range_comp_op (op))
+	{
+	  if (PT_ARE_COMPARABLE_NO_CHAR (arg1_eq_type, arg1_type))
+	    {
+	      arg1_eq_type = arg1_type;
+	    }
+	  if (PT_ARE_COMPARABLE_NO_CHAR (arg2_eq_type, arg2_type))
+	    {
+	      arg2_eq_type = arg2_type;
+	    }
+	  if (PT_ARE_COMPARABLE_NO_CHAR (arg3_eq_type, arg3_type))
+	    {
+	      arg3_eq_type = arg3_type;
+	    }
+	}
+      else if (pt_is_comp_op (op))
 	{
 	  /* do not cast between numeric types or char types for comparison operators */
 	  if (PT_ARE_COMPARABLE (arg1_eq_type, arg1_type))
@@ -5838,6 +5936,38 @@ pt_coerce_expr_arguments (PARSER_CONTEXT * parser, PT_NODE * expr, PT_NODE * arg
     }
 
   return expr;
+}
+
+/*
+ * pt_is_range_comp_op () - return true if the op is related to range
+ *  return  : true if the operatior is of range
+ *  op (in) : operator
+ */
+static bool
+pt_is_range_comp_op (PT_OP_TYPE op)
+{
+  switch (op)
+    {
+    case PT_GE:
+    case PT_GT:
+    case PT_LT:
+    case PT_LE:
+    case PT_GT_INF:
+    case PT_LT_INF:
+    case PT_BETWEEN_GE_LE:
+    case PT_BETWEEN_GE_LT:
+    case PT_BETWEEN_GT_LE:
+    case PT_BETWEEN_GT_LT:
+    case PT_BETWEEN_EQ_NA:
+    case PT_BETWEEN_INF_LE:
+    case PT_BETWEEN_INF_LT:
+    case PT_BETWEEN_GE_INF:
+    case PT_BETWEEN_GT_INF:
+    case PT_RANGE:
+      return 1;
+    default:
+      return 0;
+    }
 }
 
 /*
@@ -6003,9 +6133,9 @@ pt_apply_expressions_definition (PARSER_CONTEXT * parser, PT_NODE ** node)
   /* check the expression contains NULL argument. If the op does not specially treat NULL args, for instance, NVL,
    * NVL2, IS [NOT] NULL and so on, just decide the retun type as NULL. */
   if (!does_op_specially_treat_null_arg (op)
-      && ((arg1 && !arg1->is_added_by_parser && arg1_type == PT_TYPE_NULL)
-	  || (arg2 && !arg2->is_added_by_parser && arg2_type == PT_TYPE_NULL)
-	  || (arg3 && !arg3->is_added_by_parser && arg3_type == PT_TYPE_NULL)))
+      && ((arg1 && !arg1->flag.is_added_by_parser && arg1_type == PT_TYPE_NULL)
+	  || (arg2 && !arg2->flag.is_added_by_parser && arg2_type == PT_TYPE_NULL)
+	  || (arg3 && !arg3->flag.is_added_by_parser && arg3_type == PT_TYPE_NULL)))
     {
       expr->type_enum = PT_TYPE_NULL;
       return NO_ERROR;
@@ -7068,7 +7198,8 @@ pt_to_false_subquery (PARSER_CONTEXT * parser, PT_NODE * node)
   int col_cnt, i;
   PT_NODE *col, *set, *spec;
 
-  if (node->info.query.has_outer_spec == 1 || node->info.query.is_sort_spec || node->info.query.is_insert_select)
+  if (node->info.query.flag.has_outer_spec == 1 || node->info.query.flag.is_sort_spec
+      || node->info.query.flag.is_insert_select)
     {
       /* rewrite as empty subquery for example, SELECT a, b FROM x LEFT OUTER JOIN y WHERE 0 <> 0 => SELECT null, null
        * FROM table({}) as av6749(av_1) WHERE 0 <> 0 */
@@ -7188,7 +7319,7 @@ pt_to_false_subquery (PARSER_CONTEXT * parser, PT_NODE * node)
     }
   else
     {
-      int hidden = node->is_hidden_column;
+      int hidden = node->flag.is_hidden_column;
 
       /* rewrite as null value */
       next = node->next;
@@ -7211,7 +7342,8 @@ pt_to_false_subquery (PARSER_CONTEXT * parser, PT_NODE * node)
       node->alias_print = alias_print;
       node->type_enum = PT_TYPE_NULL;
       node->info.value.location = 0;
-      node->is_hidden_column = hidden;
+      node->info.value.is_false_where = true;
+      node->flag.is_hidden_column = hidden;
       node->next = next;	/* restore link */
     }
 
@@ -7291,11 +7423,11 @@ pt_eval_type_pre (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *conti
 	      || (node->next && (node->next->info.spec.join_type == PT_JOIN_LEFT_OUTER
 				 || (node->next->info.spec.join_type == PT_JOIN_RIGHT_OUTER))))
 	    {
-	      derived_table->info.query.has_outer_spec = 1;
+	      derived_table->info.query.flag.has_outer_spec = 1;
 	    }
 	  else
 	    {
-	      derived_table->info.query.has_outer_spec = 0;
+	      derived_table->info.query.flag.has_outer_spec = 0;
 	    }
 	}
       break;
@@ -7304,7 +7436,7 @@ pt_eval_type_pre (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *conti
       /* if sort spec expression is query, mark it as such */
       if (node->info.sort_spec.expr && PT_IS_QUERY (node->info.sort_spec.expr))
 	{
-	  node->info.sort_spec.expr->info.query.is_sort_spec = 1;
+	  node->info.sort_spec.expr->info.query.flag.is_sort_spec = 1;
 	}
       break;
 
@@ -7316,15 +7448,15 @@ pt_eval_type_pre (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *conti
       arg2 = node->info.query.q.union_.arg2;
       if (arg1 != NULL)
 	{
-	  arg1->info.query.has_outer_spec = node->info.query.has_outer_spec;
+	  arg1->info.query.flag.has_outer_spec = node->info.query.flag.has_outer_spec;
 	}
       if (arg2 != NULL)
 	{
-	  arg2->info.query.has_outer_spec = node->info.query.has_outer_spec;
+	  arg2->info.query.flag.has_outer_spec = node->info.query.flag.has_outer_spec;
 	}
 
       /* rewrite limit clause as numbering expression and add it to the corresponding predicate */
-      if (node->info.query.limit && node->info.query.rewrite_limit)
+      if (node->info.query.limit && node->info.query.flag.rewrite_limit)
 	{
 	  PT_NODE *limit, *t_node;
 	  PT_NODE **expr_pred;
@@ -7354,7 +7486,7 @@ pt_eval_type_pre (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *conti
 		      t_node->next = limit;
 		    }
 
-		  node->info.query.rewrite_limit = 0;
+		  node->info.query.flag.rewrite_limit = 0;
 		}
 	      else
 		{
@@ -7366,7 +7498,7 @@ pt_eval_type_pre (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *conti
 
     case PT_SELECT:
       /* rewrite limit clause as numbering expression and add it to the corresponding predicate */
-      if (node->info.query.limit && node->info.query.rewrite_limit)
+      if (node->info.query.limit && node->info.query.flag.rewrite_limit)
 	{
 	  PT_NODE *limit, *t_node;
 	  PT_NODE **expr_pred;
@@ -7410,7 +7542,7 @@ pt_eval_type_pre (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *conti
 		  t_node->next = limit;
 		}
 
-	      node->info.query.rewrite_limit = 0;
+	      node->info.query.flag.rewrite_limit = 0;
 	    }
 	  else
 	    {
@@ -7423,7 +7555,7 @@ pt_eval_type_pre (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *conti
       /* mark inserted sub-query as belonging to insert statement */
       if (node->info.insert.value_clauses->info.node_list.list_type == PT_IS_SUBQUERY)
 	{
-	  node->info.insert.value_clauses->info.node_list.list->info.query.is_insert_select = 1;
+	  node->info.insert.value_clauses->info.node_list.list->info.query.flag.is_insert_select = 1;
 	}
       break;
 
@@ -7798,7 +7930,7 @@ pt_eval_type (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_
       node->info.merge.update.search_cond = pt_where_type (parser, node->info.merge.update.search_cond);
       node->info.merge.update.del_search_cond = pt_where_type (parser, node->info.merge.update.del_search_cond);
 
-      if (parser->set_host_var == 0)
+      if (parser->flag.set_host_var == 0)
 	{
 	  PT_NODE *v;
 	  PT_NODE *list = NULL;
@@ -7915,7 +8047,7 @@ pt_eval_type (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_
 	    }
 	}
 
-      if (parser->set_host_var == 0)
+      if (parser->flag.set_host_var == 0)
 	{
 	  PT_NODE *v = NULL;
 	  PT_NODE *list = NULL;
@@ -8171,7 +8303,7 @@ pt_wrap_select_list_with_cast_op (PARSER_CONTEXT * parser, PT_NODE * query, PT_T
 
 	    for (item = select_list; item != NULL; prev = item, item = item->next)
 	      {
-		if (item->is_hidden_column)
+		if (item->flag.is_hidden_column)
 		  {
 		    continue;
 		  }
@@ -8339,7 +8471,7 @@ pt_wrap_collection_with_cast_op (PARSER_CONTEXT * parser, PT_NODE * arg, PT_TYPE
   new_att->line_number = arg->line_number;
   new_att->column_number = arg->column_number;
   new_att->alias_print = arg->alias_print;
-  new_att->is_hidden_column = arg->is_hidden_column;
+  new_att->flag.is_hidden_column = arg->flag.is_hidden_column;
   arg->alias_print = NULL;
 
 
@@ -8441,7 +8573,7 @@ pt_wrap_with_cast_op (PARSER_CONTEXT * parser, PT_NODE * arg, PT_TYPE_ENUM new_t
   new_att->line_number = arg->line_number;
   new_att->column_number = arg->column_number;
   new_att->alias_print = arg->alias_print;
-  new_att->is_hidden_column = arg->is_hidden_column;
+  new_att->flag.is_hidden_column = arg->flag.is_hidden_column;
   arg->alias_print = NULL;
 
   new_att->type_enum = new_type;
@@ -9021,7 +9153,7 @@ pt_eval_expr_type (PARSER_CONTEXT * parser, PT_NODE * node)
       break;
 
     case PT_TO_CHAR:
-      if (PT_IS_CHAR_STRING_TYPE (arg1_type))
+      if (PT_IS_CHAR_STRING_TYPE (arg1_type) && PT_IS_NULL_NODE (arg2))
 	{
 	  arg1->line_number = node->line_number;
 	  arg1->column_number = node->column_number;
@@ -10150,9 +10282,10 @@ pt_eval_expr_type (PARSER_CONTEXT * parser, PT_NODE * node)
 	  node->type_enum = PT_TYPE_NONE;
 	  break;
 	}
-      if (common_type == PT_TYPE_MAYBE)
+
+      if (common_type == PT_TYPE_MAYBE && arg1_type != PT_TYPE_NULL && arg2_type != PT_TYPE_NULL)
 	{
-	  common_type = (arg1_type == PT_TYPE_MAYBE && arg2_type != PT_TYPE_NULL) ? arg2_type : arg1_type;
+	  common_type = (arg1_type == PT_TYPE_MAYBE) ? arg2_type : arg1_type;
 	}
 
       if (common_type == PT_TYPE_MAYBE)
@@ -12405,8 +12538,29 @@ pt_character_length_for_node (PT_NODE * node, const PT_TYPE_ENUM coerce_type)
   return precision;
 }
 
-static PT_NODE *
-pt_eval_function_type (PARSER_CONTEXT * parser, PT_NODE * node)
+static bool
+pt_is_function_no_arg (FUNC_TYPE fcode)
+{
+  switch (fcode)
+    {
+    case PT_COUNT_STAR:
+    case PT_GROUPBY_NUM:
+    case PT_ROW_NUMBER:
+    case PT_RANK:
+    case PT_DENSE_RANK:
+    case PT_CUME_DIST:
+    case PT_PERCENT_RANK:
+    case F_JSON_ARRAY:
+    case F_JSON_OBJECT:
+      return true;
+
+    default:
+      return false;
+    }
+}
+
+static bool
+pt_is_function_new_type_checking (PT_NODE * node)
 {
   switch (node->info.function.function_type)
     {
@@ -12437,6 +12591,7 @@ pt_eval_function_type (PARSER_CONTEXT * parser, PT_NODE * node)
     case F_JSON_TYPE:
     case F_JSON_UNQUOTE:
     case F_JSON_VALID:
+      // REGEXP functions are migrated to new checking function
     case F_REGEXP_COUNT:
     case F_REGEXP_INSTR:
     case F_REGEXP_LIKE:
@@ -12445,9 +12600,25 @@ pt_eval_function_type (PARSER_CONTEXT * parser, PT_NODE * node)
     case F_SPATIAL_ASTEXT:
     case F_SPATIAL_FROMTEXT:
       return pt_eval_function_type_new (parser, node);
+      // COUNT functions
+    case PT_COUNT:
+    case PT_COUNT_STAR:
+      return true;
 
-      // legacy functions are still managed by old checking function; all should be migrated though
     default:
+      return false;
+    }
+}
+
+static PT_NODE *
+pt_eval_function_type (PARSER_CONTEXT * parser, PT_NODE * node)
+{
+  if (pt_is_function_new_type_checking (node))
+    {
+      return pt_eval_function_type_new (parser, node);
+    }
+  else
+    {
       return pt_eval_function_type_old (parser, node);
     }
 }
@@ -12476,9 +12647,7 @@ pt_eval_function_type_new (PARSER_CONTEXT * parser, PT_NODE * node)
     }
 
   PT_NODE *arg_list = node->info.function.arg_list;
-  if (!arg_list && fcode != PT_COUNT_STAR && fcode != PT_GROUPBY_NUM && fcode != PT_ROW_NUMBER && fcode != PT_RANK &&
-      fcode != PT_DENSE_RANK && fcode != PT_CUME_DIST && fcode != PT_PERCENT_RANK && fcode != F_JSON_ARRAY &&
-      fcode != F_JSON_OBJECT)
+  if (!arg_list && !pt_is_function_no_arg (fcode))
     {
       pt_cat_error (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_FUNCTION_NO_ARGS,
 		    pt_short_print (parser, node));
@@ -12547,8 +12716,7 @@ pt_eval_function_type_old (PARSER_CONTEXT * parser, PT_NODE * node)
   arg_list = node->info.function.arg_list;
   fcode = node->info.function.function_type;
 
-  if (!arg_list && fcode != PT_COUNT_STAR && fcode != PT_GROUPBY_NUM && fcode != PT_ROW_NUMBER && fcode != PT_RANK
-      && fcode != PT_DENSE_RANK && fcode != PT_CUME_DIST && fcode != PT_PERCENT_RANK)
+  if (!arg_list && !pt_is_function_no_arg (fcode))
     {
       PT_ERRORmf (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_FUNCTION_NO_ARGS,
 		  pt_short_print (parser, node));
@@ -12669,7 +12837,10 @@ pt_eval_function_type_old (PARSER_CONTEXT * parser, PT_NODE * node)
 
     case PT_LEAD:
     case PT_LAG:
+      break;
+
     case PT_COUNT:
+      assert (false);
       break;
 
     case PT_GROUP_CONCAT:
@@ -12987,6 +13158,8 @@ pt_eval_function_type_old (PARSER_CONTEXT * parser, PT_NODE * node)
 	{
 	case PT_COUNT:
 	case PT_COUNT_STAR:
+	  assert (false);
+	  break;
 	case PT_ROW_NUMBER:
 	case PT_RANK:
 	case PT_DENSE_RANK:
@@ -13330,7 +13503,8 @@ pt_eval_function_type_old (PARSER_CONTEXT * parser, PT_NODE * node)
 	    arg = arg_list->next;
 	    while (arg)
 	      {
-		if (arg->type_enum != arg_type || arg->data_type->info.data_type.precision != max_precision)
+		if ((arg->type_enum != arg_type) ||
+		    (arg->data_type && arg->data_type->info.data_type.precision != max_precision))
 		  {
 		    PT_NODE *new_attr = pt_wrap_with_cast_op (parser, arg, arg_type,
 							      max_precision, 0, NULL);
@@ -14833,7 +15007,14 @@ pt_evaluate_db_value_expr (PARSER_CONTEXT * parser, PT_NODE * expr, PT_OP_TYPE o
 	}
       else
 	{
-	  db_make_int (result, true);
+	  if (o1->node_type == PT_VALUE && o1->info.value.is_false_where)
+	    {
+	      db_make_int (result, false);
+	    }
+	  else
+	    {
+	      db_make_int (result, true);
+	    }
 	}
       break;
 
@@ -18116,7 +18297,8 @@ pt_evaluate_db_value_expr (PARSER_CONTEXT * parser, PT_NODE * expr, PT_OP_TYPE o
     case PT_NOT_BETWEEN:
     case PT_RANGE:
 
-      if (op != PT_BETWEEN && op != PT_NOT_BETWEEN && op != PT_RANGE && (op != PT_EQ || qualifier != PT_EQ_TORDER))
+      if (op != PT_BETWEEN && op != PT_NOT_BETWEEN && op != PT_RANGE && op != PT_IS_NOT_IN
+	  && (op != PT_EQ || qualifier != PT_EQ_TORDER))
 	{
 	  if ((typ1 == DB_TYPE_NULL || typ2 == DB_TYPE_NULL) && op != PT_NULLSAFE_EQ)
 	    {
@@ -18238,8 +18420,13 @@ pt_evaluate_db_value_expr (PARSER_CONTEXT * parser, PT_NODE * expr, PT_OP_TYPE o
 	    cmp = 1;
 	  break;
 
-	case PT_NE_ALL:
 	case PT_IS_NOT_IN:
+	  if (o2->node_type == PT_VALUE && o2->info.value.is_false_where)
+	    {
+	      cmp = 1;
+	      break;
+	    }
+	case PT_NE_ALL:
 	  cmp = set_issome (arg1, db_get_set (arg2), PT_EQ_SOME, 1);
 	  if (cmp == 1)
 	    cmp = 0;
@@ -18320,7 +18507,7 @@ pt_evaluate_db_value_expr (PARSER_CONTEXT * parser, PT_NODE * expr, PT_OP_TYPE o
 	case PT_RLIKE_BINARY:
 	case PT_NOT_RLIKE_BINARY:
 	  {
-	    int err = db_string_rlike (arg1, arg2, arg3, NULL, NULL, &cmp);
+	    int err = db_string_rlike (arg1, arg2, arg3, NULL, &cmp);
 
 	    switch (err)
 	      {
@@ -18747,7 +18934,7 @@ pt_fold_const_expr (PARSER_CONTEXT * parser, PT_NODE * expr, void *arg)
       return expr;
     }
 
-  if (expr->do_not_fold)
+  if (expr->flag.do_not_fold)
     {
       return expr;
     }
@@ -18763,7 +18950,7 @@ pt_fold_const_expr (PARSER_CONTEXT * parser, PT_NODE * expr, void *arg)
   expr->next = NULL;
   result_type = expr->type_enum;
   result = expr;
-  is_hidden_column = expr->is_hidden_column;
+  is_hidden_column = expr->flag.is_hidden_column;
 
   op = expr->info.expr.op;
 
@@ -18776,7 +18963,7 @@ pt_fold_const_expr (PARSER_CONTEXT * parser, PT_NODE * expr, void *arg)
 	  /* const folding OK , replace current node with arg1 VALUE */
 	  result = parser_copy_tree (parser, expr->info.expr.arg1);
 	  result->info.value.location = location;
-	  result->is_hidden_column = is_hidden_column;
+	  result->flag.is_hidden_column = is_hidden_column;
 	  if (result->info.value.text == NULL)
 	    {
 	      result->info.value.text = pt_append_string (parser, NULL, result->alias_print);
@@ -19342,7 +19529,7 @@ pt_fold_const_expr (PARSER_CONTEXT * parser, PT_NODE * expr, void *arg)
 	      res->info.expr.arg1 = parser_copy_tree_list (parser, opd1);
 	      res->type_enum = expr->type_enum;
 	      res->info.expr.location = expr->info.expr.location;
-	      res->is_hidden_column = is_hidden_column;
+	      res->flag.is_hidden_column = is_hidden_column;
 	      PT_EXPR_INFO_SET_FLAG (res, PT_EXPR_INFO_CAST_SHOULD_FOLD);
 
 	      if (pt_is_set_type (expr))
@@ -19646,8 +19833,8 @@ end:
       result->line_number = line;
       result->column_number = column;
       result->alias_print = alias_print;
-      result->is_hidden_column = is_hidden_column;
-      result->is_value_query = expr->is_value_query;
+      result->flag.is_hidden_column = is_hidden_column;
+      result->flag.is_value_query = expr->flag.is_value_query;
 
       if (result != expr)
 	{
@@ -19655,13 +19842,13 @@ end:
 	    {
 	      /* print expr to alias_print */
 	      expr->alias_print = NULL;
-	      PT_NODE_PRINT_TO_ALIAS (parser, expr, PT_CONVERT_RANGE);
+	      PT_NODE_PRINT_TO_ALIAS (parser, expr, PT_CONVERT_RANGE | PT_PRINT_NO_SPECIFIED_USER_NAME);
 	    }
 	  if (alias_print == NULL)
 	    {
 	      alias_print = expr->alias_print;
 	    }
-	  if (result->alias_print == NULL && expr->is_alias_enabled_expr)
+	  if (result->alias_print == NULL && expr->flag.is_alias_enabled_expr)
 	    {
 	      result->alias_print = pt_append_string (parser, NULL, alias_print);
 	    }
@@ -19842,23 +20029,23 @@ pt_evaluate_function_w_args (PARSER_CONTEXT * parser, FUNC_TYPE fcode, DB_VALUE 
       break;
 
     case F_REGEXP_COUNT:
-      error = db_string_regexp_count (result, args, num_args, NULL, NULL);
+      error = db_string_regexp_count (result, args, num_args, NULL);
       break;
 
     case F_REGEXP_INSTR:
-      error = db_string_regexp_instr (result, args, num_args, NULL, NULL);
+      error = db_string_regexp_instr (result, args, num_args, NULL);
       break;
 
     case F_REGEXP_LIKE:
-      error = db_string_regexp_like (result, args, num_args, NULL, NULL);
+      error = db_string_regexp_like (result, args, num_args, NULL);
       break;
 
     case F_REGEXP_REPLACE:
-      error = db_string_regexp_replace (result, args, num_args, NULL, NULL);
+      error = db_string_regexp_replace (result, args, num_args, NULL);
       break;
 
     case F_REGEXP_SUBSTR:
-      error = db_string_regexp_substr (result, args, num_args, NULL, NULL);
+      error = db_string_regexp_substr (result, args, num_args, NULL);
       break;
 
     case F_SPATIAL_FROMTEXT:
@@ -19933,11 +20120,11 @@ pt_fold_const_function (PARSER_CONTEXT * parser, PT_NODE * func)
 	  func_arg = func->info.function.arg_list;
 	  memset (&(func->info), 0, sizeof (func->info));
 	  func->info.value.data_value.set = func_arg;
-	  func->type_enum == PT_TYPE_SEQUENCE;
+	  func->type_enum = PT_TYPE_SEQUENCE;
 	}
     }
 
-  if (func->do_not_fold)
+  if (func->flag.do_not_fold)
     {
       return func;
     }
@@ -19957,7 +20144,6 @@ pt_fold_const_function (PARSER_CONTEXT * parser, PT_NODE * func)
 	      func->info.function.arg_list = NULL;
 	    }
 	}
-      func->type_enum = PT_TYPE_INTEGER;
     }
 
   /* only functions wrapped with expressions are supported */
@@ -19993,13 +20179,13 @@ pt_fold_const_function (PARSER_CONTEXT * parser, PT_NODE * func)
 	  if (alias_print == NULL || (PT_IS_VALUE_NODE (result) && !result->info.value.text))
 	    {
 	      func->alias_print = NULL;
-	      PT_NODE_PRINT_TO_ALIAS (parser, func, PT_CONVERT_RANGE);
+	      PT_NODE_PRINT_TO_ALIAS (parser, func, PT_CONVERT_RANGE | PT_PRINT_NO_SPECIFIED_USER_NAME);
 	    }
 	  if (PT_IS_VALUE_NODE (result) && !result->info.value.text)
 	    {
 	      result->info.value.text = func->alias_print;
 	    }
-	  if (alias_print == NULL && func->is_alias_enabled_expr)
+	  if (alias_print == NULL && func->flag.is_alias_enabled_expr)
 	    {
 	      alias_print = func->alias_print;
 	    }
@@ -20453,7 +20639,7 @@ pt_coerce_value_internal (PARSER_CONTEXT * parser, PT_NODE * src, PT_NODE * dest
       /* binding of host variables may be delayed in the case of an esql PREPARE statement until an OPEN cursor or an
        * EXECUTE statement. in this case we seem to have no choice but to assume each host variable is typeless and can
        * be coerced into any desired type. */
-      if (parser->set_host_var == 0)
+      if (parser->flag.set_host_var == 0)
 	{
 	  dest->type_enum = desired_type;
 	  dest->data_type = parser_copy_tree_list (parser, data_type);
@@ -21078,7 +21264,6 @@ pt_is_between_range_op (PT_OP_TYPE op)
       return 0;
     }
 }
-
 
 /*
  * pt_is_comp_op () -
@@ -23574,7 +23759,7 @@ coerce_result:
     case PT_GREATEST:
     case PT_LEAST:
     case PT_NULLIF:
-      if (expr->is_wrapped_res_for_coll)
+      if (expr->flag.is_wrapped_res_for_coll)
 	{
 	  break;
 	}
@@ -23614,7 +23799,7 @@ coerce_result:
 	    pt_coerce_node_collation (parser, expr, common_coll, common_cs, true, false,
 				      PT_COLL_WRAP_TYPE_FOR_MAYBE (expr_wrap_type), PT_TYPE_NONE);
 
-	  expr->is_wrapped_res_for_coll = 1;
+	  expr->flag.is_wrapped_res_for_coll = 1;
 	  if (new_node == NULL)
 	    {
 	      goto error;
@@ -23669,12 +23854,12 @@ coerce_result:
 	{
 	  if (expr->type_enum == PT_TYPE_MAYBE)
 	    {
-	      if (expr->is_wrapped_res_for_coll)
+	      if (expr->flag.is_wrapped_res_for_coll)
 		{
 		  break;
 		}
 	      expr_wrap_type = pt_wrap_type_for_collation (arg1, arg2, arg3, NULL);
-	      expr->is_wrapped_res_for_coll = 1;
+	      expr->flag.is_wrapped_res_for_coll = 1;
 	    }
 	  else
 	    {
@@ -24087,6 +24272,10 @@ pt_fix_enumeration_comparison (PARSER_CONTEXT * parser, PT_NODE * expr)
   op = expr->info.expr.op;
   arg1 = expr->info.expr.arg1;
   arg2 = expr->info.expr.arg2;
+  if (arg1->type_enum == PT_TYPE_NULL || arg2->type_enum == PT_TYPE_NULL)
+    {
+      return expr;
+    }
 
   switch (op)
     {

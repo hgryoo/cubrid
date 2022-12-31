@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -477,13 +476,6 @@ STATIC_INLINE bool disk_compatible_type_and_purpose (DB_VOLTYPE type, DB_VOLPURP
   __attribute__ ((ALWAYS_INLINE));
 STATIC_INLINE void disk_check_own_reserve_for_purpose (DB_VOLPURPOSE purpose) __attribute__ ((ALWAYS_INLINE));
 static DISK_ISVALID disk_check_volume (THREAD_ENTRY * thread_p, INT16 volid, bool repair);
-
-// *INDENT-OFF*
-static cubthread::daemon *disk_Auto_volume_expansion_daemon = NULL;
-
-static void disk_auto_volume_expansion_daemon_init ();
-static void disk_auto_volume_expansion_daemon_destroy ();
-// *INDENT-ON*
 
 /************************************************************************/
 /* End of static functions                                              */
@@ -2453,72 +2445,6 @@ exit:
   return error_code;
 }
 
-#if defined (SERVER_MODE)
-int
-disk_auto_expand (THREAD_ENTRY * thread_p)
-{
-  int error_code = NO_ERROR;
-
-  /* todo: we cannot expand the volumes unless we have a transaction descriptor. we might allocate a special tdes for
-   *       auto-volume expansion thread, similar to how vacuum works. otherwise, it can be limited to extend last
-   *       volume only.
-   * for now, do nothing. we'll think about it later.
-   */
-
-  return error_code;
-}
-#endif /* SERVER_MODE */
-
-// *INDENT-OFF*
-#if defined (SERVER_MODE)
-static void
-disk_auto_expansion_execute (cubthread::entry & thread_ref)
-{
-  if (!BO_IS_SERVER_RESTARTED ())
-    {
-      // wait for boot to finish
-      return;
-    }
-
-  disk_auto_expand (&thread_ref);
-}
-#endif /* SERVER_MODE */
-
-#if defined (SERVER_MODE)
-/*
- * disk_auto_volume_expansion_daemon_init () - initialize disk auto volume expansion daemon
- */
-static void
-disk_auto_volume_expansion_daemon_init ()
-{
-  // disk auto volume expansion is not yet implemented, uncomment below code when functionality will be available
-  // see disk_auto_expand (THREAD_ENTRY *) function for more details
-  /*
-  assert (disk_Auto_volume_expansion_daemon == NULL);
-
-  std::chrono::seconds interval_time = std::chrono::seconds (60);
-  disk_Auto_volume_expansion_daemon = cubthread::get_manager ()->create_daemon (cubthread::looper (interval_time),
-				      new cubthread::entry_callable_task (disk_auto_expansion_execute));
-  */
-}
-#endif /* SERVER_MODE */
-
-#if defined (SERVER_MODE)
-/*
- * disk_auto_volume_expansion_daemon_destroy () - destroy disk auto volume expansion daemon
- */
-static void
-disk_auto_volume_expansion_daemon_destroy ()
-{
-  // disk auto volume expansion is not yet implemented, uncomment below code when functionality will be available
-  // see disk_auto_expand (THREAD_ENTRY *) function for more details
-  /*
-    cubthread::get_manager ()->destroy_daemon (disk_Auto_volume_expansion_daemon);
-  */
-}
-#endif /* SERVER_MODE */
-// *INDENT-ON*
-
 /************************************************************************/
 /* Disk cache section                                                   */
 /************************************************************************/
@@ -2560,7 +2486,7 @@ disk_cache_load_volume (THREAD_ENTRY * thread_p, INT16 volid, void *ignore)
       assert (disk_Cache->perm_purpose_info.extend_info.nsect_free
 	      <= disk_Cache->perm_purpose_info.extend_info.nsect_total);
       assert (disk_Cache->perm_purpose_info.extend_info.nsect_total
-	      <= disk_Cache->perm_purpose_info.extend_info.nsect_total);
+	      <= disk_Cache->perm_purpose_info.extend_info.nsect_max);
 
       if (space_info.n_total_sects < space_info.n_max_sects)
 	{
@@ -3569,8 +3495,6 @@ disk_stab_unit_reserve (THREAD_ENTRY * thread_p, DISK_STAB_CURSOR * cursor, bool
 	   cursor->offset_to_bit < DISK_STAB_UNIT_BIT_COUNT && context->nsects_lastvol_remaining > 0;
 	   cursor->offset_to_bit++, cursor->sectid++)
 	{
-	  disk_stab_cursor_check_valid (cursor);
-
 	  if (!disk_stab_cursor_is_bit_set (cursor))
 	    {
 	      /* reserve this sector */
@@ -3879,7 +3803,9 @@ disk_rv_reserve_sectors (THREAD_ENTRY * thread_p, LOG_RCV * rcv)
       return ER_FAILED;
     }
 
+#if !defined (NDEBUG)
   pgbuf_check_page_ptype (thread_p, rcv->pgptr, PAGE_VOLBITMAP);
+#endif /* !NDEBUG */
 
   stab_unit = ((DISK_STAB_UNIT *) rcv->pgptr) + rcv->offset;
   assert (((*stab_unit) & rv_unit) == 0);
@@ -3960,7 +3886,9 @@ disk_rv_unreserve_sectors (THREAD_ENTRY * thread_p, LOG_RCV * rcv)
       return ER_FAILED;
     }
 
+#if !defined (NDEBUG)
   pgbuf_check_page_ptype (thread_p, rcv->pgptr, PAGE_VOLBITMAP);
+#endif /* !NDEBUG */
 
   stab_unit = ((DISK_STAB_UNIT *) rcv->pgptr) + rcv->offset;
   assert (((*stab_unit) & rv_unit) == rv_unit);
@@ -4966,11 +4894,6 @@ disk_manager_init (THREAD_ENTRY * thread_p, bool load_from_disk)
       disk_manager_final ();
       return error_code;
     }
-
-#if defined (SERVER_MODE)
-  disk_auto_volume_expansion_daemon_init ();
-#endif /* SERVER_MODE */
-
   return NO_ERROR;
 }
 
@@ -4980,10 +4903,6 @@ disk_manager_init (THREAD_ENTRY * thread_p, bool load_from_disk)
 void
 disk_manager_final (void)
 {
-#if defined (SERVER_MODE)
-  disk_auto_volume_expansion_daemon_destroy ();
-#endif /* SERVER_MODE */
-
   disk_cache_final ();
 }
 
@@ -5855,7 +5774,7 @@ disk_dump_all (THREAD_ENTRY * thread_p, FILE * fp)
 {
   int ret = NO_ERROR;
 
-  ret = (fileio_map_mounted (thread_p, disk_dump_goodvol_all, NULL) == true ? NO_ERROR : ER_FAILED);
+  ret = (fileio_map_mounted (thread_p, disk_dump_goodvol_all, fp) == true ? NO_ERROR : ER_FAILED);
 
   return ret;
 }
@@ -5864,12 +5783,13 @@ disk_dump_all (THREAD_ENTRY * thread_p, FILE * fp)
  * disk_dump_goodvol_all () -  Dump all information of given volume
  *   return: true
  *   volid(in): Permanent volume identifier
- *   ignore(in):
+ *   arg(in): output file pointer
  */
 static bool
-disk_dump_goodvol_all (THREAD_ENTRY * thread_p, INT16 volid, void *ignore)
+disk_dump_goodvol_all (THREAD_ENTRY * thread_p, INT16 volid, void *arg)
 {
-  (void) disk_dump_volume_system_info (thread_p, stdout, volid);
+  FILE *const fp = (FILE *) arg;
+  (void) disk_dump_volume_system_info (thread_p, fp, volid);
 
   return true;
 }

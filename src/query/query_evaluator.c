@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -1658,15 +1657,15 @@ eval_pred (THREAD_ENTRY * thread_p, const PRED_EXPR * pr, val_descr * vd, OID * 
   int regexp_res;
   const PRED_EXPR *t_pr;
   QFILE_SORTED_LIST_ID *srlist_id;
+  static int max_recursion_sql_depth = prm_get_integer_value (PRM_ID_MAX_RECURSION_SQL_DEPTH);
 
   peek_val1 = NULL;
   peek_val2 = NULL;
   peek_val3 = NULL;
 
-  if (thread_get_recursion_depth (thread_p) > prm_get_integer_value (PRM_ID_MAX_RECURSION_SQL_DEPTH))
+  if (thread_get_recursion_depth (thread_p) > max_recursion_sql_depth)
     {
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_MAX_RECURSION_SQL_DEPTH, 1,
-	      prm_get_integer_value (PRM_ID_MAX_RECURSION_SQL_DEPTH));
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_MAX_RECURSION_SQL_DEPTH, 1, max_recursion_sql_depth);
 
       return V_ERROR;
     }
@@ -2525,8 +2524,7 @@ eval_pred_rlike7 (THREAD_ENTRY * thread_p, const PRED_EXPR * pr, val_descr * vd,
     }
 
   /* evaluate regular expression match */
-  db_string_rlike (peek_val1, peek_val2, peek_val3, &et_rlike->compiled_regex, &et_rlike->compiled_pattern,
-		   &regexp_res);
+  db_string_rlike (peek_val1, peek_val2, peek_val3, &et_rlike->compiled_regex, &regexp_res);
 
   return (DB_LOGICAL) regexp_res;
 }
@@ -2711,7 +2709,7 @@ eval_data_filter (THREAD_ENTRY * thread_p, OID * oid, RECDES * recdesp, HEAP_SCA
   if (scan_attrsp != NULL && scan_attrsp->attr_cache != NULL && scan_predp->regu_list != NULL)
     {
       /* read the predicate values from the heap into the attribute cache */
-      if (heap_attrinfo_read_dbvalues (thread_p, oid, recdesp, scan_cache, scan_attrsp->attr_cache) != NO_ERROR)
+      if (heap_attrinfo_read_dbvalues (thread_p, oid, recdesp, scan_attrsp->attr_cache) != NO_ERROR)
 	{
 	  return V_ERROR;
 	}
@@ -2783,6 +2781,7 @@ eval_key_filter (THREAD_ENTRY * thread_p, DB_VALUE * value, FILTER_INFO * filter
   DB_VALUE *valp;
   int prev_j_index;
   char *prev_j_ptr;
+  static bool oracle_style_empty_string = prm_get_bool_value (PRM_ID_ORACLE_STYLE_EMPTY_STRING);
 
   if (value == NULL)
     {
@@ -2859,7 +2858,7 @@ eval_key_filter (THREAD_ENTRY * thread_p, DB_VALUE * value, FILTER_INFO * filter
 		    }
 
 		  found_empty_str = false;
-		  if (prm_get_bool_value (PRM_ID_ORACLE_STYLE_EMPTY_STRING) && db_value_is_null (valp))
+		  if (oracle_style_empty_string && db_value_is_null (valp))
 		    {
 		      if (valp->need_clear)
 			{
@@ -2926,7 +2925,7 @@ eval_key_filter (THREAD_ENTRY * thread_p, DB_VALUE * value, FILTER_INFO * filter
 	    }
 
 	  found_empty_str = false;
-	  if (prm_get_bool_value (PRM_ID_ORACLE_STYLE_EMPTY_STRING) && db_value_is_null (valp))
+	  if (oracle_style_empty_string && db_value_is_null (valp))
 	    {
 	      if (valp->need_clear)
 		{

@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -5428,7 +5427,6 @@ mr_index_cmpdisk_object (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coer
 static DB_VALUE_COMPARE_RESULT
 mr_data_cmpdisk_object (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coercion, int total_order, int *start_colp)
 {
-  DB_VALUE_COMPARE_RESULT c;
   OID o1, o2;
   int oidc;
 
@@ -5440,9 +5438,7 @@ mr_data_cmpdisk_object (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coerc
    * representation of objects is an OID, this is a valid optimization */
 
   oidc = oid_compare (&o1, &o2);
-  c = MR_CMP_RETURN_CODE (oidc);
-
-  return c;
+  return MR_CMP_RETURN_CODE (oidc);
 }
 
 static DB_VALUE_COMPARE_RESULT
@@ -6768,7 +6764,6 @@ mr_index_readval_oid (OR_BUF * buf, DB_VALUE * value, TP_DOMAIN * domain, int si
 static DB_VALUE_COMPARE_RESULT
 mr_index_cmpdisk_oid (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coercion, int total_order, int *start_colp)
 {
-  DB_VALUE_COMPARE_RESULT c;
   OID o1, o2;
   int oidc;
 
@@ -6783,15 +6778,12 @@ mr_index_cmpdisk_oid (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coercio
   COPYMEM (short, &o2.volid, (char *) mem2 + OR_OID_VOLID);
 
   oidc = oid_compare (&o1, &o2);
-  c = MR_CMP_RETURN_CODE (oidc);
-
-  return c;
+  return MR_CMP_RETURN_CODE (oidc);
 }
 
 static DB_VALUE_COMPARE_RESULT
 mr_data_cmpdisk_oid (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coercion, int total_order, int *start_colp)
 {
-  DB_VALUE_COMPARE_RESULT c;
   OID o1, o2;
   int oidc;
 
@@ -6801,15 +6793,12 @@ mr_data_cmpdisk_oid (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coercion
   OR_GET_OID (mem2, &o2);
 
   oidc = oid_compare (&o1, &o2);
-  c = MR_CMP_RETURN_CODE (oidc);
-
-  return c;
+  return MR_CMP_RETURN_CODE (oidc);
 }
 
 static DB_VALUE_COMPARE_RESULT
 mr_cmpval_oid (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int total_order, int *start_colp, int collation)
 {
-  DB_VALUE_COMPARE_RESULT c;
   OID *oid1, *oid2;
   int oidc;
 
@@ -6822,9 +6811,7 @@ mr_cmpval_oid (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int total_
     }
 
   oidc = oid_compare (oid1, oid2);
-  c = MR_CMP_RETURN_CODE (oidc);
-
-  return c;
+  return MR_CMP_RETURN_CODE (oidc);
 }
 
 /*
@@ -7679,17 +7666,12 @@ mr_index_readval_midxkey (OR_BUF * buf, DB_VALUE * value, TP_DOMAIN * domain, in
   midxkey.domain = domain;
   midxkey.min_max_val.position = -1;
   midxkey.min_max_val.type = MIN_COLUMN;
-
-  for (dom = domain->setdomain; dom; dom = dom->next)
-    {
-      midxkey.ncolumns += 1;
-    }
+  midxkey.ncolumns = domain->precision;
 
   if (!copy)
     {
       midxkey.buf = buf->ptr;
       db_make_midxkey (value, &midxkey);
-      value->need_clear = false;
       rc = or_advance (buf, size);
     }
   else
@@ -7930,8 +7912,10 @@ pr_midxkey_compare (DB_MIDXKEY * mul1, DB_MIDXKEY * mul2, int do_coercion, int t
 	      c = dom1->type->index_cmpdisk (mem1, mem2, dom1, do_coercion, total_order, NULL);
 	    }
 	  else
-	    {			/* coercion and comparison */
-	      /* val1 and val2 have different domain */
+	    {
+	      /* coercion and comparison
+	       * val1 and val2 have different domain
+	       */
 	      c = pr_midxkey_compare_element (mem1, mem2, dom1, dom2, do_coercion, total_order);
 	    }
 	}
@@ -7944,14 +7928,7 @@ pr_midxkey_compare (DB_MIDXKEY * mul1, DB_MIDXKEY * mul2, int do_coercion, int t
 		{
 		  /* safeguard */
 		  assert (mul2->min_max_val.type == MIN_COLUMN || mul2->min_max_val.type == MAX_COLUMN);
-		  if (mul2->min_max_val.type == MIN_COLUMN)
-		    {
-		      c = DB_GT;
-		    }
-		  else
-		    {
-		      c = DB_LT;
-		    }
+		  c = (mul2->min_max_val.type == MIN_COLUMN) ? DB_GT : DB_LT;
 		}
 	      else
 		{
@@ -7965,14 +7942,7 @@ pr_midxkey_compare (DB_MIDXKEY * mul1, DB_MIDXKEY * mul2, int do_coercion, int t
 		{
 		  /* safeguard */
 		  assert (mul1->min_max_val.type == MIN_COLUMN || mul1->min_max_val.type == MAX_COLUMN);
-		  if (mul1->min_max_val.type == MIN_COLUMN)
-		    {
-		      c = DB_LT;
-		    }
-		  else
-		    {
-		      c = DB_GT;
-		    }
+		  c = (mul1->min_max_val.type == MIN_COLUMN) ? DB_LT : DB_GT;
 		}
 	      else
 		{
@@ -7989,43 +7959,18 @@ pr_midxkey_compare (DB_MIDXKEY * mul1, DB_MIDXKEY * mul2, int do_coercion, int t
 		    {
 		      MIN_MAX_COLUMN_TYPE type1 = mul1->min_max_val.type;
 		      MIN_MAX_COLUMN_TYPE type2 = mul2->min_max_val.type;
-		      if (type1 == type2)
-			{
-			  c = DB_EQ;
-			}
-		      else if (type1 == MIN_COLUMN)
-			{
-			  c = DB_LT;
-			}
-		      else
-			{
-			  c = DB_GT;
-			}
+		      c = (type1 == type2) ? DB_EQ : ((type1 == MIN_COLUMN) ? DB_LT : DB_GT);
 		    }
 		  else
 		    {
 		      assert (mul1->min_max_val.type == MIN_COLUMN || mul1->min_max_val.type == MAX_COLUMN);
-		      if (mul1->min_max_val.type == MIN_COLUMN)
-			{
-			  c = DB_LT;
-			}
-		      else
-			{
-			  c = DB_GT;
-			}
+		      c = (mul1->min_max_val.type == MIN_COLUMN) ? DB_LT : DB_GT;
 		    }
 		}
 	      else if (mul2->min_max_val.position == i)
 		{
 		  assert (mul2->min_max_val.type == MIN_COLUMN || mul2->min_max_val.type == MAX_COLUMN);
-		  if (mul2->min_max_val.type == MIN_COLUMN)
-		    {
-		      c = DB_GT;
-		    }
-		  else
-		    {
-		      c = DB_LT;
-		    }
+		  c = (mul2->min_max_val.type == MIN_COLUMN) ? DB_GT : DB_LT;
 		}
 	      else
 		{
@@ -8063,22 +8008,30 @@ pr_midxkey_compare (DB_MIDXKEY * mul1, DB_MIDXKEY * mul2, int do_coercion, int t
 	}
     }
 
-  adv_size1 = adv_size2 = 0;
-  if (c != DB_EQ)
+  if (result_size1 != NULL)
     {
-      if (dom1 != NULL && OR_MULTI_ATT_IS_BOUND (bitptr1, i))
+      adv_size1 = 0;
+      if (c != DB_EQ)
 	{
-	  adv_size1 = pr_midxkey_element_disk_size (mem1, dom1);
+	  if (dom1 != NULL && OR_MULTI_ATT_IS_BOUND (bitptr1, i))
+	    {
+	      adv_size1 = pr_midxkey_element_disk_size (mem1, dom1);
+	    }
 	}
-
-      if (dom2 != NULL && OR_MULTI_ATT_IS_BOUND (bitptr2, i))
-	{
-	  adv_size2 = pr_midxkey_element_disk_size (mem2, dom2);
-	}
+      *result_size1 = size1 + adv_size1;
     }
-
-  *result_size1 = size1 + adv_size1;
-  *result_size2 = size2 + adv_size2;
+  if (result_size2 != NULL)
+    {
+      adv_size2 = 0;
+      if (c != DB_EQ)
+	{
+	  if (dom2 != NULL && OR_MULTI_ATT_IS_BOUND (bitptr2, i))
+	    {
+	      adv_size2 = pr_midxkey_element_disk_size (mem2, dom2);
+	    }
+	}
+      *result_size2 = size2 + adv_size2;
+    }
 
   *diff_column = i;
 
@@ -8107,7 +8060,7 @@ mr_cmpval_midxkey (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int to
   DB_VALUE_COMPARE_RESULT c = DB_UNK;
   DB_MIDXKEY *midxkey1;
   DB_MIDXKEY *midxkey2;
-  int dummy_size1, dummy_size2, dummy_diff_column;
+  int dummy_diff_column;
   bool dummy_dom_is_desc, dummy_next_dom_is_desc;
 
   midxkey1 = db_get_midxkey (value1);
@@ -8136,7 +8089,7 @@ mr_cmpval_midxkey (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int to
   assert_release (midxkey2->domain->precision == midxkey2->ncolumns);
 
   c = (DB_VALUE_COMPARE_RESULT) pr_midxkey_compare (midxkey1, midxkey2, do_coercion, total_order, -1, start_colp,
-						    &dummy_size1, &dummy_size2, &dummy_diff_column, &dummy_dom_is_desc,
+						    NULL, NULL, &dummy_diff_column, &dummy_dom_is_desc,
 						    &dummy_next_dom_is_desc);
 
   assert_release (c == DB_UNK || (DB_LT <= c && c <= DB_GT));
@@ -8162,7 +8115,7 @@ mr_index_cmpdisk_midxkey (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coe
   DB_MIDXKEY midxkey2;
   TP_DOMAIN *cmp_dom;
   int n_atts = 0;
-  int dummy_size1, dummy_size2, dummy_diff_column;
+  int dummy_diff_column;
   bool dummy_dom_is_desc = false, dummy_next_dom_is_desc;
 
   assert (false);
@@ -8202,7 +8155,7 @@ mr_index_cmpdisk_midxkey (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coe
   midxkey1.ncolumns = midxkey2.ncolumns = n_atts;
   midxkey1.domain = midxkey2.domain = domain;
 
-  c = pr_midxkey_compare (&midxkey1, &midxkey2, do_coercion, total_order, -1, start_colp, &dummy_size1, &dummy_size2,
+  c = pr_midxkey_compare (&midxkey1, &midxkey2, do_coercion, total_order, -1, start_colp, NULL, NULL,
 			  &dummy_diff_column, &dummy_dom_is_desc, &dummy_next_dom_is_desc);
   assert (c == DB_UNK || (DB_LT <= c && c <= DB_GT));
 
@@ -9214,7 +9167,7 @@ pr_midxkey_remove_prefix (DB_VALUE * key, int prefix)
 int
 pr_midxkey_common_prefix (DB_VALUE * key1, DB_VALUE * key2)
 {
-  int size1, size2, diff_column, ret;
+  int diff_column, ret;
   bool dom_is_desc = false, next_dom_is_desc = false;
   DB_MIDXKEY *midx_lf_key, *midx_uf_key;
 
@@ -9226,7 +9179,7 @@ pr_midxkey_common_prefix (DB_VALUE * key1, DB_VALUE * key2)
   midx_lf_key = db_get_midxkey (key1);
   midx_uf_key = db_get_midxkey (key2);
 
-  ret = pr_midxkey_compare (midx_lf_key, midx_uf_key, 0, 1, -1, NULL, &size1, &size2, &diff_column, &dom_is_desc,
+  ret = pr_midxkey_compare (midx_lf_key, midx_uf_key, 0, 1, -1, NULL, NULL, NULL, &diff_column, &dom_is_desc,
 			    &next_dom_is_desc);
 
   if (ret == DB_UNK)
@@ -9538,16 +9491,9 @@ pr_midxkey_get_element_nocopy (const DB_MIDXKEY * midxkey, int index, DB_VALUE *
 int
 pr_midxkey_init_boundbits (char *bufptr, int n_atts)
 {
-  unsigned char *bits;
-  int i, nbytes;
+  int nbytes = OR_MULTI_BOUND_BIT_BYTES (n_atts);
 
-  nbytes = OR_MULTI_BOUND_BIT_BYTES (n_atts);
-  bits = (unsigned char *) bufptr;
-
-  for (i = 0; i < nbytes; i++)
-    {
-      bits[i] = (unsigned char) 0;
-    }
+  MIDXKEY_BOUNDBITS_INIT (bufptr, nbytes);
 
   return nbytes;
 }
@@ -9614,7 +9560,7 @@ pr_midxkey_add_elements (DB_VALUE * keyval, DB_VALUE * dbvals, int num_dbvals, s
   else
     {
       /* bound bits */
-      (void) pr_midxkey_init_boundbits (bound_bits, bitmap_size);
+      MIDXKEY_BOUNDBITS_INIT (bound_bits, bitmap_size);
       or_advance (&buf, bitmap_size);
     }
 
@@ -9856,7 +9802,7 @@ pr_complete_enum_value (DB_VALUE * value, struct tp_domain *domain)
 static void
 mr_initmem_resultset (void *mem, TP_DOMAIN * domain)
 {
-  *(int *) mem = 0;
+  *(DB_BIGINT *) mem = 0;
 }
 
 static int
@@ -9864,7 +9810,7 @@ mr_setmem_resultset (void *mem, TP_DOMAIN * domain, DB_VALUE * value)
 {
   if (value != NULL)
     {
-      *(int *) mem = db_get_resultset (value);
+      *(DB_BIGINT *) mem = db_get_resultset (value);
     }
   else
     {
@@ -9877,13 +9823,13 @@ mr_setmem_resultset (void *mem, TP_DOMAIN * domain, DB_VALUE * value)
 static int
 mr_getmem_resultset (void *mem, TP_DOMAIN * domain, DB_VALUE * value, bool copy)
 {
-  return db_make_resultset (value, *(int *) mem);
+  return db_make_resultset (value, *(DB_BIGINT *) mem);
 }
 
 static void
 mr_data_writemem_resultset (OR_BUF * buf, void *mem, TP_DOMAIN * domain)
 {
-  or_put_int (buf, *(int *) mem);
+  or_put_bigint (buf, *(DB_BIGINT *) mem);
 }
 
 static void
@@ -9897,7 +9843,7 @@ mr_data_readmem_resultset (OR_BUF * buf, void *mem, TP_DOMAIN * domain, int size
     }
   else
     {
-      *(int *) mem = or_get_int (buf, &rc);
+      *(DB_BIGINT *) mem = or_get_bigint (buf, &rc);
     }
 }
 
@@ -9924,14 +9870,15 @@ mr_setval_resultset (DB_VALUE * dest, const DB_VALUE * src, bool copy)
 static int
 mr_data_writeval_resultset (OR_BUF * buf, DB_VALUE * value)
 {
-  return or_put_int (buf, db_get_resultset (value));
+  return or_put_bigint (buf, db_get_resultset (value));
 }
 
 static int
 mr_data_readval_resultset (OR_BUF * buf, DB_VALUE * value, TP_DOMAIN * domain, int size, bool copy, char *copy_buf,
 			   int copy_buf_len)
 {
-  int temp_int, rc = NO_ERROR;
+  DB_BIGINT temp;
+  int rc = NO_ERROR;
 
   if (value == NULL)
     {
@@ -9939,8 +9886,11 @@ mr_data_readval_resultset (OR_BUF * buf, DB_VALUE * value, TP_DOMAIN * domain, i
     }
   else
     {
-      temp_int = or_get_int (buf, &rc);
-      db_make_resultset (value, temp_int);
+      temp = (DB_BIGINT) or_get_bigint (buf, &rc);
+      if (rc == NO_ERROR)
+	{
+	  db_make_resultset (value, temp);
+	}
       value->need_clear = false;
     }
   return rc;
@@ -9950,15 +9900,15 @@ static DB_VALUE_COMPARE_RESULT
 mr_data_cmpdisk_resultset (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coercion, int total_order,
 			   int *start_colp)
 {
-  int i1, i2;
+  DB_BIGINT i1, i2;
 
   assert (domain != NULL);
 
   /* is not index type */
   assert (!domain->is_desc && !tp_valid_indextype (TP_DOMAIN_TYPE (domain)));
 
-  i1 = OR_GET_INT (mem1);
-  i2 = OR_GET_INT (mem2);
+  OR_GET_BIGINT (mem1, &i1);
+  OR_GET_BIGINT (mem2, &i2);
 
   return MR_CMP (i1, i2);
 }
@@ -9967,7 +9917,7 @@ static DB_VALUE_COMPARE_RESULT
 mr_cmpval_resultset (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int total_order, int *start_colp,
 		     int collation)
 {
-  int i1, i2;
+  DB_BIGINT i1, i2;
 
   i1 = db_get_resultset (value1);
   i2 = db_get_resultset (value2);
@@ -10162,8 +10112,8 @@ mr_data_lengthmem_string (void *memptr, TP_DOMAIN * domain, int disk)
 static int
 mr_index_lengthmem_string (void *memptr, TP_DOMAIN * domain)
 {
-  OR_BUF buf;
   int charlen;
+  OR_BUF buf;
   int rc = NO_ERROR, compressed_length = 0, decompressed_length = 0, length = 0;
 
   /* generally, index key-value is short enough */
@@ -10948,7 +10898,7 @@ mr_data_cmpdisk_string (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coerc
   int strc;
 
   bool ti = true;
-  bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
+  static bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
 
   assert (domain != NULL);
 
@@ -11102,8 +11052,10 @@ mr_cmpval_string (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int tot
   int size1, size2;
   int strc;
 
-  bool ti = true;
-  bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
+  static bool ti = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
+
+  DB_TYPE type1 = (DB_TYPE) value1->domain.char_info.type;
+  DB_TYPE type2 = (DB_TYPE) value2->domain.char_info.type;
 
   const unsigned char *string1 = REINTERPRET_CAST (const unsigned char *, db_get_string (value1));
   const unsigned char *string2 = REINTERPRET_CAST (const unsigned char *, db_get_string (value2));
@@ -11154,11 +11106,6 @@ mr_cmpval_string (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int tot
     {
       assert (false);
       return DB_UNK;
-    }
-
-  if (!ignore_trailing_space)
-    {
-      ti = false;
     }
 
   strc = QSTR_COMPARE (collation, string1, size1, string2, size2, ti);
@@ -11920,7 +11867,7 @@ mr_cmpdisk_char_internal (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coe
   int mem_length1, mem_length2, strc;
 
   bool ti = true;
-  bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
+  static bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
 
   if (IS_FLOATING_PRECISION (domain->precision))
     {
@@ -11964,10 +11911,13 @@ static DB_VALUE_COMPARE_RESULT
 mr_cmpval_char (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int total_order, int *start_colp, int collation)
 {
   DB_VALUE_COMPARE_RESULT c;
-  int strc;
+  int strc, size1, size2;
 
   bool ti = true;
-  bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
+  static bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
+
+  DB_TYPE type1 = (DB_TYPE) value1->domain.char_info.type;
+  DB_TYPE type2 = (DB_TYPE) value2->domain.char_info.type;
 
   const unsigned char *string1 = REINTERPRET_CAST (const unsigned char *, db_get_string (value1));
   const unsigned char *string2 = REINTERPRET_CAST (const unsigned char *, db_get_string (value2));
@@ -12007,12 +11957,18 @@ mr_cmpval_char (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int total
       return DB_UNK;
     }
 
+  size1 = db_get_string_size (value1);
+  size2 = db_get_string_size (value2);
+
   if (!ignore_trailing_space)
     {
-      ti = (value1->domain.char_info.type == DB_TYPE_CHAR && value2->domain.char_info.type == DB_TYPE_CHAR);
+      if (!TP_IS_FIXED_LEN_CHAR_TYPE (type1) || !TP_IS_FIXED_LEN_CHAR_TYPE (type2))
+	{
+	  ti = false;
+	}
     }
-  strc = QSTR_CHAR_COMPARE (collation, string1, (int) db_get_string_size (value1), string2,
-			    (int) db_get_string_size (value2), ti);
+
+  strc = QSTR_CHAR_COMPARE (collation, string1, size1, string2, size2, ti);
   c = MR_CMP_RETURN_CODE (strc);
 
   return c;
@@ -12848,6 +12804,8 @@ mr_cmpdisk_nchar_internal (void *mem1, void *mem2, TP_DOMAIN * domain, int do_co
 {
   DB_VALUE_COMPARE_RESULT c;
   int mem_length1, mem_length2, strc;
+  bool ti = true;
+  static bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
 
   if (IS_FLOATING_PRECISION (domain->precision))
     {
@@ -12873,6 +12831,11 @@ mr_cmpdisk_nchar_internal (void *mem1, void *mem2, TP_DOMAIN * domain, int do_co
       mem_length1 = mem_length2 = STR_SIZE (domain->precision, TP_DOMAIN_CODESET (domain));
     }
 
+  if (!ignore_trailing_space)
+    {
+      ti = (domain->type->id == DB_TYPE_CHAR || domain->type->id == DB_TYPE_NCHAR);
+    }
+
   strc = QSTR_NCHAR_COMPARE (domain->collation_id, (unsigned char *) mem1, mem_length1, (unsigned char *) mem2,
 			     mem_length2, TP_DOMAIN_CODESET (domain), true);
   c = MR_CMP_RETURN_CODE (strc);
@@ -12884,10 +12847,13 @@ static DB_VALUE_COMPARE_RESULT
 mr_cmpval_nchar (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int total_order, int *start_colp, int collation)
 {
   DB_VALUE_COMPARE_RESULT c;
-  int strc;
+  int strc, size1, size2;
 
   bool ti = true;
-  bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
+  static bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
+
+  DB_TYPE type1 = (DB_TYPE) value1->domain.char_info.type;
+  DB_TYPE type2 = (DB_TYPE) value2->domain.char_info.type;
 
   const unsigned char *string1 = REINTERPRET_CAST (const unsigned char *, db_get_string (value1));
   const unsigned char *string2 = REINTERPRET_CAST (const unsigned char *, db_get_string (value2));
@@ -12903,12 +12869,18 @@ mr_cmpval_nchar (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int tota
       return DB_UNK;
     }
 
+  size1 = db_get_string_size (value1);
+  size2 = db_get_string_size (value2);
+
   if (!ignore_trailing_space)
     {
-      ti = (value1->domain.char_info.type == DB_TYPE_NCHAR && value2->domain.char_info.type == DB_TYPE_NCHAR);
+      if (!TP_IS_FIXED_LEN_CHAR_TYPE (type1) || !TP_IS_FIXED_LEN_CHAR_TYPE (type2))
+	{
+	  ti = false;
+	}
     }
-  strc = QSTR_NCHAR_COMPARE (collation, string1, (int) db_get_string_size (value1), string2,
-			     (int) db_get_string_size (value2), db_get_string_codeset (value2), ti);
+
+  strc = QSTR_NCHAR_COMPARE (collation, string1, size1, string2, size2, db_get_string_codeset (value2), ti);
   c = MR_CMP_RETURN_CODE (strc);
 
   return c;
@@ -14021,10 +13993,12 @@ mr_cmpval_varnchar (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int t
 		    int collation)
 {
   DB_VALUE_COMPARE_RESULT c;
-  int strc;
+  int strc, size1, size2;
 
-  bool ti = true;
-  bool ignore_trailing_space = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
+  static bool ti = prm_get_bool_value (PRM_ID_IGNORE_TRAILING_SPACE);
+
+  DB_TYPE type1 = (DB_TYPE) value1->domain.char_info.type;
+  DB_TYPE type2 = (DB_TYPE) value2->domain.char_info.type;
 
   const unsigned char *string1 = REINTERPRET_CAST (const unsigned char *, db_get_string (value1));
   const unsigned char *string2 = REINTERPRET_CAST (const unsigned char *, db_get_string (value2));
@@ -14040,12 +14014,20 @@ mr_cmpval_varnchar (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int t
       return DB_UNK;
     }
 
-  if (!ignore_trailing_space)
+  size1 = (int) db_get_string_size (value1);
+  size2 = (int) db_get_string_size (value2);
+
+  if (size1 < 0)
     {
-      ti = false;
+      size1 = strlen ((char *) string1);
     }
-  strc = QSTR_NCHAR_COMPARE (collation, string1, (int) db_get_string_size (value1), string2,
-			     (int) db_get_string_size (value2), db_get_string_codeset (value2), ti);
+
+  if (size2 < 0)
+    {
+      size2 = strlen ((char *) string2);
+    }
+
+  strc = QSTR_NCHAR_COMPARE (collation, string1, size1, string2, size2, db_get_string_codeset (value2), ti);
   c = MR_CMP_RETURN_CODE (strc);
 
   return c;

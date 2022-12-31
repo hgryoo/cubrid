@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -40,6 +39,7 @@
 
 #include "authenticate.h"
 #include "db.h"
+#include "db_client_type.hpp"
 #include "db_json.hpp"
 #include "dbi.h"
 #include "dbtype.h"
@@ -71,6 +71,7 @@
 #include "trigger_manager.h"
 #include "utility.h"
 #include "work_space.h"
+#include "transform.h"
 
 using namespace cubload;
 
@@ -528,6 +529,7 @@ static void idmap_final (void);
 static int idmap_grow (int size);
 static int ldr_assign_class_id (DB_OBJECT *class_, int id);
 static DB_OBJECT *ldr_find_class (const char *class_name);
+static int ldr_find_class_by_query (const char *name, char *buf, int buf_size);
 static DB_OBJECT *ldr_get_class_from_id (int id);
 static void ldr_clear_context (LDR_CONTEXT *context);
 static void ldr_clear_and_free_context (LDR_CONTEXT *context);
@@ -1418,33 +1420,151 @@ ldr_assign_class_id (DB_OBJECT *class_, int id)
 static DB_OBJECT *
 ldr_find_class (const char *class_name)
 {
-  LC_FIND_CLASSNAME find;
   DB_OBJECT *class_ = NULL;
-  char realname[SM_MAX_IDENTIFIER_LENGTH];
+  LC_FIND_CLASSNAME found = LC_CLASSNAME_EXIST;
+  char realname[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
 
   /* Check for internal error */
-  if (class_name == NULL)
+  if (class_name == NULL || class_name[0] == '\0')
     {
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_GENERIC_ERROR, 0);
       display_error (0);
       return NULL;
     }
 
-  sm_downcase_name (class_name, realname, SM_MAX_IDENTIFIER_LENGTH);
+  sm_user_specified_name (class_name, realname, DB_MAX_IDENTIFIER_LENGTH);
+
   ldr_Hint_class_names[0] = realname;
 
-  find =
-	  locator_lockhint_classes (1, ldr_Hint_class_names, ldr_Hint_locks, ldr_Hint_subclasses, ldr_Hint_flags, 1,
+  found = locator_lockhint_classes (1, ldr_Hint_class_names, ldr_Hint_locks, ldr_Hint_subclasses, ldr_Hint_flags, 1,
 				    NULL_LOCK);
-
-  if (find == LC_CLASSNAME_EXIST)
+  if (found == LC_CLASSNAME_EXIST)
     {
       class_ = db_find_class (class_name);
+
+      ldr_Hint_class_names[0] = NULL;
+
+      return class_;
+    }
+
+  /* This is the case when the loaddb utility is executed with the --no-user-specified-name option as the dba user. */
+  if (db_get_client_type() == DB_CLIENT_TYPE_ADMIN_LOADDB_COMPAT)
+    {
+      char other_class_name[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+
+      ldr_find_class_by_query (realname, other_class_name, DB_MAX_IDENTIFIER_LENGTH);
+      if (other_class_name[0] != '\0')
+	{
+	  ldr_Hint_class_names[0] = other_class_name;
+
+	  found = locator_lockhint_classes (1, ldr_Hint_class_names, ldr_Hint_locks, ldr_Hint_subclasses, ldr_Hint_flags, 1,
+					    NULL_LOCK);
+	  if (found == LC_CLASSNAME_EXIST)
+	    {
+	      class_ = db_find_class (other_class_name);
+
+	      ldr_Hint_class_names[0] = NULL;
+
+	      return class_;
+	    }
+	}
     }
 
   ldr_Hint_class_names[0] = NULL;
 
-  return (class_);
+  return class_;
+}
+
+static int
+ldr_find_class_by_query (const char *name, char *buf, int buf_size)
+{
+#define QUERY_BUF_SIZE 2048
+  DB_QUERY_RESULT *query_result = NULL;
+  DB_QUERY_ERROR query_error;
+  DB_VALUE value;
+  const char *query = NULL;
+  char query_buf[QUERY_BUF_SIZE] = { '\0' };
+  const char *current_schema_name = NULL;
+  const char *class_name = NULL;
+  int error = NO_ERROR;
+
+  db_make_null (&value);
+  query_error.err_lineno = 0;
+  query_error.err_posno = 0;
+
+  if (name == NULL || name[0] == '\0')
+    {
+      ERROR_SET_WARNING (error, ER_OBJ_INVALID_ARGUMENTS);
+      return error;
+    }
+
+  assert (buf != NULL);
+
+  current_schema_name = sc_current_schema_name ();
+
+  class_name = sm_remove_qualifier_name (name);
+  query = "SELECT [unique_name] FROM [%s] WHERE [class_name] = '%s' AND [owner].[name] != UPPER ('%s')";
+  assert (QUERY_BUF_SIZE > snprintf (NULL, 0, query, CT_CLASS_NAME, class_name, current_schema_name));
+  snprintf (query_buf, QUERY_BUF_SIZE, query, CT_CLASS_NAME, class_name, current_schema_name);
+  assert (query_buf[0] != '\0');
+
+  error = db_compile_and_execute_local (query_buf, &query_result, &query_error);
+  if (error < NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  error = db_query_first_tuple (query_result);
+  if (error != DB_CURSOR_SUCCESS)
+    {
+      if (error == DB_CURSOR_END)
+	{
+	  error = NO_ERROR;
+	}
+      else
+	{
+	  ASSERT_ERROR ();
+	}
+
+      goto end;
+    }
+
+  error = db_query_get_tuple_value (query_result, 0, &value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  if (!DB_IS_NULL (&value))
+    {
+      assert (STATIC_CAST (int, strlen (db_get_string (&value))) < buf_size);
+      strncpy (buf, db_get_string (&value), buf_size);
+    }
+  else
+    {
+      /* unique_name must not be null. */
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+
+  error = db_query_next_tuple (query_result);
+  if (error != DB_CURSOR_END)
+    {
+      /* No result can be returned because unique_name is not unique. */
+      buf[0] = '\0';
+    }
+
+end:
+  if (query_result)
+    {
+      db_query_end (query_result);
+      query_result = NULL;
+    }
+
+  return error;
+#undef QUERY_BUF_SIZE
 }
 
 /*
@@ -2091,9 +2211,9 @@ ldr_null_db_generic (LDR_CONTEXT *context, const char *str, size_t len, SM_ATTRI
 
   if (att->flags & SM_ATTFLAG_NON_NULL)
     {
-      char class_attr[512];
+      char class_attr[DB_MAX_IDENTIFIER_LENGTH * 2];
 
-      snprintf (class_attr, 512, "%s.%s", context->class_name, att->header.name);
+      snprintf (class_attr, DB_MAX_IDENTIFIER_LENGTH * 2, "%s.%s", context->class_name, att->header.name);
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OBJ_ATTRIBUTE_CANT_BE_NULL, 1, class_attr);
       CHECK_ERR (err, ER_OBJ_ATTRIBUTE_CANT_BE_NULL);
     }
@@ -4758,12 +4878,12 @@ ldr_finish_context (LDR_CONTEXT *context)
   /* Reset the action function to deal with attributes */
   ldr_act = ldr_act_attr;
 
-#if defined(CUBRID_DEBUG)
-  if ((err == NO_ERROR) && (envvar_get ("LOADER_DEBUG") != NULL))
+#if defined(CUBRID_DEBUG) || defined(CUBRID_DEBUG_TEST)
+  if (err == NO_ERROR)
     {
       if (context->inst_total)
 	{
-	  printf ("%d %s %s inserted in %d %s\n", context->inst_total, ldr_class_name (context),
+	  printf ("%ld %s %s inserted in %d %s\n", context->inst_total, ldr_class_name (context),
 		  context->inst_total == 1 ? "instance" : "instances", context->flush_total,
 		  context->flush_total == 1 ? "flush" : "flushes");
 	}
@@ -4811,11 +4931,40 @@ ldr_act_init_context (LDR_CONTEXT *context, const char *class_name, size_t len)
     }
   if (class_name)
     {
-      if (intl_identifier_lower_string_size (class_name) >= SM_MAX_IDENTIFIER_LENGTH)
+      const char *dot = NULL;
+      int len = 0, sub_len = 0;
+
+      len = STATIC_CAST (int, strlen (class_name));
+      sub_len = len;
+
+      dot = strchr (class_name, '.');
+      if (dot)
+	{
+	  /* user specified name */
+
+	  /* user name of user specified name */
+	  sub_len = STATIC_CAST (int, dot - class_name);
+	  if (sub_len >= DB_MAX_USER_LENGTH)
+	    {
+	      display_error_line (0);
+	      PRINT_AND_LOG_ERR_MSG (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_LOADDB,
+						     LOADDB_MSG_EXCEED_MAX_USER_LEN),
+				     DB_MAX_USER_LENGTH - 1);
+	      CHECK_CONTEXT_VALIDITY (context, true);
+	      ldr_abort ();
+	      goto error_exit;
+	    }
+
+	  /* class name of user specified name */
+	  sub_len = STATIC_CAST (int, strlen (dot + 1));
+	}
+
+      if (sub_len >= DB_MAX_IDENTIFIER_LENGTH - DB_MAX_USER_LENGTH)
 	{
 	  display_error_line (0);
-	  fprintf (stderr, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_LOADDB, LOADDB_MSG_EXCEED_MAX_LEN),
-		   SM_MAX_IDENTIFIER_LENGTH - 1);
+	  PRINT_AND_LOG_ERR_MSG (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_LOADDB,
+						 LOADDB_MSG_EXCEED_MAX_LEN),
+				 DB_MAX_IDENTIFIER_LENGTH - DB_MAX_USER_LENGTH - 1);
 	  CHECK_CONTEXT_VALIDITY (context, true);
 	  ldr_abort ();
 	  goto error_exit;
@@ -4849,7 +4998,8 @@ ldr_act_init_context (LDR_CONTEXT *context, const char *class_name, size_t len)
 	      ldr_abort ();
 	      goto error_exit;
 	    }
-	  strcpy (context->class_name, class_name);
+	  strncpy (context->class_name, class_name, len);
+	  context->class_name[len] = '\0';
 
 	  if (is_internal_class (context->cls))
 	    {
@@ -4964,9 +5114,9 @@ ldr_act_check_missing_non_null_attrs (LDR_CONTEXT *context)
 	  /* not found */
 	  if (i >= context->num_attrs)
 	    {
-	      char class_attr[512];
+	      char class_attr[DB_MAX_IDENTIFIER_LENGTH * 2];
 
-	      snprintf (class_attr, 512, "%s.%s", context->class_name, att->header.name);
+	      snprintf (class_attr, DB_MAX_IDENTIFIER_LENGTH * 2, "%s.%s", context->class_name, att->header.name);
 	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OBJ_ATTRIBUTE_CANT_BE_NULL, 1, class_attr);
 	      CHECK_ERR (err, ER_OBJ_ATTRIBUTE_CANT_BE_NULL);
 	    }
@@ -6463,24 +6613,21 @@ ldr_update_statistics (void)
 
   for (CLASS_TABLE *table = Classes; table != NULL && !err; table = table->next)
     {
-      if (table->total_inserts)
+      if (ldr_Current_context->args->verbose)
 	{
-	  if (ldr_Current_context->args->verbose)
+	  class_name = sm_get_ch_name (table->class_);
+	  if (class_name == NULL)
 	    {
-	      class_name = sm_get_ch_name (table->class_);
-	      if (class_name == NULL)
-		{
-		  err = er_errid ();
-		  assert (err != NO_ERROR);
-		  break;
-		}
-
-	      fprintf (stdout, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_LOADDB, LOADDB_MSG_CLASS_TITLE),
-		       class_name);
-	      fflush (stdout);
+	      err = er_errid ();
+	      assert (err != NO_ERROR);
+	      break;
 	    }
-	  err = sm_update_statistics (table->class_, STATS_WITH_SAMPLING);
+
+	  fprintf (stdout, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_LOADDB, LOADDB_MSG_CLASS_TITLE),
+		   class_name);
+	  fflush (stdout);
 	}
+      err = sm_update_statistics (table->class_, STATS_WITH_SAMPLING);
     }
   return err;
 }

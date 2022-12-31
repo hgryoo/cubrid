@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -35,6 +34,7 @@
 #include <signal.h>
 
 #include "authenticate.h"
+#include "client_support.h"
 #include "porting.h"
 #include "system_parameter.h"
 #include "storage_common.h"
@@ -66,6 +66,7 @@
 #endif
 #include "connection_cl.h"
 #include "dbtype.h"
+#include "method_callback.hpp"
 
 #if !defined(WINDOWS)
 void (*prev_sigfpe_handler) (int) = SIG_DFL;
@@ -100,6 +101,7 @@ struct db_host_status_list
 
 char db_Database_name[DB_MAX_IDENTIFIER_LENGTH + 1];
 char db_Program_name[PATH_MAX];
+char db_Client_ip_addr[16] = { 0 };
 
 static char *db_Preferred_hosts = NULL;
 static int db_Connect_order = DB_CONNECT_ORDER_SEQ;
@@ -505,6 +507,22 @@ db_set_client_type (int client_type)
     }
 }
 
+char *
+db_get_client_ip_addr (void)
+{
+  return db_Client_ip_addr;
+}
+
+void
+db_set_client_ip_addr (const char *ip_addr)
+{
+  if (ip_addr)
+    {
+      memcpy (db_Client_ip_addr, ip_addr, 15);
+      db_Client_ip_addr[15] = '\0';
+    }
+}
+
 void
 db_set_preferred_hosts (const char *hosts)
 {
@@ -891,6 +909,7 @@ db_restart (const char *program, int print_version, const char *volume)
       client_credential.process_id = -1;
       client_credential.preferred_hosts = db_Preferred_hosts;
       client_credential.connect_order = db_Connect_order;
+      client_credential.client_ip_addr = db_Client_ip_addr;
 
       error = boot_restart_client (&client_credential);
       if (error != NO_ERROR)
@@ -912,6 +931,9 @@ db_restart (const char *program, int print_version, const char *volume)
 	  prev_sigfpe_handler = os_set_signal_handler (SIGFPE, sigfpe_handler);
 #endif /* SA_MODE && (LINUX||X86_SOLARIS) */
 #endif /* !WINDOWS */
+
+	  // Even if dblink_get_cipher_master_key() fails, it is executed normally.
+	  dblink_get_cipher_master_key ();
 	}
     }
 
@@ -1035,6 +1057,8 @@ db_end_session (void)
 
   retval = csession_end_session (db_get_session_id ());
 
+  cubmethod::get_callback_handler ()->free_query_handle_all (true);
+
   return (retval);
 }
 
@@ -1099,6 +1123,8 @@ db_commit_transaction (void)
   /* API does not support RETAIN LOCK */
   retval = tran_commit (false);
 
+  cubmethod::get_callback_handler ()->free_query_handle_all (true);
+
   return (retval);
 }
 
@@ -1120,6 +1146,8 @@ db_abort_transaction (void)
   /* CHECK_MODIFICATION_ERROR (); */
 
   error = tran_abort ();
+
+  cubmethod::get_callback_handler ()->free_query_handle_all (true);
 
   return (error);
 }
@@ -2829,7 +2857,7 @@ db_get_ha_server_state (char *buffer, int maxlen)
   CHECK_CONNECT_ERROR ();
 
 #if defined(CS_MODE)
-  ha_state = boot_get_ha_server_state ();
+  ha_state = css_ha_server_state ();
 #else
   ha_state = HA_SERVER_STATE_NA;
 #endif

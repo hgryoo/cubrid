@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -303,7 +302,7 @@ locator_initialize (THREAD_ENTRY * thread_p)
 
       classname = or_class_name (&peek);
       assert (classname != NULL);
-      assert (strlen (classname) < 255);
+      assert (strlen (classname) < DB_MAX_IDENTIFIER_LENGTH);
 
       entry = ((LOCATOR_CLASSNAME_ENTRY *) malloc (sizeof (*entry)));
       if (entry == NULL)
@@ -415,7 +414,7 @@ xlocator_reserve_class_names (THREAD_ENTRY * thread_p, const int num_classes, co
   for (i = 0; i < num_classes; ++i)
     {
       assert (classnames[i] != NULL);
-      assert (strlen (classnames[i]) < 255);
+      assert (strlen (classnames[i]) < DB_MAX_IDENTIFIER_LENGTH);
 
       result = xlocator_reserve_class_name (thread_p, classnames[i], &class_oids[i]);
       if (result != LC_CLASSNAME_RESERVED)
@@ -466,7 +465,7 @@ xlocator_reserve_class_name (THREAD_ENTRY * thread_p, const char *classname, OID
     }
 
   assert (classname != NULL);
-  assert (strlen (classname) < 255);
+  assert (strlen (classname) < DB_MAX_IDENTIFIER_LENGTH);
 
   tran_index = LOG_FIND_THREAD_TRAN_INDEX (thread_p);
 
@@ -767,7 +766,7 @@ xlocator_delete_class_name (THREAD_ENTRY * thread_p, const char *classname)
     }
 
   assert (classname != NULL);
-  assert (strlen (classname) < 255);
+  assert (strlen (classname) < DB_MAX_IDENTIFIER_LENGTH);
 
   tran_index = LOG_FIND_THREAD_TRAN_INDEX (thread_p);
 
@@ -1974,7 +1973,7 @@ locator_check_class_names (THREAD_ENTRY * thread_p)
     {
       classname = or_class_name (&peek);
       assert (classname != NULL);
-      assert (strlen (classname) < 255);
+      assert (strlen (classname) < DB_MAX_IDENTIFIER_LENGTH);
 
       /*
        * Make sure that this class exists in classname_to_OID table and that
@@ -4050,7 +4049,7 @@ locator_check_foreign_key (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid
 
   if (idx_info.has_single_col)
     {
-      error_code = heap_attrinfo_read_dbvalues (thread_p, inst_oid, recdes, NULL, &index_attrinfo);
+      error_code = heap_attrinfo_read_dbvalues (thread_p, inst_oid, recdes, &index_attrinfo);
       if (error_code != NO_ERROR)
 	{
 	  goto error;
@@ -5328,6 +5327,7 @@ locator_update_force (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid, OID
   HEAP_SCANCACHE *local_scan_cache;
   bool no_data_new_address = false;
   REPL_INFO repl_info;
+  TDE_ALGORITHM tde_algo = TDE_ALGORITHM_NONE;
 
   assert (class_oid != NULL && !OID_ISNULL (class_oid));
 
@@ -5347,13 +5347,25 @@ locator_update_force (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid, OID
     {
       HEAP_OPERATION_CONTEXT update_context;
 
+      if (!OID_IS_ROOTOID (oid))
+	{
+	  /* Prevent any update on a TDE-encryted class if TDE is not loaded */
+	  or_class_tde_algorithm (recdes, &tde_algo);
+	  if (tde_algo != TDE_ALGORITHM_NONE && !tde_is_loaded ())
+	    {
+	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_TDE_CIPHER_IS_NOT_LOADED, 0);
+	      error_code = ER_TDE_CIPHER_IS_NOT_LOADED;
+	      goto error;
+	    }
+	}
+
       /*
        * A CLASS: classes do not have any indices...however, the classname
        * to oid table may need to be updated
        */
       classname = or_class_name (recdes);
       assert (classname != NULL);
-      assert (strlen (classname) < 255);
+      assert (strlen (classname) < DB_MAX_IDENTIFIER_LENGTH);
 
       if (heap_get_class_name_alloc_if_diff (thread_p, oid, classname, &old_classname) != NO_ERROR)
 	{
@@ -5369,7 +5381,7 @@ locator_update_force (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid, OID
       if (old_classname != NULL && old_classname != classname)
 	{
 	  assert (old_classname != NULL);
-	  assert (strlen (old_classname) < 255);
+	  assert (strlen (old_classname) < DB_MAX_IDENTIFIER_LENGTH);
 
 	  /* Different names, the class was renamed. */
 	  error_code = log_add_to_modified_class_list (thread_p, old_classname, oid);
@@ -5454,13 +5466,37 @@ locator_update_force (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid, OID
 
       if (update_context.is_logical_old)
 	{
-	  /* Update the catalog as long as it is not the root class */
+	  /* Update the catalog and hfid cache as long as it is not the root class */
 	  if (!OID_IS_ROOTOID (oid))
 	    {
 #if !defined(NDEBUG)
 	      or_class_rep_dir (recdes, &rep_dir);
 	      assert (!OID_ISNULL (&rep_dir));
 #endif
+	      HFID new_hfid = HFID_INITIALIZER;
+
+	      or_class_hfid (recdes, &new_hfid);
+
+	      /* if the hfid for the class is cached, and it is different from the NEW one, delete the previouse one. The new one is cached when it is accessed for the first time */
+	      if (!HFID_IS_NULL (&new_hfid))
+		{
+		  HFID cached_hfid = HFID_INITIALIZER;
+		  bool was_cached = false;
+		  error_code = heap_get_hfid_if_cached (thread_p, oid, &cached_hfid, NULL, NULL, &was_cached);
+		  if (error_code != NO_ERROR)
+		    {
+		      goto error;
+		    }
+		  if (was_cached && !HFID_EQ (&cached_hfid, &new_hfid))
+		    {
+		      error_code = heap_delete_hfid_from_cache (thread_p, oid);
+		      if (error_code != NO_ERROR)
+			{
+			  goto error;
+			}
+		    }
+		}
+
 	      error_code = catalog_update (thread_p, recdes, oid);
 	      if (error_code < 0)
 		{
@@ -6133,7 +6169,7 @@ locator_delete_force_internal (THREAD_ENTRY * thread_p, HFID * hfid, OID * oid, 
       /* Delete the classname entry */
       classname = or_class_name (&copy_recdes);
       assert (classname != NULL);
-      assert (strlen (classname) < 255);
+      assert (strlen (classname) < DB_MAX_IDENTIFIER_LENGTH);
 
       /* Note: by now, the client has probably already requested this class be deleted. We try again here just to be
        * sure it has been marked properly.  Note that we would normally want to check the return code, but we must not
@@ -7019,6 +7055,8 @@ xlocator_force (THREAD_ENTRY * thread_p, LC_COPYAREA * force_area, int num_ignor
 
       has_index = LC_ONEOBJ_GET_INDEX_FLAG (obj);
 
+      thread_p->trigger_involved = LC_ONEOBJ_IS_TRIGGER_INVOLVED (obj);
+
       /* For multi update, we're just interested in the INSERT and DELETE operations here, which were generated by
        * triggers operating on the same class that is being updated; treat these operations as single row and skip all
        * updates. Also, for multi UPDATE operations, the class objects should be flushed here as single row. Instance
@@ -7103,6 +7141,8 @@ xlocator_force (THREAD_ENTRY * thread_p, LC_COPYAREA * force_area, int num_ignor
 	  error_code = ER_LC_BADFORCE_OPERATION;
 	  break;
 	}			/* end-switch */
+
+      thread_p->trigger_involved = false;
 
       if (LOG_CHECK_LOG_APPLIER (thread_p) || num_ignore_error > 0)
 	{
@@ -7675,7 +7715,7 @@ locator_add_or_remove_index_internal (THREAD_ENTRY * thread_p, RECDES * recdes, 
    */
   if (idx_info.has_single_col)
     {
-      error_code = heap_attrinfo_read_dbvalues (thread_p, inst_oid, recdes, NULL, &index_attrinfo);
+      error_code = heap_attrinfo_read_dbvalues (thread_p, inst_oid, recdes, &index_attrinfo);
       if (error_code != NO_ERROR)
 	{
 	  goto error;
@@ -7890,43 +7930,6 @@ locator_add_or_remove_index_internal (THREAD_ENTRY * thread_p, RECDES * recdes, 
 	  assert (er_errid () != NO_ERROR);
 	  goto error;
 	}
-
-#if 0
-      if (key_ins_del != NULL && !DB_IS_NULL (key_dbvalue) && !btree_multicol_key_is_null (key_dbvalue))
-	{
-	  BTREE_CHECKSCAN bt_checkscan;
-	  DISK_ISVALID isvalid = DISK_VALID;
-
-	  /* start a check-scan on index */
-	  if (btree_keyoid_checkscan_start (thread_p, &btid, &bt_checkscan) != NO_ERROR)
-	    {
-	      goto error;
-	    }
-
-	  isvalid = btree_keyoid_checkscan_check (thread_p, &bt_checkscan, class_oid, key_dbvalue, inst_oid);
-
-	  if (er_errid () == ER_INTERRUPTED)
-	    {
-	      /* in case of user interrupt */
-	      ;			/* do not check isvalid */
-	    }
-	  else
-	    {
-	      if (is_insert)
-		{
-		  assert (isvalid == DISK_VALID);	/* found */
-		}
-	      else
-		{
-		  assert (isvalid == DISK_INVALID);	/* not found */
-		}
-	    }
-
-	  /* close the index check-scan */
-	  btree_keyoid_checkscan_end (thread_p, &bt_checkscan);
-	}
-#endif
-
       if (key_dbvalue == &dbvalue)
 	{
 	  pr_clear_value (&dbvalue);
@@ -8083,7 +8086,7 @@ locator_eval_filter_predicate (THREAD_ENTRY * thread_p, BTID * btid, OR_PREDICAT
 
   for (i = 0; i < num_insts; i++)
     {
-      error_code = heap_attrinfo_read_dbvalues (thread_p, inst_oids[i], recs[i], NULL, pred_filter->cache_pred);
+      error_code = heap_attrinfo_read_dbvalues (thread_p, inst_oids[i], recs[i], pred_filter->cache_pred);
       if (error_code != NO_ERROR)
 	{
 	  goto end;
@@ -8260,12 +8263,12 @@ locator_update_index (THREAD_ENTRY * thread_p, RECDES * new_recdes, RECDES * old
   new_attrinfo = &space_attrinfo[0];
   old_attrinfo = &space_attrinfo[1];
 
-  error_code = heap_attrinfo_read_dbvalues (thread_p, oid, new_recdes, NULL, new_attrinfo);
+  error_code = heap_attrinfo_read_dbvalues (thread_p, oid, new_recdes, new_attrinfo);
   if (error_code != NO_ERROR)
     {
       goto error;
     }
-  error_code = heap_attrinfo_read_dbvalues (thread_p, oid, old_recdes, NULL, old_attrinfo);
+  error_code = heap_attrinfo_read_dbvalues (thread_p, oid, old_recdes, old_attrinfo);
   if (error_code != NO_ERROR)
     {
       goto error;
@@ -8626,52 +8629,6 @@ locator_update_index (THREAD_ENTRY * thread_p, RECDES * new_recdes, RECDES * old
 		  LSA_COPY (&tdes->repl_insert_lsa, &preserved_repl_lsa);
 		}
 	    }
-
-#if 0
-	  {
-	    BTREE_CHECKSCAN bt_checkscan;
-	    DISK_ISVALID isvalid = DISK_VALID;
-
-	    /* start a check-scan on index */
-	    if (btree_keyoid_checkscan_start (thread_p, &old_btid, &bt_checkscan) != NO_ERROR)
-	      {
-		goto error;
-	      }
-
-	    if (!do_insert_only && !DB_IS_NULL (old_key) && !btree_multicol_key_is_null (old_key))
-	      {
-		isvalid = btree_keyoid_checkscan_check (thread_p, &bt_checkscan, class_oid, old_key, old_oid);
-
-		if (er_errid () == ER_INTERRUPTED)
-		  {
-		    /* in case of user interrupt */
-		    ;		/* do not check isvalid */
-		  }
-		else
-		  {
-		    assert (isvalid == DISK_INVALID);	/* not found */
-		  }
-	      }
-
-	    if (!do_delete_only && !DB_IS_NULL (new_key) && !btree_multicol_key_is_null (new_key))
-	      {
-
-		isvalid = btree_keyoid_checkscan_check (thread_p, &bt_checkscan, class_oid, new_key, new_oid);
-		if (er_errid () == ER_INTERRUPTED)
-		  {
-		    /* in case of user interrupt */
-		    ;		/* do not check isvalid */
-		  }
-		else
-		  {
-		    assert (isvalid == DISK_VALID);	/* found */
-		  }
-	      }
-
-	    /* close the index check-scan */
-	    btree_keyoid_checkscan_end (thread_p, &bt_checkscan);
-	  }
-#endif
 	}
 
       if (pk_btid_index == i && repl_old_key == NULL)
@@ -8930,7 +8887,7 @@ xlocator_remove_class_from_index (THREAD_ENTRY * thread_p, OID * class_oid, BTID
 	  continue;
 	}
 
-      error_code = heap_attrinfo_read_dbvalues (thread_p, &inst_oid, &copy_rec, NULL, &index_attrinfo);
+      error_code = heap_attrinfo_read_dbvalues (thread_p, &inst_oid, &copy_rec, &index_attrinfo);
       if (error_code != NO_ERROR)
 	{
 	  goto error;
@@ -9387,7 +9344,7 @@ locator_check_btree_entries (THREAD_ENTRY * thread_p, BTID * btid, HFID * hfid, 
 	}
 
       /* Make sure that the index entry exist */
-      if ((n_attr_ids == 1 && heap_attrinfo_read_dbvalues (thread_p, &inst_oid, &record, NULL, &attr_info) != NO_ERROR)
+      if ((n_attr_ids == 1 && heap_attrinfo_read_dbvalues (thread_p, &inst_oid, &record, &attr_info) != NO_ERROR)
 	  || (key = heap_attrvalue_get_key (thread_p, index_id, &attr_info, &record, &btid_info, &dbvalue, aligned_buf,
 					    NULL, NULL)) == NULL)
 	{
@@ -9722,7 +9679,7 @@ locator_check_unique_btree_entries (THREAD_ENTRY * thread_p, BTID * btid, OID * 
 #if defined(SERVER_MODE)
   int tran_index;
 #else
-  int btree_oid_cnt, btree_null_cnt, btree_key_cnt;
+  long long btree_oid_cnt, btree_null_cnt, btree_key_cnt;
 #endif /* SERVER_MODE */
   bool bt_checkscan_inited = false;
 
@@ -9836,7 +9793,7 @@ locator_check_unique_btree_entries (THREAD_ENTRY * thread_p, BTID * btid, OID * 
 	    }
 
 	  /* Make sure that the index entry exists */
-	  if ((heap_attrinfo_read_dbvalues (thread_p, &inst_oid, &peek, NULL, &attr_info) != NO_ERROR)
+	  if ((heap_attrinfo_read_dbvalues (thread_p, &inst_oid, &peek, &attr_info) != NO_ERROR)
 	      ||
 	      ((key =
 		heap_attrvalue_get_key (thread_p, index_id, &attr_info, &peek, btid, &dbvalue, aligned_buf, NULL,
@@ -11720,18 +11677,9 @@ xlocator_check_fk_validity (THREAD_ENTRY * thread_p, OID * cls_oid, HFID * hfid,
   copy_recdes.data = NULL;
   while (heap_next (thread_p, hfid, NULL, &oid, &copy_recdes, &scan_cache, COPY) == S_SUCCESS)
     {
-      if (n_attrs == 1)
-	{
-	  error_code = heap_attrinfo_read_dbvalues (thread_p, &oid, &copy_recdes, NULL, &attr_info);
-	  if (error_code != NO_ERROR)
-	    {
-	      goto end;
-	    }
-	}
-
       key_val =
 	heap_attrinfo_generate_key (thread_p, n_attrs, attr_ids, NULL, &attr_info, &copy_recdes, &tmpval,
-				    aligned_midxkey_buf, NULL, NULL);
+				    aligned_midxkey_buf, NULL, NULL, &oid);
       if (key_val == NULL)
 	{
 	  error_code = ER_FAILED;
@@ -12167,7 +12115,7 @@ xlocator_upgrade_instances_domain (THREAD_ENTRY * thread_p, OID * class_oid, int
 	      goto error_exit;
 	    }
 
-	  error = heap_attrinfo_read_dbvalues (thread_p, &obj->oid, &recdes, NULL, &attr_info);
+	  error = heap_attrinfo_read_dbvalues (thread_p, &obj->oid, &recdes, &attr_info);
 	  if (error != NO_ERROR)
 	    {
 	      goto error_exit;
@@ -12783,12 +12731,18 @@ redistribute_partition_data (THREAD_ENTRY * thread_p, OID * class_oid, int no_oi
 		  goto exit;
 		}
 
+	      /* No supplemental log for insert is appended due to DDL statement */
+	      thread_p->no_supplemental_log = true;
+
 	      /* make sure that pruning does not change the given class OID */
 	      COPY_OID (&cls_oid, class_oid);
 	      error =
 		locator_insert_force (thread_p, &class_hfid, &cls_oid, &oid, &recdes, true, SINGLE_ROW_INSERT,
 				      &parent_scan_cache, &force_count, DB_PARTITIONED_CLASS, &pcontext, NULL,
 				      UPDATE_INPLACE_OLD_MVCCID, NULL, false, false);
+
+	      thread_p->no_supplemental_log = false;
+
 	      if (error != NO_ERROR)
 		{
 		  goto exit;
@@ -13541,7 +13495,7 @@ locator_mvcc_reeval_scan_filters (THREAD_ENTRY * thread_p, const OID * oid, HEAP
 
   if (mvcc_cond_reeval->rest_attrs->num_attrs != 0)
     {
-      if (heap_attrinfo_read_dbvalues (thread_p, oid_inst, recdesp, NULL, mvcc_cond_reeval->rest_attrs->attr_cache) !=
+      if (heap_attrinfo_read_dbvalues (thread_p, oid_inst, recdesp, mvcc_cond_reeval->rest_attrs->attr_cache) !=
 	  NO_ERROR)
 	{
 	  ev_res = V_ERROR;
@@ -13592,7 +13546,7 @@ locator_mvcc_reevaluate_filters (THREAD_ENTRY * thread_p, MVCC_SCAN_REEV_DATA * 
   filter = mvcc_reev_data->range_filter;
   if (filter != NULL && filter->scan_pred != NULL && filter->scan_pred->pred_expr != NULL)
     {
-      if (heap_attrinfo_read_dbvalues (thread_p, oid, recdes, NULL, filter->scan_attrs->attr_cache) != NO_ERROR)
+      if (heap_attrinfo_read_dbvalues (thread_p, oid, recdes, filter->scan_attrs->attr_cache) != NO_ERROR)
 	{
 	  return V_ERROR;
 	}
@@ -13608,7 +13562,7 @@ locator_mvcc_reevaluate_filters (THREAD_ENTRY * thread_p, MVCC_SCAN_REEV_DATA * 
   filter = mvcc_reev_data->key_filter;
   if (filter != NULL && filter->scan_pred != NULL && filter->scan_pred->pred_expr != NULL)
     {
-      if (heap_attrinfo_read_dbvalues (thread_p, oid, recdes, NULL, filter->scan_attrs->attr_cache) != NO_ERROR)
+      if (heap_attrinfo_read_dbvalues (thread_p, oid, recdes, filter->scan_attrs->attr_cache) != NO_ERROR)
 	{
 	  return V_ERROR;
 	}
@@ -13715,7 +13669,7 @@ locator_multi_insert_force (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oi
   std::vector<VPID> heap_pages_array;
   RECDES local_record;
   bool has_BU_lock = lock_has_lock_on_object (class_oid, oid_Root_class_oid, BU_LOCK);
-  size_t record_overhead = spage_slot_size ();
+  size_t record_overhead = SPAGE_SLOT_SIZE;
 
   // Early-out
   if (recdes.size () == 0)
@@ -13837,7 +13791,7 @@ locator_multi_insert_force (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oi
   // Log the postpone operation
   heap_log_postpone_heap_append_pages (thread_p, hfid, class_oid, heap_pages_array);
 
-  return NO_ERROR;
+  return error_code;
 }
 
 bool
@@ -13852,3 +13806,9 @@ has_errors_filtered_for_insert (std::vector<int> error_filter_array)
   return false;
 }
 // *INDENT-ON*
+
+void
+xsynonym_remove_xasl_by_oid (THREAD_ENTRY * thread_p, OID * oidp)
+{
+  xcache_remove_by_oid (thread_p, oidp);
+}

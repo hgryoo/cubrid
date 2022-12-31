@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -703,10 +702,12 @@ def_class_internal (const char *name, int class_type)
 
   if (sm_check_name (name))
     {
-      type = pr_find_type (name);
+      const char *class_name = sm_remove_qualifier_name (name);
+
+      type = pr_find_type (class_name);
       if (type != NULL)
 	{
-	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SM_CLASS_WITH_PRIM_NAME, 1, name);
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SM_CLASS_WITH_PRIM_NAME, 1, class_name);
 	}
       else
 	{
@@ -1559,9 +1560,23 @@ smt_add_constraint_to_property (SM_TEMPLATE * template_, SM_CONSTRAINT_TYPE type
       goto end;
     }
 
-  if (classobj_put_index (&template_->properties, type, constraint_name, atts, asc_desc, attr_prefix_length, NULL,
-			  filter_index, fk_info, shared_cons_name, function_index, comment, index_status, true)
-      != NO_ERROR)
+  // Declare and use a temporary variable to match the prototype of the classobj_put_index() function.
+  SM_CLASS_CONSTRAINT con;
+
+  con.type = type;
+  con.name = constraint_name;
+  con.attributes = atts;
+  con.asc_desc = (int *) asc_desc;
+  con.attrs_prefix_length = (int *) attr_prefix_length;
+  con.filter_predicate = filter_index;
+  con.func_index_info = function_index;
+  con.comment = comment;
+  con.index_status = index_status;
+  con.index_btid = BTID_INITIALIZER;
+  con.fk_info = NULL;
+  con.shared_cons_name = NULL;
+
+  if (classobj_put_index (&template_->properties, &con, NULL, fk_info, shared_cons_name, true) != NO_ERROR)
     {
       ASSERT_ERROR_AND_SET (error);
     }
@@ -1571,6 +1586,39 @@ end:
 
   return error;
 }
+
+
+static int
+smt_check_type_collation_match_4_fk (SM_ATTRIBUTE * attr1, SM_ATTRIBUTE * attr2)
+{
+  int error = NO_ERROR;
+
+  if (attr1->type->id != attr2->type->id
+      || (TP_TYPE_HAS_COLLATION (attr1->type->id)
+	  && TP_DOMAIN_COLLATION (attr1->domain) != TP_DOMAIN_COLLATION (attr2->domain)))
+    {
+      char *tp_col_nm1, *tp_col_nm2;
+      char *ekind;
+      if (attr1->type->id != attr2->type->id)
+	{
+	  tp_col_nm1 = (char *) pr_type_from_id (attr1->type->id)->get_name ();
+	  tp_col_nm2 = (char *) pr_type_from_id (attr2->type->id)->get_name ();
+	  ekind = (char *) "data type";
+	}
+      else
+	{
+	  tp_col_nm1 = lang_get_collation (attr1->domain->collation_id)->coll.coll_name;
+	  tp_col_nm2 = lang_get_collation (attr2->domain->collation_id)->coll.coll_name;
+	  ekind = (char *) "collation";
+	}
+
+      ERROR5 (error, ER_FK_HAS_DEFFERENT_TYPE_WITH_PK, attr1->header.name, attr2->header.name, ekind, tp_col_nm1,
+	      tp_col_nm2);
+    }
+
+  return error;
+}
+
 
 /*
  * smt_check_foreign_key()
@@ -1708,11 +1756,8 @@ smt_check_foreign_key (SM_TEMPLATE * template_, const char *constraint_name, SM_
 	      goto err;
 	    }
 
-	  if (ref_attr->type->id != atts[j]->type->id
-	      || (TP_TYPE_HAS_COLLATION (ref_attr->type->id)
-		  && TP_DOMAIN_COLLATION (ref_attr->domain) != TP_DOMAIN_COLLATION (atts[j]->domain)))
+	  if ((error = smt_check_type_collation_match_4_fk (atts[j], ref_attr)) != NO_ERROR)
 	    {
-	      ERROR2 (error, ER_FK_HAS_DEFFERENT_TYPE_WITH_PK, atts[j]->header.name, ref_attr->header.name);
 	      goto err;
 	    }
 
@@ -1726,15 +1771,16 @@ smt_check_foreign_key (SM_TEMPLATE * template_, const char *constraint_name, SM_
 	      fk_info->ref_attrs[i] = fk_info->ref_attrs[j];
 	      fk_info->ref_attrs[j] = tmp;
 	    }
-
 	}
       else
 	{
-	  if (pk->attributes[i]->type->id != atts[i]->type->id
-	      || (TP_TYPE_HAS_COLLATION (atts[i]->type->id)
-		  && TP_DOMAIN_COLLATION (pk->attributes[i]->domain) != TP_DOMAIN_COLLATION (atts[i]->domain)))
+	  /*  This is the case where there is only a referenced table name and a specific column name is omitted.
+	   **  ex) create table tbl (id char(3) not null  PRIMARY KEY);
+	   **      create table tf_tbl (f_id int references tbl); 
+	   **  In this case, the PK column name is used.
+	   */
+	  if ((error = smt_check_type_collation_match_4_fk (atts[i], pk->attributes[i])) != NO_ERROR)
 	    {
-	      ERROR2 (error, ER_FK_HAS_DEFFERENT_TYPE_WITH_PK, atts[i]->header.name, pk->attributes[i]->header.name);
 	      goto err;
 	    }
 	}
@@ -2320,11 +2366,11 @@ smt_add_method_any (SM_TEMPLATE * template_, const char *name, const char *funct
 	{
 	  if (template_->name != NULL)
 	    {
-	      sprintf (iname, "%s_%s", template_->name, name);
+	      sprintf (iname, "%s_%s", sm_remove_qualifier_name (template_->name), name);
 	    }
 	  else if (template_->op != NULL)
 	    {
-	      sprintf (iname, "%s_%s", sm_get_ch_name (template_->op), name);
+	      sprintf (iname, "%s_%s", sm_remove_qualifier_name (sm_get_ch_name (template_->op)), name);
 	    }
 	  else
 	    {
@@ -4424,10 +4470,13 @@ smt_change_attribute_w_dflt_w_order (DB_CTMPL * def, const char *name, const cha
 	}
     }
 
-  error = smt_set_attribute_on_update (def, ((new_name != NULL) ? new_name : name), is_class_attr, on_update_expr);
-  if (error != NO_ERROR)
+  if (on_update_expr != DB_DEFAULT_NONE)
     {
-      return error;
+      error = smt_set_attribute_on_update (def, ((new_name != NULL) ? new_name : name), is_class_attr, on_update_expr);
+      if (error != NO_ERROR)
+	{
+	  return error;
+	}
     }
 
   /* change original default : continue only for normal attributes */

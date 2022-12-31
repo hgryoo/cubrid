@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -27,6 +26,10 @@
 
 #include "config.h"
 
+#if defined (WINDOWS)
+#include <io.h>
+#endif
+#include <filesystem>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -58,6 +61,8 @@
 #include "porting.h"
 #include "error_manager.h"
 #include "connection_globals.h"
+#include "filesys.hpp"
+#include "filesys_temp.hpp"
 #include "memory_alloc.h"
 #include "system_parameter.h"
 #include "environment_variable.h"
@@ -94,17 +99,11 @@ static CSS_CONN_ENTRY *css_Conn_anchor = NULL;
 static int css_Client_id = 0;
 
 static void css_initialize_conn (CSS_CONN_ENTRY * conn, SOCKET fd);
-static void css_close_conn (CSS_CONN_ENTRY * conn);
 static void css_dealloc_conn (CSS_CONN_ENTRY * conn);
 
 static int css_read_header (CSS_CONN_ENTRY * conn, NET_HEADER * local_header);
-static CSS_CONN_ENTRY *css_common_connect (const char *host_name, CSS_CONN_ENTRY * conn, int connect_type,
-					   const char *server_name, int server_name_length, int port, int timeout,
-					   unsigned short *rid, bool send_magic);
 static CSS_CONN_ENTRY *css_server_connect (char *host_name, CSS_CONN_ENTRY * conn, char *server_name,
 					   unsigned short *rid);
-static CSS_CONN_ENTRY *css_server_connect_part_two (char *host_name, CSS_CONN_ENTRY * conn, int port_id,
-						    unsigned short *rid);
 static int css_return_queued_data (CSS_CONN_ENTRY * conn, unsigned short request_id, char **buffer, int *buffer_size,
 				   int *rc);
 static int css_return_queued_request (CSS_CONN_ENTRY * conn, unsigned short *rid, int *request, int *buffer_size);
@@ -149,6 +148,7 @@ css_initialize_conn (CSS_CONN_ENTRY * conn, SOCKET fd)
   conn->error_queue = NULL;
   conn->set_tran_index (NULL_TRAN_INDEX);
   conn->invalidate_snapshot = 1;
+  conn->in_method = false;
   conn->db_error = 0;
   conn->cnxn = NULL;
 }
@@ -178,7 +178,7 @@ css_make_conn (SOCKET fd)
  *   return: void
  *   conn(in):
  */
-static void
+void
 css_close_conn (CSS_CONN_ENTRY * conn)
 {
   if (conn && !IS_INVALID_SOCKET (conn->fd))
@@ -331,11 +331,25 @@ css_send_close_request (CSS_CONN_ENTRY * conn)
       header.type = htonl (CLOSE_TYPE);
       header.transaction_id = htonl (conn->get_tran_index ());
       flags = 0;
-      if (conn->invalidate_snapshot)
+
+  /**
+   * FIXME!!
+   * make NET_HEADER_FLAG_INVALIDATE_SNAPSHOT be enabled always due to CBRD-24157
+   *
+   * flags was mis-readed at css_read_header() and fixed at CBRD-24118.
+   * But The side effects described in CBRD-24157 occurred.
+   */
+      if (true)			// if (conn->invalidate_snapshot)
 	{
 	  flags |= NET_HEADER_FLAG_INVALIDATE_SNAPSHOT;
 	}
-      header.flags = ntohs (flags);
+
+      if (conn->in_method)
+	{
+	  flags |= NET_HEADER_FLAG_METHOD_MODE;
+	}
+
+      header.flags = htons (flags);
       header.db_error = htonl (conn->db_error);
       /* timeout in milli-second in css_net_send() */
       css_net_send (conn, (char *) &header, sizeof (NET_HEADER), -1);
@@ -379,7 +393,8 @@ css_read_header (CSS_CONN_ENTRY * conn, NET_HEADER * local_header)
 
   conn->set_tran_index (ntohl (local_header->transaction_id));
   flags = ntohs (local_header->flags);
-  conn->invalidate_snapshot = flags | NET_HEADER_FLAG_INVALIDATE_SNAPSHOT ? 1 : 0;
+  conn->invalidate_snapshot = flags & NET_HEADER_FLAG_INVALIDATE_SNAPSHOT ? 1 : 0;
+  conn->in_method = flags & NET_HEADER_FLAG_METHOD_MODE ? true : false;
   conn->db_error = (int) ntohl (local_header->db_error);
 
   return rc;
@@ -711,7 +726,7 @@ begin:
  *   timeout(in): timeout in seconds
  *   rid(out):
  */
-static CSS_CONN_ENTRY *
+CSS_CONN_ENTRY *
 css_common_connect (const char *host_name, CSS_CONN_ENTRY * conn, int connect_type, const char *server_name,
 		    int server_name_length, int port, int timeout, unsigned short *rid, bool send_magic)
 {
@@ -796,7 +811,7 @@ css_server_connect (char *host_name, CSS_CONN_ENTRY * conn, char *server_name, u
  *   port_id(in):
  *   rid(in):
  */
-static CSS_CONN_ENTRY *
+CSS_CONN_ENTRY *
 css_server_connect_part_two (char *host_name, CSS_CONN_ENTRY * conn, int port_id, unsigned short *rid)
 {
   int reason = -1, buffer_size;
@@ -862,7 +877,7 @@ css_connect_to_master_server (int master_port_id, const char *server_name, int n
   int server_port_id;
   int connection_protocol;
 #if !defined(WINDOWS)
-  char *pname;
+  std::string pname;
   int datagram_fd, socket_fd;
 #endif
 
@@ -954,35 +969,35 @@ css_connect_to_master_server (int master_port_id, const char *server_name, int n
 #else /* WINDOWS */
       /* send the "pathname" for the datagram */
       /* be sure to open the datagram first.  */
-      pname = tempnam (NULL, "csql");
-      if (pname)
+      pname = std::filesystem::temp_directory_path ();
+      pname += "/csql_tcp_setup_server" + std::to_string (getpid ());
+      (void) unlink (pname.c_str ());	// make sure file is deleted
+
+      if (!css_tcp_setup_server_datagram (pname.c_str (), &socket_fd))
 	{
-	  if (css_tcp_setup_server_datagram (pname, &socket_fd)
-	      && css_send_data (conn, rid, pname, strlen (pname) + 1) == NO_ERRORS
-	      && css_tcp_listen_server_datagram (socket_fd, &datagram_fd))
-	    {
-	      (void) unlink (pname);
-	      /* don't use free_and_init on pname since it came from tempnam() */
-	      free (pname);
-	      css_free_conn (conn);
-	      close (socket_fd);
-	      return (css_make_conn (datagram_fd));
-	    }
-	  else
-	    {
-	      /* don't use free_and_init on pname since it came from tempnam() */
-	      free (pname);
-	      er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_ERROR_DURING_SERVER_CONNECT, 1,
-				   server_name);
-	      goto fail_end;
-	    }
-	}
-      else
-	{
-	  /* Could not create the temporary file */
+	  (void) unlink (pname.c_str ());
 	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_ERROR_DURING_SERVER_CONNECT, 1, server_name);
 	  goto fail_end;
 	}
+      if (css_send_data (conn, rid, pname.c_str (), pname.length () + 1) != NO_ERRORS)
+	{
+	  (void) unlink (pname.c_str ());
+	  close (socket_fd);
+	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_ERROR_DURING_SERVER_CONNECT, 1, server_name);
+	  goto fail_end;
+	}
+      if (!css_tcp_listen_server_datagram (socket_fd, &datagram_fd))
+	{
+	  (void) unlink (pname.c_str ());
+	  close (socket_fd);
+	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_ERROR_DURING_SERVER_CONNECT, 1, server_name);
+	  goto fail_end;
+	}
+      // success
+      (void) unlink (pname.c_str ());
+      css_free_conn (conn);
+      close (socket_fd);
+      return (css_make_conn (datagram_fd));
 #endif /* WINDOWS */
     }
 
@@ -1340,6 +1355,7 @@ css_return_queued_data (CSS_CONN_ENTRY * conn, unsigned short request_id, char *
   *rc = data_q_entry_p->rc;
   conn->set_tran_index (data_q_entry_p->transaction_id);
   conn->invalidate_snapshot = data_q_entry_p->invalidate_snapshot;
+  conn->in_method = data_q_entry_p->in_method;
   conn->db_error = data_q_entry_p->db_error;
   css_queue_remove_header_entry_ptr (&conn->data_queue, data_q_entry_p);
 
@@ -1443,6 +1459,7 @@ css_return_queued_request (CSS_CONN_ENTRY * conn, unsigned short *rid, int *requ
   *buffer_size = ntohl (buffer->buffer_size);
   conn->set_tran_index (request_q_entry_p->transaction_id);
   conn->invalidate_snapshot = request_q_entry_p->invalidate_snapshot;
+  conn->in_method = request_q_entry_p->in_method;
   conn->db_error = request_q_entry_p->db_error;
 
   /* This will remove both the entry and the buffer */

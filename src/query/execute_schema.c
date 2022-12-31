@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -84,6 +83,7 @@
 
 #define QUERY_MAX_SIZE	1024 * 1024
 #define MAX_FILTER_PREDICATE_STRING_LENGTH 255
+#define MAX_FUNCTION_EXPRESSION_STRING_LENGTH 1024
 
 typedef enum
 {
@@ -235,11 +235,8 @@ static int do_alter_change_auto_increment (PARSER_CONTEXT * const parser, PT_NOD
 static int do_rename_internal (const char *const old_name, const char *const new_name);
 static DB_CONSTRAINT_TYPE get_reverse_unique_index_type (const bool is_reverse, const bool is_unique);
 static int create_or_drop_index_helper (PARSER_CONTEXT * parser, const char *const constraint_name,
-					const bool is_reverse, const bool is_unique, PT_NODE * spec,
-					PT_NODE * column_names, PT_NODE * column_prefix_length,
-					PT_NODE * filter_predicate, int func_index_pos, int func_index_args_count,
-					PT_NODE * function_expr, PT_NODE * comment, DB_OBJECT * const obj,
-					SM_INDEX_STATUS index_status, DO_INDEX do_index);
+					const bool is_reverse, const bool is_unique,
+					const PT_INDEX_INFO * idx_info, DB_OBJECT * const obj, DO_INDEX do_index);
 static int update_locksets_for_multiple_rename (const char *class_name, int *num_mops, MOP * mop_set, int *num_names,
 						char **name_set, bool error_on_misssing_class);
 static int acquire_locks_for_multiple_rename (const PT_NODE * statement);
@@ -1536,9 +1533,8 @@ do_alter_clause_drop_index (PARSER_CONTEXT * const parser, PT_NODE * const alter
     }
 
   error_code =
-    create_or_drop_index_helper (parser, alter->info.alter.constraint_list->info.name.original, is_reverse,
-				 is_unique, NULL, NULL, NULL, NULL, -1, 0, NULL, NULL, obj,
-				 SM_NORMAL_INDEX, DO_INDEX_DROP);
+    create_or_drop_index_helper (parser, alter->info.alter.constraint_list->info.name.original, is_reverse, is_unique,
+				 NULL, obj, DO_INDEX_DROP);
   return error_code;
 }
 
@@ -2486,7 +2482,17 @@ acquire_locks_for_multiple_rename (const PT_NODE * statement)
 
       for (i = 0; i < num_names; i++)
 	{
-	  if (strcmp (name_set[i], old_name) == 0)
+	  /*
+	   * Check if old_name to be changed next is in the list of new_name that has been changed before.
+	   *   - e.g. rename table a as b, B as c, C as a;
+	   *     1. dba.b vs dba.B
+	   *     2. dba.b vs dba.C, dba.c vs dba.C
+	   *
+	   *     ERROR: Unknown class "b".
+	   *
+	   * Changed comparison function to pt_str_compare() function to be case insensitive.
+	   */
+	  if (pt_str_compare (name_set[i], old_name, CASE_INSENSITIVE) == 0)
 	    {
 	      found = true;
 	      break;
@@ -2585,7 +2591,7 @@ error_exit:
  *   statement(in): Parse tree of a rename statement
  */
 int
-do_rename (const PARSER_CONTEXT * parser, const PT_NODE * statement)
+do_rename (PARSER_CONTEXT * parser, PT_NODE * statement)
 {
   int error = NO_ERROR;
   const PT_NODE *current_rename = NULL;
@@ -2612,6 +2618,38 @@ do_rename (const PARSER_CONTEXT * parser, const PT_NODE * statement)
     {
       const char *old_name = current_rename->info.rename.old_name->info.name.original;
       const char *new_name = current_rename->info.rename.new_name->info.name.original;
+
+      /* We cannot change the schema of a class by using synonym names. */
+      if (db_find_synonym (old_name) != NULL)
+	{
+	  PT_ERRORmf (parser, statement, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_CLASS_DOES_NOT_EXIST, old_name);
+	  goto error_exit;
+	}
+      else
+	{
+	  /* db_find_synonym () == NULL */
+	  ASSERT_ERROR_AND_SET (error);
+
+	  if (er_errid () == ER_SYNONYM_NOT_EXIST)
+	    {
+	      er_clear ();
+	      error = NO_ERROR;
+	    }
+	  else
+	    {
+	      goto error_exit;
+	    }
+	}
+
+      const char *old_qualifier_name = pt_get_qualifier_name (parser, current_rename->info.rename.old_name);
+      const char *new_qualifier_name = pt_get_qualifier_name (parser, current_rename->info.rename.new_name);
+
+      if (old_qualifier_name && new_qualifier_name
+	  && intl_identifier_casecmp (old_qualifier_name, new_qualifier_name) != 0)
+	{
+	  ERROR_SET_ERROR (error, ER_SM_RENAME_CANT_ALTER_OWNER);
+	  goto error_exit;
+	}
 
       error = do_rename_internal (old_name, new_name);
       if (error != NO_ERROR)
@@ -2685,35 +2723,22 @@ get_reverse_unique_index_type (const bool is_reverse, const bool is_unique)
  *                        column_names must be non-NULL in this case.
  *   is_reverse(in):
  *   is_unique(in):
- *   column_names(in): Can be NULL if dropping a constraint and providing the
- *                     constraint name.
- *   column_prefix_length(in):
- *   where_predicate(in):
- *   func_index_pos(in):
- *   func_index_args_count(in):
- *   function_expr(in):
- *   comment(in): index comment
+ *   idx_info(in): NULL if dropping a index
  *   obj(in): Class object
  *   do_index(in) : The operation to be performed (creating or dropping)
  */
 static int
 create_or_drop_index_helper (PARSER_CONTEXT * parser, const char *const constraint_name, const bool is_reverse,
-			     const bool is_unique, PT_NODE * spec, PT_NODE * column_names,
-			     PT_NODE * column_prefix_length, PT_NODE * where_predicate, int func_index_pos,
-			     int func_index_args_count, PT_NODE * function_expr, PT_NODE * comment,
-			     DB_OBJECT * const obj, SM_INDEX_STATUS index_status, DO_INDEX do_index)
+			     const bool is_unique, const PT_INDEX_INFO * idx_info, DB_OBJECT * const obj,
+			     DO_INDEX do_index)
 {
   int error = NO_ERROR;
-  int i = 0, nnames = 0;
+  int nnames = 0;
   DB_CONSTRAINT_TYPE ctype = DB_CONSTRAINT_NONE;
-  const PT_NODE *c = NULL, *n = NULL;
   char **attnames = NULL;
   int *asc_desc = NULL;
   int *attrs_prefix_length = NULL;
   char *cname = NULL;
-  char const *colname = NULL;
-  const char *comment_str = NULL;
-  bool mysql_index_name = false;
   bool free_packing_buff = false;
   PRED_EXPR_WITH_CONTEXT *filter_predicate = NULL;
   SM_PREDICATE_INFO pred_index_info = { NULL, NULL, 0, NULL, 0 };
@@ -2732,47 +2757,49 @@ create_or_drop_index_helper (PARSER_CONTEXT * parser, const char *const constrai
       return ER_NOT_ALLOWED_ACCESS_TO_PARTITION;
     }
 
-  if (comment != NULL)
+  ctype = get_reverse_unique_index_type (is_reverse, is_unique);
+
+  char *attname_tmp = NULL;
+  if (do_index != DO_INDEX_CREATE)
     {
-      assert (comment->node_type == PT_VALUE);
-      comment_str = (char *) PT_VALUE_GET_BYTES (comment);
+      assert (constraint_name != NULL);
+      nnames = 0;
+      attnames = &attname_tmp;
+      attnames[0] = NULL;
     }
-
-  nnames = pt_length_of_list (column_names);
-
-  if (do_index == DO_INDEX_CREATE && nnames == 1 && column_prefix_length)
+  else
     {
-      n = column_names->info.sort_spec.expr;
-      if (n)
+      assert (idx_info);
+      nnames = pt_length_of_list (idx_info->column_names);
+
+      if (nnames == 1 && idx_info->prefix_length)
 	{
-	  colname = n->info.name.original;
+	  if (idx_info->column_names->info.sort_spec.expr)
+	    {
+	      char const *colname = idx_info->column_names->info.sort_spec.expr->info.name.original;
+	      if (colname && (sm_att_unique_constrained (obj, colname) || sm_att_fk_constrained (obj, colname)))
+		{
+		  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SM_INDEX_PREFIX_LENGTH_ON_UNIQUE_FOREIGN, 0);
+		  return ER_SM_INDEX_PREFIX_LENGTH_ON_UNIQUE_FOREIGN;
+		}
+	    }
 	}
 
-      if (colname && (sm_att_unique_constrained (obj, colname) || sm_att_fk_constrained (obj, colname)))
+      attnames = (char **) malloc ((nnames + 1) * sizeof (const char *));
+      if (attnames == NULL)
 	{
-	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SM_INDEX_PREFIX_LENGTH_ON_UNIQUE_FOREIGN, 0);
-
-	  return ER_SM_INDEX_PREFIX_LENGTH_ON_UNIQUE_FOREIGN;
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, (nnames + 1) * sizeof (const char *));
+	  return ER_OUT_OF_VIRTUAL_MEMORY;
 	}
-    }
 
-  attnames = (char **) malloc ((nnames + 1) * sizeof (const char *));
-  if (attnames == NULL)
-    {
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, (nnames + 1) * sizeof (const char *));
-      return ER_OUT_OF_VIRTUAL_MEMORY;
-    }
+      asc_desc = (int *) malloc ((nnames) * sizeof (int));
+      if (asc_desc == NULL)
+	{
+	  free_and_init (attnames);
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, nnames * sizeof (int));
+	  return ER_OUT_OF_VIRTUAL_MEMORY;
+	}
 
-  asc_desc = (int *) malloc ((nnames) * sizeof (int));
-  if (asc_desc == NULL)
-    {
-      free_and_init (attnames);
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, nnames * sizeof (int));
-      return ER_OUT_OF_VIRTUAL_MEMORY;
-    }
-
-  if (do_index == DO_INDEX_CREATE)
-    {
       attrs_prefix_length = (int *) malloc ((nnames) * sizeof (int));
       if (attrs_prefix_length == NULL)
 	{
@@ -2781,49 +2808,43 @@ create_or_drop_index_helper (PARSER_CONTEXT * parser, const char *const constrai
 	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, nnames * sizeof (int));
 	  return ER_OUT_OF_VIRTUAL_MEMORY;
 	}
-    }
 
-  for (c = column_names, i = 0; c != NULL; c = c->next, i++)
-    {
-      asc_desc[i] = c->info.sort_spec.asc_or_desc == PT_ASC ? 0 : 1;
-      /* column name node */
-      n = c->info.sort_spec.expr;
-      attnames[i] = (char *) n->info.name.original;
-      if (do_index == DO_INDEX_CREATE)
+      int i = 0;
+      const PT_NODE *c = idx_info->column_names;
+      while (c != NULL)
 	{
+	  asc_desc[i] = c->info.sort_spec.asc_or_desc == PT_ASC ? 0 : 1;
+	  /* column name node */
+	  attnames[i] = (char *) c->info.sort_spec.expr->info.name.original;
 	  attrs_prefix_length[i] = -1;
+
+	  i++;
+	  c = c->next;
 	}
-    }
-  attnames[i] = NULL;
+      attnames[i] = NULL;
 
-  if (do_index == DO_INDEX_CREATE && nnames == 1 && attrs_prefix_length && column_prefix_length)
-    {
-      attrs_prefix_length[0] = column_prefix_length->info.value.data_value.i;
-    }
-
-  ctype = get_reverse_unique_index_type (is_reverse, is_unique);
-
-  if (prm_get_integer_value (PRM_ID_COMPAT_MODE) == COMPAT_MYSQL && ctype == DB_CONSTRAINT_INDEX
-      && constraint_name != NULL && nnames == 0)
-    {
-      mysql_index_name = true;
-    }
-
-  if (function_expr)
-    {
-      pt_enter_packing_buf ();
-      free_packing_buff = true;
-      func_index_info = pt_node_to_function_index (parser, spec, function_expr, do_index);
-      if (func_index_info == NULL)
+      if (nnames == 1 && idx_info->prefix_length)
 	{
-	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, sizeof (SM_FUNCTION_INFO));
-	  error = ER_FAILED;
-	  goto end;
+	  attrs_prefix_length[0] = idx_info->prefix_length->info.value.data_value.i;
 	}
-      else
+
+      if (idx_info->function_expr)
 	{
-	  func_index_info->col_id = func_index_pos;
-	  func_index_info->attr_index_start = nnames - func_index_args_count;
+	  pt_enter_packing_buf ();
+	  free_packing_buff = true;
+	  func_index_info =
+	    pt_node_to_function_index (parser, idx_info->indexed_class, idx_info->function_expr, do_index);
+	  if (func_index_info == NULL)
+	    {
+	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, sizeof (SM_FUNCTION_INFO));
+	      error = ER_FAILED;
+	      goto end;
+	    }
+	  else
+	    {
+	      func_index_info->col_id = idx_info->func_pos;
+	      func_index_info->attr_index_start = nnames - idx_info->func_no_args;
+	    }
 	}
     }
 
@@ -2833,71 +2854,82 @@ create_or_drop_index_helper (PARSER_CONTEXT * parser, const char *const constrai
       assert (er_errid () != NO_ERROR);
       error = er_errid ();
     }
-  else
+  else if (do_index == DO_INDEX_CREATE)
     {
-      if (do_index == DO_INDEX_CREATE)
+      if (idx_info->where)
 	{
-	  if (where_predicate)
+	  PARSER_VARCHAR *filter_expr = NULL;
+	  unsigned int save_custom;
+
+	  /* free at parser_free_parser */
+	  /* make sure paren_type is 0 so parenthesis are not printed */
+	  idx_info->where->info.expr.paren_type = 0;
+	  save_custom = parser->custom_print;
+	  parser->custom_print |= PT_CHARSET_COLLATE_FULL;
+	  filter_expr = pt_print_bytes ((PARSER_CONTEXT *) parser, (PT_NODE *) idx_info->where);
+	  parser->custom_print = save_custom;
+	  if (filter_expr)
 	    {
-	      PARSER_VARCHAR *filter_expr = NULL;
-	      unsigned int save_custom;
-
-	      /* free at parser_free_parser */
-	      /* make sure paren_type is 0 so parenthesis are not printed */
-	      where_predicate->info.expr.paren_type = 0;
-	      save_custom = parser->custom_print;
-	      parser->custom_print |= PT_CHARSET_COLLATE_FULL;
-	      filter_expr = pt_print_bytes ((PARSER_CONTEXT *) parser, (PT_NODE *) where_predicate);
-	      parser->custom_print = save_custom;
-	      if (filter_expr)
+	      pred_index_info.pred_string = (char *) filter_expr->bytes;
+	      if (strlen (pred_index_info.pred_string) > MAX_FILTER_PREDICATE_STRING_LENGTH)
 		{
-		  pred_index_info.pred_string = (char *) filter_expr->bytes;
-		  if (strlen (pred_index_info.pred_string) > MAX_FILTER_PREDICATE_STRING_LENGTH)
-		    {
-		      error = ER_SM_INVALID_FILTER_PREDICATE_LENGTH;
-		      PT_ERRORmf ((PARSER_CONTEXT *) parser, where_predicate, MSGCAT_SET_ERROR,
-				  -(ER_SM_INVALID_FILTER_PREDICATE_LENGTH), MAX_FILTER_PREDICATE_STRING_LENGTH);
-		      goto end;
-		    }
-		}
-
-	      pt_enter_packing_buf ();
-	      free_packing_buff = true;
-	      filter_predicate =
-		pt_to_pred_with_context ((PARSER_CONTEXT *) parser, (PT_NODE *) where_predicate, (PT_NODE *) spec);
-	      if (filter_predicate)
-		{
-		  error =
-		    xts_map_filter_pred_to_stream (filter_predicate, &(pred_index_info.pred_stream),
-						   &(pred_index_info.pred_stream_size));
-		  if (error != NO_ERROR)
-		    {
-		      PT_ERRORm ((PARSER_CONTEXT *) parser, where_predicate, MSGCAT_SET_PARSER_RUNTIME,
-				 MSGCAT_RUNTIME_RESOURCES_EXHAUSTED);
-		      goto end;
-		    }
-		  pred_index_info.att_ids = filter_predicate->attrids_pred;
-		  pred_index_info.num_attrs = filter_predicate->num_attrs_pred;
-		  p_pred_index_info = &pred_index_info;
-		}
-	      else
-		{
-		  assert (er_errid () != NO_ERROR);
-		  error = er_errid ();
+		  error = ER_SM_INVALID_FILTER_PREDICATE_LENGTH;
+		  PT_ERRORmf ((PARSER_CONTEXT *) parser, idx_info->where, MSGCAT_SET_ERROR,
+			      -(ER_SM_INVALID_FILTER_PREDICATE_LENGTH), MAX_FILTER_PREDICATE_STRING_LENGTH);
 		  goto end;
 		}
 	    }
 
-	  assert (index_status != SM_NO_INDEX);
+	  pt_enter_packing_buf ();
+	  free_packing_buff = true;
+	  filter_predicate =
+	    pt_to_pred_with_context ((PARSER_CONTEXT *) parser, (PT_NODE *) idx_info->where,
+				     (PT_NODE *) idx_info->indexed_class);
+	  if (filter_predicate)
+	    {
+	      error =
+		xts_map_filter_pred_to_stream (filter_predicate, &(pred_index_info.pred_stream),
+					       &(pred_index_info.pred_stream_size));
+	      if (error != NO_ERROR)
+		{
+		  PT_ERRORm ((PARSER_CONTEXT *) parser, idx_info->where, MSGCAT_SET_PARSER_RUNTIME,
+			     MSGCAT_RUNTIME_RESOURCES_EXHAUSTED);
+		  goto end;
+		}
+	      pred_index_info.att_ids = filter_predicate->attrids_pred;
+	      pred_index_info.num_attrs = filter_predicate->num_attrs_pred;
+	      p_pred_index_info = &pred_index_info;
+	    }
+	  else
+	    {
+	      assert (er_errid () != NO_ERROR);
+	      error = er_errid ();
+	      goto end;
+	    }
+	}
 
-	  error = sm_add_constraint (obj, ctype, cname, (const char **) attnames, asc_desc, attrs_prefix_length, false,
-				     p_pred_index_info, func_index_info, comment_str, index_status);
-	}
-      else
+      assert (idx_info->index_status != SM_NO_INDEX);
+
+      const char *comment_str = NULL;
+      if (idx_info->comment != NULL)
 	{
-	  assert (do_index == DO_INDEX_DROP);
-	  error = sm_drop_constraint (obj, ctype, cname, (const char **) attnames, false, mysql_index_name);
+	  assert (idx_info->comment->node_type == PT_VALUE);
+	  comment_str = (char *) PT_VALUE_GET_BYTES (idx_info->comment);
 	}
+
+      error = sm_add_constraint (obj, ctype, cname, (const char **) attnames, asc_desc, attrs_prefix_length, false,
+				 p_pred_index_info, func_index_info, comment_str, idx_info->index_status);
+    }
+  else
+    {
+      assert (do_index == DO_INDEX_DROP);
+
+      bool mysql_index_name = false;
+      if (prm_get_integer_value (PRM_ID_COMPAT_MODE) == COMPAT_MYSQL && ctype == DB_CONSTRAINT_INDEX)
+	{
+	  mysql_index_name = true;
+	}
+      error = sm_drop_constraint (obj, ctype, cname, (const char **) attnames, false, mysql_index_name);
     }
 
 end:
@@ -2922,7 +2954,10 @@ end:
       pt_exit_packing_buf ();
     }
 
-  free_and_init (attnames);
+  if (attnames != &attname_tmp)
+    {
+      free_and_init (attnames);
+    }
   free_and_init (asc_desc);
   if (attrs_prefix_length)
     {
@@ -2972,13 +3007,8 @@ do_create_index (PARSER_CONTEXT * parser, const PT_NODE * statement)
       ib_thread_count = statement->info.index.ib_threads;
     }
 
-  error =
-    create_or_drop_index_helper (parser, index_name, statement->info.index.reverse, statement->info.index.unique,
-				 statement->info.index.indexed_class, statement->info.index.column_names,
-				 statement->info.index.prefix_length, statement->info.index.where,
-				 statement->info.index.func_pos, statement->info.index.func_no_args,
-				 statement->info.index.function_expr, statement->info.index.comment, obj,
-				 statement->info.index.index_status, DO_INDEX_CREATE);
+  error = create_or_drop_index_helper (parser, index_name, statement->info.index.reverse, statement->info.index.unique,
+				       &statement->info.index, obj, DO_INDEX_CREATE);
   return error;
 }
 
@@ -3043,12 +3073,7 @@ do_drop_index (PARSER_CONTEXT * parser, const PT_NODE * statement)
       is_unique = statement->info.index.unique;
     }
 
-  error_code =
-    create_or_drop_index_helper (parser, index_name, is_reverse, is_unique,
-				 statement->info.index.indexed_class, statement->info.index.column_names, NULL, NULL,
-				 statement->info.index.func_pos, statement->info.index.func_no_args,
-				 statement->info.index.function_expr, NULL, obj, statement->info.index.index_status,
-				 DO_INDEX_DROP);
+  error_code = create_or_drop_index_helper (parser, index_name, is_reverse, is_unique, NULL, obj, DO_INDEX_DROP);
 
   return error_code;
 }
@@ -3675,6 +3700,7 @@ do_create_partition (PARSER_CONTEXT * parser, PT_NODE * alter, SM_PARTITION_ALTE
   size_t buf_size;
   SM_CLASS *smclass;
   bool reuse_oid = false;
+  TDE_ALGORITHM tde_algo = TDE_ALGORITHM_NONE;
 
   CHECK_MODIFICATION_ERROR ();
 
@@ -3745,6 +3771,7 @@ do_create_partition (PARSER_CONTEXT * parser, PT_NODE * alter, SM_PARTITION_ALTE
     }
 
   reuse_oid = (smclass->flags & SM_CLASSFLAG_REUSE_OID) ? true : false;
+  tde_algo = (TDE_ALGORITHM) smclass->tde_algorithm;
 
   parttemp->info.create_entity.entity_type = PT_CLASS;
   parttemp->info.create_entity.entity_name = parser_new_node (parser, PT_NAME);
@@ -3881,8 +3908,17 @@ do_create_partition (PARSER_CONTEXT * parser, PT_NODE * alter, SM_PARTITION_ALTE
 		  goto end_create;
 		}
 	    }
+	  if (tde_algo != TDE_ALGORITHM_NONE)
+	    {
+	      error = sm_set_class_tde_algorithm (newpci->obj, tde_algo);
+	      if (error != NO_ERROR)
+		{
+		  goto end_create;
+		}
+	    }
 
-	  if (locator_create_heap_if_needed (newpci->obj, reuse_oid) == NULL)
+	  if (locator_create_heap_if_needed (newpci->obj, reuse_oid) == NULL
+	      || locator_flush_class (newpci->obj) != NO_ERROR)
 	    {
 	      error = (er_errid () != NO_ERROR) ? er_errid () : ER_FAILED;
 	      goto end_create;
@@ -3906,6 +3942,14 @@ do_create_partition (PARSER_CONTEXT * parser, PT_NODE * alter, SM_PARTITION_ALTE
 		}
 
 	      hashtail = newparts;
+	    }
+	  if (tde_algo != TDE_ALGORITHM_NONE)
+	    {
+	      error = file_apply_tde_to_class_files (&newpci->obj->oid_info.oid);
+	      if (error != NO_ERROR)
+		{
+		  goto end_create;
+		}
 	    }
 	  error = NO_ERROR;
 	}
@@ -3948,7 +3992,7 @@ do_create_partition (PARSER_CONTEXT * parser, PT_NODE * alter, SM_PARTITION_ALTE
 	      goto end_create;
 	    }
 
-	  if (alter->info.alter.code == PT_REORG_PARTITION && parts->partition_pruned)
+	  if (alter->info.alter.code == PT_REORG_PARTITION && parts->flag.partition_pruned)
 	    {			/* reused partition */
 	      newpci->obj = ws_find_class (newpci->pname);
 	      if (newpci->obj == NULL)
@@ -4087,12 +4131,32 @@ do_create_partition (PARSER_CONTEXT * parser, PT_NODE * alter, SM_PARTITION_ALTE
 		  goto end_create;
 		}
 	    }
+	  if (tde_algo != TDE_ALGORITHM_NONE)
+	    {
+	      error = sm_set_class_tde_algorithm (newpci->obj, tde_algo);
+	      if (error != NO_ERROR)
+		{
+		  assert (er_errid () != NO_ERROR);
+		  error = er_errid ();
+		  goto end_create;
+		}
+	    }
 	  if (locator_create_heap_if_needed (newpci->obj, reuse_oid) == NULL
 	      || locator_flush_class (newpci->obj) != NO_ERROR)
 	    {
 	      assert (er_errid () != NO_ERROR);
 	      error = er_errid ();
 	      goto end_create;
+	    }
+	  if (tde_algo != TDE_ALGORITHM_NONE)
+	    {
+	      error = file_apply_tde_to_class_files (&newpci->obj->oid_info.oid);
+	      if (error != NO_ERROR)
+		{
+		  assert (er_errid () != NO_ERROR);
+		  error = er_errid ();
+		  goto end_create;
+		}
 	    }
 
 	  error = NO_ERROR;
@@ -4527,6 +4591,8 @@ do_rename_partition (MOP old_class, const char *newname)
   int newlen;
   int error;
   char new_subname[PARTITION_VARCHAR_LEN + 1], *ptr;
+  char expr[DB_MAX_PARTITION_EXPR_LENGTH] = { '\0' };
+  char *expr_ptr = NULL;
 
   if (!old_class || !newname)
     {
@@ -4535,11 +4601,21 @@ do_rename_partition (MOP old_class, const char *newname)
 
   newlen = strlen (newname);
 
-  error = au_fetch_class (old_class, &smclass, AU_FETCH_READ, AU_SELECT);
+  error = au_fetch_class (old_class, &smclass, AU_FETCH_UPDATE, AU_ALTER);
   if (error != NO_ERROR)
     {
       goto end_rename;
     }
+
+  /* The pexpr format is defined in the function pt_node_to_partition_info. */
+  strncpy (expr, smclass->partition->expr, DB_MAX_PARTITION_EXPR_LENGTH);
+  expr_ptr = strchr (expr, ']');	// skip select list
+  expr_ptr = strchr (expr_ptr + 1, '[');	// find table name
+  sprintf (expr_ptr, "[%s]", newname);
+
+  ws_free_string (smclass->partition->expr);
+  smclass->partition->expr = ws_copy_string (expr);
+  sm_flush_objects (old_class);
 
   for (objs = smclass->users; objs; objs = objs->next)
     {
@@ -4609,6 +4685,7 @@ do_redistribute_partitions_data (const char *classname, const char *keyname, cha
     {
       query_size = 0;
       query_size += 7;		/* 'UPDATE ' */
+      query_size += 28;		// ' /*+ NO_SUPPLEMENTAL_LOG */ ' 
       query_size += strlen (classname) + 2;
       query_size += 5;		/* ' SET ' */
       query_size += strlen (keyname) * 2 + 6;	/* [keyname]=[keyname]; */
@@ -4618,7 +4695,7 @@ do_redistribute_partitions_data (const char *classname, const char *keyname, cha
 	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, query_size + 1);
 	  return ER_FAILED;
 	}
-      sprintf (query_buf, "UPDATE [%s] SET [%s]=[%s];", classname, keyname, keyname);
+      sprintf (query_buf, "UPDATE /*+ NO_SUPPLEMENTAL_LOG */ [%s] SET [%s]=[%s];", classname, keyname, keyname);
 
       error = db_compile_and_execute_local (query_buf, &query_result, &query_error);
       if (error >= 0)
@@ -5385,7 +5462,7 @@ do_create_partition_constraint (PT_NODE * alter, SM_CLASS * root_class, SM_CLASS
 	{
 	  MOP subclass_op = parts->info.parts.name->info.name.db_object;
 
-	  if (alter_op == PT_REORG_PARTITION && parts->partition_pruned)
+	  if (alter_op == PT_REORG_PARTITION && parts->flag.partition_pruned)
 	    {
 	      continue;		/* reused partition */
 	    }
@@ -6352,7 +6429,7 @@ do_reorganize_partition_post (PARSER_CONTEXT * parser, PT_NODE * alter, SM_PARTI
   name = alter->info.alter.alter_clause.partition.parts;
   while (name)
     {
-      if (name->partition_pruned != 0)
+      if (name->flag.partition_pruned != 0)
 	{
 	  /* at least one partitions has been changed */
 	  update = true;
@@ -8461,6 +8538,7 @@ execute_create_select_query (PARSER_CONTEXT * parser, const char *const class_na
       error = ER_FAILED;
       goto error_exit;
     }
+
   insert_into =
     create_select_to_insert_into (parser, class_name, create_select_copy, create_select_action, query_columns);
   if (insert_into == NULL)
@@ -8546,13 +8624,17 @@ do_create_entity (PARSER_CONTEXT * parser, PT_NODE * node)
   PARSER_VARCHAR *comment = NULL;
   PT_NODE *tbl_opt_charset, *tbl_opt_coll, *cs_node, *coll_node;
   PT_NODE *tbl_opt_comment, *comment_node, *super_node;
+  PT_NODE *tbl_opt_encrypt, *encrypt_node;
   const char *comment_str = NULL;
   MOP super_class = NULL;
+  int tde_algo_opt = -1;
+  TDE_ALGORITHM tde_algo = TDE_ALGORITHM_NONE;
 
   CHECK_MODIFICATION_ERROR ();
 
   tbl_opt_charset = tbl_opt_coll = cs_node = coll_node = NULL;
   tbl_opt_comment = comment_node = NULL;
+  tbl_opt_encrypt = encrypt_node = NULL;
 
   class_name = node->info.create_entity.entity_name->info.name.original;
 
@@ -8564,10 +8646,48 @@ do_create_entity (PARSER_CONTEXT * parser, PT_NODE * node)
   create_select = node->info.create_entity.create_select;
   if (create_select != NULL)
     {
+      DB_QUERY_TYPE *column;
+
       error = pt_get_select_query_columns (parser, create_select, &query_columns);
       if (error != NO_ERROR)
 	{
 	  goto error_exit;
+	}
+
+      /* check for mis-creating string type with -1 precision */
+      for (column = query_columns; column != NULL; column = db_query_format_next (column))
+	{
+	  if (column->domain == NULL)
+	    {
+	      /*
+	       * this might be from dblink which has errors for column definition
+	       * the error code is not need to set at this point
+	       * because the error code is already set from dblink
+	       */
+	      error = ER_FAILED;
+	      goto error_exit;
+	    }
+
+	  switch (column->domain->type->id)
+	    {
+	    case DB_TYPE_VARCHAR:
+	      if (column->domain->precision == DB_DEFAULT_PRECISION)
+		{
+		  column->domain->precision = DB_MAX_VARCHAR_PRECISION;
+		}
+	      break;
+	    case DB_TYPE_VARNCHAR:
+	      if (column->domain->precision == DB_DEFAULT_PRECISION)
+		{
+		  column->domain->precision = DB_MAX_VARNCHAR_PRECISION;
+		}
+	      else if (column->domain->precision > DB_MAX_VARNCHAR_PRECISION)
+		{
+		  column->domain->precision = DB_MAX_VARNCHAR_PRECISION;
+		}
+	    default:
+	      break;
+	    }
 	}
     }
   assert (!(create_like != NULL && create_select != NULL));
@@ -8622,6 +8742,9 @@ do_create_entity (PARSER_CONTEXT * parser, PT_NODE * node)
 	      found_reuse_oid_option = true;
 	      reuse_oid = true;
 	      break;
+	    case PT_TABLE_OPTION_ENCRYPT:
+	      tbl_opt_encrypt = tbl_opt;
+	      break;
 	    case PT_TABLE_OPTION_DONT_REUSE_OID:
 	      found_reuse_oid_option = true;
 	      reuse_oid = false;
@@ -8637,6 +8760,18 @@ do_create_entity (PARSER_CONTEXT * parser, PT_NODE * node)
 	      break;
 	    default:
 	      break;
+	    }
+	}
+
+      if (tbl_opt_encrypt)
+	{
+	  int tde_loaded = 0;
+	  (void) tde_is_loaded (&tde_loaded);
+	  if (!tde_loaded)
+	    {
+	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_TDE_CIPHER_IS_NOT_LOADED, 0);
+	      error = er_errid ();
+	      goto error_exit;
 	    }
 	}
 
@@ -8798,6 +8933,18 @@ do_create_entity (PARSER_CONTEXT * parser, PT_NODE * node)
 	    {
 	      reuse_oid = true;
 	    }
+
+	  tde_algo = (TDE_ALGORITHM) source_class->tde_algorithm;
+	  if (tde_algo != TDE_ALGORITHM_NONE)
+	    {
+	      error = sm_set_class_tde_algorithm (class_obj, tde_algo);
+	      if (error != NO_ERROR)
+		{
+		  break;
+		}
+	      do_flush_class_mop = true;
+	    }
+
 	  if (source_class->comment)
 	    {
 	      error = sm_set_class_comment (class_obj, source_class->comment);
@@ -8822,6 +8969,31 @@ do_create_entity (PARSER_CONTEXT * parser, PT_NODE * node)
 	       * catalog information is incorrect under non-autocommit mode. */
 	      do_flush_class_mop = true;
 	    }
+	}
+      if (tbl_opt_encrypt)
+	{
+	  encrypt_node = tbl_opt_encrypt->info.table_option.val;
+	  assert (encrypt_node != NULL && encrypt_node->node_type == PT_VALUE
+		  && encrypt_node->type_enum == PT_TYPE_INTEGER);
+	  tde_algo_opt = encrypt_node->info.value.data_value.i;
+	  /*
+	   *  -1 means using deafult encryption algorithm.
+	   *  Other values but -1, TDE_ALGORITHM_AES, TDE_ALGORITHM_ARIA has been denied by parser.
+	   */
+	  if (tde_algo_opt == -1)
+	    {
+	      tde_algo = (TDE_ALGORITHM) prm_get_integer_value (PRM_ID_TDE_DEFAULT_ALGORITHM);
+	    }
+	  else
+	    {
+	      tde_algo = (TDE_ALGORITHM) tde_algo_opt;
+	    }
+	  error = sm_set_class_tde_algorithm (class_obj, tde_algo);
+	  if (error != NO_ERROR)
+	    {
+	      break;
+	    }
+	  do_flush_class_mop = true;
 	}
       error = sm_set_class_collation (class_obj, collation_id);
       if (error != NO_ERROR)
@@ -8932,6 +9104,15 @@ do_create_entity (PARSER_CONTEXT * parser, PT_NODE * node)
 	}
     }
 
+  if (tde_algo != TDE_ALGORITHM_NONE)
+    {
+      error = file_apply_tde_to_class_files (&class_obj->oid_info.oid);
+      if (error != NO_ERROR)
+	{
+	  goto error_exit;
+	}
+    }
+
   return error;
 
 error_exit:
@@ -8995,9 +9176,14 @@ do_recreate_renamed_class_indexes (const PARSER_CONTEXT * parser, const char *co
       return NO_ERROR;
     }
 
+  /* We can come here by renaming a view. In general, views have no constraints. If there are no constraints,
+   * NO_ERROR is returned before. However, views can have shared columns with a not null constraint.
+   * Renaming does not affect the not null constraint. So, even if the view has a not null constraint,
+   * change it so that an error does not occur here. I do not think there is a view with a constraint
+   * other than a not null constraint. Change the return value from ER_OBJ_NOT_A_CLASS to NO_ERROR. (In CBRD-24435) */
   if (class_->class_type != SM_CLASS_CT)
     {
-      return ER_OBJ_NOT_A_CLASS;
+      return NO_ERROR;
     }
 
   for (c = class_->constraints; c; c = c->next)
@@ -9243,15 +9429,16 @@ exit_on_error:
  *
  */
 
-static int truncate_class_name (const char *name);
+static int truncate_class_name (const char *name, const bool is_cascade);
 
 /*
  * truncate_class_name() - This static routine truncates a class by name.
  *   return: Error code
  *   name(in): Class name to truncate
+ *   is_cascade(in): whether to truncate cascade FK-referring classes
  */
 static int
-truncate_class_name (const char *name)
+truncate_class_name (const char *name, const bool is_cascade)
 {
   DB_OBJECT *class_mop;
 
@@ -9259,7 +9446,7 @@ truncate_class_name (const char *name)
 
   if (class_mop)
     {
-      return db_truncate_class (class_mop);
+      return db_truncate_class (class_mop, is_cascade);
     }
   else
     {
@@ -9282,9 +9469,11 @@ do_truncate (PARSER_CONTEXT * parser, PT_NODE * statement)
   PT_NODE *entity_spec = NULL;
   PT_NODE *entity = NULL;
   PT_NODE *entity_list = NULL;
+  bool is_cascade = false;
 
   CHECK_MODIFICATION_ERROR ();
 
+  is_cascade = statement->info.truncate.is_cascade;
   entity_spec = statement->info.truncate.spec;
   if (entity_spec == NULL)
     {
@@ -9311,7 +9500,7 @@ do_truncate (PARSER_CONTEXT * parser, PT_NODE * statement)
 
   for (entity = entity_list; entity != NULL; entity = entity->next)
     {
-      error = truncate_class_name (entity->info.name.original);
+      error = truncate_class_name (entity->info.name.original, is_cascade);
       if (error != NO_ERROR)
 	{
 	  if (error != ER_LK_UNILATERALLY_ABORTED)
@@ -10451,7 +10640,7 @@ do_change_att_schema_only (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NOD
 
   /* the serial property has not changed, we are only dealing with renaming */
   if (is_att_prop_set (attr_chg_prop->p[P_NAME], ATT_CHG_PROPERTY_DIFF)
-      && attribute->info.attr_def.auto_increment != NULL
+      && is_att_prop_set (attr_chg_prop->p[P_AUTO_INCR], ATT_CHG_PROPERTY_PRESENT_OLD)
       && !is_att_prop_set (attr_chg_prop->p[P_AUTO_INCR], ATT_CHG_PROPERTY_DIFF)
       && !is_att_prop_set (attr_chg_prop->p[P_AUTO_INCR], ATT_CHG_PROPERTY_LOST)
       && !is_att_prop_set (attr_chg_prop->p[P_AUTO_INCR], ATT_CHG_PROPERTY_GAINED))
@@ -10489,7 +10678,6 @@ do_change_att_schema_only (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NOD
     {
       MOP auto_increment_obj = NULL;
 
-      assert (attribute->info.attr_def.auto_increment != NULL);
       assert_release (found_att->auto_increment != NULL);
 
       error = do_update_maxvalue_of_auto_increment_serial (parser, &auto_increment_obj, ctemplate->name, attribute);
@@ -10511,6 +10699,12 @@ do_change_att_schema_only (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NOD
 
   if (is_att_prop_set (attr_chg_prop->p[P_COMMENT], ATT_CHG_PROPERTY_DIFF))
     {
+      /* free old before assign new */
+      if (found_att->comment)
+	{
+	  ws_free_string (found_att->comment);
+	}
+
       comment = attribute->info.attr_def.comment;
       assert (comment != NULL && comment->node_type == PT_VALUE);
       comment_str = comment->info.value.data_value.str;
@@ -10519,6 +10713,11 @@ do_change_att_schema_only (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NOD
 	{
 	  error = (er_errid () != NO_ERROR) ? er_errid () : ER_FAILED;
 	  goto exit;
+	}
+      else if (!found_att->comment[0])	/* empty string */
+	{
+	  ws_free_string (found_att->comment);
+	  found_att->comment = NULL;
 	}
     }
   else if (is_att_prop_set (attr_chg_prop->p[P_COMMENT], ATT_CHG_PROPERTY_LOST))
@@ -10861,6 +11060,8 @@ build_attr_change_map (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NODE * 
 	  chg_prop_idx = P_S_CONSTR_UNI;
 	  save_pt_costraint = true;
 	  break;
+	case PT_CONSTRAIN_NULL:
+	  attr_chg_properties->p[P_NOT_NULL] = ATT_CHG_PROPERTY_LOST;
 	case PT_CONSTRAIN_NOT_NULL:
 	  constr_att_list = cnstr->info.constraint.un.not_null.attr;
 	  chg_prop_idx = P_NOT_NULL;
@@ -10943,6 +11144,11 @@ build_attr_change_map (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NODE * 
       {
 	int *const p = &(attr_chg_properties->p[i]);
 
+	if (*p & ATT_CHG_PROPERTY_LOST)
+	  {
+	    continue;
+	  }
+
 	if (*p & ATT_CHG_PROPERTY_PRESENT_OLD)
 	  {
 	    if (*p & ATT_CHG_PROPERTY_PRESENT_NEW)
@@ -10951,7 +11157,7 @@ build_attr_change_map (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NODE * 
 	      }
 	    else
 	      {
-		*p |= ATT_CHG_PROPERTY_LOST;
+		*p |= ATT_CHG_PROPERTY_UNCHANGED;
 	      }
 	  }
 	else
@@ -11096,7 +11302,6 @@ build_attr_change_map (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NODE * 
 
   /* comment */
   attr_chg_properties->p[P_COMMENT] = 0;
-  attr_chg_properties->p[P_COMMENT] |= ATT_CHG_PROPERTY_LOST;
   comment = attr_def->info.attr_def.comment;
   if (comment != NULL)
     {
@@ -11107,6 +11312,10 @@ build_attr_change_map (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NODE * 
 	  /* remove "LOST" flag */
 	  attr_chg_properties->p[P_COMMENT] &= ~ATT_CHG_PROPERTY_LOST;
 	}
+    }
+  else
+    {
+      attr_chg_properties->p[P_COMMENT] |= ATT_CHG_PROPERTY_UNCHANGED;
     }
 
   return error;
@@ -12673,7 +12882,7 @@ get_att_default_from_def (PARSER_CONTEXT * parser, PT_NODE * attribute, DB_VALUE
       for (dt = attribute->data_type; dt != NULL; dt = dt->next)
 	{
 	  if (dt->info.data_type.entity != NULL && dt->info.data_type.entity->node_type == PT_NAME
-	      && intl_identifier_casecmp (dt->info.data_type.entity->info.name.original, classname) == 0)
+	      && pt_user_specified_name_compare (dt->info.data_type.entity->info.name.original, classname) == 0)
 	    {
 	      has_self_ref = true;
 	      break;
@@ -12977,9 +13186,9 @@ do_run_update_query_for_new_notnull_fields (PARSER_CONTEXT * parser, PT_NODE * a
 
   /* Allocate enough for each attribute's name, its default value, and for the "UPDATE table_name" part of the query.
    * 42 is more than the maximum length of any default value for an attribute, including three spaces, the coma sign
-   * and an equal. */
+   * and an equal. And size of 28 is added for NO_SUPPLEMENTAL_LOG hint. */
 
-  query_len = remaining = (attr_count + 1) * (DB_MAX_IDENTIFIER_LENGTH + 42);
+  query_len = remaining = (attr_count + 1) * (DB_MAX_IDENTIFIER_LENGTH + 42 + 28);
   if (query_len > QUERY_MAX_SIZE)
     {
       ERROR1 (error, ER_UNEXPECTED, "Too many attributes.");
@@ -12997,7 +13206,9 @@ do_run_update_query_for_new_notnull_fields (PARSER_CONTEXT * parser, PT_NODE * a
 
   /* Using UPDATE ALL to update the current class and all its children. */
 
-  n = snprintf (q, remaining, "UPDATE ALL [%s] SET ", alter->info.alter.entity_name->info.name.original);
+  n =
+    snprintf (q, remaining, "UPDATE /*+ NO_SUPPLEMENTAL_LOG */ ALL [%s] SET ",
+	      alter->info.alter.entity_name->info.name.original);
   if (n < 0)
     {
       ERROR1 (error, ER_UNEXPECTED, "Building UPDATE statement failed.");
@@ -13085,7 +13296,9 @@ do_run_update_query_for_new_default_expression_fields (PARSER_CONTEXT * parser, 
   query[0] = 0;
 
   /* Using UPDATE ALL to update the current class and all its children. */
-  n = snprintf (q, remaining, "UPDATE ALL [%s] SET ", alter->info.alter.entity_name->info.name.original);
+  n =
+    snprintf (q, remaining, "UPDATE /*+ NO_SUPPLEMENTAL_LOG */ ALL [%s] SET ",
+	      alter->info.alter.entity_name->info.name.original);
   if (n < 0)
     {
       ERROR1 (error, ER_UNEXPECTED, "Building UPDATE statement failed.");
@@ -13983,7 +14196,7 @@ do_check_rows_for_null (MOP class_mop, const char *att_name, bool * has_nulls)
       goto end;
     }
 
-  assert (result->query_type->db_type == DB_TYPE_INTEGER);
+  assert (result->query_type->db_type == DB_TYPE_BIGINT);
 
   error = db_query_set_copy_tplvalue (result, 0 /* peek */ );
   if (error != NO_ERROR)
@@ -13998,9 +14211,9 @@ do_check_rows_for_null (MOP class_mop, const char *att_name, bool * has_nulls)
     }
 
   assert (!DB_IS_NULL (&count));
-  assert (DB_VALUE_DOMAIN_TYPE (&count) == DB_TYPE_INTEGER);
+  assert (DB_VALUE_DOMAIN_TYPE (&count) == DB_TYPE_BIGINT);
 
-  if (db_get_int (&count) > 0)
+  if (db_get_bigint (&count) > 0)
     {
       *has_nulls = true;
     }
@@ -14127,6 +14340,7 @@ pt_node_to_function_index (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * no
   char *expr_str = NULL;
   TP_DOMAIN *d = NULL;
   unsigned int save_custom;
+  int error = NO_ERROR;
 
   if (node->node_type == PT_SORT_SPEC)
     {
@@ -14169,6 +14383,14 @@ pt_node_to_function_index (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * no
   expr_str = parser_print_tree_with_quotes (parser, expr);
   parser->custom_print = save_custom;
   assert (expr_str != NULL);
+
+  if (expr_str && (strlen (expr_str) >= MAX_FUNCTION_EXPRESSION_STRING_LENGTH))
+    {
+      error = ER_SM_INVALID_FILTER_PREDICATE_LENGTH;
+      PT_ERRORmf ((PARSER_CONTEXT *) parser, node, MSGCAT_SET_ERROR, -(ER_SM_INVALID_FUNCTION_EXPRESSION_LENGTH),
+		  MAX_FUNCTION_EXPRESSION_STRING_LENGTH);
+      goto error_exit;
+    }
 
   func_index_info->expr_str = strdup (expr_str);
   if (func_index_info->expr_str == NULL)

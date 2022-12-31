@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -78,6 +77,7 @@
 #include "thread_manager.hpp"
 #include "xasl.h"
 #include "xasl_cache.h"
+#include "method_runtime_context.hpp"
 
 #define RMUTEX_NAME_TDES_TOPOP "TDES_TOPOP"
 
@@ -127,7 +127,6 @@ static LOG_TRAN_BTID_UNIQUE_STATS *logtb_tran_create_btid_unique_stats (THREAD_E
 static int logtb_tran_update_delta_hash_func (THREAD_ENTRY * thread_p, void *data, void *args);
 static int logtb_tran_load_global_stats_func (THREAD_ENTRY * thread_p, void *data, void *args);
 static int logtb_tran_reset_cos_func (THREAD_ENTRY * thread_p, void *data, void *args);
-static int logtb_load_global_statistics_to_tran (THREAD_ENTRY * thread_p);
 static int logtb_create_unique_stats_from_repr (THREAD_ENTRY * thread_p, OID * class_oid);
 static GLOBAL_UNIQUE_STATS *logtb_get_global_unique_stats_entry (THREAD_ENTRY * thread_p, BTID * btid,
 								 bool load_at_creation);
@@ -1060,7 +1059,7 @@ logtb_rv_find_allocate_tran_index (THREAD_ENTRY * thread_p, TRANID trid, const L
   if (logtb_is_system_worker_tranid (trid))
     {
       // *INDENT-OFF*
-      return log_system_tdes::rv_get_or_alloc_tdes (trid);
+      return log_system_tdes::rv_get_or_alloc_tdes (trid, *log_lsa);
       // *INDENT-ON*
     }
 
@@ -1497,6 +1496,7 @@ logtb_clear_tdes (THREAD_ENTRY * thread_p, LOG_TDES * tdes)
   LSA_SET_NULL (&tdes->savept_lsa);
   LSA_SET_NULL (&tdes->topop_lsa);
   LSA_SET_NULL (&tdes->tail_topresult_lsa);
+  LSA_SET_NULL (&tdes->commit_abort_lsa);
   tdes->topops.last = -1;
   tdes->gtrid = LOG_2PC_NULL_GTRID;
   tdes->gtrinfo.info_length = 0;
@@ -1565,6 +1565,7 @@ logtb_clear_tdes (THREAD_ENTRY * thread_p, LOG_TDES * tdes)
   tdes->num_exec_queries = 0;
   tdes->suppress_replication = 0;
   tdes->m_log_postpone_cache.reset ();
+  tdes->has_supplemental_log = false;
 
   logtb_tran_clear_update_stats (&tdes->log_upd_stats);
 
@@ -1620,6 +1621,7 @@ logtb_initialize_tdes (LOG_TDES * tdes, int tran_index)
   LSA_SET_NULL (&tdes->savept_lsa);
   LSA_SET_NULL (&tdes->topop_lsa);
   LSA_SET_NULL (&tdes->tail_topresult_lsa);
+  LSA_SET_NULL (&tdes->commit_abort_lsa);
 
   r = rmutex_initialize (&tdes->rmutex_topop, RMUTEX_NAME_TDES_TOPOP);
   assert (r == NO_ERROR);
@@ -1677,6 +1679,8 @@ logtb_initialize_tdes (LOG_TDES * tdes, int tran_index)
 
   tdes->block_global_oldest_active_until_commit = false;
   tdes->is_user_active = false;
+
+  tdes->has_supplemental_log = false;
 
   LSA_SET_NULL (&tdes->rcv.tran_start_postpone_lsa);
   LSA_SET_NULL (&tdes->rcv.sysop_start_postpone_lsa);
@@ -2802,29 +2806,37 @@ logtb_is_interrupted_tdes (THREAD_ENTRY * thread_p, LOG_TDES * tdes, bool clear,
 	  *continue_checking = false;
 	}
     }
-  else if (interrupt == true && clear == true)
+  else if (interrupt == true)
     {
-      tdes->interrupt = false;
-
+      if (clear)
+	{
+	  tdes->interrupt = false;
 #if !defined (HAVE_ATOMIC_BUILTINS)
-      TR_TABLE_CS_ENTER (thread_p);
-      log_Gl.trantable.num_interrupts--;
+	  TR_TABLE_CS_ENTER (thread_p);
+	  log_Gl.trantable.num_interrupts--;
 #else
-      ATOMIC_INC_32 (&log_Gl.trantable.num_interrupts, -1);
+	  ATOMIC_INC_32 (&log_Gl.trantable.num_interrupts, -1);
 #endif
 
-      if (log_Gl.trantable.num_interrupts > 0)
-	{
-	  *continue_checking = true;
-	}
-      else
-	{
-	  *continue_checking = false;
-	}
+	  if (log_Gl.trantable.num_interrupts > 0)
+	    {
+	      *continue_checking = true;
+	    }
+	  else
+	    {
+	      *continue_checking = false;
+	    }
 
 #if !defined (HAVE_ATOMIC_BUILTINS)
-      TR_TABLE_CS_EXIT (thread_p);
+	  TR_TABLE_CS_EXIT (thread_p);
 #endif
+	}
+
+      cubmethod::runtime_context * rctx = cubmethod::get_rctx (thread_p);
+      if (rctx)
+	{
+	  rctx->set_interrupt (ER_INTERRUPTED);
+	}
     }
   else if (interrupt == false && tdes->query_timeout > 0)
     {
@@ -3492,7 +3504,8 @@ logtb_tran_find_btid_stats (THREAD_ENTRY * thread_p, const BTID * btid, bool cre
  * Note: the statistics are searched and created if they not exist.
  */
 int
-logtb_tran_update_btid_unique_stats (THREAD_ENTRY * thread_p, const BTID * btid, int n_keys, int n_oids, int n_nulls)
+logtb_tran_update_btid_unique_stats (THREAD_ENTRY * thread_p, const BTID * btid, long long n_keys, long long n_oids,
+				     long long n_nulls)
 {
   /* search and create if not found */
   LOG_TRAN_BTID_UNIQUE_STATS *unique_stats = logtb_tran_find_btid_stats (thread_p, btid, true);
@@ -3525,8 +3538,8 @@ logtb_tran_update_btid_unique_stats (THREAD_ENTRY * thread_p, const BTID * btid,
  * Note: the statistics are searched and created if they not exist.
  */
 int
-logtb_tran_update_unique_stats (THREAD_ENTRY * thread_p, const BTID * btid, int n_keys, int n_oids, int n_nulls,
-				bool write_to_log)
+logtb_tran_update_unique_stats (THREAD_ENTRY * thread_p, const BTID * btid, long long n_keys, long long n_oids,
+				long long n_nulls, bool write_to_log)
 {
   int error = NO_ERROR;
 
@@ -3540,14 +3553,14 @@ logtb_tran_update_unique_stats (THREAD_ENTRY * thread_p, const BTID * btid, int 
   if (write_to_log)
     {
       /* log statistics */
-      char undo_rec_buf[3 * OR_INT_SIZE + OR_BTID_ALIGNED_SIZE + MAX_ALIGNMENT];
-      char redo_rec_buf[3 * OR_INT_SIZE + OR_BTID_ALIGNED_SIZE + MAX_ALIGNMENT];
+      char undo_rec_buf[3 * OR_BIGINT_SIZE + OR_BTID_ALIGNED_SIZE + MAX_ALIGNMENT];
+      char redo_rec_buf[3 * OR_BIGINT_SIZE + OR_BTID_ALIGNED_SIZE + MAX_ALIGNMENT];
       RECDES undo_rec, redo_rec;
 
-      undo_rec.area_size = ((3 * OR_INT_SIZE) + OR_BTID_ALIGNED_SIZE);
+      undo_rec.area_size = ((3 * OR_BIGINT_SIZE) + OR_BTID_ALIGNED_SIZE);
       undo_rec.data = PTR_ALIGN (undo_rec_buf, MAX_ALIGNMENT);
 
-      redo_rec.area_size = ((3 * OR_INT_SIZE) + OR_BTID_ALIGNED_SIZE);
+      redo_rec.area_size = ((3 * OR_BIGINT_SIZE) + OR_BTID_ALIGNED_SIZE);
       redo_rec.data = PTR_ALIGN (redo_rec_buf, MAX_ALIGNMENT);
 
       btree_rv_mvcc_save_increments (btid, -n_keys, -n_oids, -n_nulls, &undo_rec);
@@ -3573,8 +3586,8 @@ logtb_tran_update_unique_stats (THREAD_ENTRY * thread_p, const BTID &btid, const
     {
       return NO_ERROR;
     }
-  return logtb_tran_update_unique_stats (thread_p, &btid, (int) ustats.get_key_count (), (int) ustats.get_row_count (),
-                                         (int) ustats.get_null_count (), write_to_log);
+  return logtb_tran_update_unique_stats (thread_p, &btid, ustats.get_key_count (), ustats.get_row_count (),
+                                         ustats.get_null_count (), write_to_log);
 }
 
 int
@@ -3727,7 +3740,7 @@ logtb_tran_load_global_stats_func (THREAD_ENTRY * thread_p, void *data, void *ar
 	      goto cleanup;
 	    }
 
-	  error_code = logtb_create_unique_stats_from_repr (thread_p, &entry->class_oid);
+	  error_code = logtb_create_unique_stats_from_repr (thread_p, &new_entry->class_oid);
 	  if (error_code != NO_ERROR)
 	    {
 	      goto cleanup;
@@ -3771,7 +3784,7 @@ cleanup:
  *	 count optimization state. This function is used when a snapshot is
  *	 taken.
  */
-static int
+int
 logtb_load_global_statistics_to_tran (THREAD_ENTRY * thread_p)
 {
   int error_code = NO_ERROR;
@@ -4007,43 +4020,10 @@ logtb_complete_mvcc (THREAD_ENTRY * thread_p, LOG_TDES * tdes, bool committed)
     }
   else
     {
-#if defined(SA_MODE)
       if (committed && logtb_tran_update_all_global_unique_stats (thread_p) != NO_ERROR)
 	{
 	  assert (false);
 	}
-#else	/* !SA_MODE */	       /* SERVER_MODE */
-      if (committed)
-	{
-	  /* There is one unique index that can be modified with no MVCCID being generated: db_serial primary key. This
-	   * could happen in a transaction that only does a create serial and commits. Next code makes sure serial
-	   * index statistics are reflected. */
-	  BTID serial_index_btid = BTID_INITIALIZER;
-	  LOG_TRAN_BTID_UNIQUE_STATS *serial_unique_stats = NULL;
-
-	  /* Get serial index BTID. */
-	  serial_get_index_btid (&serial_index_btid);
-	  assert (!BTID_IS_NULL (&serial_index_btid));
-
-	  /* Get statistics for serial unique index. */
-	  serial_unique_stats = logtb_tran_find_btid_stats (thread_p, &serial_index_btid, false);
-	  if (serial_unique_stats != NULL)
-	    {
-	      /* Reflect serial unique statistics. */
-	      if (logtb_update_global_unique_stats_by_delta (thread_p, &serial_index_btid,
-							     serial_unique_stats->tran_stats.num_oids,
-							     serial_unique_stats->tran_stats.num_nulls,
-							     serial_unique_stats->tran_stats.num_keys,
-							     true) != NO_ERROR)
-		{
-		  /* No errors are permitted here. */
-		  assert (false);
-
-		  /* Fall through to do everything we would do in case of no error. */
-		}
-	    }
-	}
-#endif /* SERVER_MODE */
 
       /* atomic set transaction lowest active MVCCID */
       log_Gl.mvcc_table.reset_transaction_lowest_active (tran_index);
@@ -4160,31 +4140,15 @@ logtb_set_num_loose_end_trans (THREAD_ENTRY * thread_p)
 }
 
 /*
- * log_find_unilaterally_largest_undo_lsa - find maximum lsa address to undo
- *
- * return:
- *
- * Note: Find the maximum log sequence address to undo during the undo
- *              crash recovery phase.
+ * logtb_rv_read_only_map_undo_tdes - map func to all tdes to abort in the UNOO recovery phase.
  */
 void
-log_find_unilaterally_largest_undo_lsa (THREAD_ENTRY * thread_p, LOG_LSA & max_undo_lsa)
+logtb_rv_read_only_map_undo_tdes (THREAD_ENTRY * thread_p, const std::function < void (const log_tdes &) > map_func)
 {
-  // *INDENT-OFF*
   int i;
   LOG_TDES *tdes;		/* Transaction descriptor */
 
   TR_TABLE_CS_ENTER_READ_MODE (thread_p);
-
-  LSA_SET_NULL (&max_undo_lsa);
-
-  auto max_undo_lsa_func = [&] (log_tdes & tdes)
-    {
-      if (LSA_LT (&max_undo_lsa, &tdes.undo_nxlsa))
-        {
-          max_undo_lsa = tdes.undo_nxlsa;
-        }
-    };
 
   /* Check active transactions. */
   for (i = 0; i < NUM_TOTAL_TRAN_INDICES; i++)
@@ -4195,15 +4159,16 @@ log_find_unilaterally_largest_undo_lsa (THREAD_ENTRY * thread_p, LOG_LSA & max_u
 	  if (tdes != NULL && tdes->trid != NULL_TRANID
 	      && (tdes->state == TRAN_UNACTIVE_UNILATERALLY_ABORTED || tdes->state == TRAN_UNACTIVE_ABORTED))
 	    {
-	      max_undo_lsa_func (*tdes);
+	      map_func (*tdes);
 	    }
 	}
     }
   /* Check system worker transactions. */
-  log_system_tdes::map_all_tdes (max_undo_lsa_func);
+  // *INDENT-OFF*
+  log_system_tdes::map_all_tdes (map_func);
+  // *INDENT-ON*
 
   TR_TABLE_CS_EXIT (thread_p);
-  // *INDENT-ON*
 }
 
 /*
@@ -4779,7 +4744,7 @@ logtb_get_global_unique_stats_entry (THREAD_ENTRY * thread_p, BTID * btid, bool 
   int error_code = NO_ERROR;
   LF_TRAN_ENTRY *t_entry = thread_get_tran_entry (thread_p, THREAD_TS_GLOBAL_UNIQUE_STATS);
   GLOBAL_UNIQUE_STATS *stats = NULL;
-  int num_oids, num_nulls, num_keys;
+  long long num_oids, num_nulls, num_keys;
 
   assert (btid != NULL);
 
@@ -4838,7 +4803,8 @@ logtb_get_global_unique_stats_entry (THREAD_ENTRY * thread_p, BTID * btid, bool 
  *		     of keys for the given btid
  */
 int
-logtb_get_global_unique_stats (THREAD_ENTRY * thread_p, BTID * btid, int *num_oids, int *num_nulls, int *num_keys)
+logtb_get_global_unique_stats (THREAD_ENTRY * thread_p, BTID * btid, long long *num_oids, long long *num_nulls,
+			       long long *num_keys)
 {
   int error_code = NO_ERROR;
   GLOBAL_UNIQUE_STATS *stats = NULL;
@@ -4873,8 +4839,8 @@ logtb_get_global_unique_stats (THREAD_ENTRY * thread_p, BTID * btid, int *num_oi
  *   num_keys (in) : the new number of keys
  */
 int
-logtb_rv_update_global_unique_stats_by_abs (THREAD_ENTRY * thread_p, BTID * btid, int num_oids, int num_nulls,
-					    int num_keys)
+logtb_rv_update_global_unique_stats_by_abs (THREAD_ENTRY * thread_p, BTID * btid, long long num_oids,
+					    long long num_nulls, long long num_keys)
 {
   int error_code = NO_ERROR;
   GLOBAL_UNIQUE_STATS *stats = NULL;
@@ -4923,13 +4889,13 @@ logtb_rv_update_global_unique_stats_by_abs (THREAD_ENTRY * thread_p, BTID * btid
  *   log (in) : true if we need to log the changes
  */
 int
-logtb_update_global_unique_stats_by_delta (THREAD_ENTRY * thread_p, BTID * btid, int oid_delta, int null_delta,
-					   int key_delta, bool log)
+logtb_update_global_unique_stats_by_delta (THREAD_ENTRY * thread_p, BTID * btid, long long oid_delta,
+					   long long null_delta, long long key_delta, bool log)
 {
   int error_code = NO_ERROR;
   GLOBAL_UNIQUE_STATS *stats = NULL;
   LOG_TDES *tdes = LOG_FIND_CURRENT_TDES (thread_p);
-  int num_oids, num_nulls, num_keys;
+  long long num_oids, num_nulls, num_keys;
 
   if (oid_delta == 0 && key_delta == 0 && null_delta == 0)
     {
@@ -4949,41 +4915,41 @@ logtb_update_global_unique_stats_by_delta (THREAD_ENTRY * thread_p, BTID * btid,
   if (log)
     {
       RECDES undo_rec, redo_rec;
-      char undo_rec_buf[(3 * OR_INT_SIZE) + OR_BTID_ALIGNED_SIZE + BTREE_MAX_ALIGN], *datap = NULL;
-      char redo_rec_buf[(3 * OR_INT_SIZE) + OR_BTID_ALIGNED_SIZE + BTREE_MAX_ALIGN];
+      char undo_rec_buf[(3 * OR_BIGINT_SIZE) + OR_BTID_ALIGNED_SIZE + BTREE_MAX_ALIGN], *datap = NULL;
+      char redo_rec_buf[(3 * OR_BIGINT_SIZE) + OR_BTID_ALIGNED_SIZE + BTREE_MAX_ALIGN];
 
       /* although we don't change the btree header, we still need to log here the new values of statistics so that they
        * can be recovered at recover stage. For undo purposes we log the increments. */
       undo_rec.data = NULL;
-      undo_rec.area_size = 3 * OR_INT_SIZE + OR_BTID_ALIGNED_SIZE;
+      undo_rec.area_size = 3 * OR_BIGINT_SIZE + OR_BTID_ALIGNED_SIZE;
       undo_rec.data = PTR_ALIGN (undo_rec_buf, BTREE_MAX_ALIGN);
 
       undo_rec.length = 0;
       datap = (char *) undo_rec.data;
       OR_PUT_BTID (datap, btid);
       datap += OR_BTID_ALIGNED_SIZE;
-      OR_PUT_INT (datap, null_delta);
-      datap += OR_INT_SIZE;
-      OR_PUT_INT (datap, oid_delta);
-      datap += OR_INT_SIZE;
-      OR_PUT_INT (datap, key_delta);
-      datap += OR_INT_SIZE;
+      OR_PUT_BIGINT (datap, &null_delta);
+      datap += OR_BIGINT_SIZE;
+      OR_PUT_BIGINT (datap, &oid_delta);
+      datap += OR_BIGINT_SIZE;
+      OR_PUT_BIGINT (datap, &key_delta);
+      datap += OR_BIGINT_SIZE;
       undo_rec.length = CAST_BUFLEN (datap - undo_rec.data);
 
       redo_rec.data = NULL;
-      redo_rec.area_size = 3 * OR_INT_SIZE + OR_BTID_ALIGNED_SIZE;
+      redo_rec.area_size = 3 * OR_BIGINT_SIZE + OR_BTID_ALIGNED_SIZE;
       redo_rec.data = PTR_ALIGN (redo_rec_buf, BTREE_MAX_ALIGN);
 
       redo_rec.length = 0;
       datap = (char *) redo_rec.data;
       OR_PUT_BTID (datap, btid);
       datap += OR_BTID_ALIGNED_SIZE;
-      OR_PUT_INT (datap, num_nulls);
-      datap += OR_INT_SIZE;
-      OR_PUT_INT (datap, num_oids);
-      datap += OR_INT_SIZE;
-      OR_PUT_INT (datap, num_keys);
-      datap += OR_INT_SIZE;
+      OR_PUT_BIGINT (datap, &num_nulls);
+      datap += OR_BIGINT_SIZE;
+      OR_PUT_BIGINT (datap, &num_oids);
+      datap += OR_BIGINT_SIZE;
+      OR_PUT_BIGINT (datap, &num_keys);
+      datap += OR_BIGINT_SIZE;
       redo_rec.length = CAST_BUFLEN (datap - redo_rec.data);
 
       log_append_undoredo_data2 (thread_p, RVBT_LOG_GLOBAL_UNIQUE_STATS_COMMIT, NULL, NULL, HEADER, undo_rec.length,
@@ -4999,8 +4965,8 @@ logtb_update_global_unique_stats_by_delta (THREAD_ENTRY * thread_p, BTID * btid,
   if (prm_get_bool_value (PRM_ID_LOG_UNIQUE_STATS))
     {
       _er_log_debug (ARG_FILE_LINE,
-		     "Update stats for index (%d, %d|%d) by nulls=%d, "
-		     "oids=%d, keys=%d to nulls=%d, oids=%d, keys=%d. LSA=%lld|%d.\n", btid->root_pageid,
+		     "Update stats for index (%d, %d|%d) by nulls=%lld, "
+		     "oids=%lld, keys=%lld to nulls=%lld, oids=%lld, keys=%lld. LSA=%lld|%d.\n", btid->root_pageid,
 		     btid->vfid.volid, btid->vfid.fileid, null_delta, oid_delta, key_delta, num_nulls, num_oids,
 		     num_keys, (long long int) stats->last_log_lsa.pageid, (int) stats->last_log_lsa.offset);
     }
@@ -6078,7 +6044,7 @@ log_tdes::is_system_main_transaction () const
 bool
 log_tdes::is_system_worker_transaction () const
 {
-  return is_system_transaction () && trid < NULL_ATTRID;
+  return is_system_transaction () && trid < NULL_TRANID;
 }
 
 bool
@@ -6138,6 +6104,7 @@ log_tdes::on_sysop_start ()
       LSA_SET_NULL (&tail_lsa);
       LSA_SET_NULL (&undo_nxlsa);
       LSA_SET_NULL (&tail_topresult_lsa);
+      assert (commit_abort_lsa.is_null ());
       LSA_SET_NULL (&rcv.tran_start_postpone_lsa);
       LSA_SET_NULL (&rcv.sysop_start_postpone_lsa);
     }
@@ -6155,6 +6122,7 @@ log_tdes::on_sysop_end ()
       LSA_SET_NULL (&tail_lsa);
       LSA_SET_NULL (&undo_nxlsa);
       LSA_SET_NULL (&tail_topresult_lsa);
+      assert (commit_abort_lsa.is_null ());
     }
 }
 

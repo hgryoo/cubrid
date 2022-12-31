@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -89,6 +88,8 @@
 #include "parser_support.h"
 #include "tz_support.h"
 #include "dbtype.h"
+#include "crypt_opfunc.h"
+#include "method_callback.hpp"
 
 #if defined (SUPPRESS_STRLEN_WARNING)
 #define strlen(s1)  ((int) strlen(s1))
@@ -133,6 +134,15 @@ static int do_vacuum (PARSER_CONTEXT * parser, PT_NODE * statement);
 static int do_insert_checks (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE ** class_,
 			     PT_NODE ** update, PT_NODE * values);
 
+static int do_alter_synonym_internal (const char *synonym_name, const char *target_name, DB_OBJECT * target_owner,
+				      const char *comment, const int is_public_synonym);
+static int do_create_synonym_internal (const char *synonym_name, DB_OBJECT * synonym_owner, const char *target_name,
+				       DB_OBJECT * target_owner, const char *comment, const int is_public_synonym,
+				       const int or_replace);
+static int do_drop_synonym_internal (const char *synonym_name, const int is_public_synonym, const int if_exists,
+				     DB_OBJECT * synonym_class_obj, DB_OBJECT * synonym_obj);
+static int do_rename_synonym_internal (const char *old_synonym_name, const char *new_synonym_name);
+
 #define MAX_SERIAL_INVARIANT	8
 typedef struct serial_invariant SERIAL_INVARIANT;
 
@@ -165,6 +175,13 @@ struct eval_insert_value
   bool replace_names;		/* true if names may need to be replaced with each evaluation */
 };
 
+typedef struct reserved_class_info
+{
+  OID oid;
+  CDC_DDL_OBJECT_TYPE objtype;
+  char name[1024];
+} RESERVED_CLASS_INFO;
+
 static void initialize_serial_invariant (SERIAL_INVARIANT * invariant, DB_VALUE val1, DB_VALUE val2,
 					 PT_OP_TYPE cmp_op, int val1_msgid, int val2_msgid, int error_type);
 static int check_serial_invariants (SERIAL_INVARIANT * invariants, int num_invariants, int *ret_msg_id);
@@ -182,6 +199,16 @@ static void init_compile_context (PARSER_CONTEXT * parser);
 
 static int do_select_internal (PARSER_CONTEXT * parser, PT_NODE * statement, bool for_ins_upd);
 
+static int get_dblink_password_encrypt (const char *passwd, DB_VALUE * encrypt_val, bool is_external);
+static int get_dblink_password_decrypt (const char *passwd_cipher, DB_VALUE * decrypt_val);
+static MOP server_find (PT_NODE * node_server, PT_NODE * node_owner, bool force_owner_name);
+
+static int do_supplemental_statement (PARSER_CONTEXT * parser, PT_NODE * statement, RESERVED_CLASS_INFO ** cls_info,
+				      OID * reserved_oid);
+
+static int do_reserve_classinfo (PARSER_CONTEXT * parser, PT_NODE * statement, RESERVED_CLASS_INFO ** cls_info);
+
+static int do_reserve_oidinfo (PARSER_CONTEXT * parser, PT_NODE * statement, OID ** oid);
 /*
  * initialize_serial_invariant() - initialize a serial invariant
  *   return: None
@@ -369,7 +396,6 @@ is_stmt_based_repl_type (const PT_NODE * node)
   switch (node->node_type)
     {
     case PT_DROP_VARIABLE:
-    case PT_TRUNCATE:
       return true;
     case PT_INSERT:
       if (node->info.insert.hint & PT_HINT_USE_SBR)
@@ -648,6 +674,8 @@ do_create_serial_internal (MOP * serial_object, const char *serial_name, DB_VALU
   DB_OTMPL *obj_tmpl = NULL;
   DB_VALUE value;
   DB_OBJECT *serial_class = NULL;
+  char owner_name[DB_MAX_USER_LENGTH] = { '\0' };
+  MOP owner = NULL;
   int au_save, error = NO_ERROR;
 
   db_make_null (&value);
@@ -671,8 +699,17 @@ do_create_serial_internal (MOP * serial_object, const char *serial_name, DB_VALU
       goto end;
     }
 
-  /* name */
+  /* unique_name */
   db_make_string (&value, serial_name);
+  error = dbt_put_internal (obj_tmpl, SERIAL_ATTR_UNIQUE_NAME, &value);
+  pr_clear_value (&value);
+  if (error != NO_ERROR)
+    {
+      goto end;
+    }
+
+  /* name */
+  db_make_string (&value, sm_remove_qualifier_name (serial_name));
   error = dbt_put_internal (obj_tmpl, SERIAL_ATTR_NAME, &value);
   pr_clear_value (&value);
   if (error != NO_ERROR)
@@ -681,7 +718,16 @@ do_create_serial_internal (MOP * serial_object, const char *serial_name, DB_VALU
     }
 
   /* owner */
-  db_make_object (&value, Au_user);
+  sm_qualifier_name (serial_name, owner_name, DB_MAX_USER_LENGTH);
+  owner = owner_name[0] == '\0' ? Au_user : db_find_user (owner_name);
+
+  if (!ws_is_same_object (owner, Au_user) && !au_is_dba_group_member (Au_user))
+    {
+      ERROR_SET_ERROR (error, ER_QPROC_CREATE_SERIAL_NOT_OWNER);
+      goto end;
+    }
+
+  db_make_object (&value, owner);
   error = dbt_put_internal (obj_tmpl, SERIAL_ATTR_OWNER, &value);
   pr_clear_value (&value);
   if (error != NO_ERROR)
@@ -747,7 +793,7 @@ do_create_serial_internal (MOP * serial_object, const char *serial_name, DB_VALU
   /* class name */
   if (class_name)
     {
-      db_make_string (&value, class_name);
+      db_make_string (&value, sm_remove_qualifier_name (class_name));
       error = dbt_put_internal (obj_tmpl, SERIAL_ATTR_CLASS_NAME, &value);
       pr_clear_value (&value);
       if (error != NO_ERROR)
@@ -872,8 +918,17 @@ do_update_auto_increment_serial_on_rename (MOP serial_obj, const char *class_nam
       goto update_auto_increment_error;
     }
 
-  /* name */
+  /* unique_name */
   db_make_string (&value, serial_name);
+  error = dbt_put_internal (obj_tmpl, SERIAL_ATTR_UNIQUE_NAME, &value);
+  pr_clear_value (&value);
+  if (error != NO_ERROR)
+    {
+      goto update_auto_increment_error;
+    }
+
+  /* name */
+  db_make_string (&value, sm_remove_qualifier_name (serial_name));
   error = dbt_put_internal (obj_tmpl, SERIAL_ATTR_NAME, &value);
   if (error != NO_ERROR)
     {
@@ -882,7 +937,7 @@ do_update_auto_increment_serial_on_rename (MOP serial_obj, const char *class_nam
 
   /* class name */
   pr_clear_value (&value);
-  db_make_string (&value, class_name);
+  db_make_string (&value, sm_remove_qualifier_name (class_name));
   error = dbt_put_internal (obj_tmpl, SERIAL_ATTR_CLASS_NAME, &value);
   pr_clear_value (&value);
   if (error != NO_ERROR)
@@ -1172,45 +1227,36 @@ normal_exit:
 }
 
 
-/*
- * do_get_serial_obj_id() -
- *   return: serial object
- *   serial_obj_id(out):
- *   serial_class_mop(in):
- *   serial_name(in):
- *
- * Note:
- */
-MOP
-do_get_serial_obj_id (DB_IDENTIFIER * serial_obj_id, DB_OBJECT * serial_class_mop, const char *serial_name)
+static MOP
+do_get_obj_id (DB_IDENTIFIER * obj_id, DB_OBJECT * class_mop, const char *name, const char *attr_name)
 {
   DB_OBJECT *mop;
   DB_VALUE val;
   DB_IDENTIFIER *db_id;
   char *p;
-  size_t serial_name_size;
+  size_t name_size;
   int save;
 
-  OID_SET_NULL (serial_obj_id);
+  OID_SET_NULL (obj_id);
 
-  if (serial_class_mop == NULL || serial_name == NULL)
+  if (class_mop == NULL || name == NULL)
     {
       return NULL;
     }
 
-  serial_name_size = intl_identifier_lower_string_size (serial_name);
-  p = (char *) malloc (serial_name_size + 1);
+  name_size = intl_identifier_lower_string_size (name);
+  p = (char *) malloc (name_size + 1);
   if (p == NULL)
     {
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, (serial_name_size + 1));
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, (name_size + 1));
       return NULL;
     }
 
-  intl_identifier_lower (serial_name, p);
+  intl_identifier_lower (name, p);
   db_make_string (&val, p);
 
   AU_DISABLE (save);
-  mop = db_find_unique (serial_class_mop, SERIAL_ATTR_NAME, &val);
+  mop = db_find_unique (class_mop, attr_name, &val);
   AU_ENABLE (save);
 
   if (mop == NULL)
@@ -1228,7 +1274,7 @@ do_get_serial_obj_id (DB_IDENTIFIER * serial_obj_id, DB_OBJECT * serial_class_mo
 
       if (db_id != NULL)
 	{
-	  *serial_obj_id = *db_id;
+	  *obj_id = *db_id;
 	}
       else
 	{
@@ -1240,6 +1286,46 @@ do_get_serial_obj_id (DB_IDENTIFIER * serial_obj_id, DB_OBJECT * serial_class_mo
   free_and_init (p);
 
   return mop;
+}
+
+
+/*
+ * do_get_serial_obj_id() -
+ *   return: serial object
+ *   serial_obj_id(out):
+ *   serial_class_mop(in):
+ *   serial_name(in):
+ *
+ * Note:
+ */
+MOP
+do_get_serial_obj_id (DB_IDENTIFIER * serial_obj_id, DB_OBJECT * serial_class_mop, const char *serial_name)
+{
+  MOP serial_mop = NULL;
+
+  serial_mop = do_get_obj_id (serial_obj_id, serial_class_mop, serial_name, SERIAL_ATTR_UNIQUE_NAME);
+  if (serial_mop)
+    {
+      return serial_mop;
+    }
+
+  /* This is the case when the loaddb utility is executed with the --no-user-specified-name option as the dba user. */
+  if (db_get_client_type () == DB_CLIENT_TYPE_ADMIN_LOADDB_COMPAT)
+    {
+      char other_serial_name[DB_MAX_SERIAL_NAME_LENGTH] = { '\0' };
+
+      do_find_serial_by_query (serial_name, other_serial_name, DB_MAX_SERIAL_NAME_LENGTH);
+      if (other_serial_name[0] != '\0')
+	{
+	  serial_mop = do_get_obj_id (serial_obj_id, serial_class_mop, other_serial_name, SERIAL_ATTR_UNIQUE_NAME);
+	  if (serial_mop)
+	    {
+	      return serial_mop;
+	    }
+	}
+    }
+
+  return NULL;
 }
 
 /*
@@ -1285,7 +1371,8 @@ do_create_serial (PARSER_CONTEXT * parser, PT_NODE * statement)
   DB_IDENTIFIER serial_obj_id;
   DB_VALUE value, *pval = NULL;
 
-  char *name = NULL;
+  const char *serial_name = NULL;
+  char downcase_serial_name[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
   PT_NODE *start_val_node;
   PT_NODE *inc_val_node;
   PT_NODE *max_val_node;
@@ -1311,7 +1398,6 @@ do_create_serial (PARSER_CONTEXT * parser, PT_NODE * statement)
   int error = NO_ERROR;
   int save;
   bool au_disable_flag = false;
-  char *p = NULL;
   size_t name_size;
   const char *comment = NULL;
 
@@ -1342,24 +1428,14 @@ do_create_serial (PARSER_CONTEXT * parser, PT_NODE * statement)
   /*
    * lookup if serial object name already exists?
    */
-
-  name = (char *) PT_NODE_SR_NAME (statement);
-  name_size = intl_identifier_lower_string_size (name);
-  p = (char *) malloc (name_size + 1);
-  if (p == NULL)
-    {
-      error = ER_OUT_OF_VIRTUAL_MEMORY;
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 1, (name_size + 1));
-      goto end;
-    }
-  intl_identifier_lower (name, p);
-
-  serial_mop = do_get_serial_obj_id (&serial_obj_id, serial_class, p);
+  serial_name = PT_NODE_SR_NAME (statement);
+  sm_downcase_name (serial_name, downcase_serial_name, DB_MAX_IDENTIFIER_LENGTH);
+  serial_mop = do_get_serial_obj_id (&serial_obj_id, serial_class, downcase_serial_name);
   if (serial_mop != NULL)
     {
       error = ER_QPROC_SERIAL_ALREADY_EXIST;
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 1, name);
-      PT_ERRORmf (parser, statement, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SERIAL_ALREADY_EXIST, name);
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 1, serial_name);
+      PT_ERRORmf (parser, statement, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_SERIAL_ALREADY_EXIST, serial_name);
       goto end;
     }
 
@@ -1721,8 +1797,8 @@ do_create_serial (PARSER_CONTEXT * parser, PT_NODE * statement)
   AU_DISABLE (save);
   au_disable_flag = true;
 
-  error = do_create_serial_internal (&serial_object, p, &start_val, &inc_val, &min_val, &max_val, cyclic, cached_num,
-				     0, comment, NULL, NULL);
+  error = do_create_serial_internal (&serial_object, downcase_serial_name, &start_val, &inc_val, &min_val,
+				     &max_val, cyclic, cached_num, 0, comment, NULL, NULL);
 
   AU_ENABLE (save);
   au_disable_flag = false;
@@ -1732,22 +1808,12 @@ do_create_serial (PARSER_CONTEXT * parser, PT_NODE * statement)
       goto end;
     }
 
-  if (p != NULL)
-    {
-      free_and_init (p);
-    }
-
   return NO_ERROR;
 
 end:
   if (au_disable_flag == true)
     {
       AU_ENABLE (save);
-    }
-
-  if (p != NULL)
-    {
-      free_and_init (p);
     }
 
   return error;
@@ -2045,7 +2111,6 @@ do_update_maxvalue_of_auto_increment_serial (PARSER_CONTEXT * parser, MOP * seri
 
   numeric_coerce_string_to_num (DB_SERIAL_MAX, strlen (DB_SERIAL_MAX), INTL_CODESET_ISO88591, &e38);
 
-  assert_release (att->info.attr_def.auto_increment != NULL);
   assert (serial_object != NULL);
 
   /* find db_serial */
@@ -2932,6 +2997,11 @@ end:
 
 bool do_Trigger_involved;
 
+/* do_Trigger_involved does not accurately distinguish
+ * whether the corresponding query is a trigger syntax.
+ * Therefore, a separate global variable is set to distinguish whether the query is related to a trigger */
+bool cdc_Trigger_involved = false;
+
 /*
  * do_statement() -
  *   return: Error code
@@ -2947,6 +3017,9 @@ do_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
   bool need_stmt_replication = false;
   int suppress_repl_error = NO_ERROR;
   LC_FETCH_VERSION_TYPE read_fetch_instance_version;
+
+  RESERVED_CLASS_INFO *cls_info[64] = { NULL, };
+  OID *reserved_oid = NULL;
 
   /* save old read fetch instance version */
   read_fetch_instance_version = TM_TRAN_READ_FETCH_VERSION ();
@@ -3069,6 +3142,11 @@ do_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
 	case PT_DROP_SESSION_VARIABLES:
 	case PT_SET_NAMES:
 	case PT_SET_TIMEZONE:
+	  /* TODO: check it  */
+	case PT_CREATE_SERVER:
+	case PT_DROP_SERVER:
+	case PT_RENAME_SERVER:
+	case PT_ALTER_SERVER:
 
 	  /* Need to get dirty version when fetch the instance. That's because we are in an update command. */
 	  db_set_read_fetch_instance_version (LC_FETCH_DIRTY_VERSION);
@@ -3122,6 +3200,8 @@ do_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
 	  break;
 
 	case PT_DROP:
+	  (void) do_reserve_classinfo (parser, statement, cls_info);
+
 	  error = do_check_internal_statements (parser, statement,
 						/* statement->info.drop. internal_stmts, */
 						do_drop);
@@ -3259,6 +3339,8 @@ do_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
 	  break;
 
 	case PT_DROP_SERIAL:
+	  (void) do_reserve_oidinfo (parser, statement, &reserved_oid);
+
 	  error = do_drop_serial (parser, statement);
 	  break;
 
@@ -3298,6 +3380,22 @@ do_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
 	  error = do_set_timezone (parser, statement);
 	  break;
 
+	case PT_CREATE_SERVER:
+	  error = do_create_server (parser, statement);
+	  break;
+
+	case PT_DROP_SERVER:
+	  error = do_drop_server (parser, statement);
+	  break;
+
+	case PT_RENAME_SERVER:
+	  error = do_rename_server (parser, statement);
+	  break;
+
+	case PT_ALTER_SERVER:
+	  error = do_alter_server (parser, statement);
+	  break;
+
 	default:
 	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_PT_UNKNOWN_STATEMENT, 1, statement->node_type);
 	  break;
@@ -3327,6 +3425,11 @@ do_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
 	    {
 	      error = repl_error;
 	    }
+	}
+
+      if (prm_get_integer_value (PRM_ID_SUPPLEMENTAL_LOG) > 0)
+	{
+	  (void) do_supplemental_statement (parser, statement, cls_info, reserved_oid);
 	}
     }
 
@@ -3434,6 +3537,9 @@ do_execute_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
   bool need_stmt_based_repl = false;
   int suppress_repl_error;
   LC_FETCH_VERSION_TYPE read_fetch_instance_version;
+
+  RESERVED_CLASS_INFO *cls_info[64] = { NULL, };
+  OID *reserved_oid = NULL;
 
   assert (parser->query_id == NULL_QUERY_ID);
   /* save old read fetch instance version */
@@ -3555,6 +3661,17 @@ do_execute_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
     case PT_DROP_SESSION_VARIABLES:
     case PT_SET_NAMES:
     case PT_SET_TIMEZONE:
+
+      /* TODO: check it  */
+    case PT_CREATE_SERVER:
+    case PT_DROP_SERVER:
+    case PT_RENAME_SERVER:
+    case PT_ALTER_SERVER:
+
+    case PT_ALTER_SYNONYM:
+    case PT_CREATE_SYNONYM:
+    case PT_DROP_SYNONYM:
+    case PT_RENAME_SYNONYM:
       /* Need to get dirty version when fetch the instance. That's because we are in an update command. */
       db_set_read_fetch_instance_version (LC_FETCH_DIRTY_VERSION);
       break;
@@ -3606,6 +3723,8 @@ do_execute_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
     case PT_DROP:
       /* err = do_drop(parser, statement); */
       /* execute internal statements before and after do_drop() */
+
+      (void) do_reserve_classinfo (parser, statement, cls_info);
       err = do_check_internal_statements (parser, statement,
 					  /* statement->info.drop.internal_stmts, */
 					  do_drop);
@@ -3614,6 +3733,8 @@ do_execute_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
       err = do_drop_index (parser, statement);
       break;
     case PT_DROP_SERIAL:
+      (void) do_reserve_oidinfo (parser, statement, &reserved_oid);
+
       err = do_drop_serial (parser, statement);
       break;
     case PT_DROP_TRIGGER:
@@ -3751,6 +3872,31 @@ do_execute_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
     case PT_SET_TIMEZONE:
       err = do_set_timezone (parser, statement);
       break;
+    case PT_CREATE_SERVER:
+      err = do_create_server (parser, statement);
+      break;
+    case PT_DROP_SERVER:
+      err = do_drop_server (parser, statement);
+      break;
+    case PT_RENAME_SERVER:
+      err = do_rename_server (parser, statement);
+      break;
+    case PT_ALTER_SERVER:
+      err = do_alter_server (parser, statement);
+      break;
+    case PT_ALTER_SYNONYM:
+      err = do_alter_synonym (parser, statement);
+      break;
+    case PT_CREATE_SYNONYM:
+      err = do_create_synonym (parser, statement);
+      break;
+    case PT_DROP_SYNONYM:
+      err = do_drop_synonym (parser, statement);
+      break;
+    case PT_RENAME_SYNONYM:
+      err = do_rename_synonym (parser, statement);
+      break;
+
     default:
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_PT_UNKNOWN_STATEMENT, 1, statement->node_type);
       break;
@@ -3780,6 +3926,11 @@ do_execute_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
 	{
 	  err = repl_error;
 	}
+    }
+
+  if (prm_get_integer_value (PRM_ID_SUPPLEMENTAL_LOG) > 0)
+    {
+      (void) do_supplemental_statement (parser, statement, cls_info, reserved_oid);
     }
 
 end:
@@ -4051,7 +4202,7 @@ do_update_stats (PARSER_CONTEXT * parser, PT_NODE * statement)
 	    }
 	  else
 	    {
-	      ASSERT_ERROR_AND_SET (error);
+	      ERROR_SET_ERROR_1ARG (error, ER_LC_UNKNOWN_CLASSNAME, cls->info.name.original);
 	      return error;
 	    }
 
@@ -4438,6 +4589,7 @@ do_commit (PARSER_CONTEXT * parser, PT_NODE * statement)
   /* Row count should be reset to -1 for explicit commits (i.e: commit statements) but should not be reset in
    * AUTO_COMMIT mode. This is the best place to reset it for commit statements. */
   db_update_row_count_cache (-1);
+  cubmethod::get_callback_handler ()->free_query_handle_all (true);
   return tran_commit (statement->info.commit_work.retain_lock ? true : false);
 }
 
@@ -4489,6 +4641,8 @@ do_rollback (PARSER_CONTEXT * parser, PT_NODE * statement)
 	  db_value_clear (&val);
 	}
     }
+
+  cubmethod::get_callback_handler ()->free_query_handle_all (true);
 
   return error;
 }
@@ -5793,7 +5947,9 @@ do_check_for_empty_classes_in_delete (PARSER_CONTEXT * parser, PT_NODE * stateme
 	  error = ER_GENERIC_ERROR;
 	  goto cleanup;
 	}
-      classes_names[idx] = (char *) node->info.delete_.spec->info.spec.entity_name->info.name.original;
+      classes_names[idx] = (char *) db_private_alloc (NULL, SM_MAX_IDENTIFIER_LENGTH * sizeof (char));
+      sm_downcase_name (node->info.delete_.spec->info.spec.entity_name->info.name.original, classes_names[idx],
+			SM_MAX_IDENTIFIER_LENGTH);
       locks[idx] = X_LOCK;
       if (node->info.delete_.spec->info.spec.only_all == PT_ALL)
 	{
@@ -5904,7 +6060,11 @@ cleanup:
   /* free allocated resources */
   if (classes_names != NULL)
     {
-      db_private_free (NULL, classes_names);
+      for (idx = 0; idx < num_classes; idx++)
+	{
+	  db_private_free_and_init (NULL, classes_names[idx]);
+	}
+      db_private_free_and_init (NULL, classes_names);
     }
 
   if (locks != NULL)
@@ -5963,7 +6123,7 @@ do_check_delete_trigger (PARSER_CONTEXT * parser, PT_NODE * statement, PT_DO_FUN
 	}
     }
 
-  if (statement->use_auto_commit)
+  if (statement->flag.use_auto_commit)
     {
       /* No active trigger is involved. Avoid lock and fetch request. */
       error = do_func (parser, statement);
@@ -5982,7 +6142,7 @@ do_check_delete_trigger (PARSER_CONTEXT * parser, PT_NODE * statement, PT_DO_FUN
 
   affected_count = error;
 
-  if (!statement->use_auto_commit)
+  if (!statement->flag.use_auto_commit)
     {
       node = statement->info.delete_.del_stmt_list;
       while (node != NULL)
@@ -6019,7 +6179,7 @@ do_check_delete_trigger (PARSER_CONTEXT * parser, PT_NODE * statement, PT_DO_FUN
 int
 do_check_insert_trigger (PARSER_CONTEXT * parser, PT_NODE * statement, PT_DO_FUNC * do_func)
 {
-  if (statement->use_auto_commit)
+  if (statement->flag.use_auto_commit)
     {
       /* no active trigger is involved. Avoid lock and fetch request. */
       return do_func (parser, statement);
@@ -6114,7 +6274,7 @@ do_check_update_trigger (PARSER_CONTEXT * parser, PT_NODE * statement, PT_DO_FUN
       return ER_BLOCK_NOWHERE_STMT;
     }
 
-  if (statement->use_auto_commit)
+  if (statement->flag.use_auto_commit)
     {
       /* no active trigger is involved. Avoid lock and fetch request. */
       err = do_func (parser, statement);
@@ -6152,6 +6312,7 @@ static void
 get_activity_info (PARSER_CONTEXT * parser, DB_TRIGGER_ACTION * type, const char **source, PT_NODE * statement)
 {
   PT_NODE *str;
+  unsigned int save_custom;
 
   *type = TR_ACT_NULL;
   *source = NULL;
@@ -6182,7 +6343,9 @@ get_activity_info (PARSER_CONTEXT * parser, DB_TRIGGER_ACTION * type, const char
 	{
 	  /* complex expression */
 	  *type = TR_ACT_EXPRESSION;
+	  save_custom = parser->custom_print;
 	  *source = parser_print_tree_with_quotes (parser, statement);
+	  parser->custom_print = save_custom;
 	}
     }
 }
@@ -6247,8 +6410,8 @@ do_create_trigger (PARSER_CONTEXT * parser, PT_NODE * statement)
       class_ = db_find_class (PT_TR_TARGET_CLASS (target));
       if (class_ == NULL)
 	{
-	  assert (er_errid () != NO_ERROR);
-	  return er_errid ();
+	  ERROR_SET_ERROR_1ARG (error, ER_LC_UNKNOWN_CLASSNAME, PT_TR_TARGET_CLASS (target));
+	  return error;
 	}
 #if defined (ENABLE_UNUSED_FUNCTION)	/* to disable TEXT */
       if (sm_has_text_domain (db_get_attributes (class_), 1))
@@ -6657,15 +6820,11 @@ do_rename_trigger (PARSER_CONTEXT * parser, PT_NODE * statement)
   trigger = tr_find_trigger (old_name);
   if (trigger == NULL)
     {
-      assert (er_errid () != NO_ERROR);
-      error = er_errid ();
-    }
-  else
-    {
-      error = tr_rename_trigger (trigger, new_name, false);
+      ASSERT_ERROR_AND_SET (error);
+      return error;
     }
 
-  return error;
+  return tr_rename_trigger (trigger, new_name, false, false);
 }
 
 /*
@@ -8067,8 +8226,8 @@ static void
 init_compile_context (PARSER_CONTEXT * parser)
 {
   memset (&parser->context, 0x00, sizeof (COMPILE_CONTEXT));
-  parser->context.is_xasl_pinned_reference = (bool) parser->is_xasl_pinned_reference;
-  parser->context.recompile_xasl_pinned = (bool) parser->recompile_xasl_pinned;
+  parser->context.is_xasl_pinned_reference = (bool) parser->flag.is_xasl_pinned_reference;
+  parser->context.recompile_xasl_pinned = (bool) parser->flag.recompile_xasl_pinned;
 }
 
 /*
@@ -8118,7 +8277,7 @@ update_at_server (PARSER_CONTEXT * parser, PT_NODE * from, PT_NODE * statement, 
   int error = NO_ERROR;
   int i;
   XASL_NODE *xasl = NULL;
-  int count = 0;
+  INT64 count = 0;
   QUERY_ID query_id_self = parser->query_id;
   QFILE_LIST_ID *list_id = NULL;
   PT_NODE *cl_name_node = NULL, *spec = NULL;
@@ -8164,7 +8323,7 @@ update_at_server (PARSER_CONTEXT * parser, PT_NODE * from, PT_NODE * statement, 
 
       query_flag = DEFAULT_EXEC_MODE;
 
-      if (parser->is_auto_commit)
+      if (parser->flag.is_auto_commit)
 	{
 	  query_flag |= TRAN_AUTO_COMMIT;
 	}
@@ -8195,7 +8354,7 @@ update_at_server (PARSER_CONTEXT * parser, PT_NODE * from, PT_NODE * statement, 
 	      for (cl_name_node = spec->info.spec.flat_entity_list; cl_name_node && error == NO_ERROR;
 		   cl_name_node = cl_name_node->next)
 		{
-		  if (statement->use_auto_commit && tran_was_latest_query_committed ())
+		  if (statement->flag.use_auto_commit && tran_was_latest_query_committed ())
 		    {
 		      /* Nothing to flush. Avoids flush, since may fetch the class. */
 		      error = sm_decache_instances_after_query_executed_with_commit (cl_name_node->info.name.db_object);
@@ -8877,9 +9036,9 @@ do_prepare_update (PARSER_CONTEXT * parser, PT_NODE * statement)
 	   */
 
 	  /* make query string */
-	  parser->dont_prt_long_string = 1;
-	  parser->long_string_skipped = 0;
-	  parser->print_type_ambiguity = 0;
+	  parser->flag.dont_prt_long_string = 1;
+	  parser->flag.long_string_skipped = 0;
+	  parser->flag.print_type_ambiguity = 0;
 	  PT_NODE_PRINT_TO_ALIAS (parser, statement, (PT_CONVERT_RANGE | PT_PRINT_QUOTES | PT_PRINT_USER));
 	  contextp->sql_hash_text = (char *) statement->alias_print;
 	  err =
@@ -8890,10 +9049,10 @@ do_prepare_update (PARSER_CONTEXT * parser, PT_NODE * statement)
 	      ASSERT_ERROR ();
 	      return err;
 	    }
-	  parser->dont_prt_long_string = 0;
-	  if (parser->long_string_skipped || parser->print_type_ambiguity)
+	  parser->flag.dont_prt_long_string = 0;
+	  if (parser->flag.long_string_skipped || parser->flag.print_type_ambiguity)
 	    {
-	      statement->cannot_prepare = 1;
+	      statement->flag.cannot_prepare = 1;
 	      return NO_ERROR;
 	    }
 	}
@@ -8907,8 +9066,8 @@ do_prepare_update (PARSER_CONTEXT * parser, PT_NODE * statement)
 	   */
 
 	  /* look up server's XASL cache for this query string and get XASL file id (XASL_ID) returned if found */
-	  contextp->recompile_xasl = statement->recompile;
-	  if (statement->recompile == 0)
+	  contextp->recompile_xasl = statement->flag.recompile;
+	  if (statement->flag.recompile == 0)
 	    {
 	      err = prepare_query (contextp, &stream);
 
@@ -8991,7 +9150,7 @@ do_prepare_update (PARSER_CONTEXT * parser, PT_NODE * statement)
 		{
 		  free_and_init (stream.buffer);
 		}
-	      statement->use_plan_cache = 0;
+	      statement->flag.use_plan_cache = 0;
 	    }
 	  else
 	    {			/* if (!xasl_id) */
@@ -9014,11 +9173,11 @@ do_prepare_update (PARSER_CONTEXT * parser, PT_NODE * statement)
 		}
 	      if (err == NO_ERROR)
 		{
-		  statement->use_plan_cache = 1;
+		  statement->flag.use_plan_cache = 1;
 		}
 	      else
 		{
-		  statement->use_plan_cache = 0;
+		  statement->flag.use_plan_cache = 0;
 		}
 	    }
 	}
@@ -9119,7 +9278,7 @@ do_prepare_update (PARSER_CONTEXT * parser, PT_NODE * statement)
 int
 do_execute_update (PARSER_CONTEXT * parser, PT_NODE * statement)
 {
-  int err, result = 0;
+  INT64 err, result = 0;
   PT_NODE *flat, *spec = NULL;
   const char *savepoint_name = NULL;
   DB_OBJECT *class_obj;
@@ -9189,17 +9348,17 @@ do_execute_update (PARSER_CONTEXT * parser, PT_NODE * statement)
 	  query_flag |= NOT_FROM_RESULT_CACHE;
 	  query_flag |= RESULT_CACHE_INHIBITED;
 
-	  if (parser->is_xasl_pinned_reference)
+	  if (parser->flag.is_xasl_pinned_reference)
 	    {
 	      query_flag |= XASL_CACHE_PINNED_REFERENCE;
 	    }
 
-	  if (statement->use_auto_commit)
+	  if (statement->flag.use_auto_commit)
 	    {
 	      query_flag |= EXECUTE_QUERY_WITH_COMMIT;
 	    }
 
-	  if (parser->is_auto_commit)
+	  if (parser->flag.is_auto_commit)
 	    {
 	      query_flag |= TRAN_AUTO_COMMIT;
 	    }
@@ -9212,7 +9371,7 @@ do_execute_update (PARSER_CONTEXT * parser, PT_NODE * statement)
 
 	  // When a transaction is under auto-commit mode, flush all dirty objects to server.
 	  // Otherwise, flush associated objects.
-	  if (statement->use_auto_commit)
+	  if (statement->flag.use_auto_commit)
 	    {
 	      err = tran_flush_to_commit ();
 	    }
@@ -9312,7 +9471,7 @@ do_execute_update (PARSER_CONTEXT * parser, PT_NODE * statement)
 			{
 			  flat = spec->info.spec.flat_entity_list;
 			  class_obj = (flat) ? flat->info.name.db_object : NULL;
-			  if (statement->use_auto_commit && tran_was_latest_query_committed ())
+			  if (statement->flag.use_auto_commit && tran_was_latest_query_committed ())
 			    {
 			      /* Nothing to flush. Avoids flush, since may fetch the class. */
 			      err = sm_decache_instances_after_query_executed_with_commit (class_obj);
@@ -9350,7 +9509,7 @@ do_execute_update (PARSER_CONTEXT * parser, PT_NODE * statement)
 	      flat = spec->info.spec.flat_entity_list;
 	      class_obj = (flat) ? flat->info.name.db_object : NULL;
 
-	      if (class_obj && (statement->use_auto_commit == false || !tran_was_latest_query_committed ()))
+	      if (class_obj && (statement->flag.use_auto_commit == false || !tran_was_latest_query_committed ()))
 		{
 		  err = db_is_vclass (class_obj);
 		  if (err > 0)
@@ -9762,7 +9921,7 @@ build_xasl_for_server_delete (PARSER_CONTEXT * parser, PT_NODE * statement)
   int error = NO_ERROR;
   XASL_NODE *xasl = NULL;
   DB_OBJECT *class_obj;
-  int count = 0;
+  INT64 count = 0;
   QUERY_ID query_id_self = parser->query_id;
   QFILE_LIST_ID *list_id = NULL;
   const PT_NODE *node;
@@ -9799,7 +9958,7 @@ build_xasl_for_server_delete (PARSER_CONTEXT * parser, PT_NODE * statement)
 
       query_flag = DEFAULT_EXEC_MODE;
 
-      if (parser->is_auto_commit)
+      if (parser->flag.is_auto_commit)
 	{
 	  query_flag |= TRAN_AUTO_COMMIT;
 	}
@@ -9830,7 +9989,7 @@ build_xasl_for_server_delete (PARSER_CONTEXT * parser, PT_NODE * statement)
 	      if (node->info.spec.flag & PT_SPEC_FLAG_DELETE)
 		{
 		  class_obj = node->info.spec.flat_entity_list->info.name.db_object;
-		  if (statement->use_auto_commit && tran_was_latest_query_committed ())
+		  if (statement->flag.use_auto_commit && tran_was_latest_query_committed ())
 		    {
 		      /* Nothing to flush. Avoids flush, since may fetch the class. */
 		      error = sm_decache_instances_after_query_executed_with_commit (class_obj);
@@ -10228,9 +10387,9 @@ do_prepare_delete (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * paren
 	  /* Server-side deletion case: (by requesting server to execute XASL) build DELETE_PROC XASL */
 
 	  /* make query string */
-	  parser->dont_prt_long_string = 1;
-	  parser->long_string_skipped = 0;
-	  parser->print_type_ambiguity = 0;
+	  parser->flag.dont_prt_long_string = 1;
+	  parser->flag.long_string_skipped = 0;
+	  parser->flag.print_type_ambiguity = 0;
 	  PT_NODE_PRINT_TO_ALIAS (parser, statement, (PT_CONVERT_RANGE | PT_PRINT_QUOTES | PT_PRINT_USER));
 	  contextp->sql_hash_text = (char *) statement->alias_print;
 	  err =
@@ -10241,17 +10400,17 @@ do_prepare_delete (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * paren
 	      ASSERT_ERROR ();
 	      return err;
 	    }
-	  parser->dont_prt_long_string = 0;
-	  if (parser->long_string_skipped || parser->print_type_ambiguity)
+	  parser->flag.dont_prt_long_string = 0;
+	  if (parser->flag.long_string_skipped || parser->flag.print_type_ambiguity)
 	    {
-	      statement->cannot_prepare = 1;
+	      statement->flag.cannot_prepare = 1;
 	      err = NO_ERROR;
 	      break;
 	    }
 
 	  /* look up server's XASL cache for this query string and get XASL file id (XASL_ID) returned if found */
-	  contextp->recompile_xasl = statement->recompile;
-	  if (statement->recompile == 0)
+	  contextp->recompile_xasl = statement->flag.recompile;
+	  if (statement->flag.recompile == 0)
 	    {
 	      err = prepare_query (contextp, &stream);
 	      if (err != NO_ERROR)
@@ -10321,17 +10480,17 @@ do_prepare_delete (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * paren
 		{
 		  free_and_init (stream.buffer);
 		}
-	      statement->use_plan_cache = 0;
+	      statement->flag.use_plan_cache = 0;
 	    }
 	  else
 	    {
 	      if (err == NO_ERROR)
 		{
-		  statement->use_plan_cache = 1;
+		  statement->flag.use_plan_cache = 1;
 		}
 	      else
 		{
-		  statement->use_plan_cache = 0;
+		  statement->flag.use_plan_cache = 0;
 		}
 	    }
 	}
@@ -10391,7 +10550,7 @@ do_prepare_delete (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * paren
     }
 
   /* if something failed or cannot be prepared in in del_stmt_list clear all statement->xasl_id */
-  if (err != NO_ERROR || (statement != NULL && statement->cannot_prepare == 1))
+  if (err != NO_ERROR || (statement != NULL && statement->flag.cannot_prepare == 1))
     {
       for (node = save_stmt; node != statement; node = node->next)
 	{
@@ -10400,7 +10559,7 @@ do_prepare_delete (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * paren
       if (err == NO_ERROR && parent != NULL)
 	{
 	  /* set cannot_prepare to parent */
-	  parent->cannot_prepare = 1;
+	  parent->flag.cannot_prepare = 1;
 	}
     }
 
@@ -10416,7 +10575,7 @@ do_prepare_delete (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * paren
 int
 do_execute_delete (PARSER_CONTEXT * parser, PT_NODE * statement)
 {
-  int err, result = 0;
+  INT64 err, result = 0;
   PT_NODE *flat, *node;
   const char *savepoint_name = NULL;
   DB_OBJECT *class_obj;
@@ -10483,17 +10642,17 @@ do_execute_delete (PARSER_CONTEXT * parser, PT_NODE * statement)
       query_flag |= NOT_FROM_RESULT_CACHE;
       query_flag |= RESULT_CACHE_INHIBITED;
 
-      if (parser->is_xasl_pinned_reference)
+      if (parser->flag.is_xasl_pinned_reference)
 	{
 	  query_flag |= XASL_CACHE_PINNED_REFERENCE;
 	}
 
-      if (statement->use_auto_commit)
+      if (statement->flag.use_auto_commit)
 	{
 	  query_flag |= EXECUTE_QUERY_WITH_COMMIT;
 	}
 
-      if (parser->is_auto_commit)
+      if (parser->flag.is_auto_commit)
 	{
 	  query_flag |= TRAN_AUTO_COMMIT;
 	}
@@ -10506,7 +10665,7 @@ do_execute_delete (PARSER_CONTEXT * parser, PT_NODE * statement)
 
       // When a transaction is under auto-commit mode, flush all dirty objects to server.
       // Otherwise, flush associated objects.
-      if (statement->use_auto_commit)
+      if (statement->flag.use_auto_commit)
 	{
 	  err = tran_flush_to_commit ();
 	}
@@ -10591,7 +10750,7 @@ do_execute_delete (PARSER_CONTEXT * parser, PT_NODE * statement)
 		      flat = node->info.spec.flat_entity_list;
 		      class_obj = (flat) ? flat->info.name.db_object : NULL;
 
-		      if (statement->use_auto_commit && tran_was_latest_query_committed ())
+		      if (statement->flag.use_auto_commit && tran_was_latest_query_committed ())
 			{
 			  /* Nothing to flush. Avoids flush, since may fetch the class. */
 			  err2 = sm_decache_instances_after_query_executed_with_commit (class_obj);
@@ -10630,7 +10789,7 @@ do_execute_delete (PARSER_CONTEXT * parser, PT_NODE * statement)
 	      flat = node->info.spec.flat_entity_list;
 	      class_obj = (flat) ? flat->info.name.db_object : NULL;
 
-	      if (class_obj && (statement->use_auto_commit == false || !tran_was_latest_query_committed ()))
+	      if (class_obj && (statement->flag.use_auto_commit == false || !tran_was_latest_query_committed ()))
 		{
 		  err = db_is_vclass (class_obj);
 		  if (err > 0)
@@ -10875,9 +11034,9 @@ do_prepare_insert_internal (PARSER_CONTEXT * parser, PT_NODE * statement)
     }
 
   /* make query string */
-  parser->dont_prt_long_string = 1;
-  parser->long_string_skipped = 0;
-  parser->print_type_ambiguity = 0;
+  parser->flag.dont_prt_long_string = 1;
+  parser->flag.long_string_skipped = 0;
+  parser->flag.print_type_ambiguity = 0;
   PT_NODE_PRINT_TO_ALIAS (parser, statement, (PT_CONVERT_RANGE | PT_PRINT_QUOTES | PT_PRINT_USER));
   contextp->sql_hash_text = (char *) statement->alias_print;
   error =
@@ -10888,16 +11047,16 @@ do_prepare_insert_internal (PARSER_CONTEXT * parser, PT_NODE * statement)
       ASSERT_ERROR ();
       return error;
     }
-  parser->dont_prt_long_string = 0;
-  if (parser->long_string_skipped || parser->print_type_ambiguity)
+  parser->flag.dont_prt_long_string = 0;
+  if (parser->flag.long_string_skipped || parser->flag.print_type_ambiguity)
     {
-      statement->cannot_prepare = 1;
+      statement->flag.cannot_prepare = 1;
       return NO_ERROR;
     }
 
   /* look up server's XASL cache for this query string and get XASL file id (XASL_ID) returned if found */
-  contextp->recompile_xasl = statement->recompile;
-  if (statement->recompile == 0)
+  contextp->recompile_xasl = statement->flag.recompile;
+  if (statement->flag.recompile == 0)
     {
       error = prepare_query (contextp, &stream);
       if (error != NO_ERROR)
@@ -10960,17 +11119,17 @@ do_prepare_insert_internal (PARSER_CONTEXT * parser, PT_NODE * statement)
 	  free_and_init (stream.buffer);
 	}
 
-      statement->use_plan_cache = 0;
+      statement->flag.use_plan_cache = 0;
     }
   else
     {
       if (error == NO_ERROR)
 	{
-	  statement->use_plan_cache = 1;
+	  statement->flag.use_plan_cache = 1;
 	}
       else
 	{
-	  statement->use_plan_cache = 0;
+	  statement->flag.use_plan_cache = 0;
 	}
     }
 
@@ -11006,7 +11165,7 @@ do_insert_at_server (PARSER_CONTEXT * parser, PT_NODE * statement)
 {
   int error = NO_ERROR;
   XASL_NODE *xasl = NULL;
-  int count = 0;
+  INT64 count = 0;
   QUERY_ID query_id_self = parser->query_id;
   QFILE_LIST_ID *list_id = NULL;
 
@@ -11051,7 +11210,7 @@ do_insert_at_server (PARSER_CONTEXT * parser, PT_NODE * statement)
 	  query_flag |= TRIGGER_IS_INVOLVED;
 	}
 
-      if (parser->is_auto_commit)
+      if (parser->flag.is_auto_commit)
 	{
 	  query_flag |= TRAN_AUTO_COMMIT;
 	}
@@ -11080,7 +11239,7 @@ do_insert_at_server (PARSER_CONTEXT * parser, PT_NODE * statement)
 	{
 	  MOP class_obj = statement->info.insert.spec->info.spec.flat_entity_list->info.name.db_object;
 
-	  if (statement->use_auto_commit && tran_was_latest_query_committed ())
+	  if (statement->flag.use_auto_commit && tran_was_latest_query_committed ())
 	    {
 	      /* Nothing to flush. Avoids flush, since may fetch the class. */
 	      error = sm_decache_instances_after_query_executed_with_commit (class_obj);
@@ -11091,7 +11250,7 @@ do_insert_at_server (PARSER_CONTEXT * parser, PT_NODE * statement)
 	    }
 	}
 
-      if (parser->return_generated_keys)
+      if (parser->flag.return_generated_keys)
 	{
 	  statement->etc = (void *) list_id;
 	}
@@ -11466,7 +11625,6 @@ do_create_midxkey_for_constraint (DB_OTMPL * tmpl, SM_CLASS_CONSTRAINT * constra
   DB_MIDXKEY midxkey;
   SM_ATTRIBUTE **attr = NULL;
   int buf_size = 0, bitmap_size = 0, i, error = NO_ERROR, attr_count = 0;
-  unsigned char *bits;
   char *bound_bits = NULL, *key_ptr = NULL;
   OR_BUF buf;
   DB_VALUE *val = NULL;
@@ -11528,14 +11686,7 @@ do_create_midxkey_for_constraint (DB_OTMPL * tmpl, SM_CLASS_CONSTRAINT * constra
   key_ptr = bound_bits + bitmap_size;
 
   OR_BUF_INIT (buf, key_ptr, buf_size - bitmap_size);
-  if (bitmap_size > 0)
-    {
-      bits = (unsigned char *) bound_bits;
-      for (i = 0; i < bitmap_size; i++)
-	{
-	  bits[i] = (unsigned char) 0;
-	}
-    }
+  MIDXKEY_BOUNDBITS_INIT (bound_bits, bitmap_size);
 
   for (i = 0, attr = constraint->attributes; *attr != NULL; attr++, i++)
     {
@@ -12145,7 +12296,7 @@ do_insert_template (PARSER_CONTEXT * parser, DB_OTMPL ** otemplate, PT_NODE * st
 	  goto cleanup;
 	}
 
-      if (parser->return_generated_keys)
+      if (parser->flag.return_generated_keys)
 	{
 	  seq = set_create_sequence (0);
 	  if (seq == NULL)
@@ -12370,7 +12521,7 @@ do_insert_template (PARSER_CONTEXT * parser, DB_OTMPL ** otemplate, PT_NODE * st
 		{
 		  bool include_new_obj;
 
-		  include_new_obj = (parser->return_generated_keys && (*otemplate)->is_autoincrement_set);
+		  include_new_obj = (parser->flag.return_generated_keys && (*otemplate)->is_autoincrement_set);
 
 		  obt_quit (*otemplate);	/* free template */
 
@@ -12392,7 +12543,7 @@ do_insert_template (PARSER_CONTEXT * parser, DB_OTMPL ** otemplate, PT_NODE * st
 		}
 	    }
 
-	  if (parser->abort)
+	  if (parser->flag.abort)
 	    {
 	      assert (er_errid () != NO_ERROR);
 	      error = er_errid ();
@@ -12414,7 +12565,7 @@ do_insert_template (PARSER_CONTEXT * parser, DB_OTMPL ** otemplate, PT_NODE * st
       goto cleanup;
     }
 
-  if (*otemplate != NULL && parser->return_generated_keys)
+  if (*otemplate != NULL && parser->flag.return_generated_keys)
     {
       /* a client side insert with template, with requested generated keys */
       value = db_value_create ();
@@ -12435,7 +12586,7 @@ do_insert_template (PARSER_CONTEXT * parser, DB_OTMPL ** otemplate, PT_NODE * st
     }
   else
     {
-      if (!parser->return_generated_keys && (*otemplate == NULL || value_clauses->next != NULL))
+      if (!parser->flag.return_generated_keys && (*otemplate == NULL || value_clauses->next != NULL))
 	{
 	  /* a client side insert with subquery and no template, a client side insert with multiple insert values or a
 	   * server side insert for which the generated keys have not been requested */
@@ -12607,7 +12758,7 @@ insert_subquery_results (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE *
 
   cnt = 0;
 
-  if (parser->return_generated_keys)
+  if (parser->flag.return_generated_keys)
     {
       seq = set_create_sequence (0);
       if (seq == NULL)
@@ -12841,7 +12992,7 @@ insert_subquery_results (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE *
 
 		      obj = dbt_finish_object (otemplate);	/* flush template */
 
-		      include_new_obj = (obj && parser->return_generated_keys && otemplate->is_autoincrement_set);
+		      include_new_obj = (obj && parser->flag.return_generated_keys && otemplate->is_autoincrement_set);
 
 		      obt_quit (otemplate);	/* free template */
 
@@ -12899,7 +13050,7 @@ insert_subquery_results (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE *
 	}
     }
 
-  if (parser->return_generated_keys && seq != NULL)
+  if (parser->flag.return_generated_keys && seq != NULL)
     {
       value = db_value_create ();
       if (value == NULL)
@@ -12955,7 +13106,7 @@ cleanup:
       set_free (seq);
     }
 
-  cursor_free_self_list_id ((QFILE_LIST_ID *) qry->etc);
+  cursor_free_self_list_id (qry->etc);
   pt_end_query (parser, query_id_self);
 
   return cnt;
@@ -13294,6 +13445,9 @@ insert_local (PARSER_CONTEXT * parser, PT_NODE * statement)
   /* the do_Trigger_involved will be set as true when execute trigger statement. it will not be set back. we need to
    * keep its value to update last insert id. */
   is_trigger_involved = do_Trigger_involved;
+
+  cdc_Trigger_involved = do_Trigger_involved;
+
   if (!do_Trigger_involved)
     {
       obt_begin_insert_values ();
@@ -13364,7 +13518,7 @@ do_insert (PARSER_CONTEXT * parser, PT_NODE * root_statement)
 
       /* check whether this transaction is a victim of deadlock during */
       /* request to the driver */
-      if (parser->abort)
+      if (parser->flag.abort)
 	{
 	  assert (er_errid () != NO_ERROR);
 	  return (er_errid ());
@@ -13397,7 +13551,7 @@ do_prepare_insert (PARSER_CONTEXT * parser, PT_NODE * statement)
   int error = NO_ERROR;
   PT_NODE *class_;
   PT_NODE *values = NULL;
-  PT_NODE *attr_list;
+  PT_NODE *attr_list, *value_clauses, *query;
   PT_NODE *update = NULL;
   PT_NODE *with = NULL;
   int save_au;
@@ -13416,6 +13570,19 @@ do_prepare_insert (PARSER_CONTEXT * parser, PT_NODE * statement)
     {
       assert (false);
       goto cleanup;
+    }
+
+  /* there can be no results, this is a compile time false where clause */
+  value_clauses = statement->info.insert.value_clauses;
+  if (value_clauses && value_clauses->info.node_list.list_type == PT_IS_SUBQUERY)
+    {
+      query = value_clauses->info.node_list.list;
+      if (PT_IS_SELECT (query) && pt_false_where (parser, query))
+	{
+	  /* tell to the execute routine that there's no XASL to execute */
+	  statement->xasl_id = NULL;
+	  goto cleanup;
+	}
     }
 
   statement->etc = NULL;
@@ -13463,7 +13630,7 @@ cleanup:
 int
 do_execute_insert (PARSER_CONTEXT * parser, PT_NODE * statement)
 {
-  int err;
+  INT64 err;
   PT_NODE *flat;
   DB_OBJECT *class_obj;
   QFILE_LIST_ID *list_id;
@@ -13493,22 +13660,22 @@ do_execute_insert (PARSER_CONTEXT * parser, PT_NODE * statement)
   query_flag |= NOT_FROM_RESULT_CACHE;
   query_flag |= RESULT_CACHE_INHIBITED;
 
-  if (parser->return_generated_keys)
+  if (parser->flag.return_generated_keys)
     {
       query_flag |= RETURN_GENERATED_KEYS;
     }
 
-  if (parser->is_xasl_pinned_reference)
+  if (parser->flag.is_xasl_pinned_reference)
     {
       query_flag |= XASL_CACHE_PINNED_REFERENCE;
     }
 
-  if (statement->use_auto_commit)
+  if (statement->flag.use_auto_commit)
     {
       query_flag |= EXECUTE_QUERY_WITH_COMMIT;
     }
 
-  if (parser->is_auto_commit)
+  if (parser->flag.is_auto_commit)
     {
       query_flag |= TRAN_AUTO_COMMIT;
     }
@@ -13521,7 +13688,7 @@ do_execute_insert (PARSER_CONTEXT * parser, PT_NODE * statement)
 
   if (ws_need_flush ())
     {
-      if (statement->use_auto_commit)
+      if (statement->flag.use_auto_commit)
 	{
 	  // When a transaction is under auto-commit mode, flush all dirty objects to server.
 	  err = tran_flush_to_commit ();
@@ -13547,7 +13714,7 @@ do_execute_insert (PARSER_CONTEXT * parser, PT_NODE * statement)
     {
       /* set as result */
       err = list_id->tuple_cnt;
-      if (parser->return_generated_keys)
+      if (parser->flag.return_generated_keys)
 	{
 	  statement->etc = (void *) list_id;
 	}
@@ -13917,7 +14084,7 @@ do_select_internal (PARSER_CONTEXT * parser, PT_NODE * statement, bool for_ins_u
   error = NO_ERROR;
 
   /* click counter check */
-  if (statement->is_click_counter)
+  if (statement->flag.is_click_counter)
     {
       CHECK_MODIFICATION_ERROR ();
     }
@@ -13935,12 +14102,12 @@ do_select_internal (PARSER_CONTEXT * parser, PT_NODE * statement, bool for_ins_u
 
   query_flag = DEFAULT_EXEC_MODE;
 
-  if (parser->dont_collect_exec_stats)
+  if (parser->flag.dont_collect_exec_stats)
     {
       query_flag |= DONT_COLLECT_EXEC_STATS;
     }
 
-  if (parser->is_auto_commit)
+  if (parser->flag.is_auto_commit)
     {
       query_flag |= TRAN_AUTO_COMMIT;
     }
@@ -14098,7 +14265,7 @@ do_prepare_select (PARSER_CONTEXT * parser, PT_NODE * statement)
   contextp->sql_user_text_len = statement->sql_user_text_len;
 
   /* click counter check */
-  if (statement->is_click_counter)
+  if (statement->flag.is_click_counter)
     {
       CHECK_MODIFICATION_ERROR ();
     }
@@ -14118,9 +14285,9 @@ do_prepare_select (PARSER_CONTEXT * parser, PT_NODE * statement)
     }
 
   /* make query string */
-  parser->dont_prt_long_string = 1;
-  parser->long_string_skipped = 0;
-  parser->print_type_ambiguity = 0;
+  parser->flag.dont_prt_long_string = 1;
+  parser->flag.long_string_skipped = 0;
+  parser->flag.print_type_ambiguity = 0;
   PT_NODE_PRINT_TO_ALIAS (parser, statement,
 			  (PT_CONVERT_RANGE | PT_PRINT_QUOTES | PT_PRINT_DIFFERENT_SYSTEM_PARAMETERS | PT_PRINT_USER));
   contextp->sql_hash_text = (char *) statement->alias_print;
@@ -14132,16 +14299,16 @@ do_prepare_select (PARSER_CONTEXT * parser, PT_NODE * statement)
       ASSERT_ERROR ();
       return err;
     }
-  parser->dont_prt_long_string = 0;
-  if (parser->long_string_skipped || parser->print_type_ambiguity)
+  parser->flag.dont_prt_long_string = 0;
+  if (parser->flag.long_string_skipped || parser->flag.print_type_ambiguity)
     {
-      statement->cannot_prepare = 1;
+      statement->flag.cannot_prepare = 1;
       return NO_ERROR;
     }
 
   /* look up server's XASL cache for this query string and get XASL file id (XASL_ID) returned if found */
-  contextp->recompile_xasl = statement->recompile;
-  if (statement->recompile == 0)
+  contextp->recompile_xasl = statement->flag.recompile;
+  if (statement->flag.recompile == 0)
     {
       XASL_NODE_HEADER xasl_header;
       stream.xasl_header = &xasl_header;
@@ -14183,6 +14350,10 @@ do_prepare_select (PARSER_CONTEXT * parser, PT_NODE * statement)
       AU_SAVE_AND_DISABLE (au_save);	/* this prevents authorization checking during generating XASL */
       /* parser_generate_xasl() will build XASL tree from parse tree */
       contextp->xasl = parser_generate_xasl (parser, statement);
+      if (contextp->xasl && statement->info.query.oids_included)
+	{
+	  contextp->xasl->header.xasl_flag |= RESULT_CACHE_INHIBITED;
+	}
       AU_RESTORE (au_save);
 
       if (contextp->xasl && (err == NO_ERROR) && !pt_has_error (parser))
@@ -14234,17 +14405,17 @@ do_prepare_select (PARSER_CONTEXT * parser, PT_NODE * statement)
 	{
 	  free_and_init (stream.buffer);
 	}
-      statement->use_plan_cache = 0;
+      statement->flag.use_plan_cache = 0;
     }
   else
     {
       if (err == NO_ERROR)
 	{
-	  statement->use_plan_cache = 1;
+	  statement->flag.use_plan_cache = 1;
 	}
       else
 	{
-	  statement->use_plan_cache = 0;
+	  statement->flag.use_plan_cache = 0;
 	}
     }
 
@@ -14317,15 +14488,15 @@ do_execute_session_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
 
   query_flag = DEFAULT_EXEC_MODE;
 
-  if (parser->is_holdable)
+  if (parser->flag.is_holdable)
     {
       query_flag |= RESULT_HOLDABLE;
     }
-  if (parser->is_xasl_pinned_reference)
+  if (parser->flag.is_xasl_pinned_reference)
     {
       query_flag |= XASL_CACHE_PINNED_REFERENCE;
     }
-  if (parser->is_auto_commit)
+  if (parser->flag.is_auto_commit)
     {
       query_flag |= TRAN_AUTO_COMMIT;
     }
@@ -14342,7 +14513,7 @@ do_execute_session_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
       (void) parser_walk_tree (parser, statement, pt_flush_classes, NULL, NULL, NULL);
     }
 
-  if (parser->abort)
+  if (parser->flag.abort)
     {
       assert (er_errid () != NO_ERROR);
       return er_errid ();
@@ -14357,13 +14528,13 @@ do_execute_session_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
   list_id = NULL;
 
   CACHE_TIME_RESET (&clt_cache_time);
-  if (statement->clt_cache_check)
+  if (statement->flag.clt_cache_check)
     {
       clt_cache_time = statement->cache_time;
-      statement->clt_cache_check = 0;
+      statement->flag.clt_cache_check = 0;
     }
   CACHE_TIME_RESET (&statement->cache_time);
-  statement->clt_cache_reusable = 0;
+  statement->flag.clt_cache_reusable = 0;
 
   err =
     execute_query (statement->xasl_id, &parser->query_id, parser->host_var_count + parser->auto_param_count,
@@ -14373,7 +14544,7 @@ do_execute_session_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
 
   if (CACHE_TIME_EQ (&clt_cache_time, &statement->cache_time))
     {
-      statement->clt_cache_reusable = 1;
+      statement->flag.clt_cache_reusable = 1;
     }
 
   /* save the returned QFILE_LIST_ID into 'statement->etc' */
@@ -14400,6 +14571,7 @@ do_execute_session_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
     }
   if (!cursor_open (&cursor_id, list_id, false, statement->info.execute.oids_included))
     {
+      free_and_init (vals);
       return err;
     }
   cursor_id.query_id = parser->query_id;
@@ -14462,41 +14634,41 @@ do_execute_select (PARSER_CONTEXT * parser, PT_NODE * statement)
   /* adjust query flag */
   query_flag = DEFAULT_EXEC_MODE;
 
-  if (statement->si_datetime == 1 || statement->si_tran_id == 1)
+  if (statement->flag.si_datetime == 1 || statement->flag.si_tran_id == 1)
     {
-      statement->info.query.reexecute = 1;
-      statement->info.query.do_not_cache = 1;
+      statement->info.query.flag.reexecute = 1;
+      statement->info.query.flag.do_not_cache = 1;
     }
 
-  if (statement->info.query.reexecute == 1)
+  if (statement->info.query.flag.reexecute == 1)
     {
       query_flag |= NOT_FROM_RESULT_CACHE;
     }
 
-  if (statement->info.query.do_cache == 1)
+  if (statement->info.query.flag.do_cache == 1)
     {
       query_flag |= RESULT_CACHE_REQUIRED;
     }
 
-  if (statement->info.query.do_not_cache == 1)
+  if (statement->info.query.flag.do_not_cache == 1 || statement->info.query.oids_included)
     {
       query_flag |= RESULT_CACHE_INHIBITED;
     }
-  if (parser->is_holdable)
+  if (parser->flag.is_holdable)
     {
       query_flag |= RESULT_HOLDABLE;
     }
-  if (parser->is_xasl_pinned_reference)
+  if (parser->flag.is_xasl_pinned_reference)
     {
       query_flag |= XASL_CACHE_PINNED_REFERENCE;
     }
 
-  if (parser->dont_collect_exec_stats)
+  if (parser->flag.dont_collect_exec_stats)
     {
       query_flag |= DONT_COLLECT_EXEC_STATS;
     }
 
-  if (statement->use_auto_commit)
+  if (statement->flag.use_auto_commit)
     {
       query_flag |= EXECUTE_QUERY_WITH_COMMIT;
 
@@ -14517,7 +14689,7 @@ do_execute_select (PARSER_CONTEXT * parser, PT_NODE * statement)
 	}
     }
 
-  if (parser->is_auto_commit)
+  if (parser->flag.is_auto_commit)
     {
       query_flag |= TRAN_AUTO_COMMIT;
     }
@@ -14534,7 +14706,7 @@ do_execute_select (PARSER_CONTEXT * parser, PT_NODE * statement)
       (void) parser_walk_tree (parser, statement, pt_flush_classes, NULL, NULL, NULL);
     }
 
-  if (parser->abort)
+  if (parser->flag.abort)
     {
       assert (er_errid () != NO_ERROR);
       return er_errid ();
@@ -14551,13 +14723,13 @@ do_execute_select (PARSER_CONTEXT * parser, PT_NODE * statement)
   list_id = NULL;
 
   CACHE_TIME_RESET (&clt_cache_time);
-  if (statement->clt_cache_check)
+  if (statement->flag.clt_cache_check)
     {
       clt_cache_time = statement->cache_time;
-      statement->clt_cache_check = 0;
+      statement->flag.clt_cache_check = 0;
     }
   CACHE_TIME_RESET (&statement->cache_time);
-  statement->clt_cache_reusable = 0;
+  statement->flag.clt_cache_reusable = 0;
 
   err =
     execute_query (statement->xasl_id, &parser->query_id, parser->host_var_count + parser->auto_param_count,
@@ -14567,7 +14739,7 @@ do_execute_select (PARSER_CONTEXT * parser, PT_NODE * statement)
 
   if (CACHE_TIME_EQ (&clt_cache_time, &statement->cache_time))
     {
-      statement->clt_cache_reusable = 1;
+      statement->flag.clt_cache_reusable = 1;
     }
 
   /* save the returned QFILE_LIST_ID into 'statement->etc' */
@@ -14605,7 +14777,768 @@ do_execute_select (PARSER_CONTEXT * parser, PT_NODE * statement)
   return err;
 }				/* do_execute_select() */
 
+static int
+do_reserve_oidinfo (PARSER_CONTEXT * parser, PT_NODE * statement, OID ** reserved_oid)
+{
+  if (prm_get_integer_value (PRM_ID_SUPPLEMENTAL_LOG) != 1)
+    {
+      return NO_ERROR;
+    }
 
+  switch (statement->node_type)
+    {
+      /* can be expanded to several drop statements */
+    case PT_DROP_SERIAL:
+      {
+	const char *objname = NULL;
+	OID *oid = NULL;
+
+	oid = (OID *) malloc (sizeof (OID));
+	if (oid == NULL)
+	  {
+	    return ER_OUT_OF_VIRTUAL_MEMORY;
+	  }
+
+	DB_OBJECT *serial_class = sm_find_class (CT_SERIAL_NAME);
+
+	objname = (char *) PT_NODE_SR_NAME (statement);
+	if (do_get_serial_obj_id (oid, serial_class, objname) == NULL)
+	  {
+	    free_and_init (oid);
+
+	    return ER_FAILED;
+	  }
+	*reserved_oid = oid;
+	break;
+      }
+    default:
+      break;
+    }
+  return NO_ERROR;
+}
+
+static int
+do_find_object_type (PT_MISC_TYPE type, const char *classname, CDC_DDL_OBJECT_TYPE * objtype)
+{
+  DB_OBJECT *class_obj;
+
+  if (type == PT_CLASS)
+    {
+      *objtype = CDC_TABLE;
+    }
+  else if (type == PT_VCLASS)
+    {
+      *objtype = CDC_VIEW;
+    }
+  else if (type == PT_MISC_DUMMY)
+    {
+      class_obj = db_find_class (classname);
+
+      if (db_is_vclass (class_obj))
+	{
+	  *objtype = CDC_VIEW;
+	}
+      else if (db_is_class (class_obj))
+	{
+	  *objtype = CDC_TABLE;
+	}
+      else
+	{
+	  return ER_FAILED;
+	}
+    }
+  else
+    {
+      return ER_FAILED;
+    }
+
+  return NO_ERROR;
+}
+
+static int
+do_reserve_classinfo (PARSER_CONTEXT * parser, PT_NODE * statement, RESERVED_CLASS_INFO ** cls_info)
+{
+  int count = 0;
+  PT_NODE *entity = NULL;
+  PT_NODE *entity_spec = NULL;
+
+  const char *classname;
+  DB_OBJECT *class_obj;
+
+  if (prm_get_integer_value (PRM_ID_SUPPLEMENTAL_LOG) != 1)
+    {
+      return NO_ERROR;
+    }
+
+  if (statement->node_type == PT_DROP)
+    {
+      if (statement->info.drop.if_exists && statement->info.drop.spec_list == NULL)
+	{
+	  return NO_ERROR;
+	}
+
+      for (entity_spec = statement->info.drop.spec_list; entity_spec != NULL; entity_spec = entity_spec->next)
+	{
+	  entity = entity_spec->info.spec.flat_entity_list;
+
+	  cls_info[count] = (RESERVED_CLASS_INFO *) malloc (sizeof (RESERVED_CLASS_INFO));
+	  if (cls_info[count] == NULL)
+	    {
+	      return ER_OUT_OF_VIRTUAL_MEMORY;
+	    }
+
+	  classname = entity->info.name.original;
+	  class_obj = db_find_class (classname);
+
+	  strcpy (cls_info[count]->name, classname);
+
+	  memcpy (&cls_info[count]->oid, ws_oid (class_obj), sizeof (OID));
+
+	  if (do_find_object_type (statement->info.drop.entity_type, classname, &cls_info[count]->objtype) != NO_ERROR)
+	    {
+	      return ER_FAILED;
+	    }
+
+	  assert (cls_info[count]->objtype == CDC_TABLE || cls_info[count]->objtype == CDC_VIEW);
+
+	  count++;
+	}
+    }
+
+  cls_info[count] = NULL;
+
+  return NO_ERROR;
+}
+
+static int
+do_supplemental_statement (PARSER_CONTEXT * parser, PT_NODE * statement, RESERVED_CLASS_INFO ** cls_info,
+			   OID * reserved_oid)
+{
+  int error = NO_ERROR;
+  PARSER_VARCHAR **host_val = NULL;
+  static const char *unknown_name = "-";
+  char stmt_separator;
+  char *stmt_end = NULL;
+  char *sbr_text = NULL;
+  char *stmt_text = NULL;
+
+  int num_class = 0;
+  int num_object = 0;
+
+  int drop_stmt_length = 0, pre_drop_length = 0;
+  int drop_copied_length = 0;
+  char *drop_stmt = NULL;
+  const char *drop_prefix = "drop table ";
+  const char *drop_view_prefix = "drop view ";
+  const char *if_exist_statement = "if exists ";
+  const char *cascade_statement = " cascade constraints";
+
+  const char *classname = NULL;
+  const char *objname = NULL;
+
+  CDC_DDL_TYPE ddl_type;
+  CDC_DDL_OBJECT_TYPE objtype;
+
+  PT_NODE *entity = NULL;
+  PT_NODE *entity_spec = NULL;
+  PT_NODE *target = NULL;
+
+  OID *classoid = NULL;
+  OID *classoid_list[1024];
+  OID *oid = NULL;
+  OID null_oid = OID_INITIALIZER;
+
+  int stmt_length = 0;
+
+  bool supp_appended = false;
+
+  if (statement->sql_user_text == NULL || statement->sql_user_text_len == 0)
+    {
+      /* this should be loaddb. */
+      return NO_ERROR;
+    }
+
+  switch (statement->node_type)
+    {
+    case PT_CREATE_ENTITY:
+      classname = statement->info.create_entity.entity_name->info.name.original;
+      ddl_type = CDC_CREATE;
+      if (statement->info.create_entity.entity_type == PT_CLASS)
+	{
+	  classname = statement->info.create_entity.entity_name->info.name.original;
+	  classoid = ws_oid (sm_find_class (classname));
+	  objtype = CDC_TABLE;
+	}
+      else if (statement->info.create_entity.entity_type == PT_VCLASS)
+	{
+	  objtype = CDC_VIEW;
+	}
+      else
+	{
+	  assert (false);
+	}
+
+      break;
+
+    case PT_ALTER:
+      classname = statement->info.alter.entity_name->info.name.original;
+      ddl_type = CDC_ALTER;
+
+      if (do_find_object_type (statement->info.alter.entity_type, classname, &objtype) != NO_ERROR)
+	{
+	  return ER_FAILED;
+	}
+
+      assert (objtype == CDC_TABLE || objtype == CDC_VIEW);
+
+      if (objtype == CDC_TABLE)
+	{
+	  classoid = ws_oid (sm_find_class (classname));
+	}
+
+      break;
+
+    case PT_RENAME:
+      {
+	const PT_NODE *current_rename = NULL;
+	ddl_type = CDC_RENAME;
+
+	for (current_rename = statement; current_rename != NULL; current_rename = current_rename->next)
+	  {
+	    char temp_statement[1024] = "\0";
+	    char *rename_statement = NULL;
+	    const char *new_name = current_rename->info.rename.new_name->info.name.original;
+	    const char *old_name = current_rename->info.rename.old_name->info.name.original;
+	    int length = 0;
+
+	    /* Bug : statement->info.rename.entity_type always has PT_CLASS 
+	     * when rename view1 as view2 or rename table1 as table2. So, objtype can not be classified with entity_type */
+	    if (do_find_object_type (PT_MISC_DUMMY, new_name, &objtype) != NO_ERROR)
+	      {
+		error = ER_FAILED;
+		goto end;
+	      }
+
+	    assert (objtype == CDC_TABLE || objtype == CDC_VIEW);
+
+	    length = strlen (new_name) + strlen (old_name) + 18;
+
+	    if (length <= 1024)
+	      {
+		rename_statement = temp_statement;
+	      }
+	    else
+	      {
+		rename_statement = (char *) malloc (length);
+		if (rename_statement == NULL)
+		  {
+		    error = ER_OUT_OF_VIRTUAL_MEMORY;
+		    goto end;
+		  }
+	      }
+
+	    if (objtype == CDC_VIEW)
+	      {
+		sprintf (rename_statement, "rename view %s as %s", old_name, new_name);
+	      }
+	    else if (objtype == CDC_TABLE)
+	      {
+		classoid = ws_oid (sm_find_class (new_name));
+		sprintf (rename_statement, "rename table %s as %s", old_name, new_name);
+	      }
+	    else
+	      {
+		assert (false);
+	      }
+
+	    error = log_supplement_statement (ddl_type, objtype, classoid, classoid, rename_statement);
+
+	    if (rename_statement != temp_statement)
+	      {
+		free_and_init (rename_statement);
+	      }
+	  }
+
+	supp_appended = true;
+
+	break;
+      }
+    case PT_DROP:
+      {
+	if (statement->info.drop.if_exists && statement->info.drop.spec_list == NULL)
+	  {
+	    goto end;
+	  }
+
+	ddl_type = CDC_DROP;
+
+	if (cls_info != NULL)
+	  {
+	    while (cls_info[num_class] != NULL)
+	      {
+		num_class++;
+	      }
+	  }
+
+
+	for (int i = 0; i < num_class; i++)
+	  {
+	    pre_drop_length =
+	      ((cls_info[i]->objtype ==
+		CDC_TABLE) ? strlen (drop_prefix) : strlen (drop_view_prefix)) + strlen (if_exist_statement) +
+	      strlen (cascade_statement) + 2;
+
+	    drop_stmt_length = pre_drop_length + strlen (cls_info[i]->name);
+	    drop_stmt = (char *) malloc (drop_stmt_length * 2);
+	    if (drop_stmt == NULL)
+	      {
+		goto end;
+	      }
+
+	    if (cls_info[i]->objtype == CDC_TABLE)
+	      {
+		strncpy (drop_stmt, drop_prefix, strlen (drop_prefix));
+		drop_copied_length = strlen (drop_prefix);
+	      }
+	    else if (cls_info[i]->objtype == CDC_VIEW)
+	      {
+		strncpy (drop_stmt, drop_view_prefix, strlen (drop_view_prefix));
+		drop_copied_length = strlen (drop_view_prefix);
+	      }
+	    else
+	      {
+		assert (false);
+	      }
+
+	    if (statement->info.drop.if_exists)
+	      {
+		strncpy (drop_stmt + drop_copied_length, if_exist_statement, strlen (if_exist_statement));
+		drop_copied_length += strlen (if_exist_statement);
+	      }
+
+	    strncpy (drop_stmt + drop_copied_length, cls_info[i]->name, strlen (cls_info[i]->name));
+	    drop_copied_length += strlen (cls_info[i]->name);
+
+	    if (statement->info.drop.is_cascade_constraints)
+	      {
+		strncpy (drop_stmt + drop_copied_length, cascade_statement, strlen (cascade_statement));
+		drop_copied_length += strlen (cascade_statement);
+	      }
+
+	    drop_stmt[drop_copied_length] = '\0';
+
+	    error =
+	      log_supplement_statement (ddl_type, cls_info[i]->objtype, &cls_info[i]->oid, &cls_info[i]->oid,
+					drop_stmt);
+
+	    free_and_init (drop_stmt);
+	    free_and_init (cls_info[i]);
+	  }
+
+	supp_appended = true;
+
+	break;
+      }
+    case PT_CREATE_INDEX:
+      {
+	BTID index;
+	MOP classop;
+
+	oid = (OID *) malloc (sizeof (OID));
+	if (oid == NULL)
+	  {
+	    error = ER_OUT_OF_VIRTUAL_MEMORY;
+	    goto end;
+	  }
+
+	classname = statement->info.index.indexed_class->info.spec.entity_name->info.name.original;
+	objname = statement->info.index.index_name->info.name.original;
+
+	classop = sm_find_class (classname);
+
+	classoid = ws_oid (classop);
+	error = sm_get_index (classop, objname, &index);
+	memcpy (oid, &index, sizeof (OID));
+
+	ddl_type = CDC_CREATE;
+	objtype = CDC_INDEX;
+
+	break;
+      }
+    case PT_ALTER_INDEX:
+      {
+	BTID index;
+	MOP classop;
+
+	oid = (OID *) malloc (sizeof (OID));
+	if (oid == NULL)
+	  {
+	    error = ER_OUT_OF_VIRTUAL_MEMORY;
+	    goto end;
+	  }
+
+	classname = statement->info.index.indexed_class->info.spec.entity_name->info.name.original;
+	objname = statement->info.index.index_name->info.name.original;
+
+	classop = sm_find_class (classname);
+
+	classoid = ws_oid (classop);
+	error = sm_get_index (classop, objname, &index);
+	memcpy (oid, &index, sizeof (OID));
+
+	ddl_type = CDC_ALTER;
+	objtype = CDC_INDEX;
+
+	break;
+      }
+    case PT_DROP_INDEX:
+      {
+	BTID index;
+	MOP classop;
+
+	oid = (OID *) malloc (sizeof (OID));
+	if (oid == NULL)
+	  {
+	    error = ER_OUT_OF_VIRTUAL_MEMORY;
+	    goto end;
+	  }
+
+	classname = statement->info.index.indexed_class->info.spec.entity_name->info.name.original;
+	objname = statement->info.index.index_name->info.name.original;
+
+	classop = sm_find_class (classname);
+
+	classoid = ws_oid (classop);
+	error = sm_get_index (classop, objname, &index);
+	memcpy (oid, &index, sizeof (OID));
+
+	ddl_type = CDC_DROP;
+	objtype = CDC_INDEX;
+
+	break;
+      }
+    case PT_CREATE_SERIAL:
+      {
+	oid = (OID *) malloc (sizeof (OID));
+	if (oid == NULL)
+	  {
+	    error = ER_OUT_OF_VIRTUAL_MEMORY;
+	    goto end;
+	  }
+
+	DB_OBJECT *serial_class = sm_find_class (CT_SERIAL_NAME);
+
+	objname = (char *) PT_NODE_SR_NAME (statement);
+	if (do_get_serial_obj_id (oid, serial_class, objname) == NULL)
+	  {
+	    error = ER_FAILED;
+	    goto end;
+	  }
+
+	ddl_type = CDC_CREATE;
+	objtype = CDC_SERIAL;
+
+	break;
+      }
+    case PT_ALTER_SERIAL:
+      {
+	oid = (OID *) malloc (sizeof (OID));
+	if (oid == NULL)
+	  {
+	    error = ER_OUT_OF_VIRTUAL_MEMORY;
+	    goto end;
+	  }
+
+	DB_OBJECT *serial_class = sm_find_class (CT_SERIAL_NAME);
+
+	objname = (char *) PT_NODE_SR_NAME (statement);
+	if (do_get_serial_obj_id (oid, serial_class, objname) == NULL)
+	  {
+	    goto end;
+	  }
+
+	ddl_type = CDC_ALTER;
+	objtype = CDC_SERIAL;
+
+	break;
+      }
+    case PT_DROP_SERIAL:
+      {
+	if (reserved_oid != NULL)
+	  {
+	    oid = reserved_oid;
+	  }
+	else
+	  {
+	    oid = (OID *) malloc (sizeof (OID));
+	    OID_SET_NULL (oid);
+	  }
+
+	ddl_type = CDC_DROP;
+	objtype = CDC_SERIAL;
+
+	break;
+      }
+    case PT_CREATE_STORED_PROCEDURE:
+      ddl_type = CDC_CREATE;
+      objtype = CDC_PROCEDURE;
+      break;
+
+    case PT_ALTER_STORED_PROCEDURE:
+      ddl_type = CDC_ALTER;
+      objtype = CDC_PROCEDURE;
+      break;
+
+    case PT_DROP_STORED_PROCEDURE:
+      ddl_type = CDC_DROP;
+      objtype = CDC_PROCEDURE;
+      break;
+
+    case PT_CREATE_USER:
+      ddl_type = CDC_CREATE;
+      objtype = CDC_USER;
+      break;
+
+    case PT_ALTER_USER:
+      ddl_type = CDC_ALTER;
+      objtype = CDC_USER;
+      break;
+
+    case PT_DROP_USER:
+      ddl_type = CDC_DROP;
+      objtype = CDC_USER;
+      break;
+
+    case PT_CREATE_TRIGGER:
+      target = PT_NODE_TR_TARGET (statement);
+
+      if (target)
+	{
+	  classname = target->info.event_target.class_name->info.name.original;
+
+	  classoid = ws_oid (sm_find_class (classname));
+	}
+      else
+	{
+	  /* Trigger that does not have target (e.g. create trigger.. execute print.. ) */
+	  classoid = &null_oid;
+	}
+
+      ddl_type = CDC_CREATE;
+      objtype = CDC_TRIGGER;
+
+      break;
+
+    case PT_RENAME_TRIGGER:
+      {
+	DB_OBJECT *tr_object;
+	TR_TRIGGER *trigger;
+	objname = statement->info.rename_trigger.old_name->info.name.original;
+
+	tr_object = tr_find_trigger (objname);
+	if (tr_object != NULL)
+	  {
+	    trigger = tr_map_trigger (tr_object, true);
+	    classoid = ws_oid (trigger->class_mop);
+	  }
+
+	ddl_type = CDC_RENAME;
+	objtype = CDC_TRIGGER;
+
+	break;
+      }
+    case PT_DROP_TRIGGER:
+      {
+	DB_OBJECT *tr_object;
+	TR_TRIGGER *trigger;
+	objname =
+	  statement->info.drop_trigger.trigger_spec_list->info.trigger_spec_list.trigger_name_list->info.name.original;
+
+	tr_object = tr_find_trigger (objname);
+	if (tr_object != NULL)
+	  {
+	    trigger = tr_map_trigger (tr_object, true);
+	    classoid = ws_oid (trigger->class_mop);
+	  }
+
+	ddl_type = CDC_DROP;
+	objtype = CDC_TRIGGER;
+
+	break;
+      }
+    case PT_REMOVE_TRIGGER:
+      break;
+
+    case PT_ALTER_TRIGGER:
+      {
+	DB_OBJECT *tr_object;
+	TR_TRIGGER *trigger;
+
+	objname =
+	  statement->info.alter_trigger.trigger_spec_list->info.trigger_spec_list.trigger_name_list->info.name.original;
+
+	tr_object = tr_find_trigger (objname);
+	if (tr_object != NULL)
+	  {
+	    trigger = tr_map_trigger (tr_object, true);
+	    classoid = ws_oid (trigger->class_mop);
+	  }
+
+	ddl_type = CDC_ALTER;
+	objtype = CDC_TRIGGER;
+
+	break;
+      }
+    case PT_TRUNCATE:
+
+      assert (statement->info.spec.entity_name);
+      classname = statement->info.spec.entity_name->info.spec.entity_name->info.name.original;
+
+      classoid = ws_oid (sm_find_class (classname));
+      ddl_type = CDC_TRUNCATE;
+      objtype = CDC_TABLE;
+
+      break;
+    default:
+      return NO_ERROR;
+    }
+
+  if (prm_get_integer_value (PRM_ID_SUPPLEMENTAL_LOG) == 2)
+    {
+      if (ddl_type != CDC_TRUNCATE || objtype != CDC_SERIAL)
+	{
+	  goto end;
+	}
+    }
+
+
+  if (parser->host_var_count == 0)
+    {
+      /* it may contain multiple statements */
+      if (strlen (statement->sql_user_text) > statement->sql_user_text_len)
+	{
+	  stmt_end = &statement->sql_user_text[statement->sql_user_text_len];
+	  stmt_separator = *stmt_end;
+	  *stmt_end = '\0';
+	}
+      stmt_text = statement->sql_user_text;
+    }
+  else
+    {
+      /*
+       * if the query string includes the host variables, while processing the variable holder '?'
+       * the values of the host variables can be replaced into the user's original query string
+       * the pt_print_db_value(...) returns the value string and its length.
+       * the length includes quotes in case of the char string.
+       */
+      char *sql_text = statement->sql_user_text;
+      int sql_len = statement->sql_user_text_len;
+      int i, n, nth;
+      int var_len = 0;
+      bool begin_quote = false;
+
+      host_val = (PARSER_VARCHAR **) malloc (sizeof (PARSER_VARCHAR *) * parser->host_var_count);
+      if (host_val == NULL)
+	{
+	  return ER_OUT_OF_VIRTUAL_MEMORY;
+	}
+
+      for (i = 0; i < parser->host_var_count; i++)
+	{
+	  host_val[i] = pt_print_db_value (parser, &parser->host_variables[i]);
+	  var_len += host_val[i]->length;
+	}
+
+      sbr_text = (char *) malloc (sql_len + var_len);
+      if (sbr_text == NULL)
+	{
+	  error = ER_OUT_OF_VIRTUAL_MEMORY;
+	  goto end;
+	}
+
+      n = nth = 0;
+
+      for (i = 0; i < sql_len; i++)
+	{
+	  if (sql_text[i] == '\'')
+	    {
+	      if (!begin_quote)
+		{
+		  begin_quote = true;
+		}
+	      else
+		{
+		  begin_quote = false;
+		}
+	    }
+
+	  if (sql_text[i] == '?' && !begin_quote)
+	    {
+	      if (nth < parser->host_var_count)
+		{
+		  strncpy (&sbr_text[n], (char *) host_val[nth]->bytes, host_val[nth]->length);
+		  n += host_val[nth++]->length;
+		}
+	      else
+		{
+		  error = ER_IT_UNKNOWN_VARIABLE;
+		  goto end;
+		}
+	    }
+	  else
+	    {
+	      sbr_text[n++] = sql_text[i];
+	    }
+	}
+
+      sbr_text[n] = 0;
+      stmt_text = sbr_text;
+    }
+
+  if (!supp_appended)
+    {
+      error = log_supplement_statement (ddl_type, objtype, classoid, oid, stmt_text);
+    }
+
+  if (stmt_end != NULL)
+    {
+      *stmt_end = stmt_separator;
+    }
+
+end:
+
+  if (sbr_text)
+    {
+      free (sbr_text);
+    }
+
+  if (host_val)
+    {
+      free (host_val);
+    }
+
+  if (oid != NULL)
+    {
+      free_and_init (oid);
+    }
+
+  if (drop_stmt != NULL)
+    {
+      free_and_init (drop_stmt);
+    }
+
+  if (cls_info[0] != NULL && statement->node_type == PT_DROP)
+    {
+      int i = 0;
+
+      while (cls_info[i] != NULL)
+	{
+	  free_and_init (cls_info[i++]);
+	}
+    }
+
+  return error;
+}
 
 
 
@@ -14631,9 +15564,11 @@ do_replicate_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
   REPL_INFO repl_info;
   REPL_INFO_SBR repl_stmt;
   PARSER_VARCHAR *name = NULL;
+  PARSER_VARCHAR **host_val = NULL;
   static const char *unknown_name = "-";
   char stmt_separator;
   char *stmt_end = NULL;
+  char *sbr_text = NULL;
 
   if (log_does_allow_replication () == false)
     {
@@ -14709,6 +15644,37 @@ do_replicate_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
 
     case PT_DROP_STORED_PROCEDURE:
       repl_stmt.statement_type = CUBRID_STMT_DROP_STORED_PROCEDURE;
+      break;
+
+    case PT_CREATE_SERVER:
+      repl_stmt.statement_type = CUBRID_STMT_CREATE_SERVER;
+      break;
+    case PT_DROP_SERVER:
+      repl_stmt.statement_type = CUBRID_STMT_DROP_SERVER;
+      break;
+
+    case PT_RENAME_SERVER:
+      repl_stmt.statement_type = CUBRID_STMT_RENAME_SERVER;
+      break;
+
+    case PT_ALTER_SERVER:
+      repl_stmt.statement_type = CUBRID_STMT_ALTER_SERVER;
+      break;
+
+    case PT_ALTER_SYNONYM:
+      repl_stmt.statement_type = CUBRID_STMT_ALTER_SYNONYM;
+      break;
+
+    case PT_CREATE_SYNONYM:
+      repl_stmt.statement_type = CUBRID_STMT_CREATE_SYNONYM;
+      break;
+
+    case PT_DROP_SYNONYM:
+      repl_stmt.statement_type = CUBRID_STMT_DROP_SYNONYM;
+      break;
+
+    case PT_RENAME_SYNONYM:
+      repl_stmt.statement_type = CUBRID_STMT_RENAME_SYNONYM;
       break;
 
     case PT_CREATE_USER:
@@ -14791,7 +15757,7 @@ do_replicate_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
       repl_stmt.name = (char *) pt_get_varchar_bytes (name);
     }
 
-  if (parser->host_var_count == 0 && parser->auto_param_count == 0)
+  if (parser->host_var_count == 0)
     {
       /* it may contain multiple statements */
       if (strlen (statement->sql_user_text) > statement->sql_user_text_len)
@@ -14801,17 +15767,88 @@ do_replicate_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
 	  *stmt_end = '\0';
 	}
       repl_stmt.stmt_text = statement->sql_user_text;
+
+      if (statement->node_type == PT_CREATE_SERVER || statement->node_type == PT_ALTER_SERVER)
+	{
+	  /* In the HA process, the original text information is transmitted to the DDL syntax.
+	   * In the CREATE SERVER statement and the ALTER SEVER statement, 
+	   * it is necessary to prevent exposure when a password to access another DBMS is passed.
+	   * For this reason, we change the original information.            
+	   */
+	  PARSER_VARCHAR *dblink_str = pt_print_bytes (parser, statement);
+	  repl_stmt.stmt_text = (char *) pt_get_varchar_bytes (dblink_str);
+	}
     }
   else
     {
-      PT_PRINT_VALUE_FUNC saved_func = parser->print_db_value;
-      int saved_custom_print = parser->custom_print;
+      /*
+       * if the query string includes the host variables, while processing the variable holder '?'
+       * the values of the host variables can be replaced into the user's original query string
+       * the pt_print_db_value(...) returns the value string and its length.
+       * the length includes quotes in case of the char string.
+       */
+      char *sql_text = statement->sql_user_text;
+      int sql_len = statement->sql_user_text_len;
+      int i, n, nth;
+      int var_len = 0;
+      bool begin_quote = false;
 
-      parser->custom_print |= PT_PRINT_ORIGINAL_BEFORE_CONST_FOLDING;
-      parser->print_db_value = pt_print_node_value;
-      repl_stmt.stmt_text = parser_print_tree (parser, statement);
-      parser->print_db_value = saved_func;
-      parser->custom_print = saved_custom_print;
+      host_val = (PARSER_VARCHAR **) malloc (sizeof (PARSER_VARCHAR *) * parser->host_var_count);
+      if (host_val == NULL)
+	{
+	  return ER_OUT_OF_VIRTUAL_MEMORY;
+	}
+
+      for (i = 0; i < parser->host_var_count; i++)
+	{
+	  host_val[i] = pt_print_db_value (parser, &parser->host_variables[i]);
+	  var_len += host_val[i]->length;
+	}
+
+      sbr_text = (char *) malloc (sql_len + var_len);
+      if (sbr_text == NULL)
+	{
+	  error = ER_OUT_OF_VIRTUAL_MEMORY;
+	  goto end;
+	}
+
+      n = nth = 0;
+
+      for (i = 0; i < sql_len; i++)
+	{
+	  if (sql_text[i] == '\'')
+	    {
+	      if (!begin_quote)
+		{
+		  begin_quote = true;
+		}
+	      else
+		{
+		  begin_quote = false;
+		}
+	    }
+
+	  if (sql_text[i] == '?' && !begin_quote)
+	    {
+	      if (nth < parser->host_var_count)
+		{
+		  strncpy (&sbr_text[n], (char *) host_val[nth]->bytes, host_val[nth]->length);
+		  n += host_val[nth++]->length;
+		}
+	      else
+		{
+		  error = ER_IT_UNKNOWN_VARIABLE;
+		  goto end;
+		}
+	    }
+	  else
+	    {
+	      sbr_text[n++] = sql_text[i];
+	    }
+	}
+
+      sbr_text[n] = 0;
+      repl_stmt.stmt_text = sbr_text;
     }
 
   repl_stmt.db_user = db_get_user_name ();
@@ -14837,6 +15874,18 @@ do_replicate_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
     }
 
   db_string_free (repl_stmt.db_user);
+
+end:
+  if (sbr_text)
+    {
+      free (sbr_text);
+    }
+
+  if (host_val)
+    {
+      free (host_val);
+    }
+
   if (repl_stmt.sys_prm_context)
     {
       free (repl_stmt.sys_prm_context);
@@ -14961,7 +16010,7 @@ do_execute_do (PARSER_CONTEXT * parser, PT_NODE * statement)
   query_flag |= NOT_FROM_RESULT_CACHE;
   query_flag |= RESULT_CACHE_INHIBITED;
 
-  if (parser->is_auto_commit)
+  if (parser->flag.is_auto_commit)
     {
       query_flag |= TRAN_AUTO_COMMIT;
     }
@@ -15107,7 +16156,7 @@ do_drop_session_variables (PARSER_CONTEXT * parser, PT_NODE * statement)
   PT_NODE *variables = NULL;
 
   assert (statement != NULL);
-  assert (statement->node_type = PT_DROP_SESSION_VARIABLES);
+  assert (statement->node_type == PT_DROP_SESSION_VARIABLES);
 
   count = 0;
   /* count assignments */
@@ -15174,7 +16223,7 @@ do_check_merge_trigger (PARSER_CONTEXT * parser, PT_NODE * statement, PT_DO_FUNC
       return ER_BLOCK_NOWHERE_STMT;
     }
 
-  if (statement->use_auto_commit)
+  if (statement->flag.use_auto_commit)
     {
       /* no active trigger is involved. Avoid lock and fetch request. */
       err = do_func (parser, statement);
@@ -15659,7 +16708,7 @@ do_merge (PARSER_CONTEXT * parser, PT_NODE * statement)
       parser->query_id = ins_query_id;
       err = insert_subquery_results (parser, statement, values_list, flat, &savepoint_name);
       parser->query_id = query_id_self;
-      if (parser->abort)
+      if (parser->flag.abort)
 	{
 	  assert (er_errid () != NO_ERROR);
 	  err = er_errid ();
@@ -15712,7 +16761,7 @@ exit:
     {
       if (ins_select_stmt->etc != NULL)
 	{
-	  cursor_free_self_list_id ((QFILE_LIST_ID *) ins_select_stmt->etc);
+	  cursor_free_self_list_id (ins_select_stmt->etc);
 	  if (ins_query_id != NULL_QUERY_ID && !tran_was_latest_query_ended ())
 	    {
 	      qmgr_end_query (ins_query_id);
@@ -15943,9 +16992,9 @@ do_prepare_merge (PARSER_CONTEXT * parser, PT_NODE * statement)
       statement->info.merge.flags |= PT_MERGE_INFO_SERVER_OP;
 
       /* make query string */
-      parser->dont_prt_long_string = 1;
-      parser->long_string_skipped = 0;
-      parser->print_type_ambiguity = 0;
+      parser->flag.dont_prt_long_string = 1;
+      parser->flag.long_string_skipped = 0;
+      parser->flag.print_type_ambiguity = 0;
       PT_NODE_PRINT_TO_ALIAS (parser, statement, (PT_CONVERT_RANGE | PT_PRINT_QUOTES | PT_PRINT_USER));
       contextp->sql_hash_text = (char *) statement->alias_print;
       err = SHA1Compute ((unsigned char *) contextp->sql_hash_text, (unsigned) strlen (contextp->sql_hash_text),
@@ -15955,17 +17004,17 @@ do_prepare_merge (PARSER_CONTEXT * parser, PT_NODE * statement)
 	  ASSERT_ERROR ();
 	  return err;
 	}
-      parser->dont_prt_long_string = 0;
-      if (parser->long_string_skipped || parser->print_type_ambiguity)
+      parser->flag.dont_prt_long_string = 0;
+      if (parser->flag.long_string_skipped || parser->flag.print_type_ambiguity)
 	{
-	  statement->cannot_prepare = 1;
+	  statement->flag.cannot_prepare = 1;
 	  statement->info.merge.flags &= ~PT_MERGE_INFO_SERVER_OP;
 	  goto cleanup;
 	}
 
       /* lookup in XASL cache */
-      contextp->recompile_xasl = statement->recompile;
-      if (statement->recompile == 0)
+      contextp->recompile_xasl = statement->flag.recompile;
+      if (statement->flag.recompile == 0)
 	{
 	  err = prepare_query (contextp, &stream);
 	  if (err != NO_ERROR)
@@ -15990,7 +17039,7 @@ do_prepare_merge (PARSER_CONTEXT * parser, PT_NODE * statement)
 						  statement->info.merge.insert.attr_list, &default_expr_attrs);
 	      if (err != NO_ERROR)
 		{
-		  statement->use_plan_cache = 0;
+		  statement->flag.use_plan_cache = 0;
 		  statement->xasl_id = NULL;
 		  goto cleanup;
 		}
@@ -16059,19 +17108,19 @@ do_prepare_merge (PARSER_CONTEXT * parser, PT_NODE * statement)
 	    {
 	      free_and_init (stream.buffer);
 	    }
-	  statement->use_plan_cache = 0;
+	  statement->flag.use_plan_cache = 0;
 	  statement->xasl_id = stream.xasl_id;
 	}
       else
 	{
 	  if (err == NO_ERROR)
 	    {
-	      statement->use_plan_cache = 1;
+	      statement->flag.use_plan_cache = 1;
 	      statement->xasl_id = stream.xasl_id;
 	    }
 	  else
 	    {
-	      statement->use_plan_cache = 0;
+	      statement->flag.use_plan_cache = 0;
 	    }
 
 	  goto cleanup;
@@ -16165,7 +17214,9 @@ cleanup:
 int
 do_execute_merge (PARSER_CONTEXT * parser, PT_NODE * statement)
 {
-  int err = NO_ERROR, result = 0, error = NO_ERROR;
+  int err = NO_ERROR;
+  INT64 result = 0;
+  int error = NO_ERROR;
   PT_NODE *flat, *spec = NULL, *values_list = NULL;
   const char *savepoint_name;
   DB_OBJECT *class_obj;
@@ -16222,7 +17273,7 @@ do_execute_merge (PARSER_CONTEXT * parser, PT_NODE * statement)
 	  goto exit;
 	}
 
-      if (parser->is_xasl_pinned_reference)
+      if (parser->flag.is_xasl_pinned_reference)
 	{
 	  query_flag |= XASL_CACHE_PINNED_REFERENCE;
 	}
@@ -16230,12 +17281,12 @@ do_execute_merge (PARSER_CONTEXT * parser, PT_NODE * statement)
       query_flag |= NOT_FROM_RESULT_CACHE;
       query_flag |= RESULT_CACHE_INHIBITED;
 
-      if (statement->use_auto_commit)
+      if (statement->flag.use_auto_commit)
 	{
 	  query_flag |= EXECUTE_QUERY_WITH_COMMIT;
 	}
 
-      if (parser->is_auto_commit)
+      if (parser->flag.is_auto_commit)
 	{
 	  query_flag |= TRAN_AUTO_COMMIT;
 	}
@@ -16245,7 +17296,7 @@ do_execute_merge (PARSER_CONTEXT * parser, PT_NODE * statement)
 	  // When a transaction is under auto-commit mode, flush all dirty objects to server.
 	  // Otherwise, flush associated objects.
 
-	  if (statement->use_auto_commit)
+	  if (statement->flag.use_auto_commit)
 	    {
 	      err = tran_flush_to_commit ();
 	    }
@@ -16285,7 +17336,7 @@ do_execute_merge (PARSER_CONTEXT * parser, PT_NODE * statement)
 	{
 	  if (list_id->tuple_cnt > 0)
 	    {
-	      if (statement->use_auto_commit && tran_was_latest_query_committed ())
+	      if (statement->flag.use_auto_commit && tran_was_latest_query_committed ())
 		{
 		  /* Nothing to flush. Avoids flush, since may fetch the class. */
 		  err = sm_decache_instances_after_query_executed_with_commit (class_obj);
@@ -16322,7 +17373,7 @@ do_execute_merge (PARSER_CONTEXT * parser, PT_NODE * statement)
 	      goto exit;
 	    }
 
-	  if (parser->is_xasl_pinned_reference)
+	  if (parser->flag.is_xasl_pinned_reference)
 	    {
 	      query_flag |= XASL_CACHE_PINNED_REFERENCE;
 	    }
@@ -16477,7 +17528,7 @@ do_execute_merge (PARSER_CONTEXT * parser, PT_NODE * statement)
 	  /* execute subquery & insert its results into target class */
 	  err = insert_subquery_results (parser, statement, values_list, flat, &savepoint_name);
 	  parser->query_id = query_id_self;
-	  if (parser->abort)
+	  if (parser->flag.abort)
 	    {
 	      assert (er_errid () != NO_ERROR);
 	      err = er_errid ();
@@ -16517,7 +17568,7 @@ exit:
     {
       if (ins_select_stmt->etc != NULL)
 	{
-	  cursor_free_self_list_id ((QFILE_LIST_ID *) ins_select_stmt->etc);
+	  cursor_free_self_list_id (ins_select_stmt->etc);
 	  if (ins_query_id != NULL_QUERY_ID && !tran_was_latest_query_ended ())
 	    {
 	      qmgr_end_query (ins_query_id);
@@ -16540,7 +17591,7 @@ exit:
     }
   /* If error and a savepoint was created, rollback to savepoint. No need to rollback if the TM aborted the
    * transaction. */
-  if (err < NO_ERROR && savepoint_name && err != ER_LK_UNILATERALLY_ABORTED)
+  if (err < NO_ERROR && savepoint_name && err != ER_LK_UNILATERALLY_ABORTED && statement->flag.use_auto_commit == false)
     {
       db_abort_to_savepoint (savepoint_name);
     }
@@ -16607,6 +17658,842 @@ do_set_timezone (PARSER_CONTEXT * parser, PT_NODE * statement)
 
 #undef MAX_LEN
   return (error != NO_ERROR) ? ER_OBJ_INVALID_ARGUMENTS : NO_ERROR;
+}
+
+/*
+ * do_alter_synonym () - change target or comment of synonym.
+ * return: error code
+ * parser(in): parser context
+ * statement(in): parse tree of a statement
+ */
+int
+do_alter_synonym (PARSER_CONTEXT * parser, PT_NODE * statement)
+{
+  DB_OBJECT *target_owner_obj = NULL;
+  char synonym_name[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+  const char *target_name = NULL;
+  char target_name_buf[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+  const char *comment = NULL;
+  int error = NO_ERROR;
+
+  CHECK_MODIFICATION_ERROR ();
+  CHECK_2ARGS_ERROR (parser, statement);
+
+  assert (statement->node_type == PT_ALTER_SYNONYM);
+
+  /* syntax is not supported. */
+  assert (PT_SYNONYM_ACCESS_MODIFIER (statement) != PT_PUBLIC);
+
+  /* synonym_name */
+  sm_user_specified_name (PT_NAME_ORIGINAL (PT_SYNONYM_NAME (statement)), synonym_name, DB_MAX_IDENTIFIER_LENGTH);
+
+  /* target_name */
+  if (PT_SYNONYM_TARGET_NAME (statement) == NULL)
+    {
+      /* If only the comment is changed, PT_SYNONYM_TARGET_NAME (statement) can be NULL.
+       * If both PT_SYNONYM_TARGET_NAME (statement) and PT_SYNONYM_COMMENT (statement) are NULL,
+       * an error occurred in yyparse() and it should not have come here. */
+      assert (PT_SYNONYM_COMMENT (statement) != NULL);
+    }
+  else
+    {
+      /* PT_SYNONYM_TARGET_NAME (statement) != NULL */
+
+      sm_user_specified_name (PT_NAME_ORIGINAL (PT_SYNONYM_TARGET_NAME (statement)), target_name_buf,
+			      DB_MAX_IDENTIFIER_LENGTH);
+      target_name = target_name_buf;
+
+      /* target_owner */
+      target_owner_obj = db_find_user (PT_NAME_ORIGINAL (PT_SYNONYM_TARGET_OWNER_NAME (statement)));
+      if (target_owner_obj == NULL)
+	{
+	  ASSERT_ERROR_AND_SET (error);
+	  return error;
+	}
+    }
+
+  /* comment */
+  if (PT_SYNONYM_COMMENT (statement) != NULL && PT_SYNONYM_COMMENT_STR (statement) != NULL)
+    {
+      assert ((PT_SYNONYM_COMMENT (statement))->node_type == PT_VALUE);
+      comment = (char *) PT_SYNONYM_COMMENT_BYTES (statement);
+    }
+
+  error = do_alter_synonym_internal (synonym_name, target_name, target_owner_obj, comment, FALSE);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+    }
+
+  return error;
+}
+
+/*
+ * do_alter_synonym_internal () - alter synonym.
+ * return: error code
+ * synonym_name(in): synonym name
+ * target_name(in): synonym target class name
+ * target_owner(in): synonym target class owner
+ * comment(in): comments on synonyms
+ * is_public_synonym(in): access modifiers for synonyms
+ */
+static int
+do_alter_synonym_internal (const char *synonym_name, const char *target_name, DB_OBJECT * target_owner,
+			   const char *comment, const int is_public_synonym)
+{
+  DB_OBJECT *class_obj = NULL;
+  DB_OBJECT *instance_obj = NULL;
+  DB_OTMPL *obj_tmpl = NULL;
+  DB_VALUE value;
+  char old_target_name[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+  DB_OBJECT *old_target_obj = NULL;
+  DB_IDENTIFIER *old_target_obj_id = NULL;
+  int error = NO_ERROR;
+  int save = 0;
+
+  AU_DISABLE (save);
+
+  class_obj = db_find_class (CT_SYNONYM_NAME);
+  if (class_obj == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+
+  db_make_string (&value, synonym_name);
+  instance_obj = db_find_unique (class_obj, "unique_name", &value);
+  if (instance_obj == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+
+      if (error == ER_OBJ_OBJECT_NOT_FOUND)
+	{
+	  er_clear ();
+	  ERROR_SET_WARNING_1ARG (error, ER_SYNONYM_NOT_EXIST, synonym_name);
+	}
+
+      goto end;
+    }
+
+  /* instance_obj != NULL */
+  obj_tmpl = dbt_edit_object (instance_obj);
+  if (obj_tmpl == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+
+  /* old_target_name */
+  if (target_name != NULL
+      && sm_get_synonym_target_name (instance_obj, old_target_name, DB_MAX_IDENTIFIER_LENGTH) == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+
+  /* target_unique_name, target_name, target_owner */
+  if (target_name == NULL)
+    {
+      /* If only the comment is changed, target_name can be NULL.
+       * If both target_name and comment are NULL,
+       * an error occurred in yyparse() and it should not have come here. */
+      assert (comment != NULL);
+    }
+  else if (intl_identifier_casecmp (old_target_name, target_name) != 0)
+    {
+      /* target_name != NULL */
+
+      /* target_unique_name */
+      db_make_string (&value, target_name);
+      error = dbt_put_internal (obj_tmpl, "target_unique_name", &value);
+      db_value_clear (&value);
+      if (error != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  goto end;
+	}
+
+      /* target_name */
+      db_make_string (&value, sm_remove_qualifier_name (target_name));
+      error = dbt_put_internal (obj_tmpl, "target_name", &value);
+      db_value_clear (&value);
+      if (error != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  goto end;
+	}
+
+      /* target_owner */
+      db_make_object (&value, target_owner);
+      error = dbt_put_internal (obj_tmpl, "target_owner", &value);
+      db_value_clear (&value);
+      if (error != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  goto end;
+	}
+
+      old_target_obj = locator_find_class_with_purpose (old_target_name, false);
+      old_target_obj_id = ws_identifier (old_target_obj);
+    }
+
+  /* comment */
+  if (comment != NULL)
+    {
+      if (*comment == '\0')
+	{
+	  db_make_null (&value);
+	}
+      else
+	{
+	  db_make_string (&value, comment);
+	}
+      error = dbt_put_internal (obj_tmpl, "comment", &value);
+      db_value_clear (&value);
+      if (error != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  goto end;
+	}
+    }
+
+  instance_obj = dbt_finish_object (obj_tmpl);
+  if (instance_obj == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+  obj_tmpl = NULL;
+
+  error = locator_flush_instance (instance_obj);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+    }
+
+  if (old_target_obj_id != NULL)
+    {
+      synonym_remove_xasl_by_oid (old_target_obj_id);
+    }
+
+end:
+  if (obj_tmpl != NULL && instance_obj == NULL)
+    {
+      dbt_abort_object (obj_tmpl);
+    }
+
+  AU_ENABLE (save);
+
+  return error;
+}
+
+/*
+ * do_create_synonym () - create synonym.
+ * return: error code
+ * parser(in): parser context
+ * statement(in): parse tree of a statement
+ */
+int
+do_create_synonym (PARSER_CONTEXT * parser, PT_NODE * statement)
+{
+  DB_OBJECT *synonym_obj = NULL;
+  DB_OBJECT *synonym_owner_obj = NULL;
+  DB_OBJECT *target_owner_obj = NULL;
+  char synonym_name[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+  char target_name[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+  const char *comment = NULL;
+  int or_replace = FALSE;
+  int error = NO_ERROR;
+
+  CHECK_MODIFICATION_ERROR ();
+  CHECK_2ARGS_ERROR (parser, statement);
+
+  assert (statement->node_type == PT_CREATE_SYNONYM);
+
+  /* syntax is not supported. */
+  assert (PT_SYNONYM_ACCESS_MODIFIER (statement) != PT_PUBLIC);
+
+  /* synonym_name */
+  sm_user_specified_name (PT_NAME_ORIGINAL (PT_SYNONYM_NAME (statement)), synonym_name, DB_MAX_IDENTIFIER_LENGTH);
+
+  /* synonym_owner */
+  synonym_owner_obj = au_find_user (PT_NAME_ORIGINAL (PT_SYNONYM_OWNER_NAME (statement)));
+  if (synonym_owner_obj == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      return error;
+    }
+
+  /* or_replace */
+  or_replace = PT_SYNONYM_OR_REPLACE (statement);
+
+  /* target_name */
+  sm_user_specified_name (PT_NAME_ORIGINAL (PT_SYNONYM_TARGET_NAME (statement)), target_name, DB_MAX_IDENTIFIER_LENGTH);
+
+  /* target_owner */
+  target_owner_obj = au_find_user (PT_NAME_ORIGINAL (PT_SYNONYM_TARGET_OWNER_NAME (statement)));
+  if (target_owner_obj == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      return error;
+    }
+
+  /* comment */
+  if (PT_SYNONYM_COMMENT (statement) != NULL && PT_SYNONYM_COMMENT_STR (statement) != NULL)
+    {
+      assert ((PT_SYNONYM_COMMENT (statement))->node_type == PT_VALUE);
+      comment = (char *) PT_SYNONYM_COMMENT_BYTES (statement);
+    }
+
+  error =
+    do_create_synonym_internal (synonym_name, synonym_owner_obj, target_name, target_owner_obj, comment, FALSE,
+				or_replace);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+    }
+
+  return error;
+}
+
+/*
+ * do_create_synonym_internal () - create synonym.
+ * return: error code
+ * synonym_name(in): synonym name
+ * synonym_owner(in): synonym owner
+ * target_name(in): synonym target class name
+ * target_owner_name(in): synonym target class owner
+ * comment(in): comments on synonyms
+ * is_public_synonym(in): access modifiers for synonyms
+ * or_replace(in): or replace
+ */
+static int
+do_create_synonym_internal (const char *synonym_name, DB_OBJECT * synonym_owner, const char *target_name,
+			    DB_OBJECT * target_owner, const char *comment, const int is_public_synonym,
+			    const int or_replace)
+{
+  DB_OBJECT *class_obj = NULL;
+  DB_OBJECT *instance_obj = NULL;
+  DB_OTMPL *obj_tmpl = NULL;
+  DB_VALUE value;
+  int error = NO_ERROR;
+  int save = 0;
+
+  AU_DISABLE (save);
+
+  /* synonym class object */
+  class_obj = db_find_class (CT_SYNONYM_NAME);
+  if (class_obj == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+
+  db_make_string (&value, synonym_name);
+  instance_obj = db_find_unique (class_obj, "unique_name", &value);
+  if (instance_obj != NULL)
+    {
+      if (or_replace == FALSE)
+	{
+	  ERROR_SET_ERROR_1ARG (error, ER_SYNONYM_ALREADY_EXIST, synonym_name);
+	  goto end;
+	}
+
+      /* or_replace == TRUE */
+      error = do_drop_synonym_internal (synonym_name, FALSE, FALSE, class_obj, instance_obj);
+      if (error != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  goto end;
+	}
+    }
+  else
+    {
+      /* instance_obj == NULL */
+      ASSERT_ERROR_AND_SET (error);
+
+      if (error == ER_OBJ_OBJECT_NOT_FOUND)
+	{
+	  er_clear ();
+	  error = NO_ERROR;
+	}
+      else
+	{
+	  goto end;
+	}
+
+      /* Check if class exists by name. */
+      if (db_find_class (synonym_name) != NULL)
+	{
+	  ERROR_SET_ERROR_1ARG (error, ER_LC_CLASSNAME_EXIST, synonym_name);
+	  goto end;
+	}
+      else
+	{
+	  /* db_find_class () == NULL */
+	  ASSERT_ERROR_AND_SET (error);
+
+	  if (er_errid () == ER_LC_UNKNOWN_CLASSNAME)
+	    {
+	      er_clear ();
+	      error = NO_ERROR;
+	    }
+	  else
+	    {
+	      goto end;
+	    }
+	}
+    }
+
+  /* (instance_obj != NULL && or_replace == TRUE)
+   * || (instance_obj == NULL && db_find_class () == NULL && er_errid () == ER_LC_UNKNOWN_CLASSNAME) */
+  obj_tmpl = dbt_create_object (class_obj);
+  if (obj_tmpl == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+
+  /* unique_name */
+  db_make_string (&value, synonym_name);
+  error = dbt_put_internal (obj_tmpl, "unique_name", &value);
+  db_value_clear (&value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  /* synonym_name */
+  db_make_string (&value, sm_remove_qualifier_name (synonym_name));
+  error = dbt_put_internal (obj_tmpl, "name", &value);
+  db_value_clear (&value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  /* synonym_owner */
+  db_make_object (&value, synonym_owner);
+  error = dbt_put_internal (obj_tmpl, "owner", &value);
+  db_value_clear (&value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  /* is_public_synonym */
+  db_make_int (&value, is_public_synonym);
+  error = dbt_put_internal (obj_tmpl, "is_public", &value);
+  db_value_clear (&value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  /* target_unique_name */
+  db_make_string (&value, target_name);
+  error = dbt_put_internal (obj_tmpl, "target_unique_name", &value);
+  db_value_clear (&value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  /* target_name */
+  db_make_string (&value, sm_remove_qualifier_name (target_name));
+  error = dbt_put_internal (obj_tmpl, "target_name", &value);
+  db_value_clear (&value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  /* target_owner */
+  db_make_object (&value, target_owner);
+  error = dbt_put_internal (obj_tmpl, "target_owner", &value);
+  db_value_clear (&value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  /* comment */
+  if (comment != NULL && *comment != '\0')
+    {
+      db_make_string (&value, comment);
+      error = dbt_put_internal (obj_tmpl, "comment", &value);
+      db_value_clear (&value);
+      if (error != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  goto end;
+	}
+    }
+
+  /* flush template */
+  instance_obj = dbt_finish_object (obj_tmpl);
+  if (instance_obj == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+  obj_tmpl = NULL;
+
+  error = locator_flush_instance (instance_obj);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+    }
+
+end:
+  if (obj_tmpl != NULL && instance_obj == NULL)
+    {
+      dbt_abort_object (obj_tmpl);
+    }
+
+  AU_ENABLE (save);
+
+  return error;
+}
+
+/*
+ * do_drop_synonym () - drop synonym.
+ * return: error code
+ * parser(in): parser context
+ * statement(in): parse tree of a statement
+ */
+int
+do_drop_synonym (PARSER_CONTEXT * parser, PT_NODE * statement)
+{
+  DB_OBJECT *synonym_owner_obj = NULL;
+  char synonym_name[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+  int if_exists = FALSE;
+  int error = NO_ERROR;
+
+  CHECK_MODIFICATION_ERROR ();
+  CHECK_2ARGS_ERROR (parser, statement);
+
+  assert (statement->node_type == PT_DROP_SYNONYM);
+
+  /* syntax is not supported. */
+  assert (PT_SYNONYM_ACCESS_MODIFIER (statement) != PT_PUBLIC);
+
+  /* synonym_name */
+  sm_user_specified_name (PT_NAME_ORIGINAL (PT_SYNONYM_NAME (statement)), synonym_name, DB_MAX_IDENTIFIER_LENGTH);
+
+  /* if_exists */
+  if_exists = PT_SYNONYM_IF_EXISTS (statement);
+
+  error = do_drop_synonym_internal (synonym_name, FALSE, if_exists, NULL, NULL);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+    }
+
+  return error;
+}
+
+/*
+ * do_drop_synonym_internal () - drop synonym.
+ * return: error code
+ * synonym_name(in): synonym name
+ * is_public_synonym(in): access modifiers for synonyms
+ * if_exists(in): if_exists
+ * synonym_class_obj(in): NULL or synonym_class_obj
+ * synonym_obj(in): NULL or synonym_obj
+ */
+static int
+do_drop_synonym_internal (const char *synonym_name, const int is_public_synonym, const int if_exists,
+			  DB_OBJECT * synonym_class_obj, DB_OBJECT * synonym_obj)
+{
+  DB_OBJECT *class_obj = NULL;
+  DB_OBJECT *instance_obj = NULL;
+  char old_target_name[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+  DB_OBJECT *old_target_obj = NULL;
+  DB_IDENTIFIER *old_target_obj_id = NULL;
+  DB_VALUE value;
+  int error = NO_ERROR;
+  int save = 0;
+
+  AU_DISABLE (save);
+
+  if (synonym_class_obj != NULL)
+    {
+      class_obj = synonym_class_obj;
+    }
+  else
+    {
+      /* synonym_class_obj == NULL */
+      class_obj = db_find_class (CT_SYNONYM_NAME);
+      if (class_obj == NULL)
+	{
+	  ASSERT_ERROR_AND_SET (error);
+	  goto end;
+	}
+    }
+
+  if (synonym_obj != NULL)
+    {
+      instance_obj = synonym_obj;
+    }
+  else
+    {
+      /* synonym_obj == NULL */
+      db_make_string (&value, synonym_name);
+      instance_obj = db_find_unique (class_obj, "unique_name", &value);
+      if (instance_obj == NULL)
+	{
+	  ASSERT_ERROR_AND_SET (error);
+
+	  if (error == ER_OBJ_OBJECT_NOT_FOUND)
+	    {
+	      er_clear ();
+	      error = NO_ERROR;
+	    }
+	  else
+	    {
+	      goto end;
+	    }
+
+	  if (if_exists == FALSE)
+	    {
+	      ERROR_SET_ERROR_1ARG (error, ER_SYNONYM_NOT_EXIST, synonym_name);
+	    }
+
+	  goto end;
+	}
+    }
+
+  if (sm_get_synonym_target_name (instance_obj, old_target_name, DB_MAX_IDENTIFIER_LENGTH) == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+  old_target_obj = locator_find_class_with_purpose (old_target_name, false);
+  old_target_obj_id = ws_identifier (old_target_obj);
+
+  error = db_drop (instance_obj);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  error = locator_flush_instance (instance_obj);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+    }
+
+  if (old_target_obj_id != NULL)
+    {
+      synonym_remove_xasl_by_oid (old_target_obj_id);
+    }
+
+end:
+  AU_ENABLE (save);
+
+  return error;
+}
+
+/*
+ * do_rename_synonym () - rename synonym.
+ * return: error code
+ * parser(in): parser context
+ * statement(in): parse tree of a statement
+ */
+int
+do_rename_synonym (PARSER_CONTEXT * parser, PT_NODE * statement)
+{
+  char old_synonym_name[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+  char new_synonym_name[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+  int error = NO_ERROR;
+
+  CHECK_MODIFICATION_ERROR ();
+  CHECK_2ARGS_ERROR (parser, statement);
+
+  assert (statement->node_type == PT_RENAME_SYNONYM);
+
+  /* syntax is not supported. */
+  assert (PT_SYNONYM_ACCESS_MODIFIER (statement) != PT_PUBLIC);
+
+  /* old_synonym_name */
+  sm_user_specified_name (PT_NAME_ORIGINAL (PT_SYNONYM_OLD_NAME (statement)), old_synonym_name,
+			  DB_MAX_IDENTIFIER_LENGTH);
+
+  /* new_synonym_name */
+  sm_user_specified_name (PT_NAME_ORIGINAL (PT_SYNONYM_NEW_NAME (statement)), new_synonym_name,
+			  DB_MAX_IDENTIFIER_LENGTH);
+
+  error = do_rename_synonym_internal (old_synonym_name, new_synonym_name);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+    }
+
+  return error;
+}
+
+/*
+ * do_rename_synonym_internal () - rename synonym.
+ * return: error code
+ * old_synonym_name(in): old synonym name
+ * new_synonym_name(in): new synonym name
+ */
+static int
+do_rename_synonym_internal (const char *old_synonym_name, const char *new_synonym_name)
+{
+  DB_OBJECT *class_obj = NULL;
+  DB_OBJECT *instance_obj = NULL;
+  DB_OBJECT *new_instance_obj = NULL;
+  DB_OTMPL *obj_tmpl = NULL;
+  DB_VALUE value;
+  char old_target_name[DB_MAX_IDENTIFIER_LENGTH] = { '\0' };
+  DB_OBJECT *old_target_obj = NULL;
+  DB_IDENTIFIER *old_target_obj_id = NULL;
+  int error = NO_ERROR;
+  int save = 0;
+
+  AU_DISABLE (save);
+
+  class_obj = db_find_class (CT_SYNONYM_NAME);
+  if (class_obj == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+
+  db_make_string (&value, old_synonym_name);
+  instance_obj = db_find_unique (class_obj, "unique_name", &value);
+  if (instance_obj == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+
+      if (error == ER_OBJ_OBJECT_NOT_FOUND)
+	{
+	  er_clear ();
+	  ERROR_SET_WARNING_1ARG (error, ER_SYNONYM_NOT_EXIST, old_synonym_name);
+	}
+
+      goto end;
+    }
+
+  /* instance_obj != NULL */
+  db_make_string (&value, new_synonym_name);
+  new_instance_obj = db_find_unique (class_obj, "unique_name", &value);
+  if (new_instance_obj != NULL)
+    {
+      ERROR_SET_ERROR_1ARG (error, ER_SYNONYM_ALREADY_EXIST, new_synonym_name);
+      goto end;
+    }
+  else
+    {
+      /* new_instance_obj == NULL */
+      ASSERT_ERROR_AND_SET (error);
+
+      if (error == ER_OBJ_OBJECT_NOT_FOUND)
+	{
+	  er_clear ();
+	  error = NO_ERROR;
+	}
+      else
+	{
+	  goto end;
+	}
+
+      /* Check if class exists by name. */
+      if (db_find_class (new_synonym_name) != NULL)
+	{
+	  ERROR_SET_ERROR_1ARG (error, ER_LC_CLASSNAME_EXIST, new_synonym_name);
+	  goto end;
+	}
+      else
+	{
+	  ASSERT_ERROR_AND_SET (error);
+
+	  if (error == ER_LC_UNKNOWN_CLASSNAME)
+	    {
+	      er_clear ();
+	      error = NO_ERROR;
+	    }
+	  else
+	    {
+	      goto end;
+	    }
+	}
+    }
+
+  /* instance_obj != NULL && new_instance_obj == NULL && er_errid () == ER_LC_UNKNOWN_CLASSNAME */
+  obj_tmpl = dbt_edit_object (instance_obj);
+  if (obj_tmpl == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+
+  /* unique_name */
+  db_make_string (&value, new_synonym_name);
+  error = dbt_put_internal (obj_tmpl, "unique_name", &value);
+  db_value_clear (&value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  /* name */
+  db_make_string (&value, sm_remove_qualifier_name (new_synonym_name));
+  error = dbt_put_internal (obj_tmpl, "name", &value);
+  db_value_clear (&value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  if (sm_get_synonym_target_name (instance_obj, old_target_name, DB_MAX_IDENTIFIER_LENGTH) == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+  old_target_obj = locator_find_class_with_purpose (old_target_name, false);
+  old_target_obj_id = ws_identifier (old_target_obj);
+
+  instance_obj = dbt_finish_object (obj_tmpl);
+  if (instance_obj == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+  obj_tmpl = NULL;
+
+  error = locator_flush_instance (instance_obj);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+    }
+
+  if (old_target_obj_id != NULL)
+    {
+      synonym_remove_xasl_by_oid (old_target_obj_id);
+    }
+
+end:
+  if (obj_tmpl != NULL && instance_obj == NULL)
+    {
+      dbt_abort_object (obj_tmpl);
+    }
+
+  AU_ENABLE (save);
+
+  return error;
 }
 
 /*
@@ -17416,6 +19303,374 @@ do_kill (PARSER_CONTEXT * parser, PT_NODE * statement)
 #endif
 }
 
+int
+do_find_class_by_query (const char *name, char *buf, int buf_size)
+{
+#define QUERY_BUF_SIZE 2048
+  DB_QUERY_RESULT *query_result = NULL;
+  DB_QUERY_ERROR query_error;
+  DB_VALUE value;
+  const char *query = NULL;
+  char query_buf[QUERY_BUF_SIZE] = { '\0' };
+  const char *current_schema_name = NULL;
+  const char *class_name = NULL;
+  int error = NO_ERROR;
+
+  db_make_null (&value);
+  query_error.err_lineno = 0;
+  query_error.err_posno = 0;
+
+  if (name == NULL || name[0] == '\0')
+    {
+      ERROR_SET_WARNING (error, ER_OBJ_INVALID_ARGUMENTS);
+      return error;
+    }
+
+  assert (buf != NULL);
+
+  current_schema_name = sc_current_schema_name ();
+
+  class_name = sm_remove_qualifier_name (name);
+  query = "SELECT [unique_name] FROM [%s] WHERE [class_name] = '%s' AND [owner].[name] != UPPER ('%s')";
+  assert (QUERY_BUF_SIZE > snprintf (NULL, 0, query, CT_CLASS_NAME, class_name, current_schema_name));
+  snprintf (query_buf, QUERY_BUF_SIZE, query, CT_CLASS_NAME, class_name, current_schema_name);
+  assert (query_buf[0] != '\0');
+
+  error = db_compile_and_execute_local (query_buf, &query_result, &query_error);
+  if (error < NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  error = db_query_first_tuple (query_result);
+  if (error != DB_CURSOR_SUCCESS)
+    {
+      if (error == DB_CURSOR_END)
+	{
+	  ERROR_SET_WARNING_1ARG (error, ER_LC_UNKNOWN_CLASSNAME, name);
+	}
+      else
+	{
+	  ASSERT_ERROR ();
+	}
+
+      goto end;
+    }
+
+  error = db_query_get_tuple_value (query_result, 0, &value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  if (!DB_IS_NULL (&value))
+    {
+      assert (strlen (db_get_string (&value)) < buf_size);
+      strncpy (buf, db_get_string (&value), buf_size);
+    }
+  else
+    {
+      /* unique_name must not be null. */
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+
+  error = db_query_next_tuple (query_result);
+  if (error != DB_CURSOR_END)
+    {
+      /* No result can be returned because unique_name is not unique. */
+      buf[0] = '\0';
+    }
+
+end:
+  if (query_result)
+    {
+      db_query_end (query_result);
+      query_result = NULL;
+    }
+
+  return error;
+#undef QUERY_BUF_SIZE
+}
+
+int
+do_find_serial_by_query (const char *name, char *buf, int buf_size)
+{
+#define QUERY_BUF_SIZE 2048
+  DB_QUERY_RESULT *query_result = NULL;
+  DB_QUERY_ERROR query_error;
+  DB_VALUE value;
+  const char *query = NULL;
+  char query_buf[QUERY_BUF_SIZE] = { '\0' };
+  const char *current_schema_name = NULL;
+  const char *serial_name = NULL;
+  int error = NO_ERROR;
+
+  db_make_null (&value);
+  query_error.err_lineno = 0;
+  query_error.err_posno = 0;
+
+  if (name == NULL || name[0] == '\0')
+    {
+      ERROR_SET_WARNING (error, ER_OBJ_INVALID_ARGUMENTS);
+      return error;
+    }
+
+  assert (buf != NULL);
+
+  current_schema_name = sc_current_schema_name ();
+
+  serial_name = sm_remove_qualifier_name (name);
+  query = "SELECT [unique_name] FROM [%s] WHERE [name] = '%s' AND [owner].[name] != UPPER ('%s')";
+  assert (QUERY_BUF_SIZE > snprintf (NULL, 0, query, CT_SERIAL_NAME, serial_name, current_schema_name));
+  snprintf (query_buf, QUERY_BUF_SIZE, query, CT_SERIAL_NAME, serial_name, current_schema_name);
+  assert (query_buf[0] != '\0');
+
+  error = db_compile_and_execute_local (query_buf, &query_result, &query_error);
+  if (error < NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  error = db_query_first_tuple (query_result);
+  if (error != DB_CURSOR_SUCCESS)
+    {
+      if (error == DB_CURSOR_END)
+	{
+	  /*
+	   * In the do_get_obj_id () function, if the MOP is NULL and the error is ER_OBJ_OBJECT_NOT_FOUND,
+	   * the error is cleared. So NO_ERROR is returned.
+	   *
+	   * In the do_create_auto_increment_serial() function, there should be no error even if the serial
+	   * cannot be found when the do_get_serial_obj_id() function is called. So it should return NO_ERROR.
+	   */
+	  error = NO_ERROR;
+	}
+      else
+	{
+	  ASSERT_ERROR ();
+	}
+
+      goto end;
+    }
+
+  error = db_query_get_tuple_value (query_result, 0, &value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  if (!DB_IS_NULL (&value))
+    {
+      assert (strlen (db_get_string (&value)) < buf_size);
+      strncpy (buf, db_get_string (&value), buf_size);
+    }
+  else
+    {
+      /* unique_name must not be null. */
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+
+  error = db_query_next_tuple (query_result);
+  if (error != DB_CURSOR_END)
+    {
+      /* No result can be returned because unique_name is not unique. */
+      buf[0] = '\0';
+    }
+
+end:
+  if (query_result)
+    {
+      db_query_end (query_result);
+      query_result = NULL;
+    }
+
+  return error;
+#undef QUERY_BUF_SIZE
+}
+
+int
+do_find_trigger_by_query (const char *name, char *buf, int buf_size)
+{
+#define QUERY_BUF_SIZE 2048
+  DB_QUERY_RESULT *query_result = NULL;
+  DB_QUERY_ERROR query_error;
+  DB_VALUE value;
+  const char *query = NULL;
+  char query_buf[QUERY_BUF_SIZE] = { '\0' };
+  const char *current_schema_name = NULL;
+  const char *trigger_name = NULL;
+  int error = NO_ERROR;
+
+  db_make_null (&value);
+  query_error.err_lineno = 0;
+  query_error.err_posno = 0;
+
+  if (name == NULL || name[0] == '\0')
+    {
+      ERROR_SET_WARNING (error, ER_OBJ_INVALID_ARGUMENTS);
+      return error;
+    }
+
+  assert (buf != NULL);
+
+  current_schema_name = sc_current_schema_name ();
+
+  trigger_name = sm_remove_qualifier_name (name);
+  query = "SELECT [unique_name] FROM [%s] WHERE [name] = '%s' AND [owner].[name] != UPPER ('%s')";
+  assert (QUERY_BUF_SIZE > snprintf (NULL, 0, query, CT_TRIGGER_NAME, trigger_name, current_schema_name));
+  snprintf (query_buf, QUERY_BUF_SIZE, query, CT_TRIGGER_NAME, trigger_name, current_schema_name);
+  assert (query_buf[0] != '\0');
+
+  error = db_compile_and_execute_local (query_buf, &query_result, &query_error);
+  if (error < NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  error = db_query_first_tuple (query_result);
+  if (error != DB_CURSOR_SUCCESS)
+    {
+      if (error == DB_CURSOR_END)
+	{
+	  error = NO_ERROR;
+	}
+      else
+	{
+	  ASSERT_ERROR ();
+	}
+
+      goto end;
+    }
+
+  error = db_query_get_tuple_value (query_result, 0, &value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  if (!DB_IS_NULL (&value))
+    {
+      assert (strlen (db_get_string (&value)) < buf_size);
+      strncpy (buf, db_get_string (&value), buf_size);
+    }
+  else
+    {
+      /* unique_name must not be null. */
+      ASSERT_ERROR_AND_SET (error);
+      goto end;
+    }
+
+  error = db_query_next_tuple (query_result);
+  if (error != DB_CURSOR_END)
+    {
+      /* No result can be returned because unique_name is not unique. */
+      buf[0] = '\0';
+    }
+
+end:
+  if (query_result)
+    {
+      db_query_end (query_result);
+      query_result = NULL;
+    }
+
+  return error;
+#undef QUERY_BUF_SIZE
+}
+
+int
+do_find_synonym_by_query (const char *name, char *buf, int buf_size)
+{
+#define QUERY_BUF_SIZE 2048
+  DB_QUERY_RESULT *query_result = NULL;
+  DB_QUERY_ERROR query_error;
+  DB_VALUE value;
+  const char *query = NULL;
+  char query_buf[QUERY_BUF_SIZE] = { '\0' };
+  int error = NO_ERROR;
+
+  db_make_null (&value);
+  query_error.err_lineno = 0;
+  query_error.err_posno = 0;
+
+  if (name == NULL || name[0] == '\0')
+    {
+      ERROR_SET_WARNING (error, ER_OBJ_INVALID_ARGUMENTS);
+      return error;
+    }
+
+  assert (buf != NULL);
+
+  query = "SELECT [target_unique_name] FROM [%s] WHERE [unique_name] = '%s'";
+  assert (QUERY_BUF_SIZE > snprintf (NULL, 0, query, CT_SYNONYM_NAME, name));
+  snprintf (query_buf, QUERY_BUF_SIZE, query, CT_SYNONYM_NAME, name);
+
+  error = db_compile_and_execute_local (query_buf, &query_result, &query_error);
+  if (error < NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  error = db_query_first_tuple (query_result);
+  if (error != DB_CURSOR_SUCCESS)
+    {
+      if (error == DB_CURSOR_END)
+	{
+	  ERROR_SET_WARNING_1ARG (error, ER_SYNONYM_NOT_EXIST, name);
+	}
+      else
+	{
+	  ASSERT_ERROR ();
+	}
+
+      goto end;
+    }
+
+  error = db_query_get_tuple_value (query_result, 0, &value);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      goto end;
+    }
+
+  if (!DB_IS_NULL (&value))
+    {
+      assert (strlen (db_get_string (&value)) < buf_size);
+      strcpy (buf, db_get_string (&value));
+    }
+  else
+    {
+      /* unique_name must not be null. */
+      assert (false);
+    }
+
+  error = db_query_next_tuple (query_result);
+  if (error != DB_CURSOR_END)
+    {
+      /* No result can be returned because unique_name is not unique. */
+      buf[0] = '\0';
+    }
+
+end:
+  if (query_result)
+    {
+      db_query_end (query_result);
+      query_result = NULL;
+    }
+
+  return error;
+#undef QUERY_BUF_SIZE
+}
+
 /*
  * do_set_trace_to_query_flag() -
  *   return: void
@@ -17645,4 +19900,1216 @@ do_insert_checks (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE ** class
 
 exit:
   return error;
+}
+
+#define SERVER_ATTR_LINK_NAME   "link_name"
+#define SERVER_ATTR_HOST        "host"
+#define SERVER_ATTR_PORT        "port"
+#define SERVER_ATTR_DB_NAME     "db_name"
+#define SERVER_ATTR_USER_NAME   "user_name"
+#define SERVER_ATTR_PROPERTIES  "properties"
+#define SERVER_ATTR_COMMENT     "comment"
+#define SERVER_ATTR_PASSWORD    "password"
+#define SERVER_ATTR_OWNER       "owner"
+#define SERVER_ATTR_LINK_NAME_BUF_SIZE  (255)	// link_name varchar(255)
+
+static MOP
+do_get_server_obj_id (DB_IDENTIFIER * server_obj_id, DB_OBJECT * server_class_mop, const char *server_name)
+{
+  return do_get_obj_id (server_obj_id, server_class_mop, server_name, SERVER_ATTR_LINK_NAME);
+}
+
+int
+do_drop_server (PARSER_CONTEXT * parser, PT_NODE * statement)
+{
+  DB_OBJECT *server_object = NULL;
+  PT_DROP_SERVER_INFO *drop_server;
+  int error;
+
+  CHECK_MODIFICATION_ERROR ();
+
+  drop_server = &(statement->info.drop_server);
+  server_object = server_find (drop_server->server_name, drop_server->owner_name, false);
+  if (server_object == NULL)
+    {
+      error = er_errid ();
+      if (drop_server->if_exists && (error == ER_DBLINK_SERVER_NOT_FOUND))
+	{
+	  error = NO_ERROR;
+	}
+      return error;
+    }
+
+  int save;
+  AU_DISABLE (save);
+  error = db_drop (server_object);
+  AU_ENABLE (save);
+  return error;
+}
+
+
+static int
+do_create_server_internal (MOP * server_object, DB_VALUE * port_no, DB_VALUE * passwd, MOP owner,
+			   const char **attr_names, char **attr_val, int attr_cnt)
+{
+  DB_OBJECT *ret_obj = NULL;
+  DB_OTMPL *obj_tmpl = NULL;
+  DB_VALUE value;
+  DB_OBJECT *server_class = NULL;
+  int au_save, error = NO_ERROR;
+
+  db_make_null (&value);
+
+  /* temporarily disable authorization to access _db_server class */
+  AU_DISABLE (au_save);
+
+  server_class = sm_find_class (CT_DB_SERVER_NAME);
+  if (server_class == NULL)
+    {
+      error = ER_DBLINK_CATALOG_DB_SERVER_NOT_FOUND;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 0);
+      goto end;
+    }
+
+  obj_tmpl = dbt_create_object_internal ((MOP) server_class);
+  if (obj_tmpl == NULL)
+    {
+      assert (er_errid () != NO_ERROR);
+      error = er_errid ();
+      goto end;
+    }
+
+  /* port */
+  error = dbt_put_internal (obj_tmpl, SERVER_ATTR_PORT, port_no);
+  if (error != NO_ERROR)
+    {
+      goto end;
+    }
+
+  /* password */
+  error = dbt_put_internal (obj_tmpl, SERVER_ATTR_PASSWORD, passwd);
+  if (error != NO_ERROR)
+    {
+      goto end;
+    }
+
+  for (int i = 0; i < attr_cnt; i++)
+    {
+      if (attr_val[i] == NULL)
+	{
+	  db_make_null (&value);
+	}
+      else
+	{
+	  db_make_string (&value, attr_val[i]);
+	}
+
+      error = dbt_put_internal (obj_tmpl, attr_names[i], &value);
+      pr_clear_value (&value);
+      if (error != NO_ERROR)
+	{
+	  goto end;
+	}
+    }
+
+  /* owner */
+  db_make_object (&value, owner);
+  error = dbt_put_internal (obj_tmpl, SERVER_ATTR_OWNER, &value);
+  pr_clear_value (&value);
+  if (error != NO_ERROR)
+    {
+      goto end;
+    }
+
+  ret_obj = dbt_finish_object (obj_tmpl);
+  if (ret_obj == NULL)
+    {
+      assert (er_errid () != NO_ERROR);
+      error = er_errid ();
+    }
+  else if (server_object != NULL)
+    {
+      *server_object = ret_obj;
+    }
+
+end:
+  if (obj_tmpl != NULL && ret_obj == NULL)
+    {
+      dbt_abort_object (obj_tmpl);
+    }
+  AU_ENABLE (au_save);
+  return error;
+}
+
+int
+do_create_server (PARSER_CONTEXT * parser, PT_NODE * statement)
+{
+  DB_OBJECT *server_object = NULL;
+  DB_VALUE *pval = NULL;
+  DB_VALUE port_no, passwd;
+  DB_DATA_STATUS data_stat;
+  char *pwd;
+  char *attr_val[6];
+  const char *attr_names[6] = { SERVER_ATTR_LINK_NAME, SERVER_ATTR_HOST, SERVER_ATTR_DB_NAME,
+    SERVER_ATTR_USER_NAME, SERVER_ATTR_PROPERTIES, SERVER_ATTR_COMMENT
+  };
+  MOP owner_obj = Au_user;
+  char name_buf[SERVER_ATTR_LINK_NAME_BUF_SIZE + 1];	// link_name varchar(255)
+  int error = NO_ERROR;
+  int save;
+
+  PT_CREATE_SERVER_INFO *create_server = &statement->info.create_server;
+
+  CHECK_MODIFICATION_ERROR ();
+
+  memset (attr_val, 0x00, sizeof (attr_val));
+  db_make_null (&passwd);
+  db_make_int (&port_no, 0);
+
+  if (create_server->owner_name)
+    {
+      owner_obj = db_find_user ((char *) create_server->owner_name->info.name.original);
+      if (owner_obj == NULL)
+	{
+	  assert (er_errid () != NO_ERROR);
+	  error = er_errid ();
+	  if (error == ER_NET_CANT_CONNECT_SERVER || error == ER_OBJ_NO_CONNECT)
+	    {
+	      error = ER_NET_CANT_CONNECT_SERVER;
+	    }
+	  else
+	    {
+	      error = ER_AU_INVALID_USER;
+	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_AU_INVALID_USER, 1,
+		      create_server->owner_name->info.name.original);
+	    }
+	  return error;
+	}
+    }
+
+  sm_downcase_name ((char *) create_server->server_name->info.name.original, name_buf, SERVER_ATTR_LINK_NAME_BUF_SIZE);
+  attr_val[0] = name_buf;
+  server_object = server_find (create_server->server_name, create_server->owner_name, true);
+  if (server_object != NULL)
+    {
+      error = ER_DBLINK_SERVER_ALREADY_EXISTS;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 1, attr_val[0]);
+      goto end;
+    }
+
+  error = er_errid ();
+  if (error != ER_DBLINK_SERVER_NOT_FOUND)
+    {
+      if (error == ER_DBLINK_SERVER_MULTIPLE_FOUND)
+	{
+	  error = ER_DBLINK_SERVER_ALREADY_EXISTS;
+	}
+      goto end;
+    }
+
+  /* HOST */
+  assert (create_server->host->node_type == PT_VALUE);
+  attr_val[1] = (char *) PT_VALUE_GET_BYTES (create_server->host);
+  if (attr_val[1] == NULL)
+    {
+      error = ER_FAILED;
+      goto end;
+    }
+
+  /* PORT */
+  db_value_domain_init (&port_no, DB_TYPE_NUMERIC, DB_MAX_NUMERIC_PRECISION, 0);
+  pval = pt_value_to_db (parser, create_server->port);
+  if (pval == NULL)
+    {
+      assert (er_errid () != NO_ERROR);
+      error = er_errid ();
+      goto end;
+    }
+
+  error = numeric_db_value_coerce_to_num (pval, &port_no, &data_stat);
+  if (error != NO_ERROR)
+    {
+      goto end;
+    }
+  pval = NULL;
+
+  /* DBNAME */
+  assert (create_server->dbname->node_type == PT_NAME || create_server->dbname->node_type == PT_VALUE);
+  // *INDENT-OFF* 
+  attr_val[2] = (create_server->dbname->node_type == PT_NAME) ? (char *) create_server->dbname->info.name.original
+                                                              : (char *) PT_VALUE_GET_BYTES (create_server->dbname);
+  // *INDENT-ON* 
+  if (attr_val[2] == NULL)
+    {
+      error = ER_FAILED;
+      goto end;
+    }
+
+  /* USER */
+  assert (create_server->user->node_type == PT_NAME || create_server->user->node_type == PT_VALUE);
+  // *INDENT-OFF* 
+  attr_val[3] = (create_server->user->node_type == PT_NAME) ? (char *) create_server->user->info.name.original
+                                                            : (char *) PT_VALUE_GET_BYTES (create_server->user);
+  // *INDENT-ON* 
+  if (attr_val[3] == NULL)
+    {
+      error = ER_FAILED;
+      goto end;
+    }
+
+  /* PASSWORD */
+  assert (create_server->pwd);
+  assert (create_server->pwd->node_type == PT_VALUE);
+  pwd = (char *) PT_VALUE_GET_BYTES (create_server->pwd);
+  if (pwd == NULL)
+    {
+      error = ER_FAILED;
+      goto end;
+    }
+
+  error = pt_remake_dblink_password (pwd, &passwd, false);
+  if (error != NO_ERROR)
+    {				// TODO: error handling
+      if (!pt_has_error (parser))
+	{
+	  if (er_errid_if_has_error () != NO_ERROR)
+	    {
+	      PT_ERROR (parser, statement, (char *) er_msg ());
+	    }
+	  else
+	    {
+	      PT_ERRORf2 (parser, statement, "Failed to re-encryption passwordfor %s. error=%d", attr_val[0], error);
+	    }
+	}
+
+      goto end;
+    }
+
+  /* PROPERTIES */
+  if (create_server->prop != NULL)
+    {
+      assert (create_server->prop->node_type == PT_VALUE);
+      attr_val[4] = (char *) PT_VALUE_GET_BYTES (create_server->prop);
+      if (attr_val[4] == NULL)
+	{
+	  error = ER_FAILED;
+	  goto end;
+	}
+    }
+
+  /* COMMENT */
+  if (create_server->comment != NULL)
+    {
+      assert (create_server->comment->node_type == PT_VALUE);
+      attr_val[5] = (char *) PT_VALUE_GET_BYTES (create_server->comment);
+      if (attr_val[5] == NULL)
+	{
+	  error = ER_FAILED;
+	  goto end;
+	}
+    }
+
+  server_object = NULL;
+  /* now create server object which is insert into _db_server */
+  AU_DISABLE (save);
+  error =
+    do_create_server_internal (&server_object, &port_no, &passwd, owner_obj, attr_names, attr_val,
+			       sizeof (attr_names) / sizeof (attr_names[0]));
+  AU_ENABLE (save);
+  if (error >= 0)
+    {
+      error = NO_ERROR;
+    }
+
+end:
+  pr_clear_value (&port_no);
+  pr_clear_value (&passwd);
+
+  return error;
+}
+
+int
+do_rename_server (PARSER_CONTEXT * parser, PT_NODE * statement)
+{
+  int error = NO_ERROR;
+  DB_OBJECT *server_object = NULL;
+  char name_buf[SERVER_ATTR_LINK_NAME_BUF_SIZE + 1];
+  DB_VALUE value;
+  int save;
+  PT_RENAME_SERVER_INFO *rename_server = &(statement->info.rename_server);
+
+  CHECK_MODIFICATION_ERROR ();
+
+  server_object = server_find (rename_server->old_name, rename_server->owner_name, false);
+  if (server_object == NULL)
+    {
+      return er_errid ();
+    }
+
+
+  // If rename_server->owner_name is not specified, the owner information of the existing server must be maintained.
+  // e.g; If u1.srv and u1.test exist and "rename server test as srv" is performed in the dba account, 
+  //      it is necessary to check whether "u1.srv" exists. It is not to check with "dba.srv" or "srv"
+  PT_NODE *owner_node = rename_server->owner_name;
+  if (rename_server->owner_name == NULL)
+    {
+      DB_VALUE owner_val, name_val;
+
+      AU_DISABLE (save);
+      error = db_get (server_object, SERVER_ATTR_OWNER, &owner_val);
+      if (error == NO_ERROR)
+	{
+	  error = db_get (db_get_object (&owner_val), "name", &name_val);
+	}
+      AU_ENABLE (save);
+
+      if (error != NO_ERROR)
+	{
+	  pr_clear_value (&owner_val);
+	  pr_clear_value (&name_val);
+	  return error;
+	}
+
+      owner_node = parser_new_node (parser, PT_NAME);
+      if (owner_node == NULL)
+	{
+	  PT_INTERNAL_ERROR (parser, "allocate new node");
+	  return MSGCAT_RUNTIME_OUT_OF_MEMORY;
+	}
+
+      owner_node->info.name.original = pt_append_string (parser, NULL, db_get_string (&name_val));
+      pr_clear_value (&owner_val);
+      pr_clear_value (&name_val);
+    }
+
+  if (server_find (rename_server->new_name, owner_node, false))
+    {
+      error = ER_DBLINK_SERVER_ALREADY_EXISTS;
+    }
+  else
+    {
+      error = er_errid ();
+      if (error == ER_DBLINK_SERVER_MULTIPLE_FOUND)
+	{
+	  error = ER_DBLINK_SERVER_ALREADY_EXISTS;
+	}
+    }
+
+  if (owner_node && owner_node != rename_server->owner_name)
+    {
+      parser_free_node (parser, owner_node);
+    }
+
+  const char *new_name = rename_server->new_name->info.name.original;
+  if (error != ER_DBLINK_SERVER_NOT_FOUND)
+    {
+      if (error == ER_DBLINK_SERVER_ALREADY_EXISTS)
+	{
+	  if (rename_server->owner_name)
+	    {
+	      char err_buf[2048];
+	      sprintf (err_buf, "[%s].[%s]", (char *) rename_server->owner_name->info.name.original, new_name);
+	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 1, err_buf);
+	    }
+	  else
+	    {
+	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 1, new_name);
+	    }
+	}
+      return error;
+    }
+
+  er_clear ();
+
+  sm_downcase_name (new_name, name_buf, SERVER_ATTR_LINK_NAME_BUF_SIZE);
+  db_make_string (&value, name_buf);
+
+  AU_DISABLE (save);
+  error = db_put (server_object, SERVER_ATTR_LINK_NAME, &value);
+  AU_ENABLE (save);
+
+  pr_clear_value (&value);
+  return error;
+}
+
+int
+do_alter_server (PARSER_CONTEXT * parser, PT_NODE * statement)
+{
+  int error = NO_ERROR;
+  char *pt;
+  const char *server_name;
+  DB_OBJECT *server_object = NULL;
+  DB_VALUE value, passwd;
+  PT_ALTER_SERVER_INFO *alter;
+  int save;
+
+  CHECK_MODIFICATION_ERROR ();
+
+  db_make_null (&value);
+  alter = &(statement->info.alter_server);
+  server_name = alter->server_name->info.name.original;
+
+  server_object = server_find (alter->server_name, alter->current_owner_name, false);
+  if (server_object == NULL)
+    {
+      return er_errid ();
+    }
+
+  AU_DISABLE (save);
+
+  if (alter->xbits.bit_pwd)
+    {
+      assert (alter->pwd && alter->pwd->node_type == PT_VALUE);
+      pt = (char *) PT_VALUE_GET_BYTES (alter->pwd);
+      assert (pt && *pt);
+
+      error = pt_remake_dblink_password (pt, &passwd, false);
+      if (error != NO_ERROR)
+	{
+	  if (!pt_has_error (parser))
+	    {			// TODO: error handling
+	      if (er_errid_if_has_error () != NO_ERROR)
+		{
+		  PT_ERROR (parser, statement, (char *) er_msg ());
+		}
+	      else
+		{
+		  PT_ERRORf2 (parser, statement, "Failed to re-encryption password for %s. error=%d",
+			      (char *) server_name, error);
+		}
+	    }
+
+	  goto end;
+	}
+      error = db_put (server_object, SERVER_ATTR_PASSWORD, &passwd);
+      pr_clear_value (&passwd);
+      if (error != NO_ERROR)
+	{
+	  goto end;
+	}
+    }
+
+  if (alter->xbits.bit_host)
+    {
+      assert (alter->host->node_type == PT_VALUE);
+      pt = (char *) PT_VALUE_GET_BYTES (alter->host);
+      assert (pt && *pt);
+
+      db_make_string (&value, pt);
+      error = db_put (server_object, SERVER_ATTR_HOST, &value);
+      pr_clear_value (&value);
+      if (error != NO_ERROR)
+	{
+	  goto end;
+	}
+    }
+
+  if (alter->xbits.bit_port)
+    {
+      DB_VALUE *pval = NULL;
+      DB_DATA_STATUS data_stat;
+
+      db_value_domain_init (&value, DB_TYPE_NUMERIC, DB_MAX_NUMERIC_PRECISION, 0);
+      pval = pt_value_to_db (parser, alter->port);
+      if (pval == NULL)
+	{
+	  assert (er_errid () != NO_ERROR);
+	  error = er_errid ();
+	  goto end;
+	}
+
+      error = numeric_db_value_coerce_to_num (pval, &value, &data_stat);
+      if (error != NO_ERROR)
+	{
+	  goto end;
+	}
+      pval = NULL;
+
+      error = db_put (server_object, SERVER_ATTR_PORT, &value);
+      pr_clear_value (&value);
+      if (error != NO_ERROR)
+	{
+	  goto end;
+	}
+    }
+
+  if (alter->xbits.bit_dbname)
+    {
+      assert (alter->dbname->node_type == PT_NAME);
+      pt = (char *) alter->dbname->info.name.original;
+
+      assert (pt && *pt);
+      db_make_string (&value, pt);
+      error = db_put (server_object, SERVER_ATTR_DB_NAME, &value);
+      pr_clear_value (&value);
+      if (error != NO_ERROR)
+	{
+	  goto end;
+	}
+    }
+
+  if (alter->xbits.bit_user)
+    {
+      assert (alter->user->node_type == PT_NAME);
+      pt = (char *) alter->user->info.name.original;
+
+      assert (pt && *pt);
+      db_make_string (&value, pt);
+      error = db_put (server_object, SERVER_ATTR_USER_NAME, &value);
+      pr_clear_value (&value);
+      if (error != NO_ERROR)
+	{
+	  goto end;
+	}
+    }
+
+  if (alter->xbits.bit_prop)
+    {
+      if (alter->prop)
+	{
+	  assert (alter->prop->node_type == PT_VALUE);
+	  pt = (char *) PT_VALUE_GET_BYTES (alter->prop);
+	}
+      else
+	{
+	  pt = 0x00;
+	}
+
+      if (!pt)
+	{
+	  db_make_null (&value);
+	}
+      else
+	{
+	  db_make_string (&value, pt);
+	}
+      error = db_put (server_object, SERVER_ATTR_PROPERTIES, &value);
+      pr_clear_value (&value);
+      if (error != NO_ERROR)
+	{
+	  goto end;
+	}
+    }
+
+  if (alter->xbits.bit_comment)
+    {
+      if (alter->comment)
+	{
+	  assert (alter->comment->node_type == PT_VALUE);
+	  pt = (char *) PT_VALUE_GET_BYTES (alter->comment);
+	}
+      else
+	{
+	  pt = 0x00;
+	}
+
+      if (!pt)
+	{
+	  db_make_null (&value);
+	}
+      else
+	{
+	  db_make_string (&value, pt);
+	}
+
+      error = db_put (server_object, SERVER_ATTR_COMMENT, &value);
+      pr_clear_value (&value);
+      if (error != NO_ERROR)
+	{
+	  goto end;
+	}
+    }
+
+  if (alter->xbits.bit_owner)
+    {
+      assert (alter->owner_name->node_type == PT_NAME);
+      pt = (char *) alter->owner_name->info.name.original;
+      assert (pt && *pt);
+
+      MOP user = db_find_user (pt);
+      if (user == NULL)
+	{
+	  assert (er_errid () != NO_ERROR);
+	  error = er_errid ();
+	  if (error == ER_NET_CANT_CONNECT_SERVER || error == ER_OBJ_NO_CONNECT)
+	    {
+	      error = ER_NET_CANT_CONNECT_SERVER;
+	    }
+	  goto end;
+	}
+
+      if (server_find (alter->server_name, alter->owner_name, false))
+	{
+	  char buf[2048];
+	  sprintf (buf, "[%s].[%s]",
+		   (char *) alter->owner_name->info.name.original, (char *) alter->server_name->info.name.original);
+	  error = ER_DBLINK_SERVER_ALREADY_EXISTS;
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 1, buf);
+	  goto end;
+	}
+
+      error = er_errid ();
+      if (error != ER_DBLINK_SERVER_NOT_FOUND)
+	{
+	  if (error == ER_DBLINK_SERVER_MULTIPLE_FOUND)
+	    {
+	      error = ER_DBLINK_SERVER_ALREADY_EXISTS;
+	    }
+	  goto end;
+	}
+
+      db_make_object (&value, user);
+      error = db_put (server_object, SERVER_ATTR_OWNER, &value);
+      pr_clear_value (&value);
+      if (error != NO_ERROR)
+	{
+	  goto end;
+	}
+    }
+
+end:
+  AU_ENABLE (save);
+
+  return error;
+}
+
+int
+get_dblink_info_from_dbserver (PARSER_CONTEXT * parser, PT_NODE * node, DB_VALUE * out_val)
+{
+  char *server_name;
+  DB_OBJECT *server_object = NULL;
+  DB_VALUE values[4], pwd_val;
+  int au_save, error, cnt;
+  const char *url_attr_names[4] = { SERVER_ATTR_HOST, SERVER_ATTR_PORT, SERVER_ATTR_DB_NAME, SERVER_ATTR_PROPERTIES };
+  PT_DBLINK_INFO *dblink_table = &node->info.dblink_table;
+
+  server_name = (char *) dblink_table->conn->info.name.original;
+  cnt = 0;
+
+  server_object = server_find (dblink_table->conn, dblink_table->owner_name, false);
+  if (server_object == NULL)
+    {
+      return er_errid ();
+    }
+
+  AU_DISABLE (au_save);		// disable checking authorization
+  for (cnt = 0; cnt < 4; cnt++)
+    {
+      db_make_null (&(values[cnt]));
+      error = db_get (server_object, url_attr_names[cnt], &(values[cnt]));
+      if (error < 0)
+	{
+	  goto error_end;
+	}
+    }
+
+  error = db_get (server_object, SERVER_ATTR_USER_NAME, &(out_val[1]));
+  if (error < 0)
+    {
+      goto error_end;
+    }
+
+  error = db_get (server_object, SERVER_ATTR_PASSWORD, &pwd_val);
+  if (error < 0)
+    {
+      goto error_end;
+    }
+
+  error = get_dblink_password_decrypt (db_get_string (&pwd_val), &(out_val[2]));
+  if (error != NO_ERROR)
+    {
+      if (error == ER_DBLINK_PASSWORD_CHECKSUM || error == ER_DBLINK_PASSWORD_INVALID_LENGTH)
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 0);
+	}
+      else
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_DBLINK_PASSWORD_DECRYPT, 1, error);
+	  error = ER_DBLINK_PASSWORD_DECRYPT;
+	}
+    }
+  else
+    {
+      // cci:CUBRID:<host>:<port>:<db_name>:<db_user>:<db_password>:[?<properties>]
+      const char *dblink_url_fmt_prop = "cci:CUBRID:%s:%d:%s:::?%s";
+      const char *dblink_url_fmt_none = "cci:CUBRID:%s:%d:%s:::";
+      char dblink_url[4096];
+      int port_no;
+      char *host, *dbname, *prop;
+
+      host = (char *) db_get_string (&(values[0]));
+      port_no = db_get_int (&(values[1]));
+      dbname = (char *) db_get_string (&(values[2]));
+      prop = (char *) db_get_string (&(values[3]));
+
+      if (prop && *prop)
+	{
+	  sprintf (dblink_url, dblink_url_fmt_prop, host, port_no, dbname, ((prop[0] == '?') ? prop + 1 : prop));
+	}
+      else
+	{
+	  sprintf (dblink_url, dblink_url_fmt_none, host, port_no, dbname);
+	}
+
+      error = db_make_string_copy (&(out_val[0]), dblink_url);
+    }
+
+error_end:
+  AU_ENABLE (au_save);
+
+  pr_clear_value (&pwd_val);
+  while (--cnt >= 0)
+    {
+      pr_clear_value (&(values[cnt]));
+    }
+
+  return error;
+}
+
+
+#define DBLINK_PASSWORD_MAX_LENGTH      (128)
+#define DBLINK_PASSWORD_CONFUSED_LENGTH (6)	// include 4(int) + 1(unsigned char) +  1(unsigned char)
+// Valid data size is the largest multiple of 3 less than or equal to DBLINK_PASSWORD_CIPHER_LENGTH.
+#define DBLINK_PASSWORD_CIPHER_LENGTH   (DBLINK_PASSWORD_MAX_LENGTH + DBLINK_PASSWORD_CONFUSED_LENGTH)
+#define DBLINK_PASSWORD_PAD_LENGTH      (40)	// include 2(length) + 2(mk) + 2(length) + 32(mk), Must be 4 or more
+#define DBLINK_PASSWORD_MAX_BUFSIZE  ((int)(DBLINK_PASSWORD_CIPHER_LENGTH / 3 * 4) + DBLINK_PASSWORD_PAD_LENGTH)
+
+/*
+ * pt_check_dblink_password ()  : Check the validity of the entered password.
+ *
+ * return		  : NO_ERROR or error code.
+ * parser(in)		  : Parser context.
+ * passwd(in)             : Password entered by user(or parser)
+ * cipher_buf(out)	  : Encrypted password
+ * ciper_buf_size(in)	  : Size of cipher_buf
+ * 
+ * Remark: 
+ *     Checks whether the entered password is a raw password or an encrypted password,
+ *     if it is a raw password, encrypt it.
+ *     The length of the raw password is shorter than DBLINK_PASSWORD_MAX_LENGTH.
+ *     If it is an encrypted password, it must have a specific length.
+ *     Even if there is no raw password, it will be returned as an encrypted password.
+ */
+int
+pt_check_dblink_password (PARSER_CONTEXT * parser, const char *passwd, char *cipher_buf, int ciper_buf_size)
+{
+  DB_VALUE val;
+  char *str;
+  int max_len = DBLINK_PASSWORD_MAX_BUFSIZE;
+  int err = ER_FAILED;
+  int length = 0;
+
+  /* Adjust the length so that it is a multiple of 4. */
+  max_len >>= 2;
+  max_len <<= 2;
+
+  if (ciper_buf_size <= max_len)
+    {
+      err = ER_TF_BUFFER_OVERFLOW;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, err, 0);
+      goto ret_pos;
+    }
+
+  if (passwd && *passwd)
+    {
+      length = strlen (passwd);
+    }
+
+  if (length <= DBLINK_PASSWORD_MAX_LENGTH)
+    {
+      // The raw password entered by the user.
+      db_make_null (&val);
+      err = get_dblink_password_encrypt (passwd, &val, true);
+      if (err == NO_ERROR)
+	{
+	  str = (char *) db_get_string (&val);
+	  if (!str)
+	    {
+	      err = ER_FAILED;
+	      goto ret_pos;
+	    }
+	  else
+	    {
+	      strcpy (cipher_buf, str);
+	    }
+	}
+      else
+	{
+	  if (err == ER_DBLINK_PASSWORD_OVER_MAX_LENGTH)
+	    {
+	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, err, 0);
+	    }
+	  else
+	    {
+	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_DBLINK_PASSWORD_ENCRYPT, 1, err);
+	      err = ER_DBLINK_PASSWORD_ENCRYPT;
+	    }
+	}
+      pr_clear_value (&val);
+    }
+  else if (length == max_len)
+    {
+      // A encrypted password from the raw password.      
+      strcpy (cipher_buf, passwd);
+      err = NO_ERROR;
+    }
+
+ret_pos:
+  if (err != NO_ERROR)
+    {
+      if (er_errid_if_has_error () != NO_ERROR)
+	{
+	  PT_ERROR (parser, pt_top (parser), (char *) er_msg ());
+	}
+      else if (!pt_has_error (parser))
+	{
+	  PT_ERROR (parser, pt_top (parser), "Failed to check PASSWORD.");
+	}
+    }
+
+  return err;
+}
+
+int
+pt_remake_dblink_password (const char *passwd, DB_VALUE * outval, bool is_external)
+{
+  int error;
+  DB_VALUE tmp_passwd;
+
+  db_make_null (&tmp_passwd);
+  error = get_dblink_password_decrypt (passwd, &tmp_passwd);
+  if (error != NO_ERROR)
+    {
+      if (error == ER_DBLINK_PASSWORD_CHECKSUM || error == ER_DBLINK_PASSWORD_INVALID_LENGTH)
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 0);
+	}
+      else
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_DBLINK_PASSWORD_DECRYPT, 1, error);
+	  error = ER_DBLINK_PASSWORD_DECRYPT;
+	}
+
+      pr_clear_value (&tmp_passwd);
+      return error;
+    }
+
+  error = get_dblink_password_encrypt ((char *) db_get_string (&tmp_passwd), outval, is_external);
+  if (error != NO_ERROR)
+    {
+      if (error == ER_DBLINK_PASSWORD_OVER_MAX_LENGTH)
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 0);
+	}
+      else
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_DBLINK_PASSWORD_ENCRYPT, 1, error);
+	  error = ER_DBLINK_PASSWORD_ENCRYPT;
+	}
+    }
+
+  pr_clear_value (&tmp_passwd);
+  return error;
+}
+
+/*
+ * get_dblink_password_encrypt ()  : Generates an encrypted password.
+ *
+ * return		  : NO_ERROR or error code.
+ * passwd(in)             : Raw password
+ * encrypt_val(out)	  : Encrypted password
+ * is_external(in)	  : If true, generate a key for the external interface,
+ *                          Otherwise, it generates a key to be stored internally.
+ * 
+ * Remark: 
+ *      
+ */
+static int
+get_dblink_password_encrypt (const char *passwd, DB_VALUE * encrypt_val, bool is_external)
+{
+  int err, length, buf_size;
+  char cipher[DBLINK_PASSWORD_CIPHER_LENGTH + 1], newpwd[DBLINK_PASSWORD_MAX_BUFSIZE + 1];
+  char confused[DBLINK_PASSWORD_CIPHER_LENGTH + 1] = { 0, };
+  unsigned char private_key[DBLINK_CRYPT_KEY_LENGTH];
+  struct timeval check_time = { 0, 0 };
+  struct tm *lt;
+  char empty_str[4] = { 0x00, };
+
+  srand (time (NULL));
+
+  db_make_null (encrypt_val);
+  if (!passwd)
+    {
+      passwd = empty_str;
+    }
+
+  if (strlen (passwd) > DBLINK_PASSWORD_MAX_LENGTH)
+    {
+      return ER_DBLINK_PASSWORD_OVER_MAX_LENGTH;
+    }
+
+  length = shake_dblink_password (passwd, confused, DBLINK_PASSWORD_CIPHER_LENGTH, &check_time);
+  passwd = confused;
+
+  if (is_external == false)
+    {
+      private_key[0] = 0x00;
+    }
+  else
+    {
+      if ((lt = localtime ((time_t *) & check_time.tv_sec)) == NULL)
+	{
+	  sprintf ((char *) private_key, "%08ld%06ld", check_time.tv_sec, check_time.tv_usec);
+	}
+      else
+	{
+	  sprintf ((char *) private_key, "%04d%02d%02d%02d%02d%02d%06ld",
+		   lt->tm_year + 1900, lt->tm_mon + 1, lt->tm_mday, lt->tm_hour, lt->tm_min, lt->tm_sec,
+		   check_time.tv_usec);
+	}
+    }
+
+  err = crypt_dblink_encrypt ((unsigned char *) passwd, length, (unsigned char *) cipher, private_key);
+  if (err == NO_ERROR)
+    {
+      err =
+	crypt_dblink_bin_to_str (cipher, length, newpwd, DBLINK_PASSWORD_MAX_BUFSIZE, private_key,
+				 (long) check_time.tv_usec);
+      if (err == NO_ERROR)
+	{
+	  // byte stream to hex string   
+	  err = db_make_string_copy (encrypt_val, newpwd);
+	}
+    }
+
+  return err;
+}
+
+/*
+ * get_dblink_password_decrypt ()  : Decrypt the encrypted password to extract the raw password.
+ *
+ * return		  : NO_ERROR or error code.
+ * parser(in)		  : Parser context.
+ * passwd_cipher(in)      : Encrypted password
+ * decrypt_val(out)	  : Raw password
+ * 
+ * Remark: 
+ *      
+ */
+static int
+get_dblink_password_decrypt (const char *passwd_cipher, DB_VALUE * decrypt_val)
+{
+  int err, length, new_length;
+  char cipher[DBLINK_PASSWORD_CIPHER_LENGTH + 1], newpwd[DBLINK_PASSWORD_CIPHER_LENGTH + 1];
+  unsigned char private_key[DBLINK_CRYPT_KEY_LENGTH];
+
+  db_make_null (decrypt_val);
+  if (!passwd_cipher || !*passwd_cipher)
+    {
+      return NO_ERROR;
+    }
+
+  new_length = DBLINK_PASSWORD_MAX_BUFSIZE;
+  /* Adjust the length so that it is a multiple of 4. */
+  new_length >>= 2;
+  new_length <<= 2;
+
+  length = strlen (passwd_cipher);
+  if (length != new_length)
+    {
+      return ER_DBLINK_PASSWORD_INVALID_LENGTH;
+    }
+
+  // hex string  to byte stream 
+  err = crypt_dblink_str_to_bin (passwd_cipher, length, cipher, &new_length, private_key);
+  if (err != NO_ERROR)
+    {
+      return ER_DBLINK_PASSWORD_INVALID_FMT;
+    }
+
+  err = crypt_dblink_decrypt ((unsigned char *) cipher, new_length, (unsigned char *) newpwd, private_key);
+  if (err == NO_ERROR)
+    {
+      newpwd[new_length] = '\0';	// Do NOT omit this line.
+      err = reverse_shake_dblink_password (newpwd, new_length, cipher);
+      if (err != NO_ERROR)
+	{
+	  return ER_DBLINK_PASSWORD_CHECKSUM;
+	}
+      err = db_make_string_copy (decrypt_val, cipher);
+    }
+
+  return err;
+}
+
+/*
+ * server_find ()  : Query by server name in the _db_server catalog.
+ *
+ * return		  : Record object or NULL
+ * node_server(in)	  : PT_NODE* for server name.
+ * node_owner(in)         : PT_NODE* for owner name.
+ * force_owner_name(in)   : Set whether to designate as the current user when node_owner is NULL
+ * 
+ * Remark: 
+ *      
+ */
+static MOP
+server_find (PT_NODE * node_server, PT_NODE * node_owner, bool force_owner_name)
+{
+  int error = NO_ERROR;
+  MOP server_obj = NULL;
+  char *upper_case_name = NULL;
+  size_t name_size;
+  char *owner_name = NULL;
+  char *server_name = NULL;
+  char query[2048];
+  char name_buf[SERVER_ATTR_LINK_NAME_BUF_SIZE + 1];	// link_name varchar(255)
+
+  sm_downcase_name ((char *) node_server->info.name.original, name_buf, SERVER_ATTR_LINK_NAME_BUF_SIZE);
+  if (node_owner)
+    {
+      owner_name = (char *) node_owner->info.name.original;
+      name_size = intl_identifier_upper_string_size (owner_name);
+      upper_case_name = (char *) malloc (name_size + 1);
+      if (upper_case_name == NULL)
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, (name_size + 1));
+	  return NULL;
+	}
+      intl_identifier_upper (owner_name, upper_case_name);
+      owner_name = upper_case_name;
+    }
+  else if (force_owner_name)
+    {
+      owner_name = (char *) au_user_name ();
+      if (!owner_name)
+	{
+	  return NULL;
+	}
+    }
+
+  if (owner_name)
+    {
+      sprintf (query,
+	       "SELECT [_db_server], [owner] FROM [_db_server] WHERE [link_name] = '%s' AND [owner].[name] = '%s'",
+	       name_buf, owner_name);
+    }
+  else
+    {
+      sprintf (query, "SELECT [_db_server], [owner] FROM [_db_server] WHERE [link_name] = '%s'", name_buf);
+    }
+
+  if (owner_name == upper_case_name)
+    {
+      free (upper_case_name);
+    }
+  else
+    {
+      db_string_free ((char *) owner_name);
+    }
+
+  DB_QUERY_RESULT *query_result;
+  DB_QUERY_ERROR query_error;
+  DB_VALUE values[2];
+  int au_save;
+  int rec_cnt = 0;
+
+  server_name = (char *) node_server->info.name.original;
+  owner_name = (char *) (node_owner ? node_owner->info.name.original : NULL);
+
+  PARSER_CONTEXT *parser = parser_create_parser ();
+  if (parser == NULL)
+    {
+      return NULL;
+    }
+
+  db_make_null (&values[0]);
+  db_make_null (&values[1]);
+
+  AU_DISABLE (au_save);
+
+  error = db_compile_and_execute_local (query, &query_result, &query_error);
+  if (error < 0)
+    {
+      goto err;
+    }
+  else if (error == 0)
+    {
+      error = ER_DBLINK_SERVER_NOT_FOUND;
+    }
+  else
+    {
+      error = db_query_first_tuple (query_result);
+      if (error != DB_CURSOR_SUCCESS)
+	{
+	  goto err;
+	}
+
+      do
+	{
+	  error = db_query_get_tuple_value (query_result, 1, &values[1]);
+	  if (error != NO_ERROR)
+	    {
+	      goto err;
+	    }
+	  /* check if user is creator or DBA  */
+	  if (au_is_server_authorized_user (&values[1]))
+	    {
+	      rec_cnt++;
+	      error = db_query_get_tuple_value (query_result, 0, &values[0]);
+	      if (error != NO_ERROR)
+		{
+		  goto err;
+		}
+	      server_obj = db_get_object (&values[0]);
+	    }
+
+	  db_value_clear (&values[0]);
+	  db_value_clear (&values[1]);
+	  if (rec_cnt > 1)
+	    break;
+	}
+      while (db_query_next_tuple (query_result) == DB_CURSOR_SUCCESS);
+      if (rec_cnt == 0)
+	{
+	  error = ER_DBLINK_SERVER_ALTER_NOT_ALLOWED;	// ER_DBLINK_CANNOT_UPDATE_SERVER
+	}
+    }
+
+  if (rec_cnt != 1)
+    {
+      server_obj = NULL;
+      if (owner_name)
+	{
+	  sprintf (query, "[%s].[%s]", owner_name, server_name);
+	}
+      else
+	{
+	  sprintf (query, "[%s]", server_name);
+	}
+
+      if (rec_cnt == 0)
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 1, query);
+	}
+      else
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_DBLINK_SERVER_MULTIPLE_FOUND, 1, query);
+	}
+    }
+  error = NO_ERROR;
+
+err:
+  parser_free_parser (parser);
+  db_query_end (query_result);
+
+  AU_ENABLE (au_save);
+
+  if (error != NO_ERROR)
+    {
+      db_value_clear (&values[0]);
+      db_value_clear (&values[1]);
+    }
+
+  return server_obj;
 }

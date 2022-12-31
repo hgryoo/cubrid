@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -1855,9 +1854,10 @@ db_drop_constraint (MOP classmop, DB_CONSTRAINT_TYPE constraint_type, const char
  *    Returns non-zero error status if the operation could not be performed.
  * return   : error code
  * class(in): class object
+ * is_cascade(in): whether to truncate cascade FK-referring classes
  */
 int
-db_truncate_class (DB_OBJECT * class_)
+db_truncate_class (DB_OBJECT * class_, const bool is_cascade)
 {
   int error_code = NO_ERROR;
 
@@ -1865,6 +1865,6 @@ db_truncate_class (DB_OBJECT * class_)
   CHECK_1ARG_ERROR (class_);
   CHECK_MODIFICATION_ERROR ();
 
-  error_code = sm_truncate_class (class_);
+  error_code = sm_truncate_class (class_, is_cascade);
   return error_code;
 }

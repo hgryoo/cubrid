@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -113,7 +112,7 @@ enum
   LANG_COLL_UTF8_KO_CS = 7,
   LANG_COLL_EUCKR_BINARY = 8,
   LANG_COLL_BINARY = 9,
-  LANG_COLL_DEFAULT = LANG_COLL_BINARY,
+  LANG_COLL_DEFAULT = LANG_COLL_ISO_BINARY,
   LANG_COLL_BUILTIN_MAX = LANG_COLL_BINARY
 };
 
@@ -122,13 +121,6 @@ enum
   (((c) == INTL_CODESET_KSC5601_EUC) ? LANG_COLL_EUCKR_BINARY :  \
   (((c) == INTL_CODESET_ISO88591) ? LANG_COLL_ISO_BINARY :	 \
     LANG_COLL_BINARY)))
-
-
-  /* collation and charset do be used by system : */
-#define LANG_SYS_COLLATION  (LANG_GET_BINARY_COLLATION(lang_charset()))
-
-#define LANG_SYS_CODESET  lang_charset()
-
 
 typedef struct db_charset DB_CHARSET;
 struct db_charset
@@ -259,10 +251,27 @@ struct lang_locale_compat
   char checksum[32 + 1];
 };
 
+/* collation and charset do be used by system : */
+#if defined(NDEBUG)
+#define LANG_GET_COLLATION(i)  lang_Collations[i]
+#else /* DEBUG */
+#define LANG_GET_COLLATION(i)  lang_get_collation(i)
+#endif /* NDEBUG */
+
+#if defined(NDEBUG)
+#define LANG_SYS_COLLATION  (LANG_GET_BINARY_COLLATION(lang_Loc_charset))
+#define LANG_SYS_CODESET  lang_Loc_charset
+#else /* DEBUG */
+#define LANG_SYS_COLLATION  (LANG_GET_BINARY_COLLATION(lang_charset()))
+#define LANG_SYS_CODESET  lang_charset()
+#endif /* NDEBUG */
+
 #ifdef __cplusplus
 extern "C"
 {
 #endif
+  extern LANG_COLLATION *lang_Collations[LANG_MAX_COLLATIONS];
+  extern INTL_CODESET lang_Loc_charset;
   extern INTL_CODESET lang_charset (void);
   extern void lang_init_builtin (void);
   extern int lang_init (void);

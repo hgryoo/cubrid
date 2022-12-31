@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -67,7 +66,7 @@ static int rv;
 static PGLENGTH spage_User_page_size;
 
 #define SPAGE_DB_PAGESIZE \
-  (spage_User_page_size != 0 ? assert (spage_User_page_size == db_page_size ()), spage_User_page_size : db_page_size ())
+  (spage_User_page_size != 0 ? assert (spage_User_page_size == DB_PAGESIZE), spage_User_page_size : DB_PAGESIZE)
 
 #define SPAGE_VERIFY_HEADER(sphdr) 				\
   do {								\
@@ -801,7 +800,7 @@ spage_boot (THREAD_ENTRY * thread_p)
   assert (sizeof (SPAGE_HEADER) % DOUBLE_ALIGNMENT == 0);
   assert (sizeof (SPAGE_SLOT) == INT_ALIGNMENT);
 
-  spage_User_page_size = db_page_size ();
+  spage_User_page_size = DB_PAGESIZE;
 
   spage_Saving_hashmap.init (spage_saving_Ts, THREAD_TS_SPAGE_SAVING, 4547, 100, 100, spage_Saving_entry_descriptor);
 }
@@ -818,26 +817,6 @@ spage_finalize (THREAD_ENTRY * thread_p)
 {
   /* destroy everything */
   spage_Saving_hashmap.destroy ();
-}
-
-/*
- * spage_slot_size () - Find the overhead used to store one slotted record
- *   return: overhead of slot
- */
-int
-spage_slot_size (void)
-{
-  return sizeof (SPAGE_SLOT);
-}
-
-/*
- * spage_header_size () - Find the overhead used by the page header
- *   return: overhead of slot
- */
-int
-spage_header_size (void)
-{
-  return sizeof (SPAGE_HEADER);
 }
 
 /*
@@ -1054,6 +1033,8 @@ spage_collect_statistics (PAGE_PTR page_p, int *npages, int *nrecords, int *rec_
     {
       if (slot_p->offset_to_record == SPAGE_EMPTY_OFFSET)
 	{
+	  assert (slot_p->record_type == REC_MARKDELETED || slot_p->record_type == REC_DELETED_WILL_REUSE);
+
 	  continue;
 	}
 
@@ -1515,12 +1496,10 @@ spage_shift_slot_up (PAGE_PTR page_p, SPAGE_HEADER * page_header_p, SPAGE_SLOT *
     }
   else
     {
-      for (; last_slot_p < slot_p; last_slot_p++)
+      if (last_slot_p < slot_p)
 	{
-	  spage_set_slot (last_slot_p, (last_slot_p + 1)->offset_to_record, (last_slot_p + 1)->record_length,
-			  (last_slot_p + 1)->record_type);
+	  memmove (last_slot_p, last_slot_p + 1, sizeof (SPAGE_SLOT) * (slot_p - last_slot_p));
 	}
-      assert (last_slot_p == slot_p);
     }
 
   spage_set_slot (slot_p, SPAGE_EMPTY_OFFSET, 0, REC_UNKNOWN);
@@ -1553,10 +1532,9 @@ spage_shift_slot_down (PAGE_PTR page_p, SPAGE_HEADER * page_header_p, SPAGE_SLOT
     }
   else
     {
-      for (; slot_p > last_slot_p; slot_p--)
+      if (last_slot_p < slot_p)
 	{
-	  spage_set_slot (slot_p, (slot_p - 1)->offset_to_record, (slot_p - 1)->record_length,
-			  (slot_p - 1)->record_type);
+	  memmove (last_slot_p + 1, last_slot_p, sizeof (SPAGE_SLOT) * (slot_p - last_slot_p));
 	}
     }
 
@@ -3982,8 +3960,7 @@ spage_get_space_for_record (THREAD_ENTRY * thread_p, PAGE_PTR page_p, PGSLOTID s
       return -1;
     }
 
-  return (slot_p->record_length + DB_WASTED_ALIGN (slot_p->record_length, page_header_p->alignment) +
-	  spage_slot_size ());
+  return (slot_p->record_length + DB_WASTED_ALIGN (slot_p->record_length, page_header_p->alignment) + SPAGE_SLOT_SIZE);
 }
 
 /*
@@ -4482,12 +4459,7 @@ spage_check (THREAD_ENTRY * thread_p, PAGE_PTR page_p)
       int other_saved_spaces = 0;
       int total_saved = spage_get_saved_spaces (thread_p, page_header_p, page_p,
 						&other_saved_spaces);
-#if 1
       if (other_saved_spaces < 0)
-#else
-      if (other_saved_spaces < 0 || total_saved > page_header_p->total_free)
-#endif
-
 	{
 	  snprintf (err_msg, sizeof (err_msg),
 		    "spage_check: Other savings of %d is inconsistent in page = %d of volume = %s.\n",

@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -77,6 +76,7 @@
 #include "system_parameter.h"
 #include "environment_variable.h"
 #include "tcp.h"
+#include "host_lookup.h"
 
 #ifndef HAVE_GETHOSTBYNAME_R
 #include <pthread.h>
@@ -131,7 +131,7 @@ css_gethostname (char *name, size_t namelen)
   hostname[namelen_ - 1] = '\0';
   gethostname (hostname, namelen_);
 
-  int gai_error = getaddrinfo (hostname, NULL, &hints, &result);
+  int gai_error = getaddrinfo_uhost (hostname, NULL, &hints, &result);
   if (gai_error != 0)
     {
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_GAI_ERROR, 1, hostname);
@@ -247,7 +247,7 @@ css_hostname_to_ip (const char *host, unsigned char *ip_addr)
       int herr;
       char buf[1024];
 
-      if (gethostbyname_r (host, &hent, buf, sizeof (buf), &hp, &herr) != 0 || hp == NULL)
+      if (gethostbyname_r_uhost (host, &hent, buf, sizeof (buf), &hp, &herr) != 0 || hp == NULL)
 	{
 	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_BO_UNABLE_TO_FIND_HOSTNAME, 1, host);
 	  return ER_BO_UNABLE_TO_FIND_HOSTNAME;
@@ -258,7 +258,7 @@ css_hostname_to_ip (const char *host, unsigned char *ip_addr)
       int herr;
       char buf[1024];
 
-      if (gethostbyname_r (host, &hent, buf, sizeof (buf), &herr) == NULL)
+      if (gethostbyname_r_uhost (host, &hent, buf, sizeof (buf), &herr) == NULL)
 	{
 	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_BO_UNABLE_TO_FIND_HOSTNAME, 1, host);
 	  return ER_BO_UNABLE_TO_FIND_HOSTNAME;
@@ -268,7 +268,7 @@ css_hostname_to_ip (const char *host, unsigned char *ip_addr)
       struct hostent hent;
       struct hostent_data ht_data;
 
-      if (gethostbyname_r (host, &hent, &ht_data) == -1)
+      if (gethostbyname_r_uhost (host, &hent, &ht_data) == -1)
 	{
 	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_BO_UNABLE_TO_FIND_HOSTNAME, 1, host);
 	  return ER_BO_UNABLE_TO_FIND_HOSTNAME;
@@ -281,7 +281,7 @@ css_hostname_to_ip (const char *host, unsigned char *ip_addr)
       struct hostent *hp;
 
       pthread_mutex_lock (&gethostbyname_lock);
-      hp = gethostbyname (host);
+      hp = gethostbyname_uhost (host);
       if (hp == NULL)
 	{
 	  pthread_mutex_unlock (&gethostbyname_lock);
@@ -335,7 +335,7 @@ css_sockaddr (const char *host, int port, struct sockaddr *saddr, socklen_t * sl
       int herr;
       char buf[1024];
 
-      if (gethostbyname_r (host, &hent, buf, sizeof (buf), &hp, &herr) != 0 || hp == NULL)
+      if (gethostbyname_r_uhost (host, &hent, buf, sizeof (buf), &hp, &herr) != 0 || hp == NULL)
 	{
 	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_HOST_NAME_ERROR, 1, host);
 	  return INVALID_SOCKET;
@@ -346,7 +346,7 @@ css_sockaddr (const char *host, int port, struct sockaddr *saddr, socklen_t * sl
       int herr;
       char buf[1024];
 
-      if (gethostbyname_r (host, &hent, buf, sizeof (buf), &herr) == NULL)
+      if (gethostbyname_r_uhost (host, &hent, buf, sizeof (buf), &herr) == NULL)
 	{
 	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_HOST_NAME_ERROR, 1, host);
 	  return INVALID_SOCKET;
@@ -356,7 +356,7 @@ css_sockaddr (const char *host, int port, struct sockaddr *saddr, socklen_t * sl
       struct hostent hent;
       struct hostent_data ht_data;
 
-      if (gethostbyname_r (host, &hent, &ht_data) == -1)
+      if (gethostbyname_r_uhost (host, &hent, &ht_data) == -1)
 	{
 	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_HOST_NAME_ERROR, 1, host);
 	  return INVALID_SOCKET;
@@ -370,7 +370,7 @@ css_sockaddr (const char *host, int port, struct sockaddr *saddr, socklen_t * sl
       int r;
 
       r = pthread_mutex_lock (&gethostbyname_lock);
-      hp = gethostbyname (host);
+      hp = gethostbyname_uhost (host);
       if (hp == NULL)
 	{
 	  pthread_mutex_unlock (&gethostbyname_lock);
@@ -880,7 +880,7 @@ css_master_accept (SOCKET sockfd)
  *       the new socket fd
  */
 bool
-css_tcp_setup_server_datagram (char *pathname, SOCKET * sockfd)
+css_tcp_setup_server_datagram (const char *pathname, SOCKET * sockfd)
 {
   int servlen;
   struct sockaddr_un serv_addr;
@@ -1606,7 +1606,7 @@ css_get_peer_name (SOCKET sockfd, char *hostname, size_t len)
     {
       return errno;
     }
-  return getnameinfo (saddr, saddr_len, hostname, len, NULL, 0, NI_NOFQDN);
+  return getnameinfo_uhost (saddr, saddr_len, hostname, len, NULL, 0, NI_NOFQDN);
 }
 
 /*
@@ -1632,5 +1632,5 @@ css_get_sock_name (SOCKET sockfd, char *hostname, size_t len)
     {
       return errno;
     }
-  return getnameinfo (saddr, saddr_len, hostname, len, NULL, 0, NI_NOFQDN);
+  return getnameinfo_uhost (saddr, saddr_len, hostname, len, NULL, 0, NI_NOFQDN);
 }

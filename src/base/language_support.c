@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -60,11 +59,12 @@
 #define ASCII_SPACE 0x20
 
 static INTL_LANG lang_Lang_id = INTL_LANG_ENGLISH;
-static INTL_CODESET lang_Loc_charset = INTL_CODESET_ISO88591;
 static char lang_Loc_name[LANG_MAX_LANGNAME] = LANG_NAME_DEFAULT;
 static char lang_Msg_loc_name[LANG_MAX_LANGNAME] = LANG_NAME_DEFAULT;
 static char lang_Lang_name[LANG_MAX_LANGNAME] = LANG_NAME_DEFAULT;
 static DB_CURRENCY lang_Loc_currency = DB_CURRENCY_DOLLAR;
+INTL_CODESET lang_Loc_charset = INTL_CODESET_ISO88591;
+LANG_COLLATION *lang_Collations[LANG_MAX_COLLATIONS] = { NULL };
 
 /* built-in collations */
 /* number of characters in the (extended) alphabet per language */
@@ -160,9 +160,6 @@ extern TEXT_CONVERSION con_Iso_8859_9_conv;
 static LANG_LOCALE_DATA *lang_Loaded_locales[LANG_MAX_LOADED_LOCALES] = { NULL };
 
 static int lang_Count_locales = 0;
-
-/* all loaded collations */
-static LANG_COLLATION *lang_Collations[LANG_MAX_COLLATIONS] = { NULL };
 
 static int lang_Count_collations = 0;
 
@@ -868,7 +865,7 @@ lang_init_builtin (void)
   /* init all collation placeholders with ISO binary collation */
   for (i = 0; i < LANG_MAX_COLLATIONS; i++)
     {
-      lang_Collations[i] = &coll_Binary;
+      lang_Collations[i] = &coll_Iso_binary;
     }
 
   /* built-in collations : order of registration should match colation ID */
@@ -3026,7 +3023,7 @@ lang_strmatch_utf8_w_contr (const LANG_COLLATION * lang_coll, bool is_match, con
   unsigned int cp1, cp2, w_cp1, w_cp2;
   const COLL_DATA *coll = &(lang_coll->coll);
   const int alpha_cnt = coll->w_count;
-  const unsigned int *weight_ptr = (ignore_trailing_space) ? lang_coll->coll.weights_ti : lang_coll->coll.weights;
+  const unsigned int *weight_ptr = lang_coll->coll.weights;
 
   bool is_str1_contr = false;
   bool is_str2_contr = false;
@@ -3268,7 +3265,7 @@ lang_get_w_first_el (const COLL_DATA * coll, const unsigned char *str, const int
 {
   unsigned int cp, w;
   const int alpha_cnt = coll->w_count;
-  const unsigned int *weight_ptr = (ignore_trailing_space) ? coll->weights_ti : coll->weights;
+  const unsigned int *weight_ptr = coll->weights;
 
   assert (coll->uca_exp_num == 0);
   assert (str_size > 0);
@@ -3290,6 +3287,10 @@ lang_get_w_first_el (const COLL_DATA * coll, const unsigned char *str, const int
 	}
       else
 	{
+	  if (cp == ASCII_SPACE && ignore_trailing_space)
+	    {
+	      return 0;
+	    }
 	  w = weight_ptr[cp];
 	}
     }
@@ -3781,6 +3782,12 @@ lang_strmatch_utf8_uca_w_level (const COLL_DATA * coll_data, const int level, bo
 	      goto exit;
 	    }
 
+	  if (!ignore_trailing_space)
+	    {
+	      result = -1;
+	      goto exit;
+	    }
+
 	  /* consume any remaining zero-weight values (skip them) from str2 */
 	  do
 	    {
@@ -3806,11 +3813,13 @@ lang_strmatch_utf8_uca_w_level (const COLL_DATA * coll_data, const int level, bo
 	      assert (result == 0);
 	      goto exit;
 	    }
+
 	  if (!ignore_trailing_space)
 	    {
 	      result = 1;
 	      goto exit;
 	    }
+
 	  /* consume any remaining zero-weight values (skip them) from str1 */
 	  while (num_ce1 > 0)
 	    {
@@ -3873,7 +3882,14 @@ lang_strmatch_utf8_uca_w_level (const COLL_DATA * coll_data, const int level, bo
   if (str2 < str2_end)
     {
       assert (str1 == str1_end);
-      if (lang_str_utf8_trail_zero_weights_w_exp (coll_data, level, str2, CAST_BUFLEN (str2_end - str2)) != 0)
+      if (ignore_trailing_space)
+	{
+	  if (lang_str_utf8_trail_zero_weights_w_exp (coll_data, level, str2, CAST_BUFLEN (str2_end - str2)) != 0)
+	    {
+	      result = -1;
+	    }
+	}
+      else
 	{
 	  result = -1;
 	}
@@ -3881,7 +3897,14 @@ lang_strmatch_utf8_uca_w_level (const COLL_DATA * coll_data, const int level, bo
   else if (str1 < str1_end)
     {
       assert (str2 == str2_end);
-      if (lang_str_utf8_trail_zero_weights_w_exp (coll_data, level, str1, CAST_BUFLEN (str1_end - str1)) != 0)
+      if (ignore_trailing_space)
+	{
+	  if (lang_str_utf8_trail_zero_weights_w_exp (coll_data, level, str1, CAST_BUFLEN (str1_end - str1)) != 0)
+	    {
+	      result = 1;
+	    }
+	}
+      else
 	{
 	  result = 1;
 	}
@@ -4214,6 +4237,7 @@ lang_back_strmatch_utf8_uca_w_level (const COLL_DATA * coll_data, bool is_match,
 
 	  if (!ignore_trailing_space)
 	    {
+	      result = 1;
 	      goto exit;
 	    }
 	  /* consume any remaining zero-weight values (skip them) from str1 */
@@ -5508,6 +5532,11 @@ lang_fastcmp_byte (const LANG_COLLATION * lang_coll, const unsigned char *string
       return cmp;
     }
 
+  if (!ignore_trailing_space && size1 != size2)
+    {
+      return size1 - size2;
+    }
+
   c1 = c2 = ZERO;
   if (size1 < size2)
     {
@@ -5837,6 +5866,7 @@ lang_init_coll_Utf8_tr_cs (LANG_COLLATION * lang_coll)
       unsigned int w_repl = lang_Weight_TR[cp_repl];
 
       lang_Weight_TR[cp] = w_repl;
+      lang_Weight_TR_ti[cp] = w_repl;
 
       assert (cp_repl < cp);
       for (j = cp_repl; j < cp; j++)
@@ -5857,6 +5887,7 @@ lang_init_coll_Utf8_tr_cs (LANG_COLLATION * lang_coll)
       unsigned int w_repl = lang_Weight_TR[cp_repl];
 
       lang_Weight_TR[cp] = w_repl;
+      lang_Weight_TR_ti[cp] = w_repl;
 
       assert (cp_repl < cp);
       for (j = cp_repl; j < cp; j++)
@@ -5893,6 +5924,9 @@ lang_init_coll_Utf8_tr_cs (LANG_COLLATION * lang_coll)
       lang_Next_alpha_char_TR_ti[cp_prev] = cp_special;
       lang_Next_alpha_char_TR_ti[cp_special] = cp_next;
     }
+
+  lang_Weight_TR_ti[32] = 0;
+  lang_Next_alpha_char_TR_ti[32] = 1;
 
   /* other initializations to follow here */
 

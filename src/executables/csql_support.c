@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -37,8 +36,11 @@
 #endif /* !WINDOWS */
 #include "porting.h"
 #include "csql.h"
+#include "filesys.hpp"
+#include "filesys_temp.hpp"
 #include "memory_alloc.h"
 #include "system_parameter.h"
+#include "ddl_log.h"
 
 #if defined (SUPPRESS_STRLEN_WARNING)
 #define strlen(s1)  ((int) strlen(s1))
@@ -249,84 +251,61 @@ csql_invoke_system (const char *command)
 int
 csql_invoke_system_editor (void)
 {
-  char *cmd = NULL;
-  char *fname = (char *) NULL;	/* pointer to temp file name */
-  FILE *fp = (FILE *) NULL;	/* pointer to stream */
-
   if (!iq_output_device_is_a_tty ())
     {
       csql_Error_code = CSQL_ERR_CANT_EDIT;
-      goto error;
+      nonscr_display_error (csql_Scratch_text, SCRATCH_TEXT_LEN);
+      return CSQL_FAILURE;
     }
 
-  /* create a temp file and open it */
-  fname = tempnam (NULL, NULL);
-
-  if (fname == NULL)
+  /* create an unique file in tmp folder and open it for writing */
+  auto[filename, fileptr] = filesys::open_temp_file ("csql_");
+  if (fileptr == NULL)
     {
       csql_Error_code = CSQL_ERR_OS_ERROR;
-      goto error;
+      nonscr_display_error (csql_Scratch_text, SCRATCH_TEXT_LEN);
+      return CSQL_FAILURE;
     }
-
-  fp = fopen (fname, "w");
-  if (fp == NULL)
-    {
-      csql_Error_code = CSQL_ERR_OS_ERROR;
-      goto error;
-    }
+  filesys::auto_delete_file file_del (filename.c_str ());	//deletes file at scope end
+  filesys::auto_close_file file (fileptr);	//closes file at scope end (before the above file deleter); forget about fp from now on
 
   /* write the content of editor to the temp file */
-  if (csql_edit_write_file (fp) == CSQL_FAILURE)
+  if (csql_edit_write_file (file.get ()) == CSQL_FAILURE)
     {
-      goto error;
+      nonscr_display_error (csql_Scratch_text, SCRATCH_TEXT_LEN);
+      return CSQL_FAILURE;
     }
-
-  fclose (fp);
-  fp = (FILE *) NULL;
 
   /* invoke the system editor */
-  cmd = csql_get_tmp_buf (strlen (csql_Editor_cmd + 1 + strlen (fname)));
+  char *cmd = csql_get_tmp_buf (strlen (csql_Editor_cmd + 1 + filename.size ()));
   if (cmd == NULL)
     {
-      goto error;
+      nonscr_display_error (csql_Scratch_text, SCRATCH_TEXT_LEN);
+      return CSQL_FAILURE;
     }
-  sprintf (cmd, "%s %s", csql_Editor_cmd, fname);
+  fclose (file.release ());	//on Windows needs to be closed before being able to save from Notepad
+  sprintf (cmd, "%s %s", csql_Editor_cmd, filename.c_str ());
   csql_invoke_system (cmd);
 
   /* initialize editor buffer */
   csql_edit_contents_clear ();
 
-  fp = fopen (fname, "r");
-  if (fp == NULL)
+  file.reset (fopen (filename.c_str (), "r"));
+  if (!file)
     {
       csql_Error_code = CSQL_ERR_OS_ERROR;
-      goto error;
+      nonscr_display_error (csql_Scratch_text, SCRATCH_TEXT_LEN);
+      return CSQL_FAILURE;
     }
 
   /* read the temp file into editor */
-  if (csql_edit_read_file (fp) == CSQL_FAILURE)
+  if (csql_edit_read_file (file.get ()) == CSQL_FAILURE)
     {
-      goto error;
+      nonscr_display_error (csql_Scratch_text, SCRATCH_TEXT_LEN);
+      return CSQL_FAILURE;
     }
-
-  fclose (fp);
-  unlink (fname);
-  free (fname);
 
   return CSQL_SUCCESS;
-
-error:
-  if (fp != NULL)
-    {
-      fclose (fp);
-    }
-  if (fname != NULL)
-    {
-      unlink (fname);
-      free (fname);
-    }
-  nonscr_display_error (csql_Scratch_text, SCRATCH_TEXT_LEN);
-  return CSQL_FAILURE;
 }
 
 /*
@@ -906,6 +885,7 @@ nonscr_display_error (char *buffer, int buf_length)
 
   buffer[buf_length - 1] = '\0';
   csql_fputs (buffer, csql_Error_fp);
+  logddl_set_err_msg (buffer);
 }
 
 /*

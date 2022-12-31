@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -55,8 +54,8 @@ enum log_rectype
   LOG_RUN_NEXT_CLIENT_UNDO = 12,	/* Obsolete */
   LOG_RUN_NEXT_CLIENT_POSTPONE = 13,	/* Obsolete */
 #endif
-  LOG_WILL_COMMIT = 14,		/* Transaction will be committed */
-  LOG_COMMIT_WITH_POSTPONE = 15,	/* Committing server postpone operations */
+  LOG_COMMIT_WITH_POSTPONE = 14,		/* Committing server postpone operations */
+  LOG_COMMIT_WITH_POSTPONE_OBSOLETE = 15,	/* Obsolete. It was LOG_COMMIT_WITH_POSTPONE without the donetime. It remains only for the backward compatibility and will be removed with the next major release, maybe 12.0 */
 #if 0
   LOG_COMMIT_WITH_CLIENT_USER_LOOSE_ENDS = 16,	/* Obsolete */
 #endif
@@ -133,6 +132,10 @@ enum log_rectype
 
   LOG_DUMMY_GENERIC,		/* used for flush for now. it is ridiculous to create dummy log records for every single
 				 * case. we should find a different approach */
+
+  LOG_SUPPLEMENTAL_INFO,        /* used for supplemental logs to support CDC interface.
+                                 * it contains transaction user info, DDL statement, undo lsa, redo lsa for DML,
+                                 * or undo images that never retrieved from the log. */
 
   LOG_LARGER_LOGREC_TYPE	/* A higher bound for checks */
 };
@@ -268,6 +271,14 @@ typedef struct log_rec_start_postpone LOG_REC_START_POSTPONE;
 struct log_rec_start_postpone
 {
   LOG_LSA posp_lsa;
+  INT64 at_time;		/* donetime. For the time-specific recovery */
+};
+
+/* This entry is included during commit. Obsolete. See the comment of LOG_COMMIT_WITH_POSTPONE_OBSOLETE. */
+typedef struct log_rec_start_postpone_obsolete LOG_REC_START_POSTPONE_OBSOLETE;
+struct log_rec_start_postpone_obsolete
+{
+  LOG_LSA posp_lsa;
 };
 
 /* types of end system operation */
@@ -296,6 +307,8 @@ struct log_rec_sysop_end
   LOG_LSA lastparent_lsa;	/* last address before the top action */
   LOG_LSA prv_topresult_lsa;	/* previous top action (either, partial abort or partial commit) address */
   LOG_SYSOP_END_TYPE type;	/* end system op type */
+  /* File where the page belong. same as mvcc_undo->vacuum_info if type == LOG_SYSOP_END_LOGICAL_MVCC_UNDO. It is used to get TDE information.*/
+  const VFID *vfid;
   union				/* other info based on type */
   {
     LOG_REC_UNDO undo;		/* undo data for logical undo */
@@ -400,6 +413,29 @@ typedef struct log_rec_2pc_particp_ack LOG_REC_2PC_PARTICP_ACK;
 struct log_rec_2pc_particp_ack
 {
   int particp_index;		/* Index of the acknowledging participant */
+};
+
+typedef enum supplement_rec_type
+{
+  LOG_SUPPLEMENT_TRAN_USER,
+  LOG_SUPPLEMENT_UNDO_RECORD, /*Contains undo raw record that can not be retrieved from the logs */
+  LOG_SUPPLEMENT_DDL,
+  /* Contains lsa of logs which contain undo, redo raw record (UPDATE, DELETE, INSERT)
+   * | LOG_REC_HEADER | SUPPLEMENT_REC_TYPE | LENGTH | CLASS OID |  UNDO LSA (sizeof LOG_LSA) | REDO LSA | */
+  LOG_SUPPLEMENT_INSERT,
+  LOG_SUPPLEMENT_UPDATE,
+  LOG_SUPPLEMENT_DELETE,
+  LOG_SUPPLEMENT_TRIGGER_INSERT, /* INSERT, UPDATE, DELETE logs appended by a trigger action */
+  LOG_SUPPLEMENT_TRIGGER_UPDATE,
+  LOG_SUPPLEMENT_TRIGGER_DELETE,
+  LOG_SUPPLEMENT_LARGER_REC_TYPE,
+} SUPPLEMENT_REC_TYPE;
+
+typedef struct log_rec_supplement LOG_REC_SUPPLEMENT;
+struct log_rec_supplement
+{
+  SUPPLEMENT_REC_TYPE rec_type;
+  int length;
 };
 
 #define LOG_GET_LOG_RECORD_HEADER(log_page_p, lsa) \

@@ -1,19 +1,21 @@
+
 $
-$ Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
-$
-$   This program is free software; you can redistribute it and/or modify
-$   it under the terms of the GNU General Public License as published by
-$   the Free Software Foundation; either version 2 of the License, or
-$   (at your option) any later version.
-$
-$  This program is distributed in the hope that it will be useful,
-$  but WITHOUT ANY WARRANTY; without even the implied warranty of
-$  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-$  GNU General Public License for more details.
-$
-$  You should have received a copy of the GNU General Public License
-$  along with this program; if not, write to the Free Software
-$  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+$  Copyright 2008 Search Solution Corporation
+$  Copyright 2016 CUBRID Corporation
+$ 
+$   Licensed under the Apache License, Version 2.0 (the "License");
+$   you may not use this file except in compliance with the License.
+$   You may obtain a copy of the License at
+$ 
+$       http://www.apache.org/licenses/LICENSE-2.0
+$ 
+$   Unless required by applicable law or agreed to in writing, software
+$   distributed under the License is distributed on an "AS IS" BASIS,
+$   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+$   See the License for the specific language governing permissions and
+$   limitations under the License.
+$ 
+$ 
 $
 
 $
@@ -72,6 +74,8 @@ $       52      dump_tz
 $       53      restoreslave
 $       54      delvoldb
 $       56      checksumdb
+$       57      tde
+$       58      flashback
 
 $set 1 MSGCAT_UTIL_SET_GENERIC
 1 Longitud o caracter '%1$c' en el nombre de la base de datos '%2$s'\n no valida.
@@ -83,7 +87,7 @@ $set 1 MSGCAT_UTIL_SET_GENERIC
 9 \
 %1$s (CUBRID utilidades)\n\
 %2$s\n\
-Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.\n
+Copyright (C) 2008 Search Solution Corporation.\nCopyright (C) 2016 CUBRID Corporation.\n
 10 \
 utilidad de administrador de cubrid, version %1$s\n\
 uso: %2$s <nombre-de-utilidad> [args]\n\
@@ -124,6 +128,8 @@ Nombre de utilidad admin disponible:\n\
     dump_tz\n\
     restoreslave\n\
     vacuumdb\n\
+    tde\n\
+    flashback\n\
 \n\
 %4$s es una hieramenta para DBMS.\n\
 Para informacion adicional, vea http://www.cubrid.org\n
@@ -146,6 +152,7 @@ Utilidades de servicio disponible:\n\
     service\n\
     server\n\
     broker\n\
+    gateway\n\
     manager\n\
     heartbeat\n\
     javasp\n\
@@ -183,6 +190,8 @@ Utilidades de administrador disponible:\n\
     dump_tz\n\
     vacuumdb\n\
     checksumdb\n\
+    tde\n\
+    flashback\n\
 \n\
 %4$s es una hieramenta para DBMS.\n\
 Para informacion adicional, vea http://www.cubrid.org\n
@@ -257,10 +266,31 @@ Comando disponible:\n\
     stop        [database-name]\n\
     restart     [database-name]\n\
     status      [database-name]\n
+45 cubrid utility, version %1$s\n\
+usage: %2$s gateway <command> [args]\n\
+\n\
+Available command:\n\
+    start\n\
+    stop\n\
+    restart\n\
+    info\n\
+    status      [-b] [-f] [-q] [-t] [-s <sec>] [-c] [-u] [<expr>]\n\
+    on          gateway-name\n\
+    off         gateway-name\n\
+    reset       gateway-name\n\
+    acl         <status|reload> [gateway-name]\n
+46 La longitud de nombre_propietario debe ser inferior a %1$d y la longitud de nombre_clase debe ser inferior a %2$d bytes.\n
+47 Formato no válido para nombre_propietario.nombre_clase ('%1$s').\n
 
 $set 2 MSGCAT_UTIL_SET_BACKUPDB
 30 ADVERTENCIA: -t opcion es ignorada en modo de ejecucion independiente.\n
 31 ERROR: Calle de destino no existe o no es un directorio.\n
+32 Al usar la opción --separate-keys, separa el archivo de claves (_keys) del volumen de respaldo.\n\
+Si se pierde el archivo de claves, es posible que la restauración (restoredb) no funcione correctamente incluso si existe el volumen de copia de seguridad.\n
+33 El volumen de respaldo incluye el archivo de claves (_keys).\n\
+Si una tabla está encriptada con TDE, puede causar un problema de seguridad para esos datos.\n\
+Para separar el archivo de claves para evitarlo, use la opción --separate-keys.\n
+34 ERROR: No se puede usar el archivo FIFO como ruta de destino con una clave separada.\n
 60 \
 backupdb: Respaldar una base de datos.\n\
 uso: %1$s backupdb [OPTION] database-name\n\
@@ -278,8 +308,9 @@ opciones validas:\n\
   -C, --CS-mode                modo de ejecucion cliente-servidor\n\
       --no-check               no verificar una consistencia de la base de datos; estandar: verificar\n\
   -t, --thread-count=COUNT     numero de hilos; estandar: 0(auto)\n\
-  -z, --compress               comprimir volumenes de respaldo; estandar: descomprimir\n\
-      --sleep-msecs=N          dormir N milisecondas para cada 1M leido estandar: 0\n
+      --no-compress            no comprima los volúmenes de respaldo; predeterminado: compresión\n\
+      --sleep-msecs=N          dormir N milisecondas para cada 1M leido estandar: 0\n\
+  -k, --separate-keys          el archivo de claves (_keys) para TDE no se incluye en el volumen de respaldo, sino que se divide en un archivo\n
 71 Argumentos incompatibles, \"%1$s\", y \"%2$s\"\n
 
 
@@ -397,7 +428,8 @@ opciones validas:\n\
   -l, --level=LEVEL                 NIVEL de respaldo a restablecer; vea uso de respaldo; estandar: 0(respaldo completo)\n\
   -p, --partial-recovery            realizar recuperacion parcial si alguna carpeta de registro falta\n\
   -o, --output-file=FILE            redireccionar mensajes de salida al ARCHIVO; estandar: ninguno\n\
-  -u, --use-database-location-path  restablecer la base de datos y volumenes de registro a la ruta especificada en el archivo de ubicacion de la base de datos\n
+  -u, --use-database-location-path  restablecer la base de datos y volumenes de registro a la ruta especificada en el archivo de ubicacion de la base de datos\n\
+  -k, --keys-file-path              Ruta del archivo de claves (_keys) para que TDE se utilice durante la restauración\n
 
 
 $set 12 MSGCAT_UTIL_SET_LOADDB
@@ -451,11 +483,12 @@ $set 12 MSGCAT_UTIL_SET_LOADDB
 115 archivo de entrada para controlar error(es) al cargar
 116 Total %ld object(s) inserted, %2$ld object(s) failed.\n
 117 Carga fallida.\n
-118 La longitud máxima del nombre de la clase es %1$d bytes.\n
+118 Maximum length of class name is %1$d bytes.\n
 119 Total de %1$8d objeto(s) verificado, %2$d objeto(s) falló. \n
 120 del archivo de datos no contiene '%%class' especificador o '--table' falta la opción \n
 121 La clase %1$s es ignorada. \n
-122 \
+122 Maximum length of user name is %1$d bytes.\n
+123 \
 loaddb: Importar objetos y esquemas en la base de datos.\n\
 uso: %1$s loaddb [OPTION] database-name[@host]\n\
 \n\
@@ -477,7 +510,9 @@ opciones validas:\n\
   -d, --data-file=FILE           cargar datos con ARCHIVO\n\
   -t, --table=TABLE              nombre de tabla que es sustituido por falta de encabezamiento de clase en archivo de datos\n\
       --error-control-file=FILE  ARCHIVO para controlar error(es) al cargar\n\
-      --ignore-class-file=FILE   archivo de entrada de nombres de clase que saltan carga\n
+      --ignore-class-file=FILE   archivo de entrada de nombres de clase que saltan carga\n\
+      --no-user-specified-name   Find classes, serials, and triggers by their object names without their owner names.\n\
+                                 This is to load files generated by cubrid before version 11.2.\n
 
 
 $set 13 MSGCAT_UTIL_SET_UNLOADDB
@@ -490,6 +525,9 @@ $set 13 MSGCAT_UTIL_SET_UNLOADDB
 47 directorio de salida es demasiado largo.\n
 48 LSA : %1$d %2$d \n
 49 Contrasena:
+50 Maximum length of class name is %1$d bytes.\n
+51 Maximum length of user name is %1$d bytes.\n
+52 Class %1$s not found.\n
 60 \
 unloaddb: Exportar objetos y esquemas de la base de datos.\n\
 uso: %1$s unloaddb [OPTION] database-name\n\
@@ -508,6 +546,8 @@ opciones validas:\n\
   -d, --data-only             botar solo objetos; estandar: esquema y objetos\n\
       --output-prefix=PREFIEX PREFIJO para archivos de salida; estandar: el nombre de la base de datos\n\
       --hash-file=FILE        ARCHIVO para hash; estandar: generar por tmpnam()\n\
+      --latest-image          al volcar objetos, vuelca la última imagen de los objetos en los volúmenes de datos, sin hacer referencia a los volúmenes de registro (ignorando MVCC)\n\
+                              Podría incluir datos no confirmados y datos eliminados que no se vacían; predeterminado: deshabilitado\n\
   -v, --verbose               habilitar mensajes de estado verbose; estandar: inhabilitado\n\
       --use-delimiter         utilizar '"' donde un identificador empieza y acaba; estandar: no utilizar\n\
   -S, --SA-mode               modo de ejecucion independiente\n\
@@ -553,6 +593,8 @@ $set 14 MSGCAT_UTIL_SET_COMPACTDB
 44 \nPass 3\n\n
 45 Fracaso al compactar el heap...\n
 46 Exito al compactar el heap...\n
+47 Maximum length of class name is %1$d bytes.\n
+48 Maximum length of user name is %1$d bytes.\n
 60 \
 compactdb: Spacio libre no utilizado en una base de datos.\n\
 uso: %1$s compactdb [OPTION] database-name [class_name1 class_name2 ...]\n\
@@ -611,6 +653,7 @@ opciones validas:\n\
 39 -i(--immediately) opcion debe ser utilizada con la opcion --deact-stop-all.\n
 
 $set 16 MSGCAT_UTIL_SET_PATCHDB
+1 Ejecute sin la opción --recreate-log o elimine el volumen de registro activo manualmente.\n
 60 \
 emergency_patchlog: Parchar una base de datos en caso de emergencia.\n\
 usage: %1$s emergency_patchlog [OPTION] database-name [database-locale]\n\
@@ -631,7 +674,7 @@ opciones validas:\n\
       --db-volume-size=SIZE        tamano de volumen adicional; estandar: db_volume_size en cubrid.conf\n\
       --max-writesize-in-sec=SIZE  la cantidad de volumen escrita por segundo; (ex. 512K, 1M, 10M); estandar: no utilizado; minimum: 160K\n\
   -n, --volume-name=NAME           NOMBRE de volumen de informacion; estandar: generar como "db"_ext1)\n\
-  -F, --file-path=PATH             RUTA para archivo de agregacion volumen; estandar: directorio de trabajo\n\
+  -F, --file-path=PATH             RUTA para archivo de agregacion volumen; estandar: volume_extension_path\n\
       --comment=COMMENT            COMENTARIO para archivo de agregacion volumen; estandar: ninguno\n\
   -p, --purpose=PURPOSE            PROPOSITO para archivo de agregacion volumen; permitido:\n\
                                            DATA - solo para datos\n\
@@ -952,6 +995,7 @@ opciones validas:\n\
 $set 44 MSGCAT_UTIL_SET_APPLYINFO
 21 Introducir contrasena DBA:
 22 El servidor no ha sido configurado para HA. \n
+57 No se puede generar la información aplicada debido a una ruta no válida de la opción -L o no hay información relacionada en la tabla de catálogo db_ha_apply_info.\n
 58 Caracteristica HA no es soportada en esta plataforma.\n
 59 applyinfo no puede ejecutar como modo independiente.\n
 60 \
@@ -960,9 +1004,9 @@ uso: %1$s applyinfo [OPTION] database-name\n\
 \n\
 opciones validas:\n\
   -r, --remote-host-name      nombre de host remote; mostrar la informacion de registro activa del nodo remote \n\
-  -a, --applied-info          mostrar informacion aplicada \n\
   -L, --copied-log-path=PATH  ruta de los volumenes de registro copiados; mostrar informacion de registro copiado \n\
-  -p, --page=ID               id de pagina; estandar : 0\n\
+  -a, --applied-info          mostrar informacion aplicada; se requiere la opción -L \n\
+  -p, --page=ID               id de pagina; se requiere la opción -L; estandar : 0\n\
   -v, --verbose               habilitar mensajes de estado verbose; estandar : inhabilitar\n\
   -i, --interval=S            imprimir informacion casa S segundos\n
 
@@ -1139,7 +1183,8 @@ opciones validas:\n\
       --list                        mostrar una lista de volumenes de backup sin restaurar\n\
   -B, --backup-file-path=PATH       PATH es una carpeta de volumenes de backup a ser restaurados\n\
   -o, --output-file=FILE            redirigir los mensajes de salida hacia FILE; default: none\n\
-  -u, --use-database-location-path  restaurar la base de datos y los volumenes de registro (log) en el camino especificado dentro del archivo de localizacion de la base de datos\n
+  -u, --use-database-location-path  restaurar la base de datos y los volumenes de registro (log) en el camino especificado dentro del archivo de localizacion de la base de datos\n\
+  -k, --keys-file-path              Ruta del archivo de claves (_keys) para que TDE se utilice durante la restauración\n
 
 $set 54 MSGCAT_UTIL_SET_DELVOLDB
 21 Listo para eliminar los siguentes volumenes:\n\n
@@ -1162,17 +1207,21 @@ opciones validas:\n\
 $set 55 MSGCAT_UTIL_SET_VACUUMDB
 20 Vacuumdb no disponible temporalmente para modo cliente-servidor\n
 21 La operacion de aspirar ha fallado\n
+22 No se puede abrir archivo de salida '%1$s'\n
 60 \
 vacuumdb: Aspira registros muertos de la base de datos.\n\
 uso: %1$s vacuumdb [OPTION] database-name\n\
 \n\
 opciones validas:\n\
   -S, --SA-mode                modo de ejecucion stand-alone\n\
-  -C, --CS-mode                modo de ejecucion cliente-servidor\n
+  -C, --CS-mode                modo de ejecucion cliente-servidor\n\
+      --dump                   volcar el estado actual de vacío\n\
+  -o, --output-file=FILE       redireccionar mensajes de salida al ARCHIVO; estandar: ninguno\n
 
 $set 56 MSGCAT_UTIL_SET_CHECKSUMDB
 1 Fallo al cargar los nombres de tablas en %1$s.\n
 2 checksumdb tiene que ejecutar en un servidor de HA activo. %1$s (estado actual: %2$s)\n
+3 El propietario de la tabla para guardar el resultado de la suma de comprobación debe ser DBA.\n
 58 Caracteristica HA no soportada en esta plataforma.\n
 59 checksumdb no puede ejecutar como modo stand-alone.\n
 60 \
@@ -1186,9 +1235,68 @@ opciones validas:\n\
   -i, --include-class-file=FILE archivo de entrada de los nombres de tabla a ser incluidos\n\
   -e, --exclude-class-file=FILE archivo de entrada de los nombres de tabla a ser excluidos; o -i o -e pueden ser utilizados, no ambos\n\
   -t, --timeout=NUMBER          tiempo de expera de la consulta (query) en milisegundos; default: 1000 ms\n\
-  -n, --table-name=NAME         nombre de tabla para guardar los resultados de la checksum; default: db_ha_checksums\n\
+  -n, --table-name=NAME         nombre de tabla para guardar los resultados de la checksum; default: dba.db_ha_checksum\n\
   -r, --report-only             reportar integridad de la replicacion en base al calculo de checksum\n\
                                 cualquier opcion excepto a --table-name va a ser ignorada\n\
       --resume                  reanudar calculo de checksum\n\
       --schema-only             verificar solo la consistencia de la esquema\n\
       --cont-on-error           continuar en error de calculo\n
+
+$set 57 MSGCAT_UTIL_SET_TDE
+21 Ingrese la contraseña de DBA:
+25 No se pudo obtener la información clave establecida en la base de datos\n
+26 Intentando cambiar la clave de la clave (índice: %1$d) a la clave (índice: %2$d) ..\n
+27 La clave se ha cambiado de la clave (índice: %1$d) a la clave (índice: %2$d)\n
+28 El conjunto de claves en la base de datos no se puede eliminar\n
+29 La clave (índice: %1$d) ha sido eliminada\n
+30 Se ha generado una nueva clave: índice de clave: %1$d creado en%2$s
+60 \
+tde: Gestión de cifrado transparente de datos (TDE)\n\
+uso: %1$s tde OPERACIÓN (-s|-n|-d|-c) [OPCIÓN] database-name\n\
+\n\
+opciones válidas:\n\
+    -p, --dba-password=PASS     contraseña del usuario DBA; le preguntará si no especifica\n\
+\n\
+OPERACIONES: se debe dar una de las operaciones, y son exclusivas\n\
+    -s, --show-keys             imprime la información de la clave establecida en la base de datos y el archivo de clave (_keys)\n\
+    -n, --generate-new-key      genera una nueva clave en el archivo de claves (_keys); recuento máximo: 128\n\
+    -d, --delete-key=KEY_INDEX  eliminar una clave en el archivo de claves (_keys)\n\
+    -c, --change-key=KEY_INDEX  cambia el conjunto de claves en la base de datos por otra clave en el archivo de claves (_keys)\n
+
+$set 58 MSGCAT_UTIL_SET_FLASHBACK
+1 Introduzca la contraseña de DBA:
+2 Formato de fecha no válido, el formato válido es dd-mm-yyyy:hh:mm:ss\n
+3 Se requiere que la fecha de inicio (%1$s) sea menor que la fecha de finalización (%2$s)\n
+4 Intente con una fecha anterior a la actual (%1$s) o posterior a la creación de la base de datos (%2$s)\n
+5 La tabla (%1$s) no existe en la base de datos\n
+6 Demasiadas transacciones para flashback. Reduzca el intervalo entre la fecha de inicio y la fecha de finalización\n
+7 No se pudo obtener flashback porque se cambió el esquema (%1$s).\n
+8 Se ha eliminado el volumen de registro. Intente con la fecha posterior\n
+9 No se pudo abrir el archivo de salida '%1$s'\n
+10 ID de transacción (%1$d) no existe\n
+11 Configure 'supplemental_log' en 'cubrid.conf'. Solo los registros de SQL ejecutados después de configurar 'supplemental_log' pueden recuperarse.\n
+12 El ID de transacción debe ingresarse en %1$d segundos. El tiempo de espera se puede ajustar a través de la configuración de 'flashback_timeout' en 'cubrid.conf'.\n
+13 Flashback ya se está ejecutando. Dos procesos no pueden ejecutar Flashback.\n
+14 Flashback no se puede ejecutar como modo independiente.\n
+15 La clase de catálogo del sistema (%1$s) no se admite en flashback.\n
+60 \
+flashback: proporciona declaraciones para retroceder una transacción específica.\n\
+uso: %1$s flashback [OPCIÓN] database-name owner_name.class_name1 [owner_name.class_name2 ...]\n\
+\n\
+opciones válidas:\n\
+    -o, --output-file=ARCHIVO     redirige el mensaje de salida a ARCHIVO; predeterminado: ninguno.\n\
+    -u, --user=ID                 especifica el usuario que ejecutó la instrucción SQL para retroceder; predeterminado: TODO.\n\
+    -p, --dba-password            contraseña del usuario DBA; le preguntará si no especifica\n\
+    -s, --start-date=FECHA        especifica la FECHA de inicio para el flashback. Los registros de SQL se extraen de DATE.\n\
+                                  La FECHA se da de la siguiente manera: dd-mm-yyyy:hh:mm:ss.\n\
+    -e, --end-date=FECHA          especifica la FECHA de finalización para el flashback. Los registros SQL se extraen hasta la FECHA.\n\
+                                  si no se especifica la fecha de inicio, entonces ((END - 10min) ~ END) se establece en rango,\n\
+                                  y de lo contrario, si no se especifica END, entonces se establece (start ~ (start + 10min)).\n\
+                                  Y no se especifica una fecha de inicio ni una fecha de finalización,\n\
+                                  se extraen los registros SQL, ejecutados entre (hora actual - 10 minutos) y la hora actual.\n\
+    --detail                      genera información detallada para cada instrucción SQL.\n\
+                                  El ID de transacción, el nombre de usuario y la declaración SQL original se devolverán con la\n\
+                                  declaración SQL\n\
+                                  para retrospectiva; predeterminado: genera solo sentencias SQL para flashback\n\
+    --oldest                      flashback más antiguo se realiza en orden cronológico para las sentencias SQL ejecutadas desde\n\
+                                  la hora de inicio hasta la hora de finalización; predeterminado: último\n

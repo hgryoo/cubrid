@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -64,7 +63,7 @@ static void process_object (THREAD_ENTRY * thread_p, DESC_OBJ * desc_obj, OID * 
 static int process_set (THREAD_ENTRY * thread_p, DB_SET * set);
 static int process_value (THREAD_ENTRY * thread_p, DB_VALUE * value);
 static DB_OBJECT *is_class (OID * obj_oid, OID * class_oid);
-static int disk_update_instance (MOP classop, DESC_OBJ * obj, OID * oid);
+static int disk_update_instance (THREAD_ENTRY * thread_p, MOP classop, DESC_OBJ * obj, OID * oid);
 static RECDES *alloc_recdes (int length);
 static void free_recdes (RECDES * rec);
 static void disk_init (void);
@@ -524,7 +523,7 @@ process_object (THREAD_ENTRY * thread_p, DESC_OBJ * desc_obj, OID * obj_oid, boo
 	{
 	  printf (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_COMPACTDB, COMPACTDB_MSG_UPDATING));
 	}
-      disk_update_instance (desc_obj->classop, desc_obj, obj_oid);
+      disk_update_instance (thread_p, desc_obj->classop, desc_obj, obj_oid);
     }
 }
 
@@ -647,12 +646,13 @@ is_class (OID * obj_oid, OID * class_oid)
 /*
  * disk_update_instance - update object instance
  *    return: number of processed instance. 0 is error.
+ *    thread_p(in): thread entry
  *    classop(in): class object
  *    obj(in): object instance
  *    oid(in): oid
  */
 static int
-disk_update_instance (MOP classop, DESC_OBJ * obj, OID * oid)
+disk_update_instance (THREAD_ENTRY * thread_p, MOP classop, DESC_OBJ * obj, OID * oid)
 {
   HEAP_OPERATION_CONTEXT update_context;
   HFID *hfid;
@@ -701,7 +701,7 @@ disk_update_instance (MOP classop, DESC_OBJ * obj, OID * oid)
 
   heap_create_update_context (&update_context, hfid, oid, WS_OID (classop), Diskrec, NULL,
 			      UPDATE_INPLACE_CURRENT_MVCCID);
-  if (heap_update_logical (NULL, &update_context) != NO_ERROR)
+  if (heap_update_logical (thread_p, &update_context) != NO_ERROR)
     {
       printf (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_COMPACTDB, COMPACTDB_MSG_CANT_UPDATE));
       return (0);

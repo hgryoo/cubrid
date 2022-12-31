@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2016 CUBRID Corporation
+ * 
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -92,6 +91,7 @@ cas_init_ssl (int sd)
   int err_code;
   unsigned long err;
   struct stat sbuf;
+  bool cert_not_found, pk_not_found;
 
   if (ssl)
     {
@@ -112,15 +112,24 @@ cas_init_ssl (int sd)
   snprintf (cert, CERT_FILENAME_LEN, "%s/conf/%s", getenv ("CUBRID"), CERTF);
   snprintf (key, CERT_FILENAME_LEN, "%s/conf/%s", getenv ("CUBRID"), KEYF);
 
-  if (stat (cert, &sbuf) < 0)
+  cert_not_found = (stat (cert, &sbuf) < 0) ? true : false;
+  pk_not_found = (stat (key, &sbuf) < 0) ? true : false;
+
+  if (cert_not_found && pk_not_found)
+    {
+      cas_log_write_and_end (0, false, "SSL: Both the certificate & Private key could not be found: %s, %s", cert, key);
+      return ER_CERT_COPPUPTED;
+    }
+
+  if (cert_not_found)
     {
       cas_log_write_and_end (0, false, "SSL: Certificate not found: %s", cert);
       return ER_CERT_COPPUPTED;
     }
 
-  if (stat (key, &sbuf) < 0)
+  if (pk_not_found)
     {
-      cas_log_write_and_end (0, true, "SSL: Private key not found: %s", key);
+      cas_log_write_and_end (0, false, "SSL: Private key not found: %s", key);
       return ER_CERT_COPPUPTED;
     }
 

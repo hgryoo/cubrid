@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation. All rights reserved by Search Solution.
+ * Copyright 2008 Search Solution Corporation
+ * Copyright 2016 CUBRID Corporation
  *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- *  GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  *
  */
 
@@ -33,6 +32,8 @@
 
 #include <stdio.h>
 
+#include <vector>
+
 #include "dbtype_def.h"
 #include "lob_locator.hpp"
 #include "replication.h"
@@ -50,6 +51,9 @@
 #include "parse_tree.h"
 #include "load_common.hpp"
 #include "timezone_lib_common.h"
+#include "method_def.hpp"
+#include "dynamic_array.h"
+#include "flashback_cl.h"
 
 // forward declarations
 #if defined (SA_MODE)
@@ -120,8 +124,17 @@ extern int heap_create (HFID * hfid, const OID * class_oid, bool reuse_oid);
 #if defined(ENABLE_UNUSED_FUNCTION)
 extern int heap_destroy (const HFID * hfid);
 #endif
-extern int heap_destroy_newly_created (const HFID * hfid, const OID * class_oid);
+extern int heap_destroy_newly_created (const HFID * hfid, const OID * class_oid, const bool force = false);
 extern int heap_reclaim_addresses (const HFID * hfid);
+extern int file_apply_tde_to_class_files (const OID * class_oid);
+#ifdef UNSTABLE_TDE_FOR_REPLICATION_LOG
+extern int tde_get_data_keys ();
+#endif /* UNSTABLE_TDE_FOR_REPLICATION_LOG */
+extern int dblink_get_cipher_master_key ();
+extern int tde_is_loaded (int *is_loaded);
+extern int tde_get_mk_file_path (char *mk_path);
+extern int tde_get_mk_info (int *mk_index, time_t * created_time, time_t * set_time);
+extern int tde_change_mk_on_server (int mk_index);
 extern DKNPAGES disk_get_total_numpages (VOLID volid);
 extern DKNPAGES disk_get_free_numpages (VOLID volid);
 extern char *disk_get_remarks (VOLID volid);
@@ -173,6 +186,7 @@ extern "C"
 {
 #endif
   extern void lock_dump (FILE * outfp);
+  extern void vacuum_dump (FILE * outfp);
 #ifdef __cplusplus
 }
 #endif
@@ -190,7 +204,7 @@ int boot_register_client (BOOT_CLIENT_CREDENTIAL * client_credential, int client
 extern int boot_unregister_client (int tran_index);
 extern int boot_backup (const char *backup_path, FILEIO_BACKUP_LEVEL backup_level, bool delete_unneeded_logarchives,
 			const char *backup_verbose_file, int num_threads, FILEIO_ZIP_METHOD zip_method,
-			FILEIO_ZIP_LEVEL zip_level, int skip_activelog, int sleep_msecs);
+			FILEIO_ZIP_LEVEL zip_level, int skip_activelog, int sleep_msecs, bool separate_keys);
 extern VOLID boot_add_volume_extension (DBDEF_VOL_EXT_INFO * ext_info);
 extern int boot_check_db_consistency (int check_flag, OID * oids, int num_oids, BTID * idx_btid);
 extern int boot_find_number_permanent_volumes (void);
@@ -253,6 +267,8 @@ extern int serial_get_next_value (DB_VALUE * value, OID * oid_p, int cached_num,
 extern int serial_get_current_value (DB_VALUE * value, OID * oid_p, int cached_num);
 extern int serial_decache (OID * oid);
 
+extern int synonym_remove_xasl_by_oid (OID * oid);
+
 extern int perfmon_server_start_stats (void);
 extern int perfmon_server_stop_stats (void);
 extern int perfmon_server_copy_stats (UINT64 * to_stats);
@@ -283,19 +299,7 @@ extern int repl_set_info (REPL_INFO * repl_info);
 
 extern int logwr_get_log_pages (LOGWR_CONTEXT * ctx_ptr);
 
-
-extern bool histo_is_supported (void);
-extern int histo_start (bool for_all_trans);
-extern int histo_stop (void);
-extern int histo_print (FILE * stream);
-extern int histo_print_global_stats (FILE * stream, bool cumulative, const char *substr);
-extern void histo_clear (void);
-
-extern int net_histo_start (bool for_all_trans);
-extern int net_histo_stop (void);
-extern int net_histo_print (FILE * stream);
-extern int net_histo_print_global_stats (FILE * stream, bool cumulative, const char *substr);
-extern void net_histo_clear (void);
+extern int log_supplement_statement (int ddl_type, int objtype, OID * classoid, OID * objoid, const char *stmt_text);
 
 extern int net_client_request_no_reply (int request, char *argbuf, int argsize);
 extern int net_client_request (int request, char *argbuf, int argsize, char *replybuf, int replysize, char *databuf,
@@ -315,6 +319,8 @@ extern int net_client_request_with_callback (int request, char *argbuf, int args
 					     char *databuf1, int datasize1, char *databuf2, int datasize2,
 					     char **replydata_ptr1, int *replydatasize_ptr1, char **replydata_ptr2,
 					     int *replydatasize_ptr2, char **replydata_ptr3, int *replydatasize_ptr3);
+extern int net_client_request_method_callback (int request, char *argbuf, int argsize, char *replybuf, int replysize,
+					       char **replydata_ptr, int *replydatasize_ptr);
 extern int net_client_check_log_header (LOGWR_CONTEXT * ctx_ptr, char *argbuf, int argsize, char *replybuf,
 					int replysize, char **logpg_area_buf, bool verbose);
 extern int net_client_request_with_logwr_context (LOGWR_CONTEXT * ctx_ptr, int request, char *argbuf, int argsize,
@@ -364,6 +370,7 @@ extern int net_client_send_data (char *host, unsigned int rc, char *databuf, int
 extern int net_client_receive_action (int rc, int *action);
 
 extern char *net_client_get_server_host (void);
+extern char *net_client_get_server_name (void);
 
 extern int boot_compact_classes (OID ** class_oids, int num_classes, int space_to_process, int instance_lock_timeout,
 				 int class_lock_timeout, bool delete_old_repr, OID * last_processed_class_oid,
@@ -432,4 +439,14 @@ extern int loaddb_fetch_status (load_status & status);
 extern int loaddb_destroy ();
 extern int loaddb_interrupt ();
 extern int loaddb_update_stats ();
+
+extern int method_invoke_fold_constants (const method_sig_list & sig_list,
+					 std::vector < std::reference_wrapper < DB_VALUE >> &args, DB_VALUE & result);
+extern int flashback_get_and_show_summary (dynamic_array * class_list, const char *user, time_t start_time,
+					   time_t end_time, FLASHBACK_SUMMARY_INFO_MAP * summary, OID ** oid_list,
+					   char **invalid_class, time_t * invalid_time);
+extern int flashback_get_loginfo (int trid, char *user, OID * classlist, int num_class, LOG_LSA * start_lsa,
+				  LOG_LSA * end_lsa, int *num_item, bool forward, char **info_list,
+				  int *invalid_class_idx);
+
 #endif /* _NETWORK_INTERFACE_CL_H_ */
