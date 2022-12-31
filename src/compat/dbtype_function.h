@@ -232,6 +232,7 @@
 #define DB_GET_COMPRESSED_SIZE(value) db_get_compressed_size(value)
 
 #define DB_GET_JSON_DOCUMENT(value) db_get_json_document(value)
+#define DB_GET_GEOMETRY(value)          db_get_geometry(value)
 
 #define DB_GET_SEQ DB_GET_SEQUENCE
 
@@ -339,6 +340,7 @@ extern "C"
   extern int db_value_precision (const DB_VALUE * value);
   extern int db_value_scale (const DB_VALUE * value);
   extern JSON_DOC *db_get_json_document (const DB_VALUE * value);
+  extern CUB_GEOMETRY *db_get_geometry (const DB_VALUE * value);
 
   extern int db_make_null (DB_VALUE * value);
   extern int db_make_int (DB_VALUE * value, const int num);
@@ -394,6 +396,7 @@ extern "C"
 					int compressed_size, bool compressed_need_clear);
 
   extern int db_make_json (DB_VALUE * value, JSON_DOC * json_document, bool need_clear);
+  extern int db_make_geometry (DB_VALUE * value, CUB_GEOMETRY * geometry, bool need_clear);
 
 #ifdef __cplusplus
 }

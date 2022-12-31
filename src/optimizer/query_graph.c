@@ -3352,6 +3352,8 @@ get_expr_fcode_rank (FUNC_TYPE fcode)
   switch (fcode)
     {
     case F_ELT:
+    case F_SPATIAL_ASTEXT:
+    case F_SPATIAL_FROMTEXT:
       return RANK_EXPR_LIGHT;
     case F_JSON_ARRAY:
     case F_JSON_ARRAY_APPEND:

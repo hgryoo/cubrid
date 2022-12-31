@@ -34,6 +34,14 @@
 #define ALWAYS_INLINE
 #endif
 
+#ifdef INLINE
+#undef INLINE
+#endif
+
+#ifdef STATIC_INLINE
+#undef STATIC_INLINE
+#endif
+
 #if defined (__cplusplus) || defined (__GNUC__)
 #define STATIC_INLINE static inline
 #define INLINE inline

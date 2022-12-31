@@ -335,6 +335,7 @@ int yybuffer_pos;
 [fF][lL][oO][aA][tT]							{ begin_token(yytext);   return FLOAT_; }
 [fF][oO][rR]								{ begin_token(yytext);   return For; }
 [gG][eE][nN][eE][rR][aA][lL]						{ begin_token(yytext);   return GENERAL; }
+[gG][eE][oO][mM][eE][tT][rR][yY]			{ begin_token(yytext);   return GEOMETRY; }
 [gG][eE][tT]								{ begin_token(yytext);   return GET; }
 [gG][eE]_[iI][nN][fF]							{ begin_token(yytext);
 										csql_yylval.cptr = pt_makename(yytext);
@@ -858,6 +859,10 @@ int yybuffer_pos;
 [sS][tT][rR][_][tT][oO][_][dD][aA][tT][eE]				{ begin_token(yytext);
 										csql_yylval.cptr = pt_makename(yytext);
 										return STR_TO_DATE; }
+
+[sS][tT][_][aA][sS][tT][eE][xX][tT]		{ begin_token(yytext); return ST_ASTEXT; }
+[sS][tT][_][gG][eE][oO][mM][eE][tT][rR][yY][fF][rR][oO][mM][tT][eE][xX][tT]		{ begin_token(yytext); return ST_GEOMETRYFROMTEXT; }
+
 [sS][uU][bB][cC][lL][aA][sS][sS]					{ begin_token(yytext);   return SUBCLASS; }
 [sS][uU][bB][dD][aA][tT][eE]						{ begin_token(yytext);
 										csql_yylval.cptr = pt_makename(yytext);

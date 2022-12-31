@@ -1542,6 +1542,9 @@ csql_db_value_as_string (DB_VALUE * value, int *length, bool plain_string, CSQL_
 	  len = strlen (result);
 	}
       break;
+    case DB_TYPE_GEOMETRY:
+      assert (false); // NOT IMPLEMENTED YET
+      break;
     case DB_TYPE_SET:
     case DB_TYPE_MULTISET:
     case DB_TYPE_SEQUENCE:

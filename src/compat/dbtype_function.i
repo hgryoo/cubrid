@@ -65,6 +65,7 @@ STATIC_INLINE DB_TYPE db_value_type (const DB_VALUE * value) __attribute__ ((ALW
 STATIC_INLINE int db_value_precision (const DB_VALUE * value) __attribute__ ((ALWAYS_INLINE));
 STATIC_INLINE int db_value_scale (const DB_VALUE * value) __attribute__ ((ALWAYS_INLINE));
 STATIC_INLINE JSON_DOC *db_get_json_document (const DB_VALUE * value) __attribute__ ((ALWAYS_INLINE));
+STATIC_INLINE CUB_GEOMETRY *db_get_geometry (const DB_VALUE * value) __attribute__ ((ALWAYS_INLINE));
 
 STATIC_INLINE int db_make_db_char (DB_VALUE * value, INTL_CODESET codeset, const int collation_id, DB_CONST_C_CHAR str,
 				   const int size) __attribute__ ((ALWAYS_INLINE));
@@ -131,6 +132,9 @@ STATIC_INLINE int db_make_date (DB_VALUE * value, const int month, const int day
   __attribute__ ((ALWAYS_INLINE));
 
 STATIC_INLINE int db_make_json (DB_VALUE * value, JSON_DOC * json_document, bool need_clear)
+  __attribute__ ((ALWAYS_INLINE));
+
+STATIC_INLINE int db_make_geometry (DB_VALUE * value, CUB_GEOMETRY * geometry, bool need_clear)
   __attribute__ ((ALWAYS_INLINE));
 
 STATIC_INLINE int db_get_compressed_size (DB_VALUE * value) __attribute__ ((ALWAYS_INLINE));
@@ -978,6 +982,18 @@ db_get_json_document (const DB_VALUE * value)
   assert (value->domain.general_info.type == DB_TYPE_JSON);
 
   return value->data.json.document;
+}
+
+CUB_GEOMETRY *
+db_get_geometry (const DB_VALUE * value)
+{
+#if defined (API_ACTIVE_CHECKS)
+  CHECK_1ARG_ZERO (value);
+#endif
+
+  assert (value->domain.general_info.type == DB_TYPE_GEOMETRY);
+
+  return value->data.geometry.instance;
 }
 
 /***********************************************************/
@@ -2116,6 +2132,28 @@ db_make_json (DB_VALUE * value, JSON_DOC * json_document, bool need_clear)
   value->domain.general_info.is_null = 0;
   value->data.json.document = json_document;
   value->data.json.schema_raw = NULL;
+  value->need_clear = need_clear;
+
+  return NO_ERROR;
+}
+
+int
+db_make_geometry (DB_VALUE * value, CUB_GEOMETRY * geometry, bool need_clear)
+{
+#if defined (API_ACTIVE_CHECKS)
+  CHECK_1ARG_ERROR (value);
+#else
+  if (value == NULL)
+    {
+      /* todo: Should this happen? */
+      assert (false);
+      return ER_FAILED;
+    }
+#endif
+
+  value->domain.general_info.type = DB_TYPE_GEOMETRY;
+  value->domain.general_info.is_null = 0;
+  value->data.geometry.instance = geometry;
   value->need_clear = need_clear;
 
   return NO_ERROR;

@@ -51,6 +51,7 @@ set(COMPAT_SOURCES
   ${COMPAT_DIR}/db_json_allocator.cpp
   ${COMPAT_DIR}/db_json_path.cpp
   ${COMPAT_DIR}/db_json_types_internal.cpp
+  ${COMPAT_DIR}/db_spatial.cpp
   ${COMPAT_DIR}/db_macro.c
   ${COMPAT_DIR}/db_obj.c
   ${COMPAT_DIR}/db_old.c
@@ -263,6 +264,7 @@ set(QUERY_SOURCES
   ${QUERY_DIR}/stream_to_xasl.c
   ${QUERY_DIR}/string_opfunc.c
   ${QUERY_DIR}/string_regex.cpp
+  ${QUERY_DIR}/spatial_opfunc.cpp
   ${QUERY_DIR}/vacuum.c
   ${QUERY_DIR}/xasl_cache.c
   ${QUERY_DIR}/xasl_to_stream.c
@@ -478,6 +480,7 @@ if(UNIX)
   set_source_files_properties(${COMPAT_DIR}/db_json_allocator.cpp PROPERTIES COMPILE_FLAGS -Wno-unknown-pragmas)
   set_source_files_properties(${COMPAT_DIR}/db_json_path.cpp PROPERTIES COMPILE_FLAGS -Wno-unknown-pragmas)
   set_source_files_properties(${COMPAT_DIR}/db_json_types_internal.cpp PROPERTIES COMPILE_FLAGS -Wno-unknown-pragmas)
+  set_source_files_properties(${COMPAT_DIR}/db_spatial.cpp PROPERTIES COMPILE_FLAGS -Wno-unknown-pragmas)
 endif(UNIX)
 
 SET_SOURCE_FILES_PROPERTIES(
@@ -618,6 +621,7 @@ target_external_dependencies(cubridsa
   LIBEDIT
   LIBOPENSSL
   LZ4
+  LIBGEOS
   )
 target_include_directories(cubridsa PRIVATE
   ${FLEX_INCLUDE_DIRS}

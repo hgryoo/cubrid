@@ -389,6 +389,17 @@ func_all_signatures sig_of_regexp_substr =
   {PT_TYPE_VARNCHAR, {PT_GENERIC_TYPE_STRING, PT_GENERIC_TYPE_STRING, PT_TYPE_INTEGER, PT_TYPE_INTEGER, PT_GENERIC_TYPE_CHAR}, {}},
 };
 
+func_all_signatures sig_of_spatial_astext =
+{
+  {PT_TYPE_VARCHAR, {PT_TYPE_GEOMETRY}, {}},
+};
+
+
+func_all_signatures sig_of_spatial_fromtext =
+{
+  {PT_TYPE_GEOMETRY, {PT_GENERIC_TYPE_STRING}, {}},
+};
+
 func_all_signatures *
 get_signatures (FUNC_TYPE ft)
 {
@@ -528,6 +539,10 @@ get_signatures (FUNC_TYPE ft)
       return &sig_of_regexp_replace;
     case F_REGEXP_SUBSTR:
       return &sig_of_regexp_substr;
+    case F_SPATIAL_ASTEXT:
+      return &sig_of_spatial_astext;
+    case F_SPATIAL_FROMTEXT:
+      return &sig_of_spatial_fromtext;
     default:
       assert (false);
       return nullptr;

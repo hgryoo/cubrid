@@ -46,6 +46,7 @@ set(COMPAT_SOURCES
   ${COMPAT_DIR}/db_date.c
   ${COMPAT_DIR}/db_elo.c
   ${COMPAT_DIR}/db_info.c
+  ${COMPAT_DIR}/db_spatial.cpp
   ${COMPAT_DIR}/db_json.cpp
   ${COMPAT_DIR}/db_json_allocator.cpp
   ${COMPAT_DIR}/db_json_path.cpp
@@ -72,6 +73,7 @@ set (COMPAT_HEADERS
   ${COMPAT_DIR}/db_json_allocator.hpp
   ${COMPAT_DIR}/db_json_path.hpp
   ${COMPAT_DIR}/db_json_types_internal.hpp
+  ${COMPAT_DIR}/db_spatial.hpp
   ${COMPAT_DIR}/db_set.h
   ${COMPAT_DIR}/db_set_function.h
   ${COMPAT_DIR}/dbtype_function.h
@@ -231,6 +233,7 @@ set(QUERY_SOURCES
   ${QUERY_DIR}/regu_var.cpp
   ${QUERY_DIR}/string_opfunc.c
   ${QUERY_DIR}/string_regex.cpp
+  ${QUERY_DIR}/spatial_opfunc.cpp
   ${QUERY_DIR}/xasl_to_stream.c
   )
 set(QUERY_HEADERS

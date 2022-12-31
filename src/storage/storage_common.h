@@ -931,6 +931,8 @@ typedef enum
 
   F_BENCHMARK,
 
+  F_SPATIAL_ASTEXT, F_SPATIAL_FROMTEXT,
+
   /* only for FIRST_VALUE. LAST_VALUE, NTH_VALUE analytic functions */
   PT_FIRST_VALUE, PT_LAST_VALUE, PT_NTH_VALUE,
   /* aggregate and analytic functions */

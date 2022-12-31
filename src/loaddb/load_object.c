@@ -1548,6 +1548,10 @@ fprint_special_strings (TEXT_OUTPUT * tout, DB_VALUE * value)
       db_private_free (NULL, json_body);
       break;
 
+    case DB_TYPE_GEOMETRY:
+      assert (false); // NOT IMPLEMENTED YET
+      break;
+
     default:
       /* the others are handled by callers or internal-use only types */
       break;

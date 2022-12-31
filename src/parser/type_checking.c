@@ -12442,6 +12442,8 @@ pt_eval_function_type (PARSER_CONTEXT * parser, PT_NODE * node)
     case F_REGEXP_LIKE:
     case F_REGEXP_REPLACE:
     case F_REGEXP_SUBSTR:
+    case F_SPATIAL_ASTEXT:
+    case F_SPATIAL_FROMTEXT:
       return pt_eval_function_type_new (parser, node);
 
       // legacy functions are still managed by old checking function; all should be migrated though
@@ -19857,6 +19859,14 @@ pt_evaluate_function_w_args (PARSER_CONTEXT * parser, FUNC_TYPE fcode, DB_VALUE 
 
     case F_REGEXP_SUBSTR:
       error = db_string_regexp_substr (result, args, num_args, NULL, NULL);
+      break;
+
+    case F_SPATIAL_FROMTEXT:
+      error = db_spatial_geometry_from_text (result, args, num_args);
+      break;
+
+    case F_SPATIAL_ASTEXT:
+      error = db_spatial_geometry_as_text (result, args, num_args);
       break;
 
     default:

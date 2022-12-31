@@ -6466,6 +6466,8 @@ pt_function_to_regu (PARSER_CONTEXT * parser, PT_NODE * function)
 	case F_REGEXP_LIKE:
 	case F_REGEXP_REPLACE:
 	case F_REGEXP_SUBSTR:
+	case F_SPATIAL_ASTEXT:
+	case F_SPATIAL_FROMTEXT:
 	  result_type = pt_node_to_db_type (function);
 	  break;
 	case F_BENCHMARK:
@@ -6896,6 +6898,7 @@ pt_make_prim_data_type (PARSER_CONTEXT * parser, PT_TYPE_ENUM e)
     case PT_TYPE_BLOB:
     case PT_TYPE_CLOB:
     case PT_TYPE_JSON:
+	case PT_TYPE_GEOMETRY:
       dt->data_type = NULL;
       break;
 

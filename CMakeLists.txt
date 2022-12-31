@@ -135,6 +135,9 @@ set(WITH_RAPIDJSON_URL "https://github.com/Tencent/rapidjson/archive/v1.1.0.tar.
 # openssl library sources URL
 set(WITH_LIBOPENSSL_URL "https://www.openssl.org/source/old/1.1.1/openssl-1.1.1f.tar.gz")
 
+# geos library sources URL
+set(WITH_GEOS_URL "http://download.osgeo.org/geos/geos-3.9.1.tar.bz2")
+
 set(WITH_EXTERNAL_PREFIX "EXTERNAL" CACHE STRING "External library prefix (default: EXTERNAL)")
 set(WITH_BUNDLED_PREFIX "BUNDLED" CACHE STRING "Bundled library prefix (default: BUNDLED)")
 set(WITH_SYSTEM_PREFIX "SYSTEM" CACHE STRING "System library prefix (default: SYSTEM)")
@@ -144,12 +147,14 @@ set(WITH_LIBJANSSON   "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with jansson
 set(WITH_LIBEDIT      "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with editline library (default: EXTERNAL)")
 set(WITH_LIBNCURSES   "${WITH_SYSTEM_PREFIX}" CACHE STRING "Build with ncurses library (default: SYSTEM)")
 set(WITH_LIBOPENSSL   "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with openssl library (default: EXTERNAL)")
+set(WITH_LIBGEOS      "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with geos library (default: EXTERNAL)")
 
 message(STATUS "Build with Curses library: ${WITH_LIBNCURSES}")
 message(STATUS "Build with editline library: ${WITH_LIBEDIT}")
 message(STATUS "Build with expat library: ${WITH_LIBEXPAT}")
 message(STATUS "Build with jansson library: ${WITH_LIBJANSSON}")
 message(STATUS "Build with openssl library: ${WITH_LIBOPENSSL}")
+message(STATUS "Build with geos library: ${WITH_LIBGEOS}")
 
 # Version info
 # TODO: remove BUILD_NUMBER file and replace with VERSION file
@@ -258,9 +263,9 @@ if(UNIX)
     endif(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 4.4.7)
 
     # C flags for both debug and release build
-    set(CMAKE_C_COMMON_FLAGS "-ggdb -fno-omit-frame-pointer")
+    set(CMAKE_C_COMMON_FLAGS "-ggdb -fno-omit-frame-pointer -DUSE_UNSTABLE_GEOS_CPP_API")
     # C++ flags for both debug and release build
-    set(CMAKE_CXX_COMMON_FLAGS "${CMAKE_C_COMMON_FLAGS} -std=c++0x")
+    set(CMAKE_CXX_COMMON_FLAGS "${CMAKE_C_COMMON_FLAGS} -std=c++0x -DUSE_UNSTABLE_GEOS_CPP_API")
 
     # C flags for debug build
     set(CMAKE_C_DEBUG_FLAGS "-Wall -fno-inline ${CMAKE_C_COMMON_FLAGS}")
@@ -1128,6 +1133,40 @@ externalproject_add(${RAPIDJSON_TARGET}
 include_directories(${CMAKE_BINARY_DIR}/external/Source/rapidjson/include)
 # add to external project targets
 list(APPEND EP_TARGETS ${RAPIDJSON_TARGET})
+
+if(WITH_LIBGEOS STREQUAL "EXTERNAL")
+  set(LIBGEOS_TARGET libgeos)
+  if(UNIX)
+    #compile GEOS given an internet url to a GEOS archive
+    #e.g. http://download.osgeo.org/geos/geos-3.9.1.tar.bz2
+    externalproject_add(${LIBGEOS_TARGET}
+      # tried URL but archive gets downloaded every time. URL_MD5 may help
+      URL                  ${WITH_GEOS_URL}
+      TIMEOUT              600
+      DOWNLOAD_NO_PROGRESS 1
+      CONFIGURE_COMMAND    <SOURCE_DIR>/configure --prefix=${CMAKE_CURRENT_BINARY_DIR}/external --with-pic CFLAGS=-w CXXFLAGS=-w
+      BUILD_COMMAND        make
+      INSTALL_COMMAND      make install
+      CMAKE_CACHE_ARGS     -DGEOS_ENABLE_TESTS:STRING=off
+                           -DGEOS_ENABLE_DOC:STRING=off
+    )
+    set(LIBGEOS_LIBS ${CMAKE_CURRENT_BINARY_DIR}/external/lib/libgeos.so)
+    set(LIBGEOS_INCLUDES ${CMAKE_CURRENT_BINARY_DIR}/external/include/geos)
+    list(APPEND EP_TARGETS ${LIBGEOS_TARGET})
+  else(UNIX)
+    set(LIBGEOS_LIBS ${WINDOWS_EXTERNAL_DIR}/geos/lib/libgeos.lib)
+    set(LIBGEOS_INCLUDES ${WINDOWS_EXTERNAL_DIR}/geos/include/geos)
+  endif(UNIX)
+else(LIBGEOS_TARGET STREQUAL "SYSTEM")
+  if(UNIX)
+    find_library(LIBGEOS_LIBS NAMES libgeos.so PATHS ${WITH_EXTERNAL_LIBS_PATH} REQUIRED)
+    find_path(LIBGEOS_INCLUDES NAMES geos/geos.h PATHS ${WITH_EXTERNAL_HEADERS_PATH} REQUIRED)
+    message(STATUS "Found geos library: ${LIBGEOS_LIBS}")
+    message(STATUS "Found geos headers: ${LIBGEOS_INCLUDES}")
+  endif(UNIX)
+endif()
+list(APPEND EP_INCLUDES ${LIBGEOS_INCLUDES})
+list(APPEND EP_LIBS ${LIBGEOS_LIBS})
 
 # include subdirectories
 add_subdirectory(cas)

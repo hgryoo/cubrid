@@ -37,6 +37,7 @@
 #include "area_alloc.h"
 #include "db_value_printer.hpp"
 #include "db_json.hpp"
+#include "db_spatial.hpp"
 #include "elo.h"
 #include "error_manager.h"
 #include "file_io.h"
@@ -937,6 +938,24 @@ static int mr_data_readval_json (OR_BUF * buf, DB_VALUE * value, TP_DOMAIN * dom
 static DB_VALUE_COMPARE_RESULT mr_data_cmpdisk_json (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coercion,
 						     int total_order, int *start_colp);
 static DB_VALUE_COMPARE_RESULT mr_cmpval_json (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int total_order,
+					       int *start_colp, int collation);
+
+static void mr_initmem_geometry (void *mem, TP_DOMAIN * domain);
+static int mr_setmem_geometry (void *memptr, TP_DOMAIN * domain, DB_VALUE * value);
+static int mr_getmem_geometry (void *memptr, TP_DOMAIN * domain, DB_VALUE * value, bool copy);
+static int mr_data_lengthmem_geometry (void *memptr, TP_DOMAIN * domain, int disk);
+static void mr_data_writemem_geometry (OR_BUF * buf, void *memptr, TP_DOMAIN * domain);
+static void mr_data_readmem_geometry (OR_BUF * buf, void *memptr, TP_DOMAIN * domain, int size);
+static void mr_freemem_geometry (void *memptr);
+static void mr_initval_geometry (DB_VALUE * value, int precision, int scale);
+static int mr_setval_geometry (DB_VALUE * dest, const DB_VALUE * src, bool copy);
+static int mr_data_lengthval_geometry (DB_VALUE * value, int disk);
+static int mr_data_writeval_geometry (OR_BUF * buf, DB_VALUE * value);
+static int mr_data_readval_geometry (OR_BUF * buf, DB_VALUE * value, TP_DOMAIN * domain, int size, bool copy,
+				 char *copy_buf, int copy_buf_len);
+static DB_VALUE_COMPARE_RESULT mr_data_cmpdisk_geometry (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coercion,
+						     int total_order, int *start_colp);
+static DB_VALUE_COMPARE_RESULT mr_cmpval_geometry (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int total_order,
 					       int *start_colp, int collation);
 /*
  * Value_area
@@ -16825,4 +16844,451 @@ mr_cmpval_json (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int total
   pr_clear_value (&scalar_value1);
   pr_clear_value (&scalar_value2);
   return cmp_result;
+}
+
+PR_TYPE tp_Geometry = {
+  "geometry", DB_TYPE_GEOMETRY, 1, sizeof (DB_GEOMETRY), 0, 1,
+  mr_initmem_geometry,
+  mr_initval_geometry,
+  mr_setmem_geometry,
+  mr_getmem_geometry,
+  mr_setval_geometry,
+  mr_data_lengthmem_geometry,
+  mr_data_lengthval_geometry,
+  mr_data_writemem_geometry,
+  mr_data_readmem_geometry,
+  mr_data_writeval_geometry,
+  mr_data_readval_geometry,
+  NULL,				/* index_lengthmem */
+  NULL,				/* index_lengthval */
+  NULL,				/* index_writeval */
+  NULL,				/* index_readval */
+  NULL,				/* index_cmpdisk */
+  mr_freemem_geometry,
+  mr_data_cmpdisk_geometry,
+  mr_cmpval_geometry
+};
+
+PR_TYPE *tp_Type_geometry = &tp_Geometry;
+
+static void
+mr_initmem_geometry (void *mem, TP_DOMAIN * domain)
+{
+  DB_GEOMETRY *geom = (DB_GEOMETRY *) mem;
+
+  if (geom != NULL)
+    {
+      geom->instance = NULL;
+    }
+  else
+    {
+      assert (false);
+    }
+}
+
+static int
+mr_setmem_geometry (void *memptr, TP_DOMAIN * domain, DB_VALUE * value)
+{
+  int error = NO_ERROR;
+  DB_GEOMETRY *geometry;
+  CUB_GEOMETRY *instance;
+
+  geometry = (DB_GEOMETRY *) memptr;
+  if (geometry != NULL)
+    {
+      mr_freemem_geometry (memptr);
+    }
+  else
+    {
+      assert (false);
+    }
+
+  if (value == NULL)
+    {
+      return NO_ERROR;
+    }
+  instance = db_get_geometry (value);
+  if (instance != NULL)
+    {
+      CUB_GEOMETRY* copy = dynamic_cast<CUB_GEOMETRY*>(instance->clone ().release());
+      if (copy != NULL)
+      {
+        value->data.geometry.instance = std::move(copy);
+      }
+      else
+      {
+        error = ER_OUT_OF_VIRTUAL_MEMORY;
+        ASSERT_ERROR ();
+	      return error;
+      }
+    }
+
+  return error;
+}
+
+static int
+mr_getmem_geometry (void *memptr, TP_DOMAIN * domain, DB_VALUE * value, bool copy)
+{
+  int error = NO_ERROR;
+  DB_GEOMETRY *geometry;
+  CUB_GEOMETRY *new_instance = NULL;
+
+  geometry = (DB_GEOMETRY *) memptr;
+
+  if (geometry == NULL)
+    {
+      db_make_null (value);
+      db_value_domain_init (value, DB_TYPE_GEOMETRY, domain->precision, 0);
+      value->need_clear = false;
+      return NO_ERROR;
+    }
+
+  if (!copy)
+    {
+      new_instance = geometry->instance;
+    }
+  else
+    {
+      new_instance = dynamic_cast<CUB_GEOMETRY*>(geometry->instance->clone ().release());
+      if (new_instance == NULL)
+      {
+        error = ER_OUT_OF_VIRTUAL_MEMORY;
+        ASSERT_ERROR ();
+	      return error;
+      }
+    }
+
+  db_make_geometry (value, new_instance, copy);
+  return error;
+}
+
+static int
+mr_data_lengthmem_geometry (void *memptr, TP_DOMAIN * domain, int disk)
+{
+  int len = 0;
+  DB_GEOMETRY *geometry;
+
+  if (!disk)
+    {
+      len = tp_Geometry.size;
+    }
+  else
+    {
+      if (memptr != NULL)
+	{
+	  geometry = (DB_GEOMETRY *) memptr;
+	  if (geometry->instance == NULL)
+	    {
+	      return 0;
+	    }
+
+	  return (int) db_spatial_serialize_length (*geometry->instance);
+	}
+    }
+
+  return len;
+}
+
+static void
+mr_data_writemem_geometry (OR_BUF * buf, void *memptr, TP_DOMAIN * domain)
+{
+  DB_GEOMETRY *geometry;
+  int rc = NO_ERROR;
+
+  geometry = (DB_GEOMETRY *) memptr;
+  if (geometry == NULL || geometry->instance == NULL)
+    {
+      return;
+    }
+
+  rc = db_spatial_serialize (*geometry->instance, *buf);
+  if (rc != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+    }
+}
+
+static void
+mr_data_readmem_geometry (OR_BUF * buf, void *memptr, TP_DOMAIN * domain, int size)
+{
+  DB_GEOMETRY *geometry;
+  int rc = NO_ERROR;
+
+  geometry = (DB_GEOMETRY *) memptr;
+  if (geometry == NULL)
+    {
+      if (size != 0)
+	{
+	  if (or_advance (buf, size) != NO_ERROR)
+	    {
+	      assert (false);
+	    }
+	}
+      return;
+    }
+
+  if (size < 0)
+    {
+      assert (false);
+      return;
+    }
+
+  if (size == 0)
+    {
+      mr_initmem_geometry (memptr, domain);
+      return;
+    }
+
+  rc = db_spatial_deserialize (buf, geometry->instance);
+  if (rc != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      //db_json_delete_doc (json->document);
+    }
+}
+
+static void
+mr_freemem_geometry (void *memptr)
+{
+  DB_GEOMETRY *geometry;
+
+  geometry = (DB_GEOMETRY *) memptr;
+
+  if (geometry != NULL)
+    {
+      if (geometry->instance != NULL)
+	{
+	  delete geometry->instance;
+	  geometry->instance = NULL;
+	}
+    }
+}
+
+static void
+mr_initval_geometry (DB_VALUE * value, int precision, int scale)
+{
+  db_value_domain_init (value, DB_TYPE_GEOMETRY, precision, scale);
+  value->need_clear = false;
+}
+
+static int
+mr_setval_geometry (DB_VALUE * dest, const DB_VALUE * src, bool copy)
+{
+  int error = NO_ERROR;
+
+  if (src == NULL || DB_IS_NULL (src))
+    {
+      error = db_value_domain_init (dest, DB_TYPE_GEOMETRY, DB_DEFAULT_PRECISION, 0);
+      if (error != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  return error;
+	}
+    }
+  else
+    {
+      db_value_domain_init (dest, DB_TYPE_GEOMETRY, DB_DEFAULT_PRECISION, 0);
+      dest->domain.general_info.is_null = 0;
+
+      if (copy)
+	{
+	  dest->data.geometry.instance = dynamic_cast<CUB_GEOMETRY*>(src->data.geometry.instance->clone().release());
+	  dest->need_clear = true;
+	}
+      else
+	{
+	  dest->data.geometry.instance = src->data.geometry.instance;
+	  dest->need_clear = false;
+	}
+    }
+
+  return error;
+}
+
+static int
+mr_data_lengthval_geometry (DB_VALUE * value, int disk)
+{
+  if (!disk)
+    {
+      return tp_Geometry.size;
+    }
+
+  if (value->data.geometry.instance != NULL)
+    {
+      return (int) db_spatial_serialize_length (*value->data.geometry.instance);
+    }
+  else
+    {
+      return 0;
+    }
+}
+
+static int
+mr_data_writeval_geometry (OR_BUF * buf, DB_VALUE * value)
+{
+  int rc = NO_ERROR;
+
+  if (value->data.geometry.instance == NULL || DB_IS_NULL (value))
+    {
+      assert (false);
+      return ER_FAILED;
+    }
+
+  if (buf->error_abort)
+    {
+      int estimated_length = mr_data_lengthval_geometry (value, true);
+
+      if ((ptrdiff_t) estimated_length > ((ptrdiff_t) (buf->endptr - buf->ptr)))
+	{
+	  /* this will make string_data_writeval jump because
+	   * of buffer overflow, leaking memory in the process,
+	   * we need to take care of it here
+	   */
+	  (void) or_overflow (buf);
+	}
+    }
+
+  CUB_GEOMETRY *geom = db_get_geometry (value);
+  rc = db_spatial_serialize (*geom, *buf);
+  if (rc != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+    }
+
+  return rc;
+}
+
+static int
+mr_data_readval_geometry (OR_BUF * buf, DB_VALUE * value, TP_DOMAIN * domain, int size, bool copy, char *copy_buf,
+		      int copy_buf_len)
+{
+  CUB_GEOMETRY *geom = NULL;
+  int rc = NO_ERROR;
+
+  db_make_null (value);
+
+  if (size == 0)
+    {
+      /* early out, means json is NULL */
+      return NO_ERROR;
+    }
+
+  rc = db_spatial_deserialize (buf, geom);
+  if (rc != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      return rc;
+    }
+
+  db_make_geometry (value, geom, true);
+
+  return NO_ERROR;
+}
+
+static DB_VALUE_COMPARE_RESULT
+mr_data_cmpdisk_geometry (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coercion, int total_order, int *start_colp)
+{
+  char *first, *second;
+  OR_BUF first_buf, second_buf;
+  DB_VALUE geometry1, geometry2;
+  CUB_GEOMETRY *geom1 = NULL, *geom2 = NULL;
+  int rc = NO_ERROR;
+
+  DB_VALUE_COMPARE_RESULT res = DB_UNK;
+
+  first = (char *) mem1;
+  second = (char *) mem2;
+
+  or_init (&first_buf, first, 0);
+  or_init (&second_buf, second, 0);
+
+  rc = db_spatial_deserialize (&first_buf, geom1);
+  if (rc != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      return res;
+    }
+
+  rc = db_spatial_deserialize (&second_buf, geom2);
+  if (rc != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      return res;
+    }
+
+  db_make_geometry (&geometry1, geom1, true);
+  db_make_geometry (&geometry2, geom2, true);
+
+  res = mr_cmpval_geometry (&geometry1, &geometry2, do_coercion, total_order, 0, 0);
+  pr_clear_value (&geometry1);
+  pr_clear_value (&geometry2);
+
+  return res;
+}
+
+/* when total_order is true,
+ * we force to string uncomparable types.
+ * this is because "order by" uses total_order=true
+ * and we don't want to fail. The standard says that
+ * only scalar and nulls are comparable.
+ *
+ * we only return DB_UNK when either one is null and
+ * total_order is false
+ */
+static DB_VALUE_COMPARE_RESULT
+mr_cmpval_geometry (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int total_order, int *start_colp, int collation)
+{
+  CUB_GEOMETRY *geom1 = NULL, *geom2 = NULL;
+  DB_GEOMETRY_TYPE type1 = DB_GEOMETRY_UNKNOWN;
+  DB_GEOMETRY_TYPE type2 = DB_GEOMETRY_UNKNOWN;
+  DB_VALUE scalar_value1, scalar_value2;
+  DB_VALUE_COMPARE_RESULT cmp_result;
+  bool is_value1_null = true, is_value2_null = true;
+  int error_code;
+
+  geom1 = db_get_geometry (value1);
+  geom2 = db_get_geometry (value2);
+
+  is_value1_null = DB_IS_NULL (value1) || ((type1 = db_geometry_get_type (geom1)) == DB_GEOMETRY_NULL);
+  is_value2_null = DB_IS_NULL (value2) || ((type2 = db_geometry_get_type (geom2)) == DB_GEOMETRY_NULL);
+
+  if (is_value1_null || is_value2_null)
+    {
+      if (!total_order)
+	{
+	  return DB_UNK;
+	}
+
+      if (is_value1_null && is_value2_null)
+	{
+	  return DB_EQ;
+	}
+
+      return is_value1_null ? DB_LT : DB_GT;
+    }
+
+  /* db_geometry_get_type shouldn't return DB_GEOMETRY_UNKNOWN, this represents a bug */
+  assert (type1 != DB_GEOMETRY_UNKNOWN && type2 != DB_GEOMETRY_UNKNOWN);
+
+  // check empty geometry
+
+  db_make_null (&scalar_value1);
+  db_make_null (&scalar_value2);
+
+  // compare bounding box
+  // TODO
+
+  // compare exact geometry
+  if (geom1->equals(geom2))
+  {
+    return DB_EQ;
+  }
+  else
+  {
+    return DB_UNK;
+  }
+
+  // cmp_result = tp_value_compare_with_error (&scalar_value1, &scalar_value2, do_coercion, total_order, NULL);
+
+  // return cmp_result;
 }

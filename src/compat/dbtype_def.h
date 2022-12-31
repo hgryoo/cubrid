@@ -713,6 +713,7 @@ extern "C"
     DB_TYPE_DATETIMETZ = 38,
     DB_TYPE_DATETIMELTZ = 39,
     DB_TYPE_JSON = 40,
+    DB_TYPE_GEOMETRY = 41,
 
     /* aliases */
     DB_TYPE_LIST = DB_TYPE_SEQUENCE,
@@ -720,7 +721,7 @@ extern "C"
     DB_TYPE_VARCHAR = DB_TYPE_STRING,	/* SQL CHAR(n) VARYING values */
     DB_TYPE_UTIME = DB_TYPE_TIMESTAMP,	/* SQL TIMESTAMP */
 
-    DB_TYPE_LAST = DB_TYPE_JSON
+    DB_TYPE_LAST = DB_TYPE_GEOMETRY
   } DB_TYPE;
 
   /* Domain information stored in DB_VALUE structures. */
@@ -1041,6 +1042,12 @@ extern "C"
     JSON_DOC *document;
   };
 
+  typedef struct db_geometry DB_GEOMETRY;
+  struct db_geometry
+  {
+    CUB_GEOMETRY *instance;
+  };
+
   /* A union of all of the possible basic type values. This is used in the definition of the DB_VALUE which is the fundamental
    * structure used in passing data in and out of the db_ function layer.
    */
@@ -1072,6 +1079,7 @@ extern "C"
     DB_RESULTSET rset;
     DB_ENUM_ELEMENT enumeration;
     DB_JSON json;
+    DB_GEOMETRY geometry;
   };
 
   /* This is the primary structure used for passing values in and out of the db_ function layer. Values are always tagged with

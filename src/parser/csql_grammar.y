@@ -1227,6 +1227,7 @@ int g_original_buffer_len;
 %token FULL
 %token FUNCTION
 %token GENERAL
+%token GEOMETRY
 %token GET
 %token GLOBAL
 %token GO
@@ -1351,6 +1352,8 @@ int g_original_buffer_len;
 %token REGEXP_LIKE
 %token REGEXP_REPLACE
 %token REGEXP_SUBSTR
+%token ST_ASTEXT
+%token ST_GEOMETRYFROMTEXT
 %token RELATIVE_
 %token RENAME
 %token REPLACE
@@ -17158,6 +17161,16 @@ reserved_func
 			$$ = parser_make_func_with_arg_count (this_parser, F_REGEXP_SUBSTR, $3, 2, 5);
 			PARSER_SAVE_ERR_CONTEXT ($$, @$.buffer_pos)
 		DBG_PRINT}}
+		| ST_ASTEXT '(' expression_list ')'
+		{{
+			$$ = parser_make_func_with_arg_count (this_parser, F_SPATIAL_ASTEXT, $3, 1, 1);
+			PARSER_SAVE_ERR_CONTEXT ($$, @$.buffer_pos)
+		DBG_PRINT}}
+		| ST_GEOMETRYFROMTEXT '(' expression_list ')'
+		{{
+			$$ = parser_make_func_with_arg_count (this_parser, F_SPATIAL_FROMTEXT, $3, 1, 1);
+			PARSER_SAVE_ERR_CONTEXT ($$, @$.buffer_pos)
+		DBG_PRINT}}
 	;
 
 of_cume_dist_percent_rank_function
@@ -20168,6 +20181,13 @@ primitive_type
 
 			$$ = ctn;
 		DBG_PRINT}}
+	| GEOMETRY
+	    {{
+			container_2 ctn;
+			PT_TYPE_ENUM type = PT_TYPE_GEOMETRY;
+			PT_NODE * dt = parser_new_node (this_parser, PT_DATA_TYPE);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (type), dt); // TODO
+		}}
 	| OBJECT
 		{{
 			container_2 ctn;

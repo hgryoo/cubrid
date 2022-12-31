@@ -198,6 +198,7 @@ static KEYWORD_RECORD keywords[] = {
   {FULLSCAN, "FULLSCAN", 1},
   {FUNCTION, "FUNCTION", 0},
   {GENERAL, "GENERAL", 0},
+  {GEOMETRY, "GEOMETRY", 0},
   {GET, "GET", 0},
   {GE_INF_, "GE_INF", 1},
   {GE_LE_, "GE_LE", 1},

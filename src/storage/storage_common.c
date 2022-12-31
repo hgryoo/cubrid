@@ -569,6 +569,10 @@ fcode_get_uppercase_name (FUNC_TYPE ftype)
       return "REGEXP_REPLACE";
     case F_REGEXP_SUBSTR:
       return "REGEXP_SUBSTR";
+  	case F_SPATIAL_ASTEXT:
+      return "ST_ASTEXT";
+	  case F_SPATIAL_FROMTEXT:
+      return "ST_GEOMETRYFROMTEXT";
     default:
       return "***UNKNOWN***";
     }
@@ -725,6 +729,10 @@ fcode_get_lowercase_name (FUNC_TYPE ftype)
       return "regexp_replace";
     case F_REGEXP_SUBSTR:
       return "regexp_substr";
+  	case F_SPATIAL_ASTEXT:
+      return "st_astext";
+	  case F_SPATIAL_FROMTEXT:
+      return "st_geometryfromtext";
     default:
       return "unknown function";
     }

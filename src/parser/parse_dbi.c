@@ -1536,6 +1536,9 @@ pt_type_enum_to_db_domain_name (const PT_TYPE_ENUM t)
     case PT_TYPE_JSON:
       name = "json";
       break;
+    case PT_TYPE_GEOMETRY:
+      name = "geometry";
+      break;
     }
 
   return name;
@@ -2379,6 +2382,10 @@ pt_type_enum_to_db (const PT_TYPE_ENUM t)
 
     case PT_TYPE_JSON:
       db_type = DB_TYPE_JSON;
+      break;
+
+    case PT_TYPE_GEOMETRY:
+      db_type = DB_TYPE_GEOMETRY;
       break;
 
     case PT_TYPE_OBJECT:

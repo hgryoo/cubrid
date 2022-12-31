@@ -4822,6 +4822,9 @@ catalog_dump_disk_attribute (DISK_ATTR * attr_p)
     case DB_TYPE_JSON:
       fprintf (stdout, "DB_TYPE_JSON \n");
       break;
+    case DB_TYPE_GEOMETRY:
+      fprintf (stdout, "DB_TYPE_GEOMETRY \n");
+      break;
     default:
       break;
     }

@@ -6899,6 +6899,10 @@ qdata_evaluate_function (THREAD_ENTRY * thread_p, regu_variable_node * function_
     case F_REGEXP_SUBSTR:
       return qdata_regexp_function (thread_p, funcp, val_desc_p, obj_oid_p, tuple);
 
+  	case F_SPATIAL_ASTEXT:
+	  case F_SPATIAL_FROMTEXT:
+      assert (false); // NOT IMPELMENTED YET
+
     default:
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QPROC_INVALID_XASLNODE, 0);
       return ER_FAILED;
