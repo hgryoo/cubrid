@@ -75,6 +75,8 @@ set(BASE_SOURCES
   ${BASE_DIR}/mem_block.cpp
   ${BASE_DIR}/memory_private_allocator.cpp
   ${BASE_DIR}/memory_alloc.c
+  ${BASE_DIR}/memory_alloc_sa.c
+  ${BASE_DIR}/memory_alloc_ws.c
   ${BASE_DIR}/databases_file.c
   ${BASE_DIR}/encryption.c
   ${BASE_DIR}/sha1.c

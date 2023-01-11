@@ -30,6 +30,10 @@
 #include "thread_manager.hpp"	// for thread_get_thread_entry_info
 #endif // SERVER_MODE
 
+#if defined (SA_MODE)
+#include "memory_alloc_sa.h"
+#endif
+
 #define DEFAULT_OBSTACK_CHUNK_SIZE      32768	/* 1024 x 32 */
 
 #if !defined (SERVER_MODE)
@@ -37,128 +41,6 @@ extern unsigned int db_on_server;
 HL_HEAPID private_heap_id = 0;	/* for SA's server-side */
 HL_HEAPID ws_heap_id = 0;	/* for both SA's and CS's workspace */
 #endif /* SERVER_MODE */
-
-#if defined(SA_MODE)
-typedef struct private_malloc_header_s PRIVATE_MALLOC_HEADER;
-struct private_malloc_header_s
-{
-  unsigned int magic;
-  int alloc_type;
-};
-
-#define PRIVATE_MALLOC_HEADER_MAGIC 0xafdaafdaU
-
-enum private_alloc_type
-{
-  PRIVATE_ALLOC_TYPE_LEA = 1,
-  PRIVATE_ALLOC_TYPE_WS = 2
-};
-
-#define PRIVATE_MALLOC_HEADER_ALIGNED_SIZE \
-  ((sizeof(PRIVATE_MALLOC_HEADER) + 7) & ~7)
-
-#define private_request_size(s) \
-  (PRIVATE_MALLOC_HEADER_ALIGNED_SIZE + (s))
-
-#define private_hl2user_ptr(ptr) \
-  (void *)((char *)(ptr) + PRIVATE_MALLOC_HEADER_ALIGNED_SIZE)
-
-#define private_user2hl_ptr(ptr) \
-  (PRIVATE_MALLOC_HEADER *)((char *)(ptr) - PRIVATE_MALLOC_HEADER_ALIGNED_SIZE)
-
-static void *db_standalone_alloc (HL_HEAPID & heap_id, private_alloc_type alloc_type, size_t size);
-static void *db_standalone_realloc (void *ptr, size_t size);
-static void db_standalone_free (void *ptr);
-
-/*
- * db_standalone_alloc () - call allocation function for SA mode
- *   return: allocated memory pointer
- *   heap_id(in): heap id
- *   alloc_type(in): allocation type
- *   size(in): size to allocate
- */
-void *
-db_standalone_alloc (HL_HEAPID & heap_id, private_alloc_type alloc_type, size_t size)
-{
-  size_t req_sz = private_request_size (size);
-  PRIVATE_MALLOC_HEADER *h = (PRIVATE_MALLOC_HEADER *) hl_lea_alloc (heap_id, req_sz);
-
-  if (h != NULL)
-    {
-      h->magic = PRIVATE_MALLOC_HEADER_MAGIC;
-      h->alloc_type = alloc_type;
-      return private_hl2user_ptr (h);
-    }
-  return NULL;
-}
-
-/*
- * db_standalone_realloc () - call re-allocation function for SA mode
- *   return: allocated memory pointer
- *   heap_id(in): heap id
- *   ptr(in): memory pointer to reallocate
- *   size(in): size to reallocate
- */
-void *
-db_standalone_realloc (void *ptr, size_t size)
-{
-  PRIVATE_MALLOC_HEADER *h = private_user2hl_ptr (ptr);
-  if (h->magic != PRIVATE_MALLOC_HEADER_MAGIC)
-    {
-      return NULL;
-    }
-
-  size_t req_sz = private_request_size (size);
-  PRIVATE_MALLOC_HEADER *new_h = NULL;
-  if (h->alloc_type == PRIVATE_ALLOC_TYPE_WS)
-    {
-      new_h = (PRIVATE_MALLOC_HEADER *) hl_lea_realloc (ws_heap_id, h, req_sz);
-    }
-  else if (h->alloc_type == PRIVATE_ALLOC_TYPE_LEA)
-    {
-      new_h = (PRIVATE_MALLOC_HEADER *) hl_lea_realloc (private_heap_id, h, req_sz);
-    }
-  else
-    {
-      return NULL;
-    }
-
-  if (new_h == NULL)
-    {
-      return NULL;
-    }
-  return private_hl2user_ptr (new_h);
-}
-
-/*
- * db_standalone_free () - call free function for SA mode
- *   return:
- *   ptr(in): memory pointer to free
- */
-void
-db_standalone_free (void *ptr)
-{
-  PRIVATE_MALLOC_HEADER *h = private_user2hl_ptr (ptr);
-  if (h->magic != PRIVATE_MALLOC_HEADER_MAGIC)
-    {
-      /* assertion point */
-      return;
-    }
-
-  if (h->alloc_type == PRIVATE_ALLOC_TYPE_WS)
-    {
-      hl_lea_free (ws_heap_id, h);
-    }
-  else if (h->alloc_type == PRIVATE_ALLOC_TYPE_LEA)
-    {
-      hl_lea_free (private_heap_id, h);
-    }
-  else
-    {
-      return;
-    }
-}
-#endif /* SA_MODE */
 
 /*
  * db_create_ostk_heap () - create an obstack heap
@@ -215,89 +97,6 @@ db_ostk_free (HL_HEAPID heap_id, void *ptr)
     }
 }
 #endif /* ENABLE_UNUSED_FUNCTION */
-
-#if !defined (SERVER_MODE)
-/*
- * db_workspace_alloc () - call allocation function for the workspace heap
- *   return: allocated memory pointer
- *   size(in): size to allocate
- */
-void *
-db_workspace_alloc (size_t size)
-{
-  void *ptr = NULL;
-
-  if (ws_heap_id == 0)
-    {
-      /* not initialized yet */
-      db_create_workspace_heap ();
-    }
-
-  if (ws_heap_id == 0 || size == 0)
-    {
-      return NULL;
-    }
-#if defined(SA_MODE)
-  ptr = db_standalone_alloc (ws_heap_id, PRIVATE_ALLOC_TYPE_WS, size);
-#else
-  ptr = hl_lea_alloc (ws_heap_id, size);
-#endif
-  return ptr;
-}
-
-/*
- * db_workspace_free () - call free function for the workspace heap
- *   return:
- *   ptr(in): memory pointer to free
- */
-void
-db_workspace_free (void *ptr)
-{
-  assert (ws_heap_id != 0);
-  if (ws_heap_id == 0 || ptr == NULL)
-    {
-      return;
-    }
-
-#if defined(SA_MODE)
-  db_standalone_free (ptr);
-#else
-  hl_lea_free (ws_heap_id, ptr);
-#endif
-}
-
-/*
- * db_workspace_realloc () - call re-allocation function for the workspace heap
- *   return: allocated memory pointer
- *   ptr(in): memory pointer to reallocate
- *   size(in): size to allocate
- */
-void *
-db_workspace_realloc (void *ptr, size_t size)
-{
-  if (ptr == NULL)
-    {
-      return db_workspace_alloc (size);
-    }
-
-  if (ws_heap_id == 0)
-    {
-      /* not initialized yet */
-      db_create_workspace_heap ();
-    }
-
-  if (ws_heap_id == 0 || size == 0)
-    {
-      return NULL;
-    }
-
-#if defined(SA_MODE)
-  return db_standalone_realloc (ptr, size);
-#else
-  return hl_lea_realloc (ws_heap_id, ptr, size);
-#endif
-}
-#endif
 
 /*
  * db_create_private_heap () - create a thread specific heap

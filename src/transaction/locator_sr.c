@@ -48,6 +48,7 @@
 #include "list_file.h"
 #include "log_lsa.hpp"
 #include "lock_manager.h"
+#include "memory_alloc_fixed.h"
 #include "object_primitive.h"
 #include "object_representation.h"
 #include "object_representation_sr.h"

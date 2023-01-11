@@ -40,6 +40,10 @@
 #define MEM_REGION_SCRAMBLE_MARK         '\01'	/* Set this to allocated areas */
 #define MEM_REGION_GUARD_MARK            '\02'	/* Set this as a memory guard to detect over/under runs */
 
+#if !defined (SERVER_MODE)
+extern unsigned int db_on_server;
+#endif /* SERVER_MODE */
+
 #if defined (CUBRID_DEBUG)
 extern void db_scramble (void *region, int size);
 #define MEM_REGION_INIT(region, size) \
@@ -103,11 +107,10 @@ extern void db_scramble (void *region, int size);
 
 #if !defined (SERVER_MODE)
 
-#define GLOBAL_HEAP_ID 0
-
 extern HL_HEAPID private_heap_id;
 extern HL_HEAPID ws_heap_id;
 
+/* allocation APIs for os */
 #define os_malloc(size) (malloc (size))
 #define os_free(ptr) (free (ptr))
 #define os_realloc(ptr, size) (realloc ((ptr), (size)))
@@ -132,6 +135,7 @@ extern void *db_workspace_realloc (void *ptr, size_t size);
 
 #else /* SERVER_MODE */
 
+/* allocation APIs for os */
 #if !defined(NDEBUG)
 #define os_malloc(size) \
         os_malloc_debug(size, true, __FILE__, __LINE__)
@@ -233,10 +237,5 @@ extern void *db_private_realloc_external (THREAD_ENTRY * thrd, void *ptr, size_t
 extern HL_HEAPID db_private_set_heapid_to_thread (THREAD_ENTRY * thread_p, HL_HEAPID heap_id);
 extern HL_HEAPID db_private_get_heapid_from_thread (REFPTR (THREAD_ENTRY, thread_p));
 #endif // SERVER_MODE
-
-extern HL_HEAPID db_create_fixed_heap (int req_size, int recs_per_chunk);
-extern void db_destroy_fixed_heap (HL_HEAPID heap_id);
-extern void *db_fixed_alloc (HL_HEAPID heap_id, size_t size);
-extern void db_fixed_free (HL_HEAPID heap_id, void *ptr);
 
 #endif /* _MEMORY_ALLOC_H_ */

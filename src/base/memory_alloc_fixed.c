@@ -28,8 +28,7 @@
 #include <stdio.h>
 #include <errno.h>
 
-#include "memory_alloc.h"
-#include "customheaps.h"
+#include "memory_alloc_fixed.h"
 #if defined (SERVER_MODE)
 #include "connection_defs.h"
 #include "connection_error.h"

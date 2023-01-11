@@ -48,7 +48,7 @@
 #include "chartype.h"
 #include "misc_string.h"
 #include "error_manager.h"
-#include "memory_alloc.h"
+#include "memory_alloc_fixed.h"
 #include "message_catalog.h"
 #include "environment_variable.h"
 #include "set_object.h"

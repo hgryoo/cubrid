@@ -104,6 +104,7 @@ set(BASE_SOURCES
   ${BASE_DIR}/lockfree_bitmap.cpp
   ${BASE_DIR}/mem_block.cpp
   ${BASE_DIR}/memory_alloc.c
+  ${BASE_DIR}/memory_alloc_ws.c
   ${BASE_DIR}/memory_hash.c
   ${BASE_DIR}/memory_private_allocator.cpp
   ${BASE_DIR}/message_catalog.c
