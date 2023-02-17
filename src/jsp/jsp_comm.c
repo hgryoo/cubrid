@@ -189,16 +189,24 @@ jsp_readn (SOCKET fd, void *vptr, int n)
 }
 
 int
+jsp_readn_with_timeout (SOCKET fd, void *vptr, int n, int timeout)
+{
+  return css_readn (fd, (char *) vptr, n, timeout);
+}
+
+int
 jsp_ping (SOCKET fd)
 {
   char buffer[DB_MAX_IDENTIFIER_LENGTH];
 
-  OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_request;
+  OR_ALIGNED_BUF (OR_INT64_SIZE + OR_INT_SIZE * 3) a_request;
   char *request = OR_ALIGNED_BUF_START (a_request);
-  char *ptr = or_pack_int (request, OR_INT_SIZE);
+  char *ptr = or_pack_int (request, OR_INT64_SIZE + OR_INT_SIZE * 2);
+  ptr = or_pack_int64 (ptr, (INT64) 0);
   ptr = or_pack_int (ptr, SP_CODE_UTIL_PING);
+  ptr = or_pack_int (ptr, 0);
 
-  int nbytes = jsp_writen (fd, request, OR_INT_SIZE * 2);
+  int nbytes = jsp_writen (fd, request, OR_INT64_SIZE + OR_INT_SIZE * 3);
   if (nbytes != OR_INT_SIZE * 2)
     {
       return ER_SP_NETWORK_ERROR;

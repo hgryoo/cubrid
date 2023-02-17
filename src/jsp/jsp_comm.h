@@ -61,7 +61,7 @@ struct javasp_status_info
 {
   int pid;
   int port;
-  char *db_name;
+  std::string db_name;
   // *INDENT-OFF*
   std::vector < std::string > vm_args;
   // *INDENT-ON*
@@ -75,6 +75,7 @@ extern "C"
   void jsp_disconnect_server (SOCKET & sockfd);
   int jsp_writen (SOCKET fd, const void *vptr, int n);
   int jsp_readn (SOCKET fd, void *vptr, int n);
+  int jsp_readn_with_timeout (SOCKET fd, void *vptr, int n, int timeout);
 
   int jsp_ping (SOCKET fd);
   char *jsp_get_socket_file_path (const char *db_name);

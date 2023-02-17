@@ -31,6 +31,7 @@
 
 #include "network_interface_cl.h"
 #include "method_def.hpp"
+#include "method_connection.hpp"
 #include "mem_block.hpp"
 #include "packer.hpp"
 #include "transaction_cl.h"
@@ -51,11 +52,7 @@ namespace cubmethod
   template <typename ... Args>
   int mcon_pack_and_queue (Args &&... args)
   {
-    packing_packer packer;
-    cubmem::extensible_block eb;
-    packer.set_buffer_and_pack_all (eb, std::forward<Args> (args)...);
-    eb.extend_to (packer.get_current_size ()); // ensure eb.get_size () == packer.get_current_size ()
-
+    cubmem::extensible_block eb = mcon_pack_data (std::forward<Args> (args)...);
     mcon_get_data_queue().push (std::move (eb));
     return NO_ERROR;
   }
