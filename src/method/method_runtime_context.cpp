@@ -48,6 +48,7 @@ namespace cubmethod
     , m_returning_cursors {}
     , m_group_map {}
     , m_cursor_map {}
+    , m_req_id {0}
     , m_is_interrupted (false)
     , m_interrupt_id (NO_ERROR)
     , m_is_running (false)

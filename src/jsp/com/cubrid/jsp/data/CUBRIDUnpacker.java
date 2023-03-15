@@ -51,6 +51,21 @@ public class CUBRIDUnpacker {
         this.buffer = buffer;
     }
 
+    public ByteBuffer unpackBuffer () {
+        align(DataUtilities.INT_ALIGNMENT);
+
+        int size = buffer.getInt();
+        if (size > 0) {
+            byte[] buf = new byte[size];
+            buffer.get(buf);
+            
+            align(DataUtilities.INT_ALIGNMENT);
+            return ByteBuffer.wrap (buf);
+        } else {
+            return ByteBuffer.allocate(0);
+        }
+    }
+
     public int unpackInt() {
         align(DataUtilities.INT_ALIGNMENT);
         return buffer.getInt();

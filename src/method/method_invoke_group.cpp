@@ -28,6 +28,7 @@
 #include "object_representation.h"	/* OR_ */
 #include "packer.hpp"
 #include "method_connection_sr.hpp"
+#include "method_connection_java.hpp"
 #include "method_connection_pool.hpp"
 #include "session.h"
 
@@ -131,7 +132,7 @@ namespace cubmethod
     return m_thread_p;
   }
 
-  std::queue<cubmem::extensible_block> &
+  std::queue<cubmem::block> &
   method_invoke_group::get_data_queue ()
   {
     return m_data_queue;
@@ -187,7 +188,7 @@ namespace cubmethod
 	  case METHOD_TYPE_INSTANCE_METHOD:
 	  case METHOD_TYPE_CLASS_METHOD:
 	  {
-	    cubmethod::header header (METHOD_REQUEST_ARG_PREPARE, m_id);
+	    cubmethod::header header (METHOD_REQUEST_ARG_PREPARE, m_id, 1);
 	    cubmethod::prepare_args arg (elem, arg_base);
 	    error = method_send_data_to_client (m_thread_p, header, arg);
 	    break;
@@ -206,9 +207,19 @@ namespace cubmethod
 	      }
 
 	    // send to Java SP Server
-	    cubmethod::header header (SP_CODE_PREPARE_ARGS, m_id);
-	    cubmethod::prepare_args arg (elem, optimized_arg_base);
+      UINT64 s_id = get_thread_entry ()->conn_entry->session_id;
+	    cubmethod::header header (s_id, SP_CODE_PREPARE_ARGS, 1);
+	    cubmethod::prepare_args arg (elem, optimized_arg_base, m_id);
+
 	    error = mcon_send_data_to_java (get_socket (), header, arg);
+
+      uint64_t dummy;
+      int nbytes = jsp_readn_with_timeout (get_socket (), (char *) &dummy, OR_INT_SIZE * 2, -1);
+      if (nbytes != OR_INT_SIZE * 2)
+          {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_NETWORK_ERROR, 1, nbytes);
+      error = er_errid ();
+          }
 	    break;
 	  }
 	  default:
@@ -292,7 +303,7 @@ namespace cubmethod
 
     if (!is_end_query)
       {
-	cubmethod::header header (METHOD_REQUEST_END, get_id());
+	cubmethod::header header (METHOD_REQUEST_END, get_id(), m_rctx->get_and_increment_request_id());
 	std::vector<int> handler_vec (m_handler_set.begin (), m_handler_set.end ());
 	error = method_send_data_to_client (m_thread_p, header, handler_vec);
 	m_handler_set.clear ();

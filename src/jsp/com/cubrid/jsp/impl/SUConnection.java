@@ -31,7 +31,8 @@
 
 package com.cubrid.jsp.impl;
 
-import com.cubrid.jsp.ExecuteThread;
+import com.cubrid.jsp.communication.ConnectionEntry;
+import com.cubrid.jsp.context.Context;
 import com.cubrid.jsp.data.CUBRIDPacker;
 import com.cubrid.jsp.data.CUBRIDUnpacker;
 import com.cubrid.jsp.data.DBParameterInfo;
@@ -49,31 +50,48 @@ import com.cubrid.jsp.exception.TypeMismatchException;
 import com.cubrid.jsp.jdbc.CUBRIDServerSideConstants;
 import com.cubrid.jsp.jdbc.CUBRIDServerSideJDBCErrorCode;
 import com.cubrid.jsp.jdbc.CUBRIDServerSideJDBCErrorManager;
+import com.cubrid.jsp.protocol.Header;
+import com.cubrid.jsp.protocol.RequestCode;
+
 import cubrid.sql.CUBRIDOID;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.sql.SQLException;
+import java.util.Queue;
+import java.util.concurrent.LinkedBlockingQueue;
 
 public class SUConnection {
-
-    ExecuteThread thread = null;
-    ByteBuffer outputBuffer = ByteBuffer.allocate(4096);
-
-    public SUConnection(ExecuteThread t) {
-        thread = t;
+    private Context context = null;
+    public SUConnection(Context ctx) {
+        context = ctx;
     }
 
-    public CUBRIDUnpacker request(ByteBuffer buffer) throws IOException, SQLException {
-        thread.sendCommand(buffer);
-        buffer.clear();
-        CUBRIDUnpacker unpacker = thread.receiveBuffer();
+    public synchronized CUBRIDPacker getPacker () {
+        ConnectionEntry connEntry = context.getRunningStack().getConnectionEntry();
+        CUBRIDPacker packer = connEntry.getPacker();
+        packer.packInt(RequestCode.INTERNAL_JDBC);
+        return packer;
+    }
 
-        int responseCode = unpacker.unpackInt();
-        if (responseCode != 0) {
-            ErrorInfo errorInfo = new ErrorInfo(unpacker);
-            String errorMsg = errorInfo.errorString;
-            throw CUBRIDServerSideJDBCErrorManager.createCUBRIDException(
-                    CUBRIDServerSideJDBCErrorCode.ER_DBMS, errorMsg, null);
+    public synchronized CUBRIDUnpacker request(CUBRIDPacker packer) throws IOException, SQLException {
+        // write
+        ConnectionEntry connEntry = context.getRunningStack().getConnectionEntry();
+        connEntry.write(packer.getBuffer());
+        
+
+        LinkedBlockingQueue<ByteBuffer> queue = context.getInboundQueue();
+
+        CUBRIDUnpacker unpacker = null;
+        try {
+            unpacker = new CUBRIDUnpacker(queue.take());
+            int responseCode = unpacker.unpackInt();
+            if (responseCode != 0) {
+                ErrorInfo errorInfo = new ErrorInfo(unpacker);
+                String errorMsg = errorInfo.errorString;
+                throw CUBRIDServerSideJDBCErrorManager.createCUBRIDException(
+                        CUBRIDServerSideJDBCErrorCode.ER_DBMS, errorMsg, null);
+            }
+        } catch (InterruptedException e) {
         }
 
         return unpacker;
@@ -81,10 +99,10 @@ public class SUConnection {
 
     // UFunctionCode.GET_DB_PARAMETER
     public DBParameterInfo getDBParameter() throws IOException, SQLException {
-        CUBRIDPacker packer = new CUBRIDPacker(outputBuffer);
+        CUBRIDPacker packer = getPacker ();
         packer.packInt(SUFunctionCode.GET_DB_PARAMETER.getCode());
 
-        CUBRIDUnpacker unpacker = request(outputBuffer);
+        CUBRIDUnpacker unpacker = request(packer);
         DBParameterInfo info = new DBParameterInfo(unpacker);
         return info;
     }
@@ -96,12 +114,12 @@ public class SUConnection {
 
     public SUStatement prepare(String sql, byte flag, boolean recompile)
             throws IOException, SQLException {
-        CUBRIDPacker packer = new CUBRIDPacker(outputBuffer);
+        CUBRIDPacker packer = getPacker ();
         packer.packInt(SUFunctionCode.PREPARE.getCode());
         packer.packString(sql);
         packer.packInt(flag);
 
-        CUBRIDUnpacker unpacker = request(outputBuffer);
+        CUBRIDUnpacker unpacker = request(packer);
         PrepareInfo info = new PrepareInfo(unpacker);
 
         SUStatement stmt = null;
@@ -117,14 +135,14 @@ public class SUConnection {
     // UFunctionCode.GET_SCHEMA_INFO
     public SUStatement getSchemaInfo(int type, String arg1, String arg2, byte flag)
             throws IOException, SQLException {
-        CUBRIDPacker packer = new CUBRIDPacker(outputBuffer);
+        CUBRIDPacker packer = getPacker ();
         packer.packInt(SUFunctionCode.GET_SCHEMA_INFO.getCode());
         packer.packInt(type);
         packer.packString(arg1);
         packer.packString(arg2);
         packer.packInt(flag);
 
-        CUBRIDUnpacker unpacker = request(outputBuffer);
+        CUBRIDUnpacker unpacker = request(packer);
         GetSchemaInfo info = new GetSchemaInfo(unpacker);
         SUStatement stmt = new SUStatement(this, info, arg1, arg2, type);
         return stmt;
@@ -138,7 +156,7 @@ public class SUConnection {
             int maxField,
             SUBindParameter bindParameter)
             throws IOException, SQLException {
-        CUBRIDPacker packer = new CUBRIDPacker(outputBuffer);
+        CUBRIDPacker packer = getPacker ();
         packer.packInt(SUFunctionCode.EXECUTE.getCode());
         packer.packInt(handlerId);
         packer.packInt(executeFlag);
@@ -156,7 +174,7 @@ public class SUConnection {
             bindParameter.pack(packer);
         }
 
-        CUBRIDUnpacker unpacker = request(outputBuffer);
+        CUBRIDUnpacker unpacker = request(packer);
         ExecuteInfo info = new ExecuteInfo(unpacker);
         return info;
     }
@@ -164,36 +182,36 @@ public class SUConnection {
     // UFunctionCode.FETCH
     public FetchInfo fetch(long queryId, int currentRowIndex, int fetchSize, int fetchFlag)
             throws IOException, TypeMismatchException, SQLException {
-        CUBRIDPacker packer = new CUBRIDPacker(outputBuffer);
+        CUBRIDPacker packer = getPacker ();
         packer.packInt(SUFunctionCode.FETCH.getCode());
         packer.packBigInt(queryId);
         packer.packInt(currentRowIndex);
         packer.packInt(fetchSize);
         packer.packInt(fetchFlag);
 
-        CUBRIDUnpacker unpacker = request(outputBuffer);
+        CUBRIDUnpacker unpacker = request(packer);
         FetchInfo info = new FetchInfo(unpacker);
         return info;
     }
 
     // UFunctionCode.MAKE_OUT_RS
     public MakeOutResultSetInfo makeOutResult(long queryId) throws IOException, SQLException {
-        CUBRIDPacker packer = new CUBRIDPacker(outputBuffer);
+        CUBRIDPacker packer = getPacker ();
         packer.packInt(SUFunctionCode.MAKE_OUT_RS.getCode());
         packer.packBigInt(queryId);
 
-        CUBRIDUnpacker unpacker = request(outputBuffer);
+        CUBRIDUnpacker unpacker = request(packer);
         MakeOutResultSetInfo info = new MakeOutResultSetInfo(unpacker);
         return info;
     }
 
     // UFunctionCode.NEXT_RESULT
     public ExecuteInfo nextResult(int handlerId) throws IOException, SQLException {
-        CUBRIDPacker packer = new CUBRIDPacker(outputBuffer);
+        CUBRIDPacker packer = getPacker ();
         packer.packInt(SUFunctionCode.NEXT_RESULT.getCode());
         packer.packInt(handlerId);
 
-        CUBRIDUnpacker unpacker = request(outputBuffer);
+        CUBRIDUnpacker unpacker = request(packer);
         ExecuteInfo info = new ExecuteInfo(unpacker);
         return info;
     }
@@ -201,7 +219,7 @@ public class SUConnection {
     // UFunctionCode.GET_BY_OID
     public SUStatement getByOID(CUBRIDOID oid, String[] attributeName)
             throws IOException, SQLException {
-        CUBRIDPacker packer = new CUBRIDPacker(outputBuffer);
+        CUBRIDPacker packer = getPacker ();
         packer.packInt(SUFunctionCode.GET_BY_OID.getCode());
         packer.packOID(new SOID(oid.getOID()));
 
@@ -218,7 +236,7 @@ public class SUConnection {
             packer.packInt(0);
         }
 
-        CUBRIDUnpacker unpacker = request(outputBuffer);
+        CUBRIDUnpacker unpacker = request(packer);
         GetByOIDInfo info = new GetByOIDInfo(unpacker);
         SUStatement stmt = new SUStatement(this, info, oid, attributeName);
         return stmt;
@@ -227,11 +245,11 @@ public class SUConnection {
     // UFunctionCode.GET_GENERATED_KEYS
     public SUStatement getGeneratedKeys(int handlerId)
             throws IOException, SQLException, TypeMismatchException {
-        CUBRIDPacker packer = new CUBRIDPacker(outputBuffer);
+        CUBRIDPacker packer = getPacker ();
         packer.packInt(SUFunctionCode.GET_GENERATED_KEYS.getCode());
         packer.packInt(handlerId);
 
-        CUBRIDUnpacker unpacker = request(outputBuffer);
+        CUBRIDUnpacker unpacker = request(packer);
         GetGeneratedKeysInfo info = new GetGeneratedKeysInfo(unpacker);
         SUStatement stmt = new SUStatement(this, info);
         return stmt;
@@ -240,7 +258,7 @@ public class SUConnection {
     // UFunctionCode.PUT_BY_OID
     public void putByOID(CUBRIDOID oid, String[] attributeName, Object values[])
             throws IOException, SQLException {
-        CUBRIDPacker packer = new CUBRIDPacker(outputBuffer);
+        CUBRIDPacker packer = getPacker ();
         packer.packInt(SUFunctionCode.PUT_BY_OID.getCode());
         packer.packOID(new SOID(oid.getOID()));
 
@@ -260,18 +278,18 @@ public class SUConnection {
             packer.packInt(0);
         }
 
-        CUBRIDUnpacker unpacker = request(outputBuffer);
+        CUBRIDUnpacker unpacker = request(packer);
         int result = unpacker.unpackInt();
     }
 
     // UFunctionCode.RELATED_TO_OID
     public Object oidCmd(CUBRIDOID oid, int command) throws IOException, SQLException {
-        CUBRIDPacker packer = new CUBRIDPacker(outputBuffer);
+        CUBRIDPacker packer = getPacker ();
         packer.packInt(SUFunctionCode.RELATED_TO_OID.getCode());
         packer.packInt(command);
         packer.packOID(new SOID(oid.getOID()));
 
-        CUBRIDUnpacker unpacker = request(outputBuffer);
+        CUBRIDUnpacker unpacker = request(packer);
         int result = unpacker.unpackInt();
         if (command == CUBRIDServerSideConstants.IS_INSTANCE) {
             if (result == 1) {
@@ -288,7 +306,7 @@ public class SUConnection {
     protected CUBRIDUnpacker collectionCmd(
             int cmd, CUBRIDOID oid, String attributeName, Object value, int index)
             throws IOException, SQLException {
-        CUBRIDPacker packer = new CUBRIDPacker(outputBuffer);
+        CUBRIDPacker packer = getPacker ();
         packer.packInt(SUFunctionCode.RELATED_TO_COLLECTION.getCode());
         packer.packInt(cmd);
         packer.packOID(new SOID(oid.getOID()));
@@ -308,7 +326,7 @@ public class SUConnection {
             packer.packInt(0); // has value
         }
 
-        CUBRIDUnpacker unpacker = request(outputBuffer);
+        CUBRIDUnpacker unpacker = request(packer);
         return unpacker;
     }
 

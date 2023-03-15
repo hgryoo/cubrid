@@ -21,7 +21,7 @@
     <property name="ivy.install.version" value="2.4.0" />
     <property name="ivy.install.dir" value="${external.dir}"/>
 
-    <property name="dist.main.class" value="com.cubrid.jsp.Server"/>
+    <property name="dist.main.class" value="com.cubrid.jsp.ServerNG"/>
     <property name="dist.jar" value="jspserver.jar"/>
     <property name="dist.lib" value="lib"/>
 

@@ -197,8 +197,14 @@ int
 method_dispatch_internal (packing_unpacker &unpacker)
 {
   int error = NO_ERROR;
+
+  uint64_t session_id;
   int method_dispatch_code;
+  int flag;
+
+  unpacker.unpack_bigint (session_id);
   unpacker.unpack_int (method_dispatch_code);
+  unpacker.unpack_int (flag);
 
   if (error == NO_ERROR)
     {

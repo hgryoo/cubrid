@@ -633,11 +633,11 @@ jsp_start_server (const char *db_name, const char *path, int port)
 	goto error;
       }
 
-    mid = JVM_GetStaticMethodID (env_p, cls, "main", "([Ljava/lang/String;)V");
+    mid = JVM_GetStaticMethodID (env_p, cls, "start", "([Ljava/lang/String;)I");
     if (mid == NULL)
       {
 	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SP_CANNOT_START_JVM, 1,
-		"GetStaticMethodID: " "com/cubrid/jsp/Server.main([Ljava/lang/String;)V");
+		"GetStaticMethodID: " "com/cubrid/jsp/Server.start([Ljava/lang/String;)I");
 	goto error;
       }
 

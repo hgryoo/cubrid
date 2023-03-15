@@ -37,6 +37,9 @@ typedef enum
   METHOD_ERROR
 } METHOD_CALL_STATUS;
 
+using METHOD_GROUP_ID = std::uint64_t;
+using METHOD_REQ_ID = int;
+
 enum METHOD_TYPE
 {
   METHOD_TYPE_NONE = 0,

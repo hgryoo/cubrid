@@ -41,6 +41,9 @@ import java.util.Properties;
 import java.util.StringTokenizer;
 import java.util.logging.Logger;
 
+import com.cubrid.jsp.context.Context;
+import com.cubrid.jsp.context.ContextManager;
+
 public class CUBRIDServerSideDriver implements Driver {
 
     private static final String JDBC_DEFAULT_CONNECTION = "jdbc:default:connection";
@@ -78,22 +81,9 @@ public class CUBRIDServerSideDriver implements Driver {
             return null;
         }
 
-        Connection conn = null;
-        try {
-            Thread t = Thread.currentThread();
-            conn =
-                    (Connection)
-                            invoke(
-                                    "com.cubrid.jsp.ExecuteThread",
-                                    "createConnection",
-                                    null,
-                                    t,
-                                    null);
-        } catch (Exception e) {
-            /* do nothing. The exception will be dealt with in ExecuteThread */
-        }
-
-        return conn;
+        Thread t = Thread.currentThread();
+        Long ctxId = ContextManager.getContextIdByThreadId(t.getId());
+        return ContextManager.getContext(ctxId).getConnection();
     }
 
     @Override
@@ -132,16 +122,5 @@ public class CUBRIDServerSideDriver implements Driver {
     @Override
     public Logger getParentLogger() {
         throw new java.lang.UnsupportedOperationException();
-    }
-
-    private Object invoke(
-            String cls_name, String method, Class<?>[] param_cls, Object cls, Object[] params) {
-        try {
-            Class<?> c = Class.forName(cls_name);
-            Method m = c.getMethod(method, param_cls);
-            return m.invoke(cls, params);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
     }
 }

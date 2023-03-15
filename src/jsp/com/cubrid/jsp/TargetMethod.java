@@ -33,12 +33,19 @@ package com.cubrid.jsp;
 
 import com.cubrid.jsp.exception.ExecuteException;
 import cubrid.sql.CUBRIDOID;
+
+import java.lang.invoke.CallSite;
+import java.lang.invoke.LambdaMetafactory;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.util.HashMap;
+import java.util.function.Function;
 
 public class TargetMethod {
     private String className;

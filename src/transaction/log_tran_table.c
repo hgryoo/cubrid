@@ -2761,6 +2761,12 @@ logtb_set_tran_index_interrupt (THREAD_ENTRY * thread_p, int tran_index, bool se
 	      perfmon_inc_stat (thread_p, PSTAT_TRAN_NUM_INTERRUPTS);
 	    }
 
+    cubmethod::runtime_context * rctx = cubmethod::get_rctx (thread_p);
+    if (rctx && er_errid () == ER_INTERRUPTING)
+    {
+      rctx->set_interrupt (ER_INTERRUPTED);
+    }
+
 	  return true;
 	}
     }

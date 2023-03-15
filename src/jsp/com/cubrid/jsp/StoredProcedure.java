@@ -49,12 +49,16 @@ import com.cubrid.jsp.value.TimeValue;
 import com.cubrid.jsp.value.TimestampValue;
 import com.cubrid.jsp.value.Value;
 import cubrid.sql.CUBRIDOID;
+
+import java.lang.invoke.CallSite;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.ResultSet;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.util.function.Function;
 
 public class StoredProcedure {
     private String signature;
@@ -74,12 +78,9 @@ public class StoredProcedure {
         checkArgs();
     }
 
-    public Object[] getResolved() {
-        Object[] resolved = new Object[args.length];
-        for (int i = 0; i < args.length; i++) {
-            resolved[i] = args[i].getResolved();
-        }
-        return resolved;
+    public StoredProcedure(String signature) throws Exception {
+        this.signature = signature;
+        this.target = TargetMethodCache.getInstance().get(signature);
     }
 
     public void setArgs() {}
@@ -265,12 +266,197 @@ public class StoredProcedure {
         }
     }
 
-    public Value invoke() throws Exception {
-        Method m = target.getMethod();
-        if (cachedResolved == null) {
-            cachedResolved = getResolved();
+    public Object[] resolveArgs (Value[] args) throws TypeMismatchException {
+        Class<?>[] argsTypes = target.getArgsTypes();
+        if (argsTypes.length != args.length) {
+            throw new TypeMismatchException(
+                    "Argument count mismatch: expected "
+                            + argsTypes.length
+                            + ", but "
+                            + args.length);
         }
-        Object result = m.invoke(null, cachedResolved);
+
+        Object[] resolvedArray = new Object[args.length];
+        for (int i = 0; i < argsTypes.length; i++) {
+            Object resolved;
+            if (args[i] == null) {
+                resolved = null;
+            } else if (argsTypes[i] == byte.class || argsTypes[i] == Byte.class) {
+                resolved = args[i].toByteObject();
+            } else if (argsTypes[i] == short.class || argsTypes[i] == Short.class) {
+                resolved = args[i].toShortObject();
+
+            } else if (argsTypes[i] == int.class || argsTypes[i] == Integer.class) {
+                resolved = args[i].toIntegerObject();
+
+            } else if (argsTypes[i] == long.class || argsTypes[i] == Long.class) {
+                resolved = args[i].toLongObject();
+
+            } else if (argsTypes[i] == float.class || argsTypes[i] == Float.class) {
+                resolved = args[i].toFloatObject();
+
+            } else if (argsTypes[i] == double.class || argsTypes[i] == Double.class) {
+                resolved = args[i].toDoubleObject();
+
+            } else if (argsTypes[i] == String.class) {
+                resolved = args[i].toString();
+
+            } else if (argsTypes[i] == Date.class) {
+                resolved = args[i].toDate();
+
+            } else if (argsTypes[i] == Time.class) {
+                resolved = args[i].toTime();
+
+            } else if (argsTypes[i] == Timestamp.class) {
+                resolved = args[i].toTimestamp();
+
+            } else if (argsTypes[i] == BigDecimal.class) {
+                resolved = args[i].toBigDecimal();
+
+            } else if (argsTypes[i] == CUBRIDOID.class) {
+                resolved = args[i].toOid();
+
+            } else if (argsTypes[i] == Object.class) {
+                resolved = args[i].toObject();
+
+            } else if (argsTypes[i] == byte[].class) {
+                resolved = args[i].toByteArray();
+
+            } else if (argsTypes[i] == short[].class) {
+                resolved = args[i].toShortArray();
+
+            } else if (argsTypes[i] == int[].class) {
+                resolved = args[i].toIntegerArray();
+
+            } else if (argsTypes[i] == long[].class) {
+                resolved = args[i].toLongArray();
+
+            } else if (argsTypes[i] == float[].class) {
+                resolved = args[i].toFloatArray();
+
+            } else if (argsTypes[i] == double[].class) {
+                resolved = args[i].toDoubleArray();
+
+            } else if (argsTypes[i] == String[].class) {
+                resolved = args[i].toStringArray();
+
+            } else if (argsTypes[i] == Byte[].class) {
+                resolved = args[i].toByteObjArray();
+
+            } else if (argsTypes[i] == Short[].class) {
+                resolved = args[i].toShortObjArray();
+
+            } else if (argsTypes[i] == Integer[].class) {
+                resolved = args[i].toIntegerObjArray();
+
+            } else if (argsTypes[i] == Long[].class) {
+                resolved = args[i].toLongObjArray();
+
+            } else if (argsTypes[i] == Float[].class) {
+                resolved = args[i].toFloatObjArray();
+
+            } else if (argsTypes[i] == Double[].class) {
+                resolved = args[i].toDoubleObjArray();
+
+            } else if (argsTypes[i] == Date[].class) {
+                resolved = args[i].toDateArray();
+
+            } else if (argsTypes[i] == Time[].class) {
+                resolved = args[i].toTimeArray();
+
+            } else if (argsTypes[i] == Timestamp[].class) {
+                resolved = args[i].toTimestampArray();
+
+            } else if (argsTypes[i] == BigDecimal[].class) {
+                resolved = args[i].toBigDecimalArray();
+
+            } else if (argsTypes[i] == CUBRIDOID[].class) {
+                resolved = args[i].toOidArray();
+
+            } else if (argsTypes[i] == ResultSet[].class) {
+                resolved = args[i].toResultSetArray(null);
+
+            } else if (argsTypes[i] == Object[].class) {
+                resolved = args[i].toObjectArray();
+
+            } else if (argsTypes[i] == byte[][].class) {
+                resolved = args[i].toByteArrayArray();
+
+            } else if (argsTypes[i] == short[][].class) {
+                resolved = args[i].toShortArrayArray();
+
+            } else if (argsTypes[i] == int[][].class) {
+                resolved = args[i].toIntegerArrayArray();
+
+            } else if (argsTypes[i] == long[][].class) {
+                resolved = args[i].toLongArrayArray();
+
+            } else if (argsTypes[i] == float[][].class) {
+                resolved = args[i].toFloatArrayArray();
+
+            } else if (argsTypes[i] == double[].class) {
+                resolved = args[i].toDoubleArrayArray();
+
+            } else if (argsTypes[i] == String[][].class) {
+                resolved = args[i].toStringArrayArray();
+
+            } else if (argsTypes[i] == Byte[][].class) {
+                resolved = args[i].toByteObjArrayArray();
+
+            } else if (argsTypes[i] == Short[][].class) {
+                resolved = args[i].toShortObjArrayArray();
+
+            } else if (argsTypes[i] == Integer[][].class) {
+                resolved = args[i].toIntegerObjArrayArray();
+
+            } else if (argsTypes[i] == Long[][].class) {
+                resolved = args[i].toLongObjArrayArray();
+
+            } else if (argsTypes[i] == Float[][].class) {
+                resolved = args[i].toFloatObjArrayArray();
+
+            } else if (argsTypes[i] == Double[][].class) {
+                resolved = args[i].toDoubleObjArrayArray();
+
+            } else if (argsTypes[i] == Date[][].class) {
+                resolved = args[i].toDateArrayArray();
+
+            } else if (argsTypes[i] == Time[][].class) {
+                resolved = args[i].toTimeArrayArray();
+
+            } else if (argsTypes[i] == Timestamp[][].class) {
+                resolved = args[i].toTimestampArrayArray();
+
+            } else if (argsTypes[i] == BigDecimal[][].class) {
+                resolved = args[i].toBigDecimalArrayArray();
+
+            } else if (argsTypes[i] == CUBRIDOID[][].class) {
+                resolved = args[i].toOidArrayArray();
+
+            } else if (argsTypes[i] == ResultSet[][].class) {
+                resolved = args[i].toResultSetArrayArray(null);
+
+            } else if (argsTypes[i] == Object[][].class) {
+                resolved = args[i].toObjectArrayArray();
+
+            } else {
+                throw new TypeMismatchException(
+                        "Not supported data type: '" + argsTypes[i].getName() + "'");
+            }
+            resolvedArray[i] = resolved;
+        }
+        return resolvedArray;
+    }
+
+    public Value invoke (Value[] args) throws Exception {
+        Method m = target.getMethod();
+        Object[] resolved = null;
+        if (args != null) {
+            resolved = resolveArgs (args);
+            this.args = args;
+        }
+        Object result = m.invoke(null, resolved);
+
         return makeReturnValue(result);
     }
 

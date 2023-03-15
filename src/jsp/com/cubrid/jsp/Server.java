@@ -31,17 +31,27 @@
 
 package com.cubrid.jsp;
 
+import com.cubrid.jsp.communication.ConnectionEntryPool;
+import com.cubrid.jsp.context.ContextManager;
+import com.cubrid.jsp.handler.AcceptHandler;
+import com.cubrid.jsp.handler.LoggingHandler;
+import com.cubrid.jsp.task.ExecutorManager;
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.management.ManagementFactory;
 import java.lang.management.RuntimeMXBean;
-import java.net.ServerSocket;
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.channels.spi.SelectorProvider;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import org.newsclub.net.unix.AFUNIXServerSocket;
+import org.newsclub.net.unix.AFUNIXSelectorProvider;
 import org.newsclub.net.unix.AFUNIXSocketAddress;
 
 public class Server {
@@ -57,10 +67,16 @@ public class Server {
 
     private static final int udsPortNumber = -1;
     private int portNumber = 0;
-    private Thread socketListener = null;
+
     private AtomicBoolean shutdown;
 
     private static Server serverInstance = null;
+
+    // Threads
+    private Thread socketListener = null;
+
+    private static LoggingHandler loggingHandler = null;
+    private static Thread loggingThread = null;
 
     private Server(
             String name, String path, String version, String rPath, String uPath, String port)
@@ -71,9 +87,16 @@ public class Server {
         udsPath = uPath;
         shutdown = new AtomicBoolean(false);
 
-        ServerSocket serverSocket = null;
+        SelectorProvider provider = null;
+        ServerSocketChannel channel = null;
+        SocketAddress sockAddr = null;
         int port_number = Integer.parseInt(port);
         try {
+            String logFilePath = rootPath + File.separatorChar + LOG_DIR + File.separatorChar + serverName + "_java.log";
+            loggingHandler = new LoggingHandler(logFilePath);
+            loggingThread = new Thread (loggingHandler);
+            loggingThread.start ();
+
             if (OSValidator.IS_UNIX && port_number == -1) {
                 final File socketFile = new File(udsPath);
                 if (socketFile.exists()) {
@@ -86,29 +109,39 @@ public class Server {
                     socketDir.mkdirs();
                 }
 
-                AFUNIXSocketAddress sockAddr = AFUNIXSocketAddress.of(socketFile);
-                serverSocket = AFUNIXServerSocket.bindOn(sockAddr);
+                provider = AFUNIXSelectorProvider.provider();
+                channel = provider.openServerSocketChannel();
+                sockAddr = AFUNIXSocketAddress.of(socketFile);
+                channel.bind(sockAddr);
                 portNumber = udsPortNumber;
             } else {
-                serverSocket = new ServerSocket(port_number);
-                portNumber = serverSocket.getLocalPort();
+                provider = SelectorProvider.provider();
+                channel = provider.openServerSocketChannel();
+                sockAddr = new InetSocketAddress ("localhost", port_number);
+                channel.bind(sockAddr);
+                portNumber = channel.socket().getLocalPort();
             }
+
+            if (channel != null) {
+                channel.configureBlocking(false);
+
+                // initialize ConnectionEntryPool
+                ConnectionEntryPool.getConnectionEntryPool();
+                // ContextManager.getContextManager();
+                ExecutorManager.getExecutorManager();
+
+                System.setSecurityManager(new SpSecurityManager());
+                System.setProperty("cubrid.server.version", version);
+                Class.forName("com.cubrid.jsp.jdbc.CUBRIDServerSideDriver");
+    
+                getJVMArguments(); // store jvm options
+                
+                socketListener = new Thread(new AcceptHandler (provider.openSelector(), channel));
+            }
+            
         } catch (Exception e) {
             log(e);
             e.printStackTrace();
-            System.exit(1);
-        }
-
-        if (serverSocket != null) {
-            socketListener = new ListenerThread(serverSocket);
-
-            System.setSecurityManager(new SpSecurityManager());
-            System.setProperty("cubrid.server.version", version);
-            Class.forName("com.cubrid.jsp.jdbc.CUBRIDServerSideDriver");
-
-            getJVMArguments(); /* store jvm options */
-        } else {
-            /* error, serverSocket is not properly initialized */
             System.exit(1);
         }
     }
@@ -175,6 +208,7 @@ public class Server {
     public static void stop(int status) {
         getServer().setShutdown();
         getServer().stopSocketListener();
+        loggingThread.interrupt();
         System.exit(status);
     }
 
@@ -183,30 +217,10 @@ public class Server {
     }
 
     public static void log(Throwable ex) {
-        FileHandler logHandler = null;
-
-        try {
-            logHandler =
-                    new FileHandler(
-                            rootPath
-                                    + File.separatorChar
-                                    + LOG_DIR
-                                    + File.separatorChar
-                                    + serverName
-                                    + "_java.log",
-                            true);
-            logger.addHandler(logHandler);
-            logger.log(Level.SEVERE, "", ex);
-        } catch (Throwable e) {
-        } finally {
-            if (logHandler != null) {
-                try {
-                    logHandler.close();
-                    logger.removeHandler(logHandler);
-                } catch (Throwable e) {
-                }
-            }
-        }
+        StringWriter sw = new StringWriter();
+        ex.printStackTrace(new PrintWriter(sw));
+        String exceptionAsString = sw.toString();
+        loggingHandler.putLog(exceptionAsString);
     }
 
     public void setShutdown() {

@@ -31,7 +31,9 @@
 
 package com.cubrid.jsp;
 
+import java.io.File;
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -46,10 +48,12 @@ import java.util.stream.Stream;
 public class StoredProcedureClassLoader extends URLClassLoader {
     private static volatile StoredProcedureClassLoader instance = null;
 
-    private static final String ROOT_PATH = Server.getSpPath() + "/java/";
-    private static final Path root = Paths.get(ROOT_PATH);
+    private String root_path = null;
+    private Path root = null;
 
     private FileTime lastModified = null;
+
+    MethodHandles.Lookup lookup = MethodHandles.lookup();
 
     /* For singleton */
     public static synchronized StoredProcedureClassLoader getInstance() {
@@ -67,8 +71,11 @@ public class StoredProcedureClassLoader extends URLClassLoader {
 
     private void init() {
         try {
+            root_path = Server.getSpPath() + File.separator + "java" + File.separator;
+            root = Paths.get(root_path);
             addURL(root.toUri().toURL());
             initJar();
+
             lastModified = getLastModifiedTime(root);
         } catch (Exception e) {
             Server.log(e);
@@ -91,7 +98,7 @@ public class StoredProcedureClassLoader extends URLClassLoader {
         }
     }
 
-    public Class<?> loadClass(String name) throws ClassNotFoundException {
+    public synchronized Class<?> loadClass(String name) throws ClassNotFoundException {
         try {
             if (!isModified()) {
                 return super.loadClass(name);

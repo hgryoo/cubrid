@@ -40,11 +40,11 @@ import java.sql.ResultSet;
 import java.text.SimpleDateFormat;
 
 public class CUBRIDPacker {
-    private ByteBuffer buffer;
+    private ByteBuffer buffer = null;
 
     public CUBRIDPacker(ByteBuffer buffer) {
-        buffer.clear();
         this.buffer = buffer;
+        buffer.clear();
     }
 
     public CUBRIDPacker(byte[] byteArray) {
@@ -57,6 +57,12 @@ public class CUBRIDPacker {
 
     public ByteBuffer getBuffer() {
         return this.buffer;
+    }
+
+    public void clear () {
+        if (this.buffer != null) {
+            this.buffer.clear();
+        }
     }
 
     public void packInt(int value) {
@@ -221,6 +227,10 @@ public class CUBRIDPacker {
             // FIXME: treat as NULL
             packInt(DBType.DB_NULL);
         }
+    }
+
+    public int getPosition () {
+        return buffer.position();
     }
 
     private void align(int size) {
