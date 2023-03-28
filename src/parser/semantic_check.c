@@ -9951,6 +9951,26 @@ pt_check_into_clause (PARSER_CONTEXT * parser, PT_NODE * qry)
   if (tgt_cnt != col_cnt)
     {
       PT_ERRORmf2 (parser, into, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_COL_CNT_NE_INTO_CNT, col_cnt, tgt_cnt);
+      return;
+    }
+
+  // FIX ME!!
+  if (parser->flag.do_late_binding == 1)
+    {
+      // set external into labels in parser context
+      char **external_into_label = (char **) malloc (tgt_cnt * sizeof (char *));
+      for (int i = 0; i < tgt_cnt; i++)
+	{
+	  external_into_label[i] = (char *) malloc (255);
+	  strncpy (external_into_label[i], into->info.name.original, 255);
+	  into = into->next;
+	}
+      parser->external_into_label_cnt = tgt_cnt;
+      parser->external_into_label = external_into_label;
+
+      // remove into list node
+      parser_free_tree (parser, qry->info.query.into_list);
+      qry->info.query.into_list = NULL;
     }
 }
 
