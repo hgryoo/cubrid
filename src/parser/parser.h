@@ -271,8 +271,6 @@ extern "C"
 
   extern int pt_evaluate_function (PARSER_CONTEXT * parser, PT_NODE * func, DB_VALUE * dbval_res);
 
-  extern bool pt_is_symmetric_op (PT_OP_TYPE op);
-
   extern void mq_free_virtual_query_cache (PARSER_CONTEXT * parser);
   extern PARSER_CONTEXT *mq_virtual_queries (DB_OBJECT * class_obj);
 
