@@ -190,8 +190,8 @@ set(PARSER_SOURCES
   ${PARSER_DIR}/cnf.c
   ${PARSER_DIR}/compile.c
   ${PARSER_DIR}/double_byte_support.c
-  ${PARSER_DIR}/expr_type.cpp
-  ${PARSER_DIR}/func_type.cpp
+  ${PARSER_DIR}/type_eval_expr.cpp
+  ${PARSER_DIR}/type_eval_func.cpp
   ${PARSER_DIR}/keyword.c
   ${PARSER_DIR}/method_transform.c
   ${PARSER_DIR}/name_resolution.c
@@ -212,7 +212,7 @@ set(PARSER_SOURCES
   ${PARSER_DIR}/xasl_generation.c
   )
 set(PARSER_HEADERS
-  ${PARSER_DIR}/func_type.hpp
+  ${PARSER_DIR}/type_eval_func.hpp
   ${PARSER_DIR}/parse_type.hpp
   ${PARSER_DIR}/parser_allocator.hpp
   ${PARSER_DIR}/xasl_regu_alloc.hpp

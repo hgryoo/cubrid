@@ -17,11 +17,11 @@
  */
 
 /*
- * expr_type.hpp
+ * type_eval_expr.hpp
  */
 
-#ifndef _EXPR_TYPE_HPP_
-#define _EXPR_TYPE_HPP_
+#ifndef _TYPE_EVAL_EXPR_HPP_
+#define _TYPE_EVAL_EXPR_HPP_
 
 #include "parse_type.hpp"
 

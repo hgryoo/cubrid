@@ -59,8 +59,8 @@
 #include "object_template.h"
 #include "db.h"
 #include "tz_support.h"
-#include "func_type.hpp"
-#include "expr_type.hpp"
+#include "type_eval_func.hpp"
+#include "type_eval_expr.hpp"
 
 #include "dbtype.h"
 

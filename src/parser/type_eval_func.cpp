@@ -17,10 +17,10 @@
  */
 
 /*
- * func_type.cpp
+ * type_eval_func.cpp
  */
 
-#include "func_type.hpp"
+#include "type_eval_func.hpp"
 #include "message_catalog.h"
 #include "object_primitive.h"
 #include "parse_tree.h"

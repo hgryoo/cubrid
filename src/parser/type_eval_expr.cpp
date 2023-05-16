@@ -17,10 +17,10 @@
  */
 
 /*
- * expr_type.cpp
+ * type_eval_expr.cpp
  */
 
-#include "expr_type.hpp"
+#include "type_eval_expr.hpp"
 #include "message_catalog.h"
 #include "object_primitive.h"
 #include "parse_tree.h"

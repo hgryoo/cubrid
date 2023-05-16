@@ -17,11 +17,11 @@
  */
 
 /*
- * func_type.hpp
+ * type_eval_func.hpp
  */
 
-#ifndef _FUNC_TYPE_HPP_
-#define _FUNC_TYPE_HPP_
+#ifndef _TYPE_EVAL_FUNC_HPP_
+#define _TYPE_EVAL_FUNC_HPP_
 
 #include "parse_type.hpp"
 #include "string_buffer.hpp"
