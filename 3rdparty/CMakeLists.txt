@@ -69,15 +69,15 @@ set(DEFAULT_CONFIGURE_OPTS <SOURCE_DIR>/configure --prefix=${CMAKE_BINARY_DIR}/3
 # For Windows
 if(WIN32)
   # directory path for Windows
-  set(WINDOWS_BASE_DIR ${CMAKE_SOURCE_DIR}/win)
-  set(WINDOWS_EXTERNAL_DIR ${WINDOWS_BASE_DIR}/3rdparty)
-  set(WINDOWS_EXTERNAL_LIB_DIR ${WINDOWS_EXTERNAL_DIR}/lib64)
-  set(WINDOWS_EXTERNAL_INCLUDE_DIR ${WINDOWS_EXTERNAL_DIR}/include)
+  set(WINDOWS_BASE_DIR_ROOT ${CMAKE_SOURCE_DIR}/win)
+  set(WINDOWS_EXTERNAL_DIR_ROOT ${WINDOWS_BASE_DIR_ROOT}/3rdparty)
+  set(WINDOWS_EXTERNAL_LIB_DIR ${WINDOWS_EXTERNAL_DIR_ROOT}/lib64)
+  set(WINDOWS_EXTERNAL_INCLUDE_DIR ${WINDOWS_EXTERNAL_DIR_ROOT}/include)
   # I could not load debug dll for jansson. disabled for now.
   # if(CMAKE_BUILD_TYPE MATCHES "Debug")
-  #   set(WINDOWS_EXTERNAL_DLL_DIR ${WINDOWS_EXTERNAL_DIR}/dll_debug)
+  #   set(WINDOWS_EXTERNAL_DLL_DIR ${WINDOWS_EXTERNAL_DIR_ROOT}/dll_debug)
   # else()
-    set(WINDOWS_EXTERNAL_DLL_DIR ${WINDOWS_EXTERNAL_DIR}/dll)
+    set(WINDOWS_EXTERNAL_DLL_DIR ${WINDOWS_EXTERNAL_DIR_ROOT}/dll)
   # endif()
 endif(WIN32)
 
@@ -92,10 +92,10 @@ if(WITH_LIBFLEXBISON STREQUAL "EXTERNAL")
     # bison and flex for Windows
     set(WIN_FLEX_BISON_VERSION "2.5.22")
     set(WIN_FLEX_BISON_URL "https://github.com/lexxmark/winflexbison/releases/download/v${WIN_FLEX_BISON_VERSION}/win_flex_bison-${WIN_FLEX_BISON_VERSION}.zip")
-    set(WIN_FLEX_BISON_FILENAME "${WINDOWS_EXTERNAL_DIR}/Download/win_flex_bison.zip")
+    set(WIN_FLEX_BISON_FILENAME "${WINDOWS_EXTERNAL_DIR_ROOT}/Download/win_flex_bison.zip")
     file(DOWNLOAD ${WIN_FLEX_BISON_URL} ${WIN_FLEX_BISON_FILENAME})
 
-    set(WIN_FLEX_BISON_INSTALL_DIR "${WINDOWS_EXTERNAL_DIR}/Install/win_flex_bison")
+    set(WIN_FLEX_BISON_INSTALL_DIR "${WINDOWS_EXTERNAL_DIR_ROOT}/Install/win_flex_bison")
     file(MAKE_DIRECTORY ${WIN_FLEX_BISON_INSTALL_DIR})
     execute_process(COMMAND ${CMAKE_COMMAND} -E tar -xf ${WIN_FLEX_BISON_FILENAME} WORKING_DIRECTORY ${WIN_FLEX_BISON_INSTALL_DIR})
     set (CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ${WIN_FLEX_BISON_INSTALL_DIR} PARENT_SCOPE)
@@ -286,9 +286,9 @@ endif(UNIX)
 #
 set(LZ4_TARGET lz4)
 if(WIN32) # msvc-built lz4 v1.9.2 libraries 
-  set(LZ4_INCLUDES ${WINDOWS_EXTERNAL_DIR}/lz4/include)
-  set(LZ4_LIBS ${WINDOWS_EXTERNAL_DIR}/lz4/bin/liblz4.lib)
-  set(LZ4_DLL ${WINDOWS_EXTERNAL_DIR}/lz4/bin/liblz4.dll)
+  set(LZ4_INCLUDES ${WINDOWS_EXTERNAL_DIR_ROOT}/lz4/include)
+  set(LZ4_LIBS ${WINDOWS_EXTERNAL_DIR_ROOT}/lz4/bin/liblz4.lib)
+  set(LZ4_DLL ${WINDOWS_EXTERNAL_DIR_ROOT}/lz4/bin/liblz4.dll)
 
   add_custom_target(${LZ4_TARGET}
     COMMAND ${CMAKE_COMMAND} -E echo "  copying ${LZ4_DLL} to ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${CMAKE_BUILD_TYPE}/liblz4.dll"
@@ -345,10 +345,10 @@ if(WITH_LIBOPENSSL STREQUAL "EXTERNAL")
       )
     list(APPEND EP_TARGETS ${LIBOPENSSL_TARGET})
   else(UNIX)
-    set(LIBOPENSSL_LIBS ${WINDOWS_EXTERNAL_DIR}/openssl/lib/libssl.lib)
-    list(APPEND LIBOPENSSL_LIBS ${WINDOWS_EXTERNAL_DIR}/openssl/lib/libcrypto.lib)
+    set(LIBOPENSSL_LIBS ${WINDOWS_EXTERNAL_DIR_ROOT}/openssl/lib/libssl.lib)
+    list(APPEND LIBOPENSSL_LIBS ${WINDOWS_EXTERNAL_DIR_ROOT}/openssl/lib/libcrypto.lib)
     list(APPEND LIBOPENSSL_LIBS Crypt32 Ws2_32)
-    set(LIBOPENSSL_INCLUDES ${WINDOWS_EXTERNAL_DIR}/openssl/include)
+    set(LIBOPENSSL_INCLUDES ${WINDOWS_EXTERNAL_DIR_ROOT}/openssl/include)
   endif(UNIX)
 else(WITH_LIOPENSSL STREQUAL "SYSTEM")
   if(UNIX)
@@ -436,9 +436,9 @@ if(WITH_RE2 STREQUAL "EXTERNAL")
       "${RE2_BYPRODUCTS}"
     )
   else(UNIX)
-    set(RE2_INCLUDES ${WINDOWS_EXTERNAL_DIR}/RE2/include)
-    set(RE2_LIBS ${WINDOWS_EXTERNAL_DIR}/RE2/lib/re2.lib)
-    set(RE2_DLL ${WINDOWS_EXTERNAL_DIR}/RE2/bin/re2.dll)
+    set(RE2_INCLUDES ${WINDOWS_EXTERNAL_DIR_ROOT}/RE2/include)
+    set(RE2_LIBS ${WINDOWS_EXTERNAL_DIR_ROOT}/RE2/lib/re2.lib)
+    set(RE2_DLL ${WINDOWS_EXTERNAL_DIR_ROOT}/RE2/bin/re2.dll)
     add_custom_target(${RE2_TARGET}
       COMMAND ${CMAKE_COMMAND} -E echo "  copying ${RE2_TARGET} to ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${CMAKE_BUILD_TYPE}/re2.dll"
       COMMAND ${CMAKE_COMMAND} -E copy ${RE2_DLL} ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${CMAKE_BUILD_TYPE}/re2.dll
