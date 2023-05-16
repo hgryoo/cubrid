@@ -1480,7 +1480,7 @@ pt_apply_expressions_definition (PARSER_CONTEXT * parser, PT_NODE ** node)
   op = expr->info.expr.op;
 
   expression_definitions def;
-  if (pt_get_expression_definition (op, def) != NO_ERROR)
+  if (pt_get_expression_definition (op, def) == false)
     {
       *node = NULL;
       return NO_ERROR;
@@ -7639,7 +7639,7 @@ pt_wrap_logical_arglist_with_integer (PARSER_CONTEXT * parser, PT_NODE * node, P
 	    }
 	  else
 	    {
-	      node->info.function.arg_list = arg_list = arg;
+	      node->info.function.arg_list = arg;
 	    }
 	}
     }
@@ -7650,6 +7650,8 @@ pt_wrap_logical_arglist_with_integer (PARSER_CONTEXT * parser, PT_NODE * node, P
 static PT_NODE *
 pt_eval_function_type (PARSER_CONTEXT * parser, PT_NODE * node)
 {
+  assert (node->node_type == PT_FUNCTION);
+
   FUNC_CODE fcode = node->info.function.function_type;
   if (pt_is_function_unsupported (fcode))
     {
@@ -7673,13 +7675,14 @@ pt_eval_function_type (PARSER_CONTEXT * parser, PT_NODE * node)
       return node;
     }
 
+  // assigns to arg_list again, potentially changing the pointer if arg_list was wrapped with PT_CAST node.
+  arg_list = node->info.function.arg_list;
   if (pt_list_has_logical_nodes (arg_list))
     {
       pt_cat_error (parser, node, MSGCAT_SET_PARSER_SEMANTIC,
 		    MSGCAT_SEMANTIC_FUNC_NOT_DEFINED_ON, fcode_get_lowercase_name (fcode), "boolean");
       return node;
     }
-
 
   if (pt_is_function_new_type_checking (fcode))
     {
@@ -19471,7 +19474,7 @@ pt_fix_arguments_collation_flag (PT_NODE * expr)
     }
 
   expression_definitions def;
-  if (pt_get_expression_definition (expr->info.expr.op, def) != NO_ERROR)
+  if (pt_get_expression_definition (expr->info.expr.op, def) == false)
     {
       return;
     }

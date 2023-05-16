@@ -69,7 +69,7 @@ typedef struct compare_between_operator
 COMPARE_BETWEEN_OPERATOR pt_get_compare_between_operator_table (int i);
 int pt_get_compare_between_operator_count ();
 
-int pt_get_expression_definition (const PT_OP_TYPE op, expression_definitions &def);
+bool pt_get_expression_definition (const PT_OP_TYPE op, expression_definitions &def);
 
 bool pt_is_range_comp_op (PT_OP_TYPE op);
 bool pt_is_range_expression (const PT_OP_TYPE op);

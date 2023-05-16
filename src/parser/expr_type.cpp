@@ -62,7 +62,7 @@ expression_signature::expression_signature ()
  *   op(in)	: the expression operator
  *   def(in/out): the expression definition
  */
-int
+bool
 pt_get_expression_definition (const PT_OP_TYPE op, expression_definitions &def)
 {
   expr_all_signatures sigs;
@@ -1322,15 +1322,23 @@ pt_get_expression_definition (const PT_OP_TYPE op, expression_definitions &def)
       };
       break;
 
+
+    // return false, if no expression definition
+    // case 1) the expression definition is not needed for the op
+    case PT_CAST:
+      return false;
+
     default:
+      // case 2) maybe a new op is defined and it omitted
+      // here assertion
       assert (false);
-      return ER_FAILED;
+      return false;
     }
 
   def.op = op;
   def.sigs = sigs;
 
-  return NO_ERROR;
+  return true;
 }
 
 /*
