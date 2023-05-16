@@ -32,13 +32,18 @@ struct parser_node;
 #define MAX_OVERLOADS 16
 
 /* SQL expression signature */
-typedef struct expression_signature
+struct expression_signature
 {
-  PT_ARG_TYPE return_type;
-  PT_ARG_TYPE arg1_type;
-  PT_ARG_TYPE arg2_type;
-  PT_ARG_TYPE arg3_type;
-} EXPRESSION_SIGNATURE;
+  pt_arg_type return_type {PT_TYPE_NONE};
+  pt_arg_type arg1_type {PT_TYPE_NONE};
+  pt_arg_type arg2_type {PT_TYPE_NONE};
+  pt_arg_type arg3_type {PT_TYPE_NONE};
+
+  // expression_signature ();
+};
+
+using EXPRESSION_SIGNATURE = struct expression_signature;
+using expr_all_signatures = std::vector<expression_signature>;
 
 /* SQL expression definition */
 typedef struct expression_definition
@@ -48,6 +53,11 @@ typedef struct expression_definition
   EXPRESSION_SIGNATURE overloads[MAX_OVERLOADS];
 } EXPRESSION_DEFINITION;
 
+struct expression_definitions
+{
+  PT_OP_TYPE op;
+  expr_all_signatures sigs;
+};
 
 typedef struct compare_between_operator
 {
@@ -59,10 +69,7 @@ typedef struct compare_between_operator
 COMPARE_BETWEEN_OPERATOR pt_get_compare_between_operator_table (int i);
 int pt_get_compare_between_operator_count ();
 
-namespace expr_type
-{
-  
-}
+int pt_get_expression_definition (const PT_OP_TYPE op, expression_definitions &def);
 
 bool pt_is_range_comp_op (PT_OP_TYPE op);
 bool pt_is_range_expression (const PT_OP_TYPE op);
