@@ -219,7 +219,7 @@ set(PARSER_SOURCES
   ${PARSER_DIR}/scanner_support.c
   ${PARSER_DIR}/semantic_check.c
   ${PARSER_DIR}/show_meta.c
-  ${PARSER_DIR}/type_checking.c
+  ${PARSER_DIR}/type_check.c
   ${PARSER_DIR}/view_transform.c
   ${PARSER_DIR}/xasl_regu_alloc.cpp
   ${PARSER_DIR}/xasl_generation.c
@@ -554,7 +554,7 @@ SET_SOURCE_FILES_PROPERTIES(
   ${PARSER_DIR}/query_result.c
   ${PARSER_DIR}/name_resolution.c
   ${PARSER_DIR}/semantic_check.c
-  ${PARSER_DIR}/type_checking.c
+  ${PARSER_DIR}/type_check.c
   ${PARSER_DIR}/xasl_generation.c
   ${PARSER_DIR}/scanner_support.c
   ${PARSER_DIR}/view_transform.c

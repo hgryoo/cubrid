@@ -17,7 +17,7 @@
  */
 
 /*
- * type_checking.c - auxiliary functions for parse tree translation
+ * type_check.c - auxiliary functions for parse tree translation
  */
 
 #ident "$Id$"
