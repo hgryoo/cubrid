@@ -1983,3 +1983,72 @@ pt_is_symmetric_op (const PT_OP_TYPE op)
       return true;
     }
 }
+
+/*
+* pt_is_enumeration_special_comparison () - check if the comparison is a
+*     '=' comparison that involves ENUM types and constants or if it's a IN
+*     'IN' comparison in which the left operator is an ENUM.
+* return : true if it is a special ENUM comparison or false otherwise.
+* arg1 (in) : left argument
+* op (in)   : expression operator
+* arg2 (in) : right argument
+*/
+bool
+pt_is_enumeration_special_comparison (PT_NODE *arg1, PT_OP_TYPE op, PT_NODE *arg2)
+{
+  PT_NODE *arg_tmp = NULL;
+
+  if (arg1 == NULL || arg2 == NULL)
+    {
+      return false;
+    }
+
+  switch (op)
+    {
+    case PT_EQ:
+    case PT_NE:
+    case PT_NULLSAFE_EQ:
+      if (arg1->type_enum != PT_TYPE_ENUMERATION)
+	{
+	  if (arg2->type_enum != PT_TYPE_ENUMERATION)
+	    {
+	      return false;
+	    }
+
+	  arg_tmp = arg1;
+	  arg1 = arg2;
+	  arg2 = arg_tmp;
+	}
+      else if (arg2->type_enum == PT_TYPE_ENUMERATION && arg1->data_type != NULL && arg2->data_type != NULL)
+	{
+	  if (pt_is_same_enum_data_type (arg1->data_type, arg2->data_type))
+	    {
+	      return true;
+	    }
+	}
+      if (arg2->node_type == PT_EXPR)
+	{
+	  if (arg2->info.expr.op != PT_TO_ENUMERATION_VALUE)
+	    {
+	      return false;
+	    }
+	}
+      else
+	{
+	  if (!PT_IS_CONST (arg2))
+	    {
+	      return false;
+	    }
+	}
+      return true;
+    case PT_IS_IN:
+    case PT_IS_NOT_IN:
+    case PT_EQ_SOME:
+    case PT_NE_SOME:
+    case PT_EQ_ALL:
+    case PT_NE_ALL:
+      return (arg1->type_enum == PT_TYPE_ENUMERATION);
+    default:
+      return false;
+    }
+}

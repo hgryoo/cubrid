@@ -73,5 +73,6 @@ bool pt_is_op_with_forced_common_type (PT_OP_TYPE op);
 bool pt_is_range_or_comp (PT_OP_TYPE op);
 bool pt_is_op_w_collation (const PT_OP_TYPE op);
 bool pt_is_symmetric_op (PT_OP_TYPE op);
+bool pt_is_enumeration_special_comparison (PT_NODE *arg1, PT_OP_TYPE op, PT_NODE *arg2);
 
 #endif
