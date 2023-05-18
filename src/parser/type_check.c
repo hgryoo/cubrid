@@ -1471,7 +1471,7 @@ pt_apply_expressions_definition (PARSER_CONTEXT * parser, PT_NODE ** node)
     }
   op = expr->info.expr.op;
 
-  expression_definitions def;
+  EXPRESSION_DEFINITION def;
   if (pt_get_expression_definition (op, def) == false)
     {
       *node = NULL;
@@ -18253,7 +18253,7 @@ pt_fix_arguments_collation_flag (PT_NODE * expr)
       return;
     }
 
-  expression_definitions def;
+  EXPRESSION_DEFINITION def;
   if (pt_get_expression_definition (expr->info.expr.op, def) == false)
     {
       return;
