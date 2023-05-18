@@ -1973,6 +1973,46 @@ pt_is_symmetric_op (const PT_OP_TYPE op)
     }
 }
 
+bool pt_is_op_unary_special_operator_on_hv (const PT_OP_TYPE op)
+{
+  switch (op)
+    {
+    case PT_UNARY_MINUS:
+    case PT_PRIOR:
+    case PT_CONNECT_BY_ROOT:
+    case PT_QPRIOR:
+    case PT_BIT_NOT:
+    case PT_BIT_COUNT:
+      return true;
+
+    default:
+      return false;
+    }
+}
+
+/*
+* pt_is_enumeration_special_comparison () - Special case handling for unary operators on host variables
+  * (-?)
+  * (prior ?)
+  * (connect_by_root ?)
+  * ...
+* return : true if special case handling is required or false otherwise.
+* node (in) : node
+*/
+bool pt_is_node_unary_special_operator_on_hv (PT_NODE *node)
+{
+  return (node->node_type == PT_EXPR
+	  && node->type_enum == PT_TYPE_MAYBE
+	  && pt_is_op_unary_special_operator_on_hv (node->info.expr.op)
+	  && pt_is_host_var_with_maybe_type (node->info.expr.arg1)
+	 );
+}
+
+bool pt_is_host_var_with_maybe_type (PT_NODE *node)
+{
+  return node->type_enum == PT_TYPE_MAYBE && node->node_type == PT_HOST_VAR;
+}
+
 /*
 * pt_is_enumeration_special_comparison () - check if the comparison is a
 *     '=' comparison that involves ENUM types and constants or if it's a IN

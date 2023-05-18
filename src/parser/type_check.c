@@ -3941,6 +3941,7 @@ pt_eval_expr_type (PARSER_CONTEXT * parser, PT_NODE * node)
 	  goto error;
 	}
     }
+
   /* shortcut for FUNCTION HOLDER */
   if (op == PT_FUNCTION_HOLDER)
     {
@@ -3978,12 +3979,7 @@ pt_eval_expr_type (PARSER_CONTEXT * parser, PT_NODE * node)
 	}
 
       /* Special case handling for unary operators on host variables (-?) or (prior ?) or (connect_by_root ?) */
-      if (arg1->node_type == PT_EXPR
-	  && (arg1->info.expr.op == PT_UNARY_MINUS || arg1->info.expr.op == PT_PRIOR
-	      || arg1->info.expr.op == PT_CONNECT_BY_ROOT || arg1->info.expr.op == PT_QPRIOR
-	      || arg1->info.expr.op == PT_BIT_NOT || arg1->info.expr.op == PT_BIT_COUNT)
-	  && arg1->type_enum == PT_TYPE_MAYBE && arg1->info.expr.arg1->node_type == PT_HOST_VAR
-	  && arg1->info.expr.arg1->type_enum == PT_TYPE_MAYBE)
+      if (pt_is_node_unary_special_operator_on_hv (arg1))
 	{
 	  arg1_hv = arg1->info.expr.arg1;
 	}
@@ -4020,12 +4016,7 @@ pt_eval_expr_type (PARSER_CONTEXT * parser, PT_NODE * node)
 	}
 
       /* Special case handling for unary operators on host variables (-?) or (prior ?) or (connect_by_root ?) */
-      if (arg2->node_type == PT_EXPR
-	  && (arg2->info.expr.op == PT_UNARY_MINUS || arg2->info.expr.op == PT_PRIOR
-	      || arg2->info.expr.op == PT_CONNECT_BY_ROOT || arg2->info.expr.op == PT_QPRIOR
-	      || arg2->info.expr.op == PT_BIT_NOT || arg2->info.expr.op == PT_BIT_COUNT)
-	  && arg2->type_enum == PT_TYPE_MAYBE && arg2->info.expr.arg1->node_type == PT_HOST_VAR
-	  && arg2->info.expr.arg1->type_enum == PT_TYPE_MAYBE)
+      if (pt_is_node_unary_special_operator_on_hv (arg2))
 	{
 	  arg2_hv = arg2->info.expr.arg1;
 	}

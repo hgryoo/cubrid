@@ -57,7 +57,7 @@ typedef struct compare_between_operator
   PT_OP_TYPE between;
 } COMPARE_BETWEEN_OPERATOR;
 
-class type_check_expr_helper : public type_check_helper
+class type_check_expr_helper : public cubparser::type_check_helper
 {
   public:
     type_check_expr_helper (parser_context *parser, parser_node *node)
@@ -84,6 +84,12 @@ bool pt_is_op_with_forced_common_type (PT_OP_TYPE op);
 bool pt_is_range_or_comp (PT_OP_TYPE op);
 bool pt_is_op_w_collation (const PT_OP_TYPE op);
 bool pt_is_symmetric_op (PT_OP_TYPE op);
+
+bool pt_is_op_unary_special_operator_on_hv (const PT_OP_TYPE op);
+
+bool pt_is_node_unary_special_operator_on_hv (PT_NODE *node);
+bool pt_is_host_var_with_maybe_type (PT_NODE *node);
+
 bool pt_is_enumeration_special_comparison (PT_NODE *arg1, PT_OP_TYPE op, PT_NODE *arg2);
 
 #endif
