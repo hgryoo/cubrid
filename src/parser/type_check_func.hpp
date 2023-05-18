@@ -80,23 +80,20 @@ namespace func_type
   bool can_signature_have_collation (const pt_arg_type &arg_sig);
   bool sig_has_json_args (const func_signature &sig);
 
-  class Node
+  class Node : public cubparser::type_check_helper
   {
     private:
-      parser_context *m_parser;
-      parser_node *m_node;
       signature_compatibility m_best_signature;
 
     public:
       Node (parser_context *parser, parser_node *node)
-	: m_parser (parser)
-	, m_node (node)
+      : cubparser::type_check_helper (parser, node)
       {
       }
 
       parser_node *get_arg (size_t index);
 
-      PT_NODE *type_checking ();
+      PT_NODE *do_type_checking () override;
 
     protected:
       bool preprocess(); //preprocess current function node type for special cases

@@ -7541,7 +7541,7 @@ pt_eval_function_type (PARSER_CONTEXT * parser, PT_NODE * node)
   if (pt_is_function_new_type_checking (fcode))
     {
       func_type::Node funcNode (parser, node);
-      return funcNode.type_checking ();
+      return funcNode.do_type_checking ();
     }
   else
     {

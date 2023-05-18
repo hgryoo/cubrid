@@ -806,7 +806,7 @@ namespace func_type
   }
 
   PT_NODE *
-  Node::type_checking ()
+  Node::do_type_checking ()
   {
     if (m_node->info.function.is_type_checked)
       {
