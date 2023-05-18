@@ -1771,7 +1771,13 @@ pt_is_op_w_collation (const PT_OP_TYPE op)
 }
 
 /*
- * pt_is_symmetric_op () - TODO: need description
+ * pt_is_symmetric_op () - In the context of type inference, symmetric operators can be relevant when determining the types of operands and the resulting type of an operation.
+      When encountering a symmetric operator during type inference, the types of the operands can provide valuable information for inferring the resulting type.
+      If the types of the operands are known, the resulting type can often be inferred.
+      For example, a symmetric operator "+"(PT_PLUS) that performs addition.
+      If the type of one operand is known to be an integer and the type of the other operand is known to be a floating-point number,
+      the resulting type can be inferred to be a floating-point number.
+      This inference is possible because addition is a symmetric operation, and the order of the operands does not affect the result.
  *   return:
  *   op(in):
  */
