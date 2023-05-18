@@ -17,14 +17,15 @@
  */
 
 /*
- * type_eval_func.hpp
+ * type_check_func.hpp
  */
 
-#ifndef _TYPE_EVAL_FUNC_HPP_
-#define _TYPE_EVAL_FUNC_HPP_
+#ifndef _TYPE_CHECK_FUNC_HPP_
+#define _TYPE_CHECK_FUNC_HPP_
 
 #include "parse_type.hpp"
 #include "string_buffer.hpp"
+#include "type_check_helper.hpp"
 #include <vector>
 
 struct parser_context;

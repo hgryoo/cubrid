@@ -59,8 +59,8 @@
 #include "object_template.h"
 #include "db.h"
 #include "tz_support.h"
-#include "type_eval_func.hpp"
-#include "type_eval_expr.hpp"
+#include "type_check_func.hpp"
+#include "type_check_expr.hpp"
 
 #include "dbtype.h"
 
@@ -7498,7 +7498,7 @@ pt_wrap_logical_arglist_with_integer (PARSER_CONTEXT * parser, PT_NODE * node, P
   return NO_ERROR;
 }
 
-/* pt_eval_function_type() - front API of evaluating type of function (PT_FUNCTION). see type_eval_func.cpp
+/* pt_eval_function_type() - front API of evaluating type of function (PT_FUNCTION). see type_check_func.cpp
     return: type checked and evaluated PT_FUNCTION node
 */
 static PT_NODE *

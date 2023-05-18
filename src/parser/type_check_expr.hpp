@@ -1,5 +1,5 @@
 /*
- * Copyright 2008 Search Solution Corporation
+ * 
  * Copyright 2016 CUBRID Corporation
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,11 +17,11 @@
  */
 
 /*
- * type_eval_expr.hpp
+ * type_check_expr.hpp
  */
 
-#ifndef _TYPE_EVAL_EXPR_HPP_
-#define _TYPE_EVAL_EXPR_HPP_
+#ifndef _TYPE_CHECK_EXPR_HPP_
+#define _TYPE_CHECK_EXPR_HPP_
 
 #include "parse_type.hpp"
 
@@ -35,8 +35,6 @@ struct expression_signature
   pt_arg_type arg1_type {PT_TYPE_NONE};
   pt_arg_type arg2_type {PT_TYPE_NONE};
   pt_arg_type arg3_type {PT_TYPE_NONE};
-
-  // expression_signature ();
 };
 
 using EXPRESSION_SIGNATURE = struct expression_signature;

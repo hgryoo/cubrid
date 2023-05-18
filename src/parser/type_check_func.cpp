@@ -17,10 +17,10 @@
  */
 
 /*
- * type_eval_func.cpp
+ * type_check_func.cpp
  */
 
-#include "type_eval_func.hpp"
+#include "type_check_func.hpp"
 #include "message_catalog.h"
 #include "object_primitive.h"
 #include "parse_tree.h"
@@ -1490,7 +1490,7 @@ static int pt_character_length_for_node (PT_NODE *node, const PT_TYPE_ENUM coerc
  *             an expression with aggregate functions.
  *
  * TODO - remove me when all functions are migrated to new evaluation
- * GIVEUP - just moved from type_check.c to type_eval_func.cpp
+ * GIVEUP - just moved from type_check.c to type_check_func.cpp
  */
 PT_NODE *
 pt_eval_function_type_aggregate (PARSER_CONTEXT *parser, PT_NODE *node)
