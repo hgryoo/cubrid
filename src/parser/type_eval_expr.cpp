@@ -45,17 +45,6 @@ static constexpr COMPARE_BETWEEN_OPERATOR pt_Compare_between_operator_table[] =
 constexpr int COMPARE_BETWEEN_OPERATOR_COUNT {sizeof (pt_Compare_between_operator_table)/sizeof (COMPARE_BETWEEN_OPERATOR)};
 
 /*
-expression_signature::expression_signature ()
-: return_type {PT_TYPE_NONE}
-, arg1_type {PT_TYPE_NONE}
-, arg2_type {PT_TYPE_NONE}
-, arg3_type {PT_TYPE_NONE}
-{
-  //
-}
-*/
-
-/*
  * pt_get_expression_definition () - get the expression definition for the
  *				     expression op.
  *   return: true if the expression has a definition, false otherwise
