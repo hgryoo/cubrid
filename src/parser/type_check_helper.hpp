@@ -29,10 +29,6 @@ namespace cubparser
 {
   class type_check_helper
   {
-    protected:
-      parser_context *m_parser;
-      parser_node *m_node;
-
     public:
       type_check_helper (parser_context *parser, parser_node *node)
 	: m_parser (parser)
@@ -43,6 +39,10 @@ namespace cubparser
 
       // parser_node *get_arg (size_t index);
       virtual PT_NODE *do_type_checking () = 0;
+
+    protected:
+      parser_context *m_parser;
+      parser_node *m_node;
   };
 }
 
