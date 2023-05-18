@@ -45,19 +45,14 @@ struct expression_signature
 using EXPRESSION_SIGNATURE = struct expression_signature;
 using expr_all_signatures = std::vector<expression_signature>;
 
-/* SQL expression definition */
-typedef struct expression_definition
-{
-  PT_OP_TYPE op;
-  int overloads_count;
-  EXPRESSION_SIGNATURE overloads[MAX_OVERLOADS];
-} EXPRESSION_DEFINITION;
-
+/* SQL expression definition (set of overloads) */
 struct expression_definitions
 {
   PT_OP_TYPE op;
   expr_all_signatures sigs;
 };
+
+using EXPRESSION_DEFINITION = struct expression_definitions;
 
 typedef struct compare_between_operator
 {
