@@ -1,5 +1,5 @@
 /*
- * 
+ *
  * Copyright 2016 CUBRID Corporation
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,7 @@
 #define _TYPE_CHECK_EXPR_HPP_
 
 #include "parse_type.hpp"
+#include "type_check_helper.hpp"
 
 struct parser_context;
 struct parser_node;
@@ -55,6 +56,21 @@ typedef struct compare_between_operator
   PT_OP_TYPE right;
   PT_OP_TYPE between;
 } COMPARE_BETWEEN_OPERATOR;
+
+class type_check_expr_helper : public type_check_helper
+{
+  public:
+    type_check_expr_helper (parser_context *parser, parser_node *node)
+      : cubparser::type_check_helper (parser, node)
+    {
+      //
+    }
+
+    PT_NODE *do_type_checking () override;
+
+  protected:
+
+};
 
 COMPARE_BETWEEN_OPERATOR pt_get_compare_between_operator_table (int i);
 int pt_get_compare_between_operator_count ();
