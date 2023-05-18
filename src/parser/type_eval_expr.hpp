@@ -28,9 +28,6 @@
 struct parser_context;
 struct parser_node;
 
-/* maximum number of overloads for an expression */
-#define MAX_OVERLOADS 16
-
 /* SQL expression signature */
 struct expression_signature
 {
