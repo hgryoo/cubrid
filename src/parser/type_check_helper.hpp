@@ -38,7 +38,12 @@ namespace cubparser
       }
 
       // parser_node *get_arg (size_t index);
-      virtual PT_NODE *do_type_checking () = 0;
+      virtual int do_type_checking () = 0;
+
+      inline PT_NODE *get_node ()
+      {
+	return m_node;
+      }
 
     protected:
       parser_context *m_parser;

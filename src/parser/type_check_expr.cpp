@@ -21,11 +21,14 @@
  */
 
 #include "type_check_expr.hpp"
+
+#include "type_check.h"
 #include "message_catalog.h"
 #include "object_primitive.h"
 #include "parse_tree.h"
 #include "parser.h"
 #include "parser_message.h"
+#include "dbtype_function.h"
 
 static constexpr COMPARE_BETWEEN_OPERATOR pt_Compare_between_operator_table[] =
 {
@@ -1311,15 +1314,36 @@ pt_get_expression_definition (const PT_OP_TYPE op, expression_definitions &def)
       };
       break;
 
-
     // return false, if no expression definition
     // case 1) the expression definition is not needed for the op
     case PT_CAST:
+    case PT_RANGE:
+    case PT_IF:
+    case PT_ASSIGN:
+    case PT_BETWEEN_AND:
+    case PT_BETWEEN_GE_LE:
+    case PT_BETWEEN_GE_LT:
+    case PT_BETWEEN_GT_LE:
+    case PT_BETWEEN_GT_LT:
+    case PT_LIKE_ESCAPE:
+    case PT_CASE:
+    case PT_PATH_EXPR_SET:
+    case PT_ENCRYPT:
+    case PT_DECRYPT:
+    case PT_DECODE:
+    case PT_FIELD:
+    case PT_DATE_ADD:
+    case PT_DATE_SUB:
+    case PT_STR_TO_DATE:
+    case PT_OID_OF_DUPLICATE_KEY:
+    case PT_FUNCTION_HOLDER:
+    case PT_LAST_OPCODE:
+    case PT_EXISTS:
       return false;
 
-    default:
+      // default:
       // case 2) maybe a new op is defined and it omitted
-      // here assertion
+      // TODO: need assertion?
       assert (false);
       return false;
     }
@@ -2080,4 +2104,419 @@ pt_is_enumeration_special_comparison (PT_NODE *arg1, PT_OP_TYPE op, PT_NODE *arg
     default:
       return false;
     }
+}
+
+//
+//
+//
+
+int
+type_check_expr_helper::do_type_checking ()
+{
+  int code = NO_ERROR;
+  if (m_is_finished)
+    {
+      goto exit;
+    }
+
+  /* handle special cases for the enumeration type */
+  if (pt_is_enumeration_special_comparison (GET_ARG1 (), GET_OP(), GET_ARG2()))
+    {
+      if ((code = handle_special_enumeration_op ()) != NO_ERROR || m_is_finished)
+	{
+	  goto exit;
+	}
+    }
+
+  if (GET_OP() == PT_FUNCTION_HOLDER)
+    {
+      if ((code = eval_function_holder ()) != NO_ERROR || m_is_finished)
+	{
+	  goto exit;
+	}
+    }
+
+  // TODO: old type evaluation routine shoule be performed
+  // remove me if the old type evaluation routine is migrated to here
+  m_is_finished = false;
+  return code;
+
+exit:
+  return code;
+}
+
+bool
+type_check_expr_helper::preprocess ()
+{
+  return false;
+}
+
+void
+type_check_expr_helper::handle_error ()
+{
+
+}
+
+int
+type_check_expr_helper::handle_special_enumeration_op ()
+{
+  /* handle special cases for the enumeration type */
+  m_node = pt_fix_enumeration_comparison (m_parser, m_node);
+  if (m_node == NULL)
+    {
+      m_is_finished = true;
+      return NO_ERROR;
+    }
+
+  if (pt_has_error (m_parser))
+    {
+      // TODO: error handling?
+      m_is_finished = true;
+      return ER_FAILED;
+    }
+
+  m_is_finished = false;
+  return NO_ERROR;
+}
+
+int
+type_check_expr_helper::eval_function_holder ()
+{
+  PT_NODE *func = NULL;
+  /* this may be a 2nd pass, tree may be already const folded */
+  if (m_node->info.expr.arg1->node_type == PT_FUNCTION)
+    {
+      func = pt_eval_function_type (m_parser, m_node->info.expr.arg1);
+      m_node->type_enum = func->type_enum;
+      if (m_node->data_type == NULL && func->data_type != NULL)
+	{
+	  m_node->data_type = parser_copy_tree (m_parser, func->data_type);
+	}
+    }
+  else
+    {
+      assert (m_node->info.expr.arg1->node_type == PT_VALUE);
+    }
+
+  m_is_finished = true;
+  return NO_ERROR;
+}
+
+/*
+* pt_fix_enumeration_comparison () - fix comparisons for enumeration type
+* return : modified node or NULL
+* parser (in) :
+* expr (in) :
+*/
+PT_NODE *
+pt_fix_enumeration_comparison (PARSER_CONTEXT *parser, PT_NODE *expr)
+{
+  PT_NODE *arg1 = NULL, *arg2 = NULL;
+  PT_NODE *node = NULL, *save_next = NULL;
+  PT_NODE *list = NULL, *list_prev = NULL, **list_start = NULL;
+  PT_OP_TYPE op;
+  if (expr == NULL || expr->node_type != PT_EXPR)
+    {
+      return expr;
+    }
+  op = expr->info.expr.op;
+  arg1 = expr->info.expr.arg1;
+  arg2 = expr->info.expr.arg2;
+  if (arg1->type_enum == PT_TYPE_NULL || arg2->type_enum == PT_TYPE_NULL)
+    {
+      return expr;
+    }
+
+  switch (op)
+    {
+    case PT_EQ:
+    case PT_NE:
+    case PT_NULLSAFE_EQ:
+      if (PT_IS_CONST (arg1))
+	{
+	  if (PT_IS_CONST (arg2))
+	    {
+	      /* const op const does not need special handling */
+	      return expr;
+	    }
+	  /* switch arg1 with arg2 so that we have non cost operand on the left side */
+	  node = arg1;
+	  arg1 = arg2;
+	  arg2 = node;
+	}
+
+      if (arg1->type_enum != PT_TYPE_ENUMERATION || !PT_IS_CONST (arg2))
+	{
+	  /* we're only handling enumeration comp const */
+	  return expr;
+	}
+      if (pt_is_same_enum_data_type (arg1->data_type, arg2->data_type))
+	{
+	  return expr;
+	}
+
+      if (arg2->type_enum == PT_TYPE_ENUMERATION && arg2->data_type != NULL)
+	{
+	  TP_DOMAIN *domain = pt_data_type_to_db_domain (parser, arg2->data_type, NULL);
+	  DB_VALUE *dbval = pt_value_to_db (parser, arg2);
+
+	  if (domain == NULL)
+	    {
+	      return NULL;
+	    }
+	  if (dbval != NULL
+	      && ((db_get_enum_string (dbval) == NULL && db_get_enum_short (dbval) == 0)
+		  || ((db_get_enum_string (dbval) != NULL && db_get_enum_short (dbval) > 0)
+		      && tp_domain_select (domain, dbval, 0, TP_EXACT_MATCH) != NULL)))
+	    {
+	      return expr;
+	    }
+	}
+      break;
+    case PT_IS_IN:
+    case PT_IS_NOT_IN:
+    case PT_EQ_SOME:
+    case PT_NE_SOME:
+    case PT_EQ_ALL:
+    case PT_NE_ALL:
+      break;
+    default:
+      return expr;
+    }
+
+  if (arg1->data_type == NULL || arg1->data_type->info.data_type.enumeration == NULL)
+    {
+      /* we don't know the actual enumeration type */
+      return expr;
+    }
+
+  switch (op)
+    {
+    case PT_EQ:
+    case PT_NE:
+    case PT_NULLSAFE_EQ:
+      node = pt_node_to_enumeration_expr (parser, arg1->data_type, arg2);
+      if (node == NULL)
+	{
+	  return NULL;
+	}
+      arg2 = node;
+      break;
+    case PT_IS_IN:
+    case PT_IS_NOT_IN:
+    case PT_EQ_SOME:
+    case PT_NE_SOME:
+    case PT_EQ_ALL:
+    case PT_NE_ALL:
+      if (PT_IS_QUERY_NODE_TYPE (arg2->node_type))
+	{
+	  node = pt_select_list_to_enumeration_expr (parser, arg1->data_type, arg2);
+	  if (node == NULL)
+	    {
+	      return NULL;
+	    }
+	  arg2 = node;
+	  break;
+	}
+      /* not a subquery */
+      switch (arg2->node_type)
+	{
+	case PT_VALUE:
+	  assert (PT_IS_COLLECTION_TYPE (arg2->type_enum) || arg2->type_enum == PT_TYPE_EXPR_SET);
+	  /* convert this value to a multiset */
+	  node = parser_new_node (parser, PT_FUNCTION);
+	  if (node == NULL)
+	    {
+	      PT_ERRORm (parser, expr, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_OUT_OF_MEMORY);
+	      return NULL;
+	    }
+	  node->info.function.function_type = F_SET;
+	  node->info.function.arg_list = arg2->info.value.data_value.set;
+	  node->type_enum = arg2->type_enum;
+
+	  arg2->info.value.data_value.set = NULL;
+	  parser_free_tree (parser, arg2);
+	  arg2 = node;
+
+	/* fall through */
+
+	case PT_FUNCTION:
+	  list = arg2->info.function.arg_list;
+	  list_start = &arg2->info.function.arg_list;
+	  break;
+
+	default:
+	  return expr;
+	}
+
+      while (list != NULL)
+	{
+	  /* Skip nodes that already have been wrapped with PT_TO_ENUMERATION_VALUE expression or have the correct type
+	   */
+	  if ((list->node_type == PT_EXPR && list->info.expr.op == PT_TO_ENUMERATION_VALUE)
+	      || (list->type_enum == PT_TYPE_ENUMERATION
+		  && pt_is_same_enum_data_type (arg1->data_type, list->data_type)))
+	    {
+	      list_prev = list;
+	      list = list->next;
+	      continue;
+	    }
+
+	  save_next = list->next;
+	  list->next = NULL;
+	  node = pt_node_to_enumeration_expr (parser, arg1->data_type, list);
+	  if (node == NULL)
+	    {
+	      return NULL;
+	    }
+
+	  node->next = save_next;
+	  if (list_prev == NULL)
+	    {
+	      *list_start = node;
+	    }
+	  else
+	    {
+	      list_prev->next = node;
+	    }
+	  list_prev = node;
+	  list = node->next;
+	}
+      if (arg2->data_type != NULL)
+	{
+	  parser_free_tree (parser, arg2->data_type);
+	  arg2->data_type = NULL;
+	}
+      (void) pt_add_type_to_set (parser, arg2->info.function.arg_list, &arg2->data_type);
+      break;
+
+    default:
+      break;
+    }
+
+  expr->info.expr.arg1 = arg1;
+  expr->info.expr.arg2 = arg2;
+
+  return expr;
+}
+
+
+/*
+* pt_select_list_to_enumeration_expr () - wrap select list with
+*					  PT_TO_ENUMERATION_VALUE expression
+* return : new node or null
+* parser (in) :
+* data_type (in) :
+* node (in) :
+*/
+PT_NODE *
+pt_select_list_to_enumeration_expr (PARSER_CONTEXT *parser, PT_NODE *data_type, PT_NODE *node)
+{
+  PT_NODE *new_node = NULL;
+
+  if (node == NULL || data_type == NULL)
+    {
+      return node;
+    }
+
+  if (!PT_IS_QUERY_NODE_TYPE (node->node_type))
+    {
+      return node;
+    }
+  switch (node->node_type)
+    {
+    case PT_SELECT:
+    {
+      PT_NODE *item = NULL;
+      PT_NODE *prev = NULL;
+      PT_NODE *select_list = node->info.query.q.select.list;
+      for (item = select_list; item != NULL; prev = item, item = item->next)
+	{
+	  if (item->type_enum == PT_TYPE_ENUMERATION)
+	    {
+	      /* nothing to do here */
+	      continue;
+	    }
+	  new_node = pt_node_to_enumeration_expr (parser, data_type, item);
+	  if (new_node == NULL)
+	    {
+	      return NULL;
+	    }
+	  new_node->next = item->next;
+	  item->next = NULL;
+	  item = new_node;
+	  /* first node in the list */
+	  if (prev == NULL)
+	    {
+	      node->info.query.q.select.list = item;
+	    }
+	  else
+	    {
+	      prev->next = item;
+	    }
+	}
+      break;
+    }
+    case PT_DIFFERENCE:
+    case PT_INTERSECTION:
+    case PT_UNION:
+      new_node = pt_select_list_to_enumeration_expr (parser, data_type, node->info.query.q.union_.arg1);
+      if (new_node == NULL)
+	{
+	  return NULL;
+	}
+      node->info.query.q.union_.arg1 = new_node;
+      new_node = pt_select_list_to_enumeration_expr (parser, data_type, node->info.query.q.union_.arg2);
+      if (new_node == NULL)
+	{
+	  return NULL;
+	}
+      node->info.query.q.union_.arg2 = new_node;
+      break;
+    default:
+      break;
+    }
+  return node;
+}
+
+/*
+* pt_node_to_enumeration_expr () - wrap node with PT_TO_ENUMERATION_VALUE
+*				    expression
+* return : new node or null
+* parser (in) :
+* data_type (in) :
+* node (in) :
+*/
+PT_NODE *
+pt_node_to_enumeration_expr (PARSER_CONTEXT *parser, PT_NODE *data_type, PT_NODE *node)
+{
+  PT_NODE *expr = NULL;
+  if (parser == NULL || data_type == NULL || node == NULL)
+    {
+      assert (false);
+      return NULL;
+    }
+
+  if (PT_HAS_COLLATION (node->type_enum) && node->data_type != NULL)
+    {
+      if (!INTL_CAN_COERCE_CS (node->data_type->info.data_type.units, data_type->info.data_type.units))
+	{
+	  PT_ERRORmf2 (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_COERCE_UNSUPPORTED,
+		       pt_short_print (parser, node), pt_show_type_enum (PT_TYPE_ENUMERATION));
+	  return node;
+	}
+    }
+
+  expr = parser_new_node (parser, PT_EXPR);
+  if (expr == NULL)
+    {
+      PT_ERRORm (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_OUT_OF_MEMORY);
+      return NULL;
+    }
+
+  expr->info.expr.arg1 = node;
+  expr->type_enum = PT_TYPE_ENUMERATION;
+  expr->data_type = parser_copy_tree (parser, data_type);
+  expr->info.expr.op = PT_TO_ENUMERATION_VALUE;
+  return expr;
 }

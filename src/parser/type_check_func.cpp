@@ -805,13 +805,13 @@ namespace func_type
     return arg;
   }
 
-  PT_NODE *
+  int
   Node::do_type_checking ()
   {
     if (m_node->info.function.is_type_checked)
       {
 	// already checked
-	return m_node;
+	return NO_ERROR;
       }
 
     if (preprocess ())
@@ -822,7 +822,7 @@ namespace func_type
 	  {
 	    pt_cat_error (m_parser, m_node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_NO_SIGNATURES,
 			  fcode_get_uppercase_name (m_node->info.function.function_type));
-	    return m_node;
+	    return NO_ERROR;
 	  }
 	const func_signature *func_sig = get_signature (*func_sigs);
 	if (func_sig == NULL || !apply_signature (*func_sig))
@@ -841,7 +841,7 @@ namespace func_type
 	// do nothing??
       }
     m_node->info.function.is_type_checked = true;
-    return m_node;
+    return NO_ERROR;
   }
 
   bool

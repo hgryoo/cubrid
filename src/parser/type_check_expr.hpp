@@ -62,14 +62,44 @@ class type_check_expr_helper : public cubparser::type_check_helper
   public:
     type_check_expr_helper (parser_context *parser, parser_node *node)
       : cubparser::type_check_helper (parser, node)
+      , m_is_finished (false)
     {
-      //
+      assert (node && node->node_type == PT_EXPR);
     }
 
-    PT_NODE *do_type_checking () override;
+    int do_type_checking () override;
+
+    bool is_finished ()
+    {
+      return m_is_finished;
+    }
 
   protected:
+    bool m_is_finished;
 
+    bool preprocess ();
+    void handle_error ();
+
+    int handle_special_enumeration_op ();
+    int eval_function_holder ();
+
+
+    constexpr auto GET_ARG1 ()
+    {
+      return m_node->info.expr.arg1;
+    }
+    constexpr auto GET_ARG2 ()
+    {
+      return m_node->info.expr.arg2;
+    }
+    constexpr auto GET_ARG3 ()
+    {
+      return m_node->info.expr.arg3;
+    }
+    constexpr auto GET_OP ()
+    {
+      return m_node->info.expr.op;
+    }
 };
 
 COMPARE_BETWEEN_OPERATOR pt_get_compare_between_operator_table (int i);
@@ -91,5 +121,10 @@ bool pt_is_node_unary_special_operator_on_hv (PT_NODE *node);
 bool pt_is_host_var_with_maybe_type (PT_NODE *node);
 
 bool pt_is_enumeration_special_comparison (PT_NODE *arg1, PT_OP_TYPE op, PT_NODE *arg2);
+
+PT_NODE *pt_fix_enumeration_comparison (PARSER_CONTEXT *parser, PT_NODE *expr);
+PT_NODE *pt_select_list_to_enumeration_expr (PARSER_CONTEXT *parser, PT_NODE *data_type, PT_NODE *node);
+PT_NODE *pt_node_to_enumeration_expr (PARSER_CONTEXT *parser, PT_NODE *data_type, PT_NODE *node);
+
 
 #endif

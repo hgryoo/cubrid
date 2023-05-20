@@ -87,13 +87,13 @@ namespace func_type
 
     public:
       Node (parser_context *parser, parser_node *node)
-      : cubparser::type_check_helper (parser, node)
+	: cubparser::type_check_helper (parser, node)
       {
       }
 
       parser_node *get_arg (size_t index);
 
-      PT_NODE *do_type_checking () override;
+      int do_type_checking () override;
 
     protected:
       bool preprocess(); //preprocess current function node type for special cases

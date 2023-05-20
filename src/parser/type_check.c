@@ -22,6 +22,8 @@
 
 #ident "$Id$"
 
+#include "type_check.h"
+
 #include "config.h"
 
 #include <assert.h>
@@ -181,7 +183,6 @@ static PT_NODE *pt_eval_type (PARSER_CONTEXT * parser, PT_NODE * node, void *arg
 static PT_NODE *pt_fold_constants_pre (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk);
 static PT_NODE *pt_fold_constants_post (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk);
 static void pt_chop_to_one_select_item (PARSER_CONTEXT * parser, PT_NODE * node);
-static PT_NODE *pt_eval_expr_type (PARSER_CONTEXT * parser, PT_NODE * node);
 static PT_NODE *pt_eval_opt_type (PARSER_CONTEXT * parser, PT_NODE * node);
 static PT_TYPE_ENUM pt_common_type_op (PT_TYPE_ENUM t1, PT_OP_TYPE op, PT_TYPE_ENUM t2);
 static int pt_upd_domain_info (PARSER_CONTEXT * parser, PT_NODE * arg1, PT_NODE * arg2, PT_OP_TYPE op,
@@ -192,7 +193,6 @@ static int pt_coerce_str_to_time_date_utime_datetime (PARSER_CONTEXT * parser, P
 						      PT_TYPE_ENUM * result_type);
 static int pt_coerce_3args (PARSER_CONTEXT * parser, PT_NODE * arg1, PT_NODE * arg2, PT_NODE * arg3);
 
-static PT_NODE *pt_eval_function_type (PARSER_CONTEXT * parser, PT_NODE * node);
 static PT_NODE *pt_eval_method_call_type (PARSER_CONTEXT * parser, PT_NODE * node);
 static PT_NODE *pt_fold_const_expr (PARSER_CONTEXT * parser, PT_NODE * expr, void *arg);
 static PT_NODE *pt_fold_const_function (PARSER_CONTEXT * parser, PT_NODE * func);
@@ -228,9 +228,6 @@ static PT_NODE *pt_coerce_node_collection_of_collection (PARSER_CONTEXT * parser
 							 PT_TYPE_ENUM wrap_type_collection);
 static int pt_check_expr_collation (PARSER_CONTEXT * parser, PT_NODE ** node);
 static int pt_check_recursive_expr_collation (PARSER_CONTEXT * parser, PT_NODE ** node);
-static PT_NODE *pt_node_to_enumeration_expr (PARSER_CONTEXT * parser, PT_NODE * data_type, PT_NODE * node);
-static PT_NODE *pt_select_list_to_enumeration_expr (PARSER_CONTEXT * parser, PT_NODE * data_type, PT_NODE * node);
-static PT_NODE *pt_fix_enumeration_comparison (PARSER_CONTEXT * parser, PT_NODE * expr);
 static PT_TYPE_ENUM pt_get_common_arg_type_of_width_bucket (PARSER_CONTEXT * parser, PT_NODE * node);
 static bool pt_is_const_foldable_width_bucket (PARSER_CONTEXT * parser, PT_NODE * expr);
 static PT_TYPE_ENUM pt_wrap_type_for_collation (const PT_NODE * arg1, const PT_NODE * arg2, const PT_NODE * arg3,
@@ -3906,7 +3903,7 @@ pt_get_common_datetime_type (PARSER_CONTEXT * parser, PT_TYPE_ENUM common_type, 
  *   parser(in):
  *   node(in):
  */
-static PT_NODE *
+PT_NODE *
 pt_eval_expr_type (PARSER_CONTEXT * parser, PT_NODE * node)
 {
   PT_OP_TYPE op;
@@ -3926,54 +3923,28 @@ pt_eval_expr_type (PARSER_CONTEXT * parser, PT_NODE * node)
   /* by the time we get here, the leaves have already been typed. this is because this function is called from a post
    * function of a parser_walk_tree, after all leaves have been visited. */
 
-  op = node->info.expr.op;
-  if (pt_is_enumeration_special_comparison (node->info.expr.arg1, op, node->info.expr.arg2))
+  type_check_expr_helper expr_helper (parser, node);
+  int error_code = expr_helper.do_type_checking ();
+  if (error_code == NO_ERROR)
     {
-      /* handle special cases for the enumeration type */
-      node = pt_fix_enumeration_comparison (parser, node);
-      if (node == NULL)
+      node = expr_helper.get_node ();
+      if (expr_helper.is_finished ())
 	{
-	  return NULL;
+	  return node;
 	}
       op = node->info.expr.op;
-      if (pt_has_error (parser))
-	{
-	  goto error;
-	}
     }
-
-  /* shortcut for FUNCTION HOLDER */
-  if (op == PT_FUNCTION_HOLDER)
+  else
     {
-      if (pt_has_error (parser))
-	{
-	  goto error;
-	}
-      PT_NODE *func = NULL;
-      /* this may be a 2nd pass, tree may be already const folded */
-      if (node->info.expr.arg1->node_type == PT_FUNCTION)
-	{
-	  func = pt_eval_function_type (parser, node->info.expr.arg1);
-	  node->type_enum = func->type_enum;
-	  if (node->data_type == NULL && func->data_type != NULL)
-	    {
-	      node->data_type = parser_copy_tree (parser, func->data_type);
-	    }
-	}
-      else
-	{
-	  assert (node->info.expr.arg1->node_type == PT_VALUE);
-	}
-      return node;
+      goto error;
     }
-
 
   arg1 = node->info.expr.arg1;
   if (arg1)
     {
       arg1_type = arg1->type_enum;
 
-      if (arg1->node_type == PT_HOST_VAR && arg1->type_enum == PT_TYPE_MAYBE)
+      if (pt_is_host_var_with_maybe_type (arg1))
 	{
 	  arg1_hv = arg1;
 	}
@@ -4010,7 +3981,7 @@ pt_eval_expr_type (PARSER_CONTEXT * parser, PT_NODE * node)
 	  arg2_type = common_type;
 	}
 
-      if (arg2->node_type == PT_HOST_VAR && arg2->type_enum == PT_TYPE_MAYBE)
+      if (pt_is_host_var_with_maybe_type (arg2))
 	{
 	  arg2_hv = arg2;
 	}
@@ -4026,7 +3997,7 @@ pt_eval_expr_type (PARSER_CONTEXT * parser, PT_NODE * node)
   if (arg3)
     {
       arg3_type = arg3->type_enum;
-      if (arg3->node_type == PT_HOST_VAR && arg3->type_enum == PT_TYPE_MAYBE)
+      if (pt_is_host_var_with_maybe_type (arg3))
 	{
 	  arg3_hv = arg3;
 	}
@@ -4692,7 +4663,7 @@ pt_eval_expr_type (PARSER_CONTEXT * parser, PT_NODE * node)
 
 	      for (temp = arg2->info.function.arg_list; temp; temp = temp->next)
 		{
-		  if (temp->node_type == PT_HOST_VAR && temp->type_enum == PT_TYPE_MAYBE)
+		  if (pt_is_host_var_with_maybe_type (temp))
 		    {
 		      if (arg1_type != PT_TYPE_NONE && arg1_type != PT_TYPE_MAYBE)
 			{
@@ -7492,7 +7463,7 @@ pt_wrap_logical_arglist_with_integer (PARSER_CONTEXT * parser, PT_NODE * node, P
 /* pt_eval_function_type() - front API of evaluating type of function (PT_FUNCTION). see type_check_func.cpp
     return: type checked and evaluated PT_FUNCTION node
 */
-static PT_NODE *
+PT_NODE *
 pt_eval_function_type (PARSER_CONTEXT * parser, PT_NODE * node)
 {
   assert (node->node_type == PT_FUNCTION);
@@ -7532,7 +7503,8 @@ pt_eval_function_type (PARSER_CONTEXT * parser, PT_NODE * node)
   if (pt_is_function_new_type_checking (fcode))
     {
       func_type::Node funcNode (parser, node);
-      return funcNode.do_type_checking ();
+      (void) funcNode.do_type_checking ();
+      return funcNode.get_node ();
     }
   else
     {
@@ -17682,324 +17654,6 @@ error:
   PT_ERRORmf (parser, expr, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_COLLATION_OP_ERROR, pt_show_binopcode (op));
 
   return ER_FAILED;
-}
-
-/*
-* pt_node_to_enumeration_expr () - wrap node with PT_TO_ENUMERATION_VALUE
-*				    expression
-* return : new node or null
-* parser (in) :
-* data_type (in) :
-* node (in) :
-*/
-static PT_NODE *
-pt_node_to_enumeration_expr (PARSER_CONTEXT * parser, PT_NODE * data_type, PT_NODE * node)
-{
-  PT_NODE *expr = NULL;
-  if (parser == NULL || data_type == NULL || node == NULL)
-    {
-      assert (false);
-      return NULL;
-    }
-
-  if (PT_HAS_COLLATION (node->type_enum) && node->data_type != NULL)
-    {
-      if (!INTL_CAN_COERCE_CS (node->data_type->info.data_type.units, data_type->info.data_type.units))
-	{
-	  PT_ERRORmf2 (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_COERCE_UNSUPPORTED,
-		       pt_short_print (parser, node), pt_show_type_enum (PT_TYPE_ENUMERATION));
-	  return node;
-	}
-    }
-
-  expr = parser_new_node (parser, PT_EXPR);
-  if (expr == NULL)
-    {
-      PT_ERRORm (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_OUT_OF_MEMORY);
-      return NULL;
-    }
-
-  expr->info.expr.arg1 = node;
-  expr->type_enum = PT_TYPE_ENUMERATION;
-  expr->data_type = parser_copy_tree (parser, data_type);
-  expr->info.expr.op = PT_TO_ENUMERATION_VALUE;
-  return expr;
-}
-
-/*
-* pt_select_list_to_enumeration_expr () - wrap select list with
-*					  PT_TO_ENUMERATION_VALUE expression
-* return : new node or null
-* parser (in) :
-* data_type (in) :
-* node (in) :
-*/
-static PT_NODE *
-pt_select_list_to_enumeration_expr (PARSER_CONTEXT * parser, PT_NODE * data_type, PT_NODE * node)
-{
-  PT_NODE *new_node = NULL;
-
-  if (node == NULL || data_type == NULL)
-    {
-      return node;
-    }
-
-  if (!PT_IS_QUERY_NODE_TYPE (node->node_type))
-    {
-      return node;
-    }
-  switch (node->node_type)
-    {
-    case PT_SELECT:
-      {
-	PT_NODE *item = NULL;
-	PT_NODE *prev = NULL;
-	PT_NODE *select_list = node->info.query.q.select.list;
-	for (item = select_list; item != NULL; prev = item, item = item->next)
-	  {
-	    if (item->type_enum == PT_TYPE_ENUMERATION)
-	      {
-		/* nothing to do here */
-		continue;
-	      }
-	    new_node = pt_node_to_enumeration_expr (parser, data_type, item);
-	    if (new_node == NULL)
-	      {
-		return NULL;
-	      }
-	    new_node->next = item->next;
-	    item->next = NULL;
-	    item = new_node;
-	    /* first node in the list */
-	    if (prev == NULL)
-	      {
-		node->info.query.q.select.list = item;
-	      }
-	    else
-	      {
-		prev->next = item;
-	      }
-	  }
-	break;
-      }
-    case PT_DIFFERENCE:
-    case PT_INTERSECTION:
-    case PT_UNION:
-      new_node = pt_select_list_to_enumeration_expr (parser, data_type, node->info.query.q.union_.arg1);
-      if (new_node == NULL)
-	{
-	  return NULL;
-	}
-      node->info.query.q.union_.arg1 = new_node;
-      new_node = pt_select_list_to_enumeration_expr (parser, data_type, node->info.query.q.union_.arg2);
-      if (new_node == NULL)
-	{
-	  return NULL;
-	}
-      node->info.query.q.union_.arg2 = new_node;
-      break;
-    default:
-      break;
-    }
-  return node;
-}
-
-/*
-* pt_fix_enumeration_comparison () - fix comparisons for enumeration type
-* return : modified node or NULL
-* parser (in) :
-* expr (in) :
-*/
-static PT_NODE *
-pt_fix_enumeration_comparison (PARSER_CONTEXT * parser, PT_NODE * expr)
-{
-  PT_NODE *arg1 = NULL, *arg2 = NULL;
-  PT_NODE *node = NULL, *save_next = NULL;
-  PT_NODE *list = NULL, *list_prev = NULL, **list_start = NULL;
-  PT_OP_TYPE op;
-  if (expr == NULL || expr->node_type != PT_EXPR)
-    {
-      return expr;
-    }
-  op = expr->info.expr.op;
-  arg1 = expr->info.expr.arg1;
-  arg2 = expr->info.expr.arg2;
-  if (arg1->type_enum == PT_TYPE_NULL || arg2->type_enum == PT_TYPE_NULL)
-    {
-      return expr;
-    }
-
-  switch (op)
-    {
-    case PT_EQ:
-    case PT_NE:
-    case PT_NULLSAFE_EQ:
-      if (PT_IS_CONST (arg1))
-	{
-	  if (PT_IS_CONST (arg2))
-	    {
-	      /* const op const does not need special handling */
-	      return expr;
-	    }
-	  /* switch arg1 with arg2 so that we have non cost operand on the left side */
-	  node = arg1;
-	  arg1 = arg2;
-	  arg2 = node;
-	}
-
-      if (arg1->type_enum != PT_TYPE_ENUMERATION || !PT_IS_CONST (arg2))
-	{
-	  /* we're only handling enumeration comp const */
-	  return expr;
-	}
-      if (pt_is_same_enum_data_type (arg1->data_type, arg2->data_type))
-	{
-	  return expr;
-	}
-
-      if (arg2->type_enum == PT_TYPE_ENUMERATION && arg2->data_type != NULL)
-	{
-	  TP_DOMAIN *domain = pt_data_type_to_db_domain (parser, arg2->data_type, NULL);
-	  DB_VALUE *dbval = pt_value_to_db (parser, arg2);
-
-	  if (domain == NULL)
-	    {
-	      return NULL;
-	    }
-	  if (dbval != NULL
-	      && ((db_get_enum_string (dbval) == NULL && db_get_enum_short (dbval) == 0)
-		  || ((db_get_enum_string (dbval) != NULL && db_get_enum_short (dbval) > 0)
-		      && tp_domain_select (domain, dbval, 0, TP_EXACT_MATCH) != NULL)))
-	    {
-	      return expr;
-	    }
-	}
-      break;
-    case PT_IS_IN:
-    case PT_IS_NOT_IN:
-    case PT_EQ_SOME:
-    case PT_NE_SOME:
-    case PT_EQ_ALL:
-    case PT_NE_ALL:
-      break;
-    default:
-      return expr;
-    }
-
-  if (arg1->data_type == NULL || arg1->data_type->info.data_type.enumeration == NULL)
-    {
-      /* we don't know the actual enumeration type */
-      return expr;
-    }
-
-  switch (op)
-    {
-    case PT_EQ:
-    case PT_NE:
-    case PT_NULLSAFE_EQ:
-      node = pt_node_to_enumeration_expr (parser, arg1->data_type, arg2);
-      if (node == NULL)
-	{
-	  return NULL;
-	}
-      arg2 = node;
-      break;
-    case PT_IS_IN:
-    case PT_IS_NOT_IN:
-    case PT_EQ_SOME:
-    case PT_NE_SOME:
-    case PT_EQ_ALL:
-    case PT_NE_ALL:
-      if (PT_IS_QUERY_NODE_TYPE (arg2->node_type))
-	{
-	  node = pt_select_list_to_enumeration_expr (parser, arg1->data_type, arg2);
-	  if (node == NULL)
-	    {
-	      return NULL;
-	    }
-	  arg2 = node;
-	  break;
-	}
-      /* not a subquery */
-      switch (arg2->node_type)
-	{
-	case PT_VALUE:
-	  assert (PT_IS_COLLECTION_TYPE (arg2->type_enum) || arg2->type_enum == PT_TYPE_EXPR_SET);
-	  /* convert this value to a multiset */
-	  node = parser_new_node (parser, PT_FUNCTION);
-	  if (node == NULL)
-	    {
-	      PT_ERRORm (parser, expr, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_OUT_OF_MEMORY);
-	      return NULL;
-	    }
-	  node->info.function.function_type = F_SET;
-	  node->info.function.arg_list = arg2->info.value.data_value.set;
-	  node->type_enum = arg2->type_enum;
-
-	  arg2->info.value.data_value.set = NULL;
-	  parser_free_tree (parser, arg2);
-	  arg2 = node;
-
-	  /* fall through */
-
-	case PT_FUNCTION:
-	  list = arg2->info.function.arg_list;
-	  list_start = &arg2->info.function.arg_list;
-	  break;
-
-	default:
-	  return expr;
-	}
-
-      while (list != NULL)
-	{
-	  /* Skip nodes that already have been wrapped with PT_TO_ENUMERATION_VALUE expression or have the correct type
-	   */
-	  if ((list->node_type == PT_EXPR && list->info.expr.op == PT_TO_ENUMERATION_VALUE)
-	      || (list->type_enum == PT_TYPE_ENUMERATION
-		  && pt_is_same_enum_data_type (arg1->data_type, list->data_type)))
-	    {
-	      list_prev = list;
-	      list = list->next;
-	      continue;
-	    }
-
-	  save_next = list->next;
-	  list->next = NULL;
-	  node = pt_node_to_enumeration_expr (parser, arg1->data_type, list);
-	  if (node == NULL)
-	    {
-	      return NULL;
-	    }
-
-	  node->next = save_next;
-	  if (list_prev == NULL)
-	    {
-	      *list_start = node;
-	    }
-	  else
-	    {
-	      list_prev->next = node;
-	    }
-	  list_prev = node;
-	  list = node->next;
-	}
-      if (arg2->data_type != NULL)
-	{
-	  parser_free_tree (parser, arg2->data_type);
-	  arg2->data_type = NULL;
-	}
-      (void) pt_add_type_to_set (parser, arg2->info.function.arg_list, &arg2->data_type);
-      break;
-
-    default:
-      break;
-    }
-
-  expr->info.expr.arg1 = arg1;
-  expr->info.expr.arg2 = arg2;
-
-  return expr;
 }
 
 /*
