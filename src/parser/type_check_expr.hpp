@@ -74,15 +74,27 @@ class type_check_expr_helper : public cubparser::type_check_helper
       return m_is_finished;
     }
 
+    PT_TYPE_ENUM traverse_multiargs_range_op (PT_NODE *arg2);
+
+    // temporary public
+    PT_NODE *m_arg1_hv = nullptr;
+    PT_NODE *m_arg2_hv = nullptr;
+    PT_NODE *m_arg3_hv = nullptr;
+    PT_NODE *m_expr = nullptr;
+
+    PT_TYPE_ENUM m_common_type = PT_TYPE_NONE;
+    PT_TYPE_ENUM m_arg1_type = PT_TYPE_NONE;
+    PT_TYPE_ENUM m_arg2_type = PT_TYPE_NONE;
+    PT_TYPE_ENUM m_arg3_type = PT_TYPE_NONE;
+
   protected:
     bool m_is_finished;
 
-    bool preprocess ();
-    void handle_error ();
+    int preprocess ();
 
     int handle_special_enumeration_op ();
     int eval_function_holder ();
-
+    int adjust_expr_def ();
 
     constexpr auto GET_ARG1 ()
     {
@@ -121,10 +133,22 @@ bool pt_is_node_unary_special_operator_on_hv (PT_NODE *node);
 bool pt_is_host_var_with_maybe_type (PT_NODE *node);
 
 bool pt_is_enumeration_special_comparison (PT_NODE *arg1, PT_OP_TYPE op, PT_NODE *arg2);
+bool pt_are_unmatchable_types (const PT_ARG_TYPE def_type, const PT_TYPE_ENUM op_type);
 
 PT_NODE *pt_fix_enumeration_comparison (PARSER_CONTEXT *parser, PT_NODE *expr);
 PT_NODE *pt_select_list_to_enumeration_expr (PARSER_CONTEXT *parser, PT_NODE *data_type, PT_NODE *node);
 PT_NODE *pt_node_to_enumeration_expr (PARSER_CONTEXT *parser, PT_NODE *data_type, PT_NODE *node);
-
+PT_NODE *pt_coerce_expr_arguments (PARSER_CONTEXT *parser, PT_NODE *expr, PT_NODE *arg1, PT_NODE *arg2,
+				   PT_NODE *arg3, EXPRESSION_SIGNATURE sig);
+int pt_coerce_expression_argument (PARSER_CONTEXT *parser, PT_NODE *expr, PT_NODE **arg, const PT_TYPE_ENUM def_type,
+				   PT_NODE *data_type);
+PT_TYPE_ENUM pt_infer_common_type (const PT_OP_TYPE op, PT_TYPE_ENUM *arg1, PT_TYPE_ENUM *arg2, PT_TYPE_ENUM *arg3,
+				   const TP_DOMAIN *expected_domain);
+int pt_apply_expressions_definition (PARSER_CONTEXT *parser, PT_NODE **expr);
+PT_NODE *pt_coerce_range_expr_arguments (PARSER_CONTEXT *parser, PT_NODE *expr, PT_NODE *arg1, PT_NODE *arg2,
+    PT_NODE *arg3,
+    EXPRESSION_SIGNATURE sig);
+PT_TYPE_ENUM pt_expr_get_return_type (PT_NODE *expr, const EXPRESSION_SIGNATURE sig);
+PT_NODE *pt_wrap_expr_w_exp_dom_cast (PARSER_CONTEXT *parser, PT_NODE *expr);
 
 #endif
