@@ -204,6 +204,7 @@ set(PARSER_SOURCES
   ${PARSER_DIR}/compile.c
   ${PARSER_DIR}/double_byte_support.c
   ${PARSER_DIR}/type_check_expr.cpp
+  ${PARSER_DIR}/type_check_expr_def.cpp
   ${PARSER_DIR}/type_check_func.cpp
   ${PARSER_DIR}/keyword.c
   ${PARSER_DIR}/method_transform.c

@@ -94,7 +94,7 @@ class type_check_expr_helper : public cubparser::type_check_helper
 
     int handle_special_enumeration_op ();
     int eval_function_holder ();
-    int adjust_expr_def ();
+    int adjust_expression_def (PT_TYPE_ENUM &common_type, PT_NODE *expr);
 
     constexpr auto GET_ARG1 ()
     {
