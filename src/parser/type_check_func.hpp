@@ -17,14 +17,15 @@
  */
 
 /*
- * func_type.hpp
+ * type_check_func.hpp
  */
 
-#ifndef _FUNC_TYPE_HPP_
-#define _FUNC_TYPE_HPP_
+#ifndef _TYPE_CHECK_FUNC_HPP_
+#define _TYPE_CHECK_FUNC_HPP_
 
 #include "parse_type.hpp"
 #include "string_buffer.hpp"
+#include "type_check_helper.hpp"
 #include <vector>
 
 struct parser_context;
@@ -79,23 +80,20 @@ namespace func_type
   bool can_signature_have_collation (const pt_arg_type &arg_sig);
   bool sig_has_json_args (const func_signature &sig);
 
-  class Node
+  class Node : public cubparser::type_check_helper
   {
     private:
-      parser_context *m_parser;
-      parser_node *m_node;
       signature_compatibility m_best_signature;
 
     public:
       Node (parser_context *parser, parser_node *node)
-	: m_parser (parser)
-	, m_node (node)
+	: cubparser::type_check_helper (parser, node)
       {
       }
 
       parser_node *get_arg (size_t index);
 
-      PT_NODE *type_checking ();
+      int do_type_checking () override;
 
     protected:
       bool preprocess(); //preprocess current function node type for special cases
@@ -114,7 +112,10 @@ namespace func_type
   }; //class Node
 } //namespace func_type
 
-bool pt_are_equivalent_types (const PT_ARG_TYPE def_type, const PT_TYPE_ENUM op_type);
-PT_TYPE_ENUM pt_get_equivalent_type (const PT_ARG_TYPE def_type, const PT_TYPE_ENUM arg_type);
+PT_NODE *pt_eval_function_type_aggregate (PARSER_CONTEXT *parser, PT_NODE *node);
+
+bool pt_is_function_unsupported (FUNC_CODE fcode);
+bool pt_is_function_no_arg (FUNC_CODE fcode);
+bool pt_is_function_new_type_checking (FUNC_CODE fcode);
 
 #endif

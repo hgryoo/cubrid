@@ -45,6 +45,7 @@ set(COMPAT_SOURCES
   ${COMPAT_DIR}/db_date.c
   ${COMPAT_DIR}/db_elo.c
   ${COMPAT_DIR}/db_info.c
+  ${COMPAT_DIR}/db_function.cpp
   ${COMPAT_DIR}/db_json.cpp
   ${COMPAT_DIR}/db_json_allocator.cpp
   ${COMPAT_DIR}/db_json_path.cpp
@@ -202,7 +203,9 @@ set(PARSER_SOURCES
   ${PARSER_DIR}/cnf.c
   ${PARSER_DIR}/compile.c
   ${PARSER_DIR}/double_byte_support.c
-  ${PARSER_DIR}/func_type.cpp
+  ${PARSER_DIR}/type_check_expr.cpp
+  ${PARSER_DIR}/type_check_expr_def.cpp
+  ${PARSER_DIR}/type_check_func.cpp
   ${PARSER_DIR}/keyword.c
   ${PARSER_DIR}/method_transform.c
   ${PARSER_DIR}/name_resolution.c
@@ -217,13 +220,14 @@ set(PARSER_SOURCES
   ${PARSER_DIR}/scanner_support.c
   ${PARSER_DIR}/semantic_check.c
   ${PARSER_DIR}/show_meta.c
-  ${PARSER_DIR}/type_checking.c
+  ${PARSER_DIR}/type_check.c
   ${PARSER_DIR}/view_transform.c
   ${PARSER_DIR}/xasl_regu_alloc.cpp
   ${PARSER_DIR}/xasl_generation.c
   )
 set(PARSER_HEADERS
-  ${PARSER_DIR}/func_type.hpp
+  ${PARSER_DIR}/type_check_expr.hpp
+  ${PARSER_DIR}/type_check_func.hpp
   ${PARSER_DIR}/parse_type.hpp
   ${PARSER_DIR}/parser_allocator.hpp
   ${PARSER_DIR}/xasl_regu_alloc.hpp
@@ -551,7 +555,7 @@ SET_SOURCE_FILES_PROPERTIES(
   ${PARSER_DIR}/query_result.c
   ${PARSER_DIR}/name_resolution.c
   ${PARSER_DIR}/semantic_check.c
-  ${PARSER_DIR}/type_checking.c
+  ${PARSER_DIR}/type_check.c
   ${PARSER_DIR}/xasl_generation.c
   ${PARSER_DIR}/scanner_support.c
   ${PARSER_DIR}/view_transform.c

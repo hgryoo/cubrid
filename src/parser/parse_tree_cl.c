@@ -12007,7 +12007,7 @@ pt_apply_function (PARSER_CONTEXT * parser, PT_NODE * p, void *arg)
 static PT_NODE *
 pt_init_function (PT_NODE * p)
 {
-  p->info.function.function_type = (FUNC_TYPE) 0;
+  p->info.function.function_type = (FUNC_CODE) 0;
   p->info.function.all_or_distinct = (PT_MISC_TYPE) 0;
 
   return p;
@@ -12022,7 +12022,7 @@ pt_init_function (PT_NODE * p)
 static PARSER_VARCHAR *
 pt_print_function (PARSER_CONTEXT * parser, PT_NODE * p)
 {
-  FUNC_TYPE code;
+  FUNC_CODE code;
   PARSER_VARCHAR *q = 0, *r1;
   PT_NODE *order_by = NULL;
 
@@ -17719,7 +17719,7 @@ pt_function_is_allowed_as_function_index (const PT_NODE * func)
 {
   assert (func != NULL && func->node_type == PT_FUNCTION);
 
-  // TODO: expose get_signatures () of func_type.cpp & filter out funcs returning PT_TYPE_JSON
+  // TODO: expose get_signatures () of type_check_func.cpp & filter out funcs returning PT_TYPE_JSON
   switch (func->info.function.function_type)
     {
     case F_BENCHMARK:

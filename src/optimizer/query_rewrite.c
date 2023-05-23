@@ -37,6 +37,7 @@
 #include "parser.h"
 #include "object_primitive.h"
 #include "object_representation.h"
+#include "type_check_expr.hpp"
 
 #include "dbtype.h"
 
