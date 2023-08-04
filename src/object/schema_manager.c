@@ -213,7 +213,10 @@ static SYSTEM_CLASS_DEF system_classes[] = {
   {CTV_DB_COLLATION_NAME, strlen (CTV_DB_COLLATION_NAME)},	// "db_collation"
   {CTV_DB_CHARSET_NAME, strlen (CTV_DB_CHARSET_NAME)},		// "db_charset"
   {CTV_DB_SERVER_NAME, strlen (CTV_DB_SERVER_NAME)},		// "db_server"
-  {CTV_SYNONYM_NAME, strlen (CTV_SYNONYM_NAME)}			// "db_synonym"
+  {CTV_SYNONYM_NAME, strlen (CTV_SYNONYM_NAME)},			// "db_synonym"
+  {CTV_ALL_OBJECTS_NAME, strlen (CTV_ALL_OBJECTS_NAME)},		// "db_all_objects"
+  {CTV_DBA_OBJECTS_NAME, strlen (CTV_DBA_OBJECTS_NAME)},		// "db_dba_objects"
+  {CTV_USER_OBJECTS_NAME, strlen (CTV_USER_OBJECTS_NAME)}			// "db_user_objects"
 };
 // *INDENT-ON*
 
