@@ -6723,6 +6723,74 @@ boot_define_view_synonym (void)
   return NO_ERROR;
 }
 
+#define SELECT_OBJECTS_QUERY  "SELECT [owner], [object_name], [object_type], [generated] FROM ( \
+    SELECT \
+      /* CLASS/VCLASS */ \
+       [c].[owner_name] AS [owner], \
+       [c].[class_name] AS [object_name], \
+       CASE [c].[class_type] \
+         WHEN 'CLASS' THEN 'table' \
+         WHEN 'VCLASS' THEN 'view' \
+         ELSE 'unknown' \
+       END AS [object_type], \
+       CASE \
+         WHEN [c].[is_system_class] = 'YES' THEN 'Y' \
+         WHEN [c].[partitioned] = 'YES' THEN 'Y' \
+         ELSE 'N' \
+       END AS [generated] \
+    FROM \
+       [db_class] AS [c] \
+   UNION ALL  \
+    /* INDEX */ \
+    SELECT \
+       [i].[owner_name] AS [owner], \
+       [i].[index_name] AS [object_name], \
+       'index'          AS [object_type], \
+       CASE \
+         WHEN [i].is_primary_key = 'YES' THEN 'Y' \
+         WHEN [i].is_foreign_key = 'YES' THEN 'Y' \
+         ELSE 'N' \
+       END AS [generated] \
+    FROM \
+       [db_index] AS [i] \
+   UNION ALL  \
+    /* TRIGGER */ \
+    SELECT \
+       [t].[target_owner_name] AS [owner], \
+       [t].[trigger_name]      AS [object_name], \
+       'trigger'               AS [object_type], \
+       'N'                     AS [generated] \
+    FROM \
+       [db_trig] AS [t] \
+   UNION ALL  \
+    /* SERIAL */ \
+    SELECT \
+       'PUBLIC'   AS [owner], \
+       [s].[name] AS [object_name], \
+       'serial'   AS [object_type], \
+       'N'        AS [generated] \
+    FROM \
+     [db_serial] AS [s] \
+   UNION ALL  \
+    /* STORED PROCEDURE */ \
+    SELECT \
+       [p].[owner]   AS [owner], \
+       [p].[sp_name] AS [object_name], \
+       [p].[sp_type] AS [object_type], \
+      'N'           AS [generated] \
+    FROM \
+       [db_stored_procedure] AS [p] \
+   UNION ALL  \
+    /* SYNONYM */ \
+    SELECT \
+       [sy].[synonym_owner_name]   AS [owner], \
+       [sy].[synonym_name] AS [object_name], \
+       'synonym'    AS [object_type], \
+      'N'           AS [generated] \
+    FROM \
+       [db_synonym] AS [sy] \
+  )"
+
 static int
 boot_define_view_dba_objects (void)
 {
@@ -6760,72 +6828,7 @@ boot_define_view_dba_objects (void)
     }
 
 // *INDENT-OFF*
-  sprintf (stmt, 
-  "SELECT"
-    /* CLASS/VCLASS */
-    " [c].[owner_name] AS [owner],"
-    " [c].[class_name] AS [object_name],"
-    " CASE [c].[class_type]"
-      " WHEN 'CLASS' THEN 'table'"
-      " WHEN 'VCLASS' THEN 'view'"
-      " ELSE 'unknown'"
-    " END AS [object_type],"
-    " CASE"
-      " WHEN [c].[is_system_class] = 'YES' THEN 'Y'"
-      " WHEN [c].[partitioned] = 'YES' THEN 'Y'"
-      " ELSE 'N'"
-    " END AS [generated]"
-  "FROM"
-    " [db_class] AS [c]"
-" UNION ALL "
-  /* INDEX */
-  "SELECT"
-    " [i].[owner_name] AS [owner],"
-    " [i].[index_name] AS [object_name],"
-    " 'index'          AS [object_type],"
-    " CASE"
-      " WHEN [i].is_primary_key = 'YES' THEN 'Y'"
-      " WHEN [i].is_foreign_key = 'YES' THEN 'Y'"
-      " ELSE 'N'"
-    " END AS [generated]"
-  "FROM"
-    " [db_index] AS [i]"
-" UNION ALL "
-  /* TRIGGER */
-  "SELECT"
-    " [t].[target_owner_name] AS [owner],"
-    " [t].[trigger_name]      AS [object_name],"
-    " 'trigger'               AS [object_type],"
-    " 'N'                     AS [generated]"
-  "FROM"
-    " [db_trig] AS [t]"
-" UNION ALL "
-  /* SERIAL */
-  "SELECT"
-    " 'PUBLIC'   AS [owner],"
-    " [s].[name] AS [object_name],"
-    " 'serial'   AS [object_type],"
-    " 'N'        AS [generated]"
-  "FROM"
-  " [db_serial] AS [s]"
-" UNION ALL "
-  /* STORED PROCEDURE */
-  "SELECT"
-    " [p].[owner]   AS [owner],"
-    " [p].[sp_name] AS [object_name],"
-    " [p].[sp_type] AS [object_type],"
-    "'N'           AS [generated]"
-  "FROM"
-    " [db_stored_procedure] AS [p]"
-" UNION ALL "
-  /* SYNONYM */
-  "SELECT"
-    " [sy].[synonym_owner_name]   AS [owner],"
-    " [sy].[synonym_name] AS [object_name],"
-    " 'synonym'    AS [object_type],"
-    "'N'           AS [generated]"
-  "FROM"
-    " [db_synonym] AS [sy]");
+  sprintf (stmt, SELECT_OBJECTS_QUERY);
 // *INDENT-ON*
 
   error_code = db_add_query_spec (class_mop, stmt);
@@ -6881,73 +6884,7 @@ boot_define_view_user_objects (void)
 
 // *INDENT-OFF*
   sprintf (stmt,
-  "SELECT [owner], [object_name], [object_type], [generated] FROM ("
-    "SELECT"
-      /* CLASS/VCLASS */
-      " [c].[owner_name] AS [owner],"
-      " [c].[class_name] AS [object_name],"
-      " CASE [c].[class_type]"
-        " WHEN 'CLASS' THEN 'table'"
-        " WHEN 'VCLASS' THEN 'view'"
-        " ELSE 'unknown'"
-      " END AS [object_type],"
-      " CASE"
-        " WHEN [c].[is_system_class] = 'YES' THEN 'Y'"
-        " WHEN [c].[partitioned] = 'YES' THEN 'Y'"
-        " ELSE 'N'"
-      " END AS [generated]"
-    "FROM"
-      " [db_class] AS [c]"
-  " UNION ALL "
-    /* INDEX */
-    "SELECT"
-      " [i].[owner_name] AS [owner],"
-      " [i].[index_name] AS [object_name],"
-      " 'index'          AS [object_type],"
-      " CASE"
-        " WHEN [i].is_primary_key = 'YES' THEN 'Y'"
-        " WHEN [i].is_foreign_key = 'YES' THEN 'Y'"
-        " ELSE 'N'"
-      " END AS [generated]"
-    "FROM"
-      " [db_index] AS [i]"
-  " UNION ALL "
-    /* TRIGGER */
-    "SELECT"
-      " [t].[target_owner_name] AS [owner],"
-      " [t].[trigger_name]      AS [object_name],"
-      " 'trigger'               AS [object_type],"
-      " 'N'                     AS [generated]"
-    "FROM"
-      " [db_trig] AS [t]"
-  " UNION ALL "
-    /* SERIAL */
-    "SELECT"
-      " 'PUBLIC'   AS [owner],"
-      " [s].[name] AS [object_name],"
-      " 'serial'   AS [object_type],"
-      " 'N'        AS [generated]"
-    "FROM"
-    " [db_serial] AS [s]"
-  " UNION ALL "
-    /* STORED PROCEDURE */
-    "SELECT"
-      " [p].[owner]   AS [owner],"
-      " [p].[sp_name] AS [object_name],"
-      " [p].[sp_type] AS [object_type],"
-      "'N'           AS [generated]"
-    "FROM"
-      " [db_stored_procedure] AS [p]"
-  " UNION ALL "
-    /* SYNONYM */
-    "SELECT"
-      " [sy].[synonym_owner_name]   AS [owner],"
-      " [sy].[synonym_name] AS [object_name],"
-      " 'synonym'    AS [object_type],"
-      "'N'           AS [generated]"
-    "FROM"
-      " [db_synonym] AS [sy]"
-  ")"
+  SELECT_OBJECTS_QUERY
   " WHERE [owner] = CURRENT_USER");
 // *INDENT-ON*
 
@@ -7010,119 +6947,46 @@ boot_define_view_all_objects (void)
 
   // *INDENT-OFF*
   sprintf (stmt,
-  "SELECT [owner], [object_name], [object_type], [generated] FROM ("
-    "SELECT"
-      /* CLASS/VCLASS */
-      " [c].[owner_name] AS [owner],"
-      " [c].[class_name] AS [object_name],"
-      " CASE [c].[class_type]"
-        " WHEN 'CLASS' THEN 'table'"
-        " WHEN 'VCLASS' THEN 'view'"
-        " ELSE 'unknown'"
-      " END AS [object_type],"
-      " CASE"
-        " WHEN [c].[is_system_class] = 'YES' THEN 'Y'"
-        " WHEN [c].[partitioned] = 'YES' THEN 'Y'"
-        " ELSE 'N'"
-      " END AS [generated]"
-    "FROM"
-      " [db_class] AS [c]"
-  " UNION ALL "
-    /* INDEX */
-    "SELECT"
-      " [i].[owner_name] AS [owner],"
-      " [i].[index_name] AS [object_name],"
-      " 'index'          AS [object_type],"
-      " CASE"
-        " WHEN [i].is_primary_key = 'YES' THEN 'Y'"
-        " WHEN [i].is_foreign_key = 'YES' THEN 'Y'"
-        " ELSE 'N'"
-      " END AS [generated]"
-    "FROM"
-      " [db_index] AS [i]"
-  " UNION ALL "
-    /* TRIGGER */
-    "SELECT"
-      " [t].[target_owner_name] AS [owner],"
-      " [t].[trigger_name]      AS [object_name],"
-      " 'trigger'               AS [object_type],"
-      " 'N'                     AS [generated]"
-    "FROM"
-      " [db_trig] AS [t]"
-  " UNION ALL "
-    /* SERIAL */
-    "SELECT"
-      " 'PUBLIC'   AS [owner],"
-      " [s].[name] AS [object_name],"
-      " 'serial'   AS [object_type],"
-      " 'N'        AS [generated]"
-    "FROM"
-    " [db_serial] AS [s]"
-  " UNION ALL "
-    /* STORED PROCEDURE */
-    "SELECT"
-      " [p].[owner]   AS [owner],"
-      " [p].[sp_name] AS [object_name],"
-      " [p].[sp_type] AS [object_type],"
-      "'N'           AS [generated]"
-    "FROM"
-      " [db_stored_procedure] AS [p]"
-  " UNION ALL "
-    /* SYNONYM */
-    "SELECT"
-      " [sy].[synonym_owner_name]   AS [owner],"
-      " [sy].[synonym_name] AS [object_name],"
-      " 'synonym'    AS [object_type],"
-      "'N'           AS [generated]"
-    "FROM"
-      " [db_synonym] AS [sy]"
-  ") AS [all] "
-  " WHERE "
-    "{'DBA'} SUBSETEQ ("
-          "SELECT "
-      "SET {CURRENT_USER} + COALESCE (SUM (SET {[t].[g].[name]}), SET {}) "
-          "FROM "
+	   SELECT_OBJECTS_QUERY
+	    " AS [all] "
+    "WHERE "
+      "{'DBA'} SUBSETEQ (" "SELECT " "SET {CURRENT_USER} + COALESCE (SUM (SET {[t].[g].[name]}), SET {}) " "FROM "
       /* AU_USER_CLASS_NAME */
       "[%s] AS [u], TABLE ([u].[groups]) AS [t] ([g]) "
-          "WHERE "
-      "[u].[name] = CURRENT_USER"
-        ") "
-      "OR [all].[owner] = 'PUBLIC' "
-      "OR ("
-          "[all].[owner] != 'PUBLIC' "
-          "AND SET {[all].[owner]} SUBSETEQ ("
-              "SELECT "
-                "SET {CURRENT_USER} + COALESCE (SUM (SET {[t].[g].[name]}), SET {}) "
-              "FROM "
-                /* AU_USER_CLASS_NAME */
-                "[%s] AS [u], TABLE ([u].[groups]) AS [t] ([g]) "
-              "WHERE "
-                "[u].[name] = CURRENT_USER"
-            ") "
-      "OR {[all].[owner]} SUBSETEQ ("
+      "WHERE "
+        "[u].[name] = CURRENT_USER"
+      ") "
+      "OR {[all].[class_of].[owner].[name]} SUBSETEQ ("
         "SELECT "
-          "SUM (SET {[au].[owner_name]}) "
+          "SET {CURRENT_USER} + COALESCE (SUM (SET {[t].[g].[name]}), SET {}) "
+        "FROM "
+          /* AU_USER_CLASS_NAME */
+          "[%s] AS [u], TABLE ([u].[groups]) AS [t] ([g]) "
+        "WHERE "
+          "[u].[name] = CURRENT_USER"
+          ") "
+      "OR {[all].[class_of]} SUBSETEQ ("
+        "SELECT "
+          "SUM (SET {[au].[class_of]}) "
         "FROM "
           /* CT_CLASSAUTH_NAME */
           "[%s] AS [au] "
         "WHERE "
-          "{[all].[owner]} SUBSETEQ ("
+          "{[au].[grantee].[name]} SUBSETEQ ("
             "SELECT "
-              "SET {CURRENT_USER} + COALESCE (SUM (SET {[t].[g].[name]}), SET {}) "
-            "FROM "
+               "SET {CURRENT_USER} + COALESCE (SUM (SET {[t].[g].[name]}), SET {}) "
+             "FROM "
               /* AU_USER_CLASS_NAME */
               "[%s] AS [u], TABLE ([u].[groups]) AS [t] ([g]) "
             "WHERE "
               "[u].[name] = CURRENT_USER"
-              " AND [au].[grantee_name] = CURRENT_USER"
-                ") "
-          "AND [au].[auth_type] = 'SELECT'"
-          ")"
-      ") ",
-  AU_USER_CLASS_NAME,
-	AU_USER_CLASS_NAME,
-  CTV_AUTH_NAME,
-	AU_USER_CLASS_NAME);
+          ") "
+      "AND [au].[auth_type] = 'SELECT'"
+	   ") ", 
+     AU_USER_CLASS_NAME, 
+     AU_USER_CLASS_NAME, 
+     CTV_AUTH_NAME, 
+     AU_USER_CLASS_NAME);
   // *INDENT-ON*
 
   error_code = db_add_query_spec (class_mop, stmt);
