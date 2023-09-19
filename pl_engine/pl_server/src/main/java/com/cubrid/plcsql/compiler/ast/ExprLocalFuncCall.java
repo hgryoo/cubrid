@@ -70,8 +70,4 @@ public class ExprLocalFuncCall extends Expr {
             return block + name + "(\n" + Misc.indentLines(decl.argsToJavaCode(args), 1) + "\n)";
         }
     }
-
-    // --------------------------------------------------
-    // Private
-    // --------------------------------------------------
 }
