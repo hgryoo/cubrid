@@ -6723,8 +6723,7 @@ boot_define_view_synonym (void)
   return NO_ERROR;
 }
 
-#define SELECT_OBJECTS_QUERY  "SELECT [owner], [object_name], [object_type], [generated] FROM ( \
-    SELECT \
+#define SELECT_OBJECTS_QUERY  "SELECT \
       /* CLASS/VCLASS */ \
        [c].[owner_name] AS [owner], \
        [c].[class_name] AS [object_name], \
@@ -6788,8 +6787,7 @@ boot_define_view_synonym (void)
        'synonym'    AS [object_type], \
       'N'           AS [generated] \
     FROM \
-       [db_synonym] AS [sy] \
-  )"
+       [db_synonym] AS [sy]"
 
 static int
 boot_define_view_dba_objects (void)
@@ -6828,7 +6826,9 @@ boot_define_view_dba_objects (void)
     }
 
 // *INDENT-OFF*
-  sprintf (stmt, SELECT_OBJECTS_QUERY);
+  sprintf (stmt, "SELECT [owner], [object_name], [object_type], [generated] FROM ( "
+    SELECT_OBJECTS_QUERY
+  ") ");
 // *INDENT-ON*
 
   error_code = db_add_query_spec (class_mop, stmt);
@@ -6851,7 +6851,7 @@ boot_define_view_user_objects (void)
 {
   MOP class_mop;
   COLUMN columns[] = {
-    {"owner", "varchar(255)"},
+    // {"owner", "varchar(255)"},
     {"object_name", "varchar(255)"},
     {"object_type", "varchar(255)"},
     {"generated", "varchar(1)"}
@@ -6883,9 +6883,9 @@ boot_define_view_user_objects (void)
     }
 
 // *INDENT-OFF*
-  sprintf (stmt,
+  sprintf (stmt, "SELECT [object_name], [object_type], [generated] FROM ( "
   SELECT_OBJECTS_QUERY
-  " WHERE [owner] = CURRENT_USER");
+  ") WHERE [owner] = CURRENT_USER");
 // *INDENT-ON*
 
   error_code = db_add_query_spec (class_mop, stmt);
@@ -6946,9 +6946,9 @@ boot_define_view_all_objects (void)
     }
 
   // *INDENT-OFF*
-  sprintf (stmt,
+  sprintf (stmt, "SELECT [owner], [object_name], [object_type], [generated] FROM ( "
 	   SELECT_OBJECTS_QUERY
-	    " AS [all] "
+	    ") AS [all] "
     "WHERE "
       "{'DBA'} SUBSETEQ (" "SELECT " "SET {CURRENT_USER} + COALESCE (SUM (SET {[t].[g].[name]}), SET {}) " "FROM "
       /* AU_USER_CLASS_NAME */
