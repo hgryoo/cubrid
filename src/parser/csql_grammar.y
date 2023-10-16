@@ -5220,6 +5220,20 @@ original_table_spec
 			PARSER_SAVE_ERR_CONTEXT ($$, @$.buffer_pos)
 
 		DBG_PRINT}}
+	| identifier '(' opt_expression_list ')' opt_as identifier
+		{{ DBG_TRACE_GRAMMAR(identifier '(' opt_expression_list ')');
+
+			PT_NODE *ent = parser_new_node (this_parser, PT_SPEC);
+			if (ent)
+			  {
+			    ent->info.spec.derived_table = $2;  // json_table_rule
+			    ent->info.spec.derived_table_type = PT_DERIVED_FUNCTION_TABLE;
+			    ent->info.spec.range_var = $6;      // identifier
+			  }
+			$$ = ent;
+			PARSER_SAVE_ERR_CONTEXT ($$, @$.buffer_pos)
+
+		DBG_PRINT}}
 	| JSON_TABLE json_table_rule opt_as identifier
 		{{ DBG_TRACE_GRAMMAR(original_table_spec, | JSON_TABLE json_table_rule opt_as identifier);
 			PT_NODE *ent = parser_new_node (this_parser, PT_SPEC);
