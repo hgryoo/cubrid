@@ -378,7 +378,7 @@ method_invoke_builtin_internal (DB_VALUE & result, std::vector<DB_VALUE> &args, 
 	  turn_on_auth = 0;
 	  AU_ENABLE (turn_on_auth);
 	  db_disable_modification ();
-	  error = obj_send_array (db_get_object (arg_val_p[0]), meth_sig_p->method_name, &result, &arg_val_p[1]);
+	  error = obj_send_array (db_get_object (arg_val_p[0]), meth_sig_p->method_name.c_str(), &result, &arg_val_p[1]);
 	  db_enable_modification ();
 	  AU_DISABLE (turn_on_auth);
 	}
