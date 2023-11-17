@@ -203,8 +203,8 @@ namespace cubmethod
     num_args = sig->num_method_args;
 
     arg_pos.resize (num_args);
-    arg_mode.resize (num_args);
-    arg_type.resize (num_args);
+    arg_mode.resize (num_args, 0);
+    arg_type.resize (num_args, 0);
 
     for (int i = 0; i < num_args; i++)
       {
