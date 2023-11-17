@@ -1491,53 +1491,35 @@ jsp_make_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node, method_sig_li
 	goto end;
       }
 
-    sig = sig_list.method_sig = (METHOD_SIG *) db_private_alloc (NULL, sizeof (METHOD_SIG));
+    sig_list.num_methods = 1;
+    sig = sig_list.method_sig = (METHOD_SIG *) db_private_alloc (NULL, sizeof (METHOD_SIG) * sig_list.num_methods);
     if (sig)
       {
-	sig->next = nullptr;
+	new (sig) METHOD_SIG ();	// placement new
+
 	sig->num_method_args = sig_num_args;
 	sig->method_type = METHOD_TYPE_JAVA_SP;
 
+	// method_name
 	const char *method_name = db_get_string (&method);
 	int method_name_len = db_get_string_size (&method);
 
-	sig->method_name = (char *) db_private_alloc (NULL, method_name_len + 1);
-	if (!sig->method_name)
-	  {
-	    error = ER_OUT_OF_VIRTUAL_MEMORY;
-	    goto end;
-	  }
+	sig->method_name.assign (method_name);
 
-	memcpy (sig->method_name, method_name, method_name_len);
-	sig->method_name[method_name_len] = 0;
+	// auth_name
+	const char *auth_name = jsp_get_owner_name (parsed_method_name);
+	int auth_name_len = strlen (auth_name);
 
+	sig->auth_name.assign (auth_name);
 
-	sig->method_arg_pos = (int *) db_private_alloc (NULL, (sig_num_args + 1) * sizeof (int));
-	if (!sig->method_arg_pos)
-	  {
-	    error = ER_OUT_OF_VIRTUAL_MEMORY;
-	    goto end;
-	  }
-
+	sig->method_arg_pos.resize (sig_num_args + 1);
 	for (int i = 0; i < sig_num_args + 1; i++)
 	  {
 	    sig->method_arg_pos[i] = i;
 	  }
 
-
-	sig->arg_info.arg_mode = (int *) db_private_alloc (NULL, (sig_num_args + 1) * sizeof (int));
-	if (!sig->arg_info.arg_mode)
-	  {
-	    error = ER_OUT_OF_VIRTUAL_MEMORY;
-	    goto end;
-	  }
-
-	sig->arg_info.arg_type = (int *) db_private_alloc (NULL, (sig_num_args + 1) * sizeof (int));
-	if (!sig->arg_info.arg_type)
-	  {
-	    error = ER_OUT_OF_VIRTUAL_MEMORY;
-	    goto end;
-	  }
+	sig->arg_info.arg_mode.resize (sig_num_args, 0);
+	sig->arg_info.arg_type.resize (sig_num_args, 0);
 
 	for (int i = 0; i < sig_num_args; i++)
 	  {
@@ -1546,8 +1528,6 @@ jsp_make_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node, method_sig_li
 	  }
 
 	sig->arg_info.result_type = sig_result_type;
-
-	sig_list.num_methods = 1;
       }
     else
       {
@@ -1564,8 +1544,6 @@ end:
 	{
 	  sig->freemem ();
 	}
-      sig_list.method_sig = nullptr;
-      sig_list.num_methods = 0;
     }
 
   pr_clear_value (&method);
