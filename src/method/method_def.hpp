@@ -115,8 +115,8 @@ enum METHOD_ARG_MODE
 typedef struct method_arg_info METHOD_ARG_INFO;
 struct method_arg_info
 {
-  int *arg_mode; /* IN, OUT, INOUT */
-  int *arg_type; /* DB_TYPE */
+  std::vector<int> arg_mode; /* IN, OUT, INOUT */
+  std::vector<int> arg_type; /* DB_TYPE */
   int result_type; /* DB_TYPE */
 
   method_arg_info () = default;
@@ -126,17 +126,13 @@ typedef struct method_sig_node METHOD_SIG;
 struct method_sig_node
 {
   /* method signature */
-  METHOD_SIG *next;
-  char *method_name;		/* method name */
-  METHOD_TYPE method_type;	/* instance or class method */
-  int num_method_args;		/* number of arguments */
-  int *method_arg_pos;		/* arg position in list file */
+  std::string method_name;	        /* method name */
+  METHOD_TYPE method_type;	        /* instance or class method */
+  int num_method_args;		        /* number of arguments */
+  std::vector<int> method_arg_pos;	/* arg position in list file */
 
-  union
-  {
-    char *class_name;		/* class name for the class method */
-    METHOD_ARG_INFO arg_info;  /* argument info for javasp's server-side calling */
-  };
+  std::string class_name;               /* class name for the class method */
+  METHOD_ARG_INFO arg_info;             /* argument info for javasp's server-side calling */
 
   void pack (cubpacking::packer &serializator) const;
   void unpack (cubpacking::unpacker &deserializator);
@@ -144,19 +140,21 @@ struct method_sig_node
 
   void freemem ();
 
-  method_sig_node &operator= (const method_sig_node &rhs);
-
   method_sig_node ();
   method_sig_node (method_sig_node &&); // move constructor
-  method_sig_node (const method_sig_node &obj); // copy constructor
+  method_sig_node &operator= (method_sig_node &&rhs); // move assignemnt
+
+  method_sig_node (const method_sig_node &obj) = delete; // copy constructor
+  method_sig_node &operator= (const method_sig_node &rhs) = delete; // copy assignment
+
   ~method_sig_node ();
 };
 
 struct method_sig_list : public cubpacking::packable_object
 {
   /* signature for methods */
-  METHOD_SIG *method_sig;	/* one method signature */
   int num_methods;		/* number of signatures */
+  METHOD_SIG *method_sig;	/* method signature lists */
 
   void pack (cubpacking::packer &serializator) const;
   void unpack (cubpacking::unpacker &deserializator);
@@ -164,7 +162,11 @@ struct method_sig_list : public cubpacking::packable_object
 
   void freemem ();
 
-  method_sig_list () = default;
+  method_sig_list ();
+  ~method_sig_list ();
+
+  method_sig_list (const method_sig_list &obj) = delete; // copy constructor
+  method_sig_list &operator= (const method_sig_list &rhs) = delete; // copy assignment
 };
 typedef struct method_sig_list METHOD_SIG_LIST;
 
