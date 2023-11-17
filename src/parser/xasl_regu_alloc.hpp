@@ -141,4 +141,41 @@ regu_array_alloc (T **ptr, size_t size)
     }
 }
 
+// For placement new of C++ object
+template <typename T>
+void
+regu_new (T *&ptr)
+{
+  ptr = reinterpret_cast<T *> (pt_alloc_packing_buf ((int) sizeof (T)));
+  if (ptr == NULL)
+    {
+      regu_set_error_with_zero_args (ER_REGU_NO_SPACE);
+      return;
+    }
+  new (ptr) T (); // placement new
+  regu_init (*ptr);
+}
+
+template <typename T>
+void
+regu_array_new (T **ptr, size_t size)
+{
+  if (size == 0)
+    {
+      *ptr = NULL;
+      return;
+    }
+  *ptr = reinterpret_cast<T *> (pt_alloc_packing_buf ((int) (sizeof (T) * size)));
+  if (*ptr == NULL)
+    {
+      regu_set_error_with_zero_args (ER_REGU_NO_SPACE);
+      return;
+    }
+  for (size_t idx = 0; idx < size; idx++)
+    {
+      new (ptr) T (); // placement new
+      regu_init ((*ptr)[idx]);
+    }
+}
+
 #endif /* _XASL_REGU_ALLOC_HPP_ */

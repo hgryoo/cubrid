@@ -223,9 +223,6 @@ static void pt_fill_in_attrid_array (REGU_VARIABLE_LIST attr_list, ATTR_ID * att
 static SORT_LIST *pt_to_sort_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * col_list,
 				   SORT_LIST_MODE sort_mode);
 
-static int *pt_to_method_arglist (PARSER_CONTEXT * parser, PT_NODE * target, PT_NODE * node_list,
-				  PT_NODE * subquery_as_attr_list);
-
 static int regu_make_constant_vid (DB_VALUE * val, DB_VALUE ** dbvalptr);
 static int set_has_objs (DB_SET * seq);
 static int setof_mop_to_setof_vobj (PARSER_CONTEXT * parser, DB_SET * seq, DB_VALUE * new_val);
@@ -569,6 +566,13 @@ static XASL_NODE *pt_build_do_stmt_aptr_list (PARSER_CONTEXT * parser, PT_NODE *
 
 static METHOD_SIG_LIST *pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list,
 					       PT_NODE * subquery_as_attr_list);
+static int pt_to_method_sig (PARSER_CONTEXT * parser, PT_NODE * node, PT_NODE * subquery_as_attr_list,
+			     METHOD_SIG * sig);
+
+// *INDENT-OFF*
+static int pt_to_method_arglist (PARSER_CONTEXT * parser, PT_NODE * target, PT_NODE * node_list,
+				  PT_NODE * subquery_as_attr_list, std::vector<int> & arg_list);
+// *INDENT-ON*
 
 static int pt_is_subquery (PT_NODE * node);
 
@@ -3748,20 +3752,17 @@ pt_filter_pseudo_specs (PARSER_CONTEXT * parser, PT_NODE * spec)
  *   target(in):
  *   node_list(in): should be parse name nodes
  *   subquery_as_attr_list(in):
+ *   arg_list(in/out): method argument array
  */
-static int *
-pt_to_method_arglist (PARSER_CONTEXT * parser, PT_NODE * target, PT_NODE * node_list, PT_NODE * subquery_as_attr_list)
+// *INDENT-OFF*
+static int
+pt_to_method_arglist (PARSER_CONTEXT * parser, PT_NODE * target, PT_NODE * node_list, PT_NODE * subquery_as_attr_list,
+		      std::vector <int> & arg_list)
+// *INDENT-ON*
 {
-  int *arg_list = NULL;
   int i = 1;
   int num_args = pt_length_of_list (node_list) + 1;
   PT_NODE *node;
-
-  arg_list = regu_int_array_alloc (num_args);
-  if (!arg_list)
-    {
-      return NULL;
-    }
 
   if (target != NULL)
     {
@@ -3769,7 +3770,7 @@ pt_to_method_arglist (PARSER_CONTEXT * parser, PT_NODE * target, PT_NODE * node_
       arg_list[0] = pt_find_attribute (parser, target, subquery_as_attr_list);
       if (arg_list[0] == -1)
 	{
-	  return NULL;
+	  return ER_FAILED;
 	}
     }
   else
@@ -3782,12 +3783,12 @@ pt_to_method_arglist (PARSER_CONTEXT * parser, PT_NODE * target, PT_NODE * node_
       arg_list[i] = pt_find_attribute (parser, node, subquery_as_attr_list);
       if (arg_list[i] == -1)
 	{
-	  return NULL;
+	  return ER_FAILED;
 	}
       i++;
     }
 
-  return arg_list;
+  return NO_ERROR;
 }
 
 
@@ -3812,136 +3813,165 @@ pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * s
       return NULL;
     }
 
-  tail = &(sig_list->method_sig);
+  int size = sig_list.num_methods = pt_length_of_list (node_list);
+  regu_array_alloc < METHOD_SIG * >(&(sig_list->method_sig), size);
 
-  for (node = node_list; node != NULL; node = node->next)
+  if (!sig_list->method_sig)
     {
-      regu_alloc (*tail);
+      return NULL;
+    }
 
-      if (*tail)
+  node = node_list;
+  for (int i = 0; i < sig_list.num_methods; i++)
+    {
+      if (!node)
 	{
-	  (sig_list->num_methods)++;
-
-	  (*tail)->method_name = (char *) node->info.method_call.method_name->info.name.original;
-
-	  /* num_method_args does not include the target by convention */
-	  (*tail)->num_method_args = pt_length_of_list (node->info.method_call.arg_list);
-	  (*tail)->method_arg_pos =
-	    pt_to_method_arglist (parser, node->info.method_call.on_call_target, node->info.method_call.arg_list,
-				  subquery_as_attr_list);
-
-	  if (PT_IS_METHOD (node))
-	    {
-	      PT_NODE *dt = node->info.method_call.on_call_target->data_type;
-	      /* beware of virtual classes */
-	      if (dt->info.data_type.virt_object)
-		{
-		  (*tail)->class_name = (char *) db_get_class_name (dt->info.data_type.virt_object);
-		}
-	      else
-		{
-		  (*tail)->class_name = (char *) dt->info.data_type.entity->info.name.original;
-		}
-
-	      (*tail)->method_type = PT_IS_CLASS_METHOD (node) ? METHOD_TYPE_CLASS_METHOD : METHOD_TYPE_INSTANCE_METHOD;
-	    }
-	  else if (PT_IS_JAVA_SP (node))
-	    {
-	      (*tail)->class_name = NULL;
-	      (*tail)->method_type = METHOD_TYPE_JAVA_SP;
-
-	      int num_args = (*tail)->num_method_args;
-	      (*tail)->arg_info.arg_mode = regu_int_array_alloc (num_args);
-	      (*tail)->arg_info.arg_type = regu_int_array_alloc (num_args);
-
-	      DB_OBJECT *mop_p = jsp_find_stored_procedure ((*tail)->method_name);
-	      if (mop_p)
-		{
-		  /* java stored procedure signature */
-		  DB_VALUE method;
-		  if (db_get (mop_p, SP_ATTR_TARGET, &method) == NO_ERROR)
-		    {
-		      (*tail)->method_name = (char *) db_get_string (&method);
-		    }
-		  else
-		    {
-		      break;
-		    }
-
-		  DB_VALUE args;
-		  /* arg_mode, arg_type */
-		  if (db_get (mop_p, SP_ATTR_ARGS, &args) == NO_ERROR)
-		    {
-		      DB_SET *param_set = db_get_set (&args);
-		      DB_VALUE mode, arg_type, temp;
-		      int i;
-		      for (i = 0; i < num_args; i++)
-			{
-			  set_get_element (param_set, i, &temp);
-			  DB_OBJECT *arg_mop_p = db_get_object (&temp);
-			  if (arg_mop_p)
-			    {
-			      if (db_get (arg_mop_p, SP_ATTR_MODE, &mode) == NO_ERROR)
-				{
-				  (*tail)->arg_info.arg_mode[i] = db_get_int (&mode);
-				}
-
-			      if (db_get (arg_mop_p, SP_ATTR_DATA_TYPE, &arg_type) == NO_ERROR)
-				{
-				  (*tail)->arg_info.arg_type[i] = db_get_int (&arg_type);
-				}
-
-			      pr_clear_value (&mode);
-			      pr_clear_value (&arg_type);
-			      pr_clear_value (&temp);
-			    }
-			  else
-			    {
-			      break;
-			    }
-			}
-		      pr_clear_value (&args);
-		    }
-		  else
-		    {
-		      break;
-		    }
-
-		  /* result type */
-		  DB_VALUE result_type;
-		  if (db_get (mop_p, SP_ATTR_RETURN_TYPE, &result_type) == NO_ERROR)
-		    {
-		      (*tail)->arg_info.result_type = db_get_int (&result_type);
-		      pr_clear_value (&result_type);
-		    }
-		  else
-		    {
-		      break;
-		    }
-		}
-	      else
-		{
-		  break;
-		}
-	    }
-	  else
-	    {
-	      /* should be never happened */
-	      assert (false);
-	      break;
-	    }
-	  tail = &(*tail)->next;
-	}
-      else
-	{
-	  /* something failed */
-	  sig_list = NULL;
+	  // safe guard
 	  assert (false);
-	  break;
+	  return NULL;
 	}
+
+      if (pt_to_method_sig (parser, node, subquery_as_attr_list, &sig_list->method_sig[i]) != NO_ERROR)
+	{
+	  return NULL;
+	}
+
+      node = node->next;
     }
 
   return sig_list;
+}
+
+static int
+pt_to_method_sig (PARSER_CONTEXT * parser, PT_NODE * node, PT_NODE * subquery_as_attr_list, METHOD_SIG * sig)
+{
+  int error = NO_ERROR;
+  const char *method_name = PT_METHOD_CALL_NAME (node)->info.name.original;
+  if (method_name)
+    {
+      sig->method_name = method_name;
+    }
+
+  /* num_method_args does not include the target by convention */
+  sig->num_method_args = pt_length_of_list (node->info.method_call.arg_list);
+  sig->method_arg_pos.resize (sig->num_method_args + 1);
+
+  error = pt_to_method_arglist (parser, node->info.method_call.on_call_target, node->info.method_call.arg_list,
+				subquery_as_attr_list, sig->method_arg_pos);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  int num_args = sig->num_method_args;
+  sig->arg_info.arg_mode.resize (num_args, 0);
+  sig->arg_info.arg_type.resize (num_args, 0);
+
+  if (PT_IS_METHOD (node))
+    {
+      PT_NODE *dt = node->info.method_call.on_call_target->data_type;
+      /* beware of virtual classes */
+      const char *class_name = nullptr;
+
+      if (dt->info.data_type.virt_object)
+	{
+	  class_name = (char *) db_get_class_name (dt->info.data_type.virt_object);
+	}
+      else
+	{
+	  class_name = (char *) dt->info.data_type.entity->info.name.original;
+	}
+
+      if (class_name)
+	{
+	  sig->class_name = class_name;
+	}
+
+      sig->method_type = PT_IS_CLASS_METHOD (node) ? METHOD_TYPE_CLASS_METHOD : METHOD_TYPE_INSTANCE_METHOD;
+    }
+  else if (PT_IS_JAVA_SP (node))
+    {
+      sig->class_name = NULL;
+      sig->method_type = METHOD_TYPE_JAVA_SP;
+
+      DB_OBJECT *mop_p = jsp_find_stored_procedure (sig->method_name.c_str ());
+      if (mop_p)
+	{
+	  /* java stored procedure signature */
+	  DB_VALUE method;
+	  if (db_get (mop_p, SP_ATTR_TARGET, &method) == NO_ERROR)
+	    {
+	      sig->method_name = (char *) db_get_string (&method);
+	    }
+	  else
+	    {
+	      break;
+	    }
+
+	  DB_VALUE args;
+	  /* arg_mode, arg_type */
+	  if (db_get (mop_p, SP_ATTR_ARGS, &args) == NO_ERROR)
+	    {
+	      DB_SET *param_set = db_get_set (&args);
+	      DB_VALUE mode, arg_type, temp;
+	      int i;
+	      for (i = 0; i < num_args; i++)
+		{
+		  set_get_element (param_set, i, &temp);
+		  DB_OBJECT *arg_mop_p = db_get_object (&temp);
+		  if (arg_mop_p)
+		    {
+		      if (db_get (arg_mop_p, SP_ATTR_MODE, &mode) == NO_ERROR)
+			{
+			  sig->arg_info.arg_mode[i] = db_get_int (&mode);
+			}
+
+		      if (db_get (arg_mop_p, SP_ATTR_DATA_TYPE, &arg_type) == NO_ERROR)
+			{
+			  sig->arg_info.arg_type[i] = db_get_int (&arg_type);
+			}
+
+		      pr_clear_value (&mode);
+		      pr_clear_value (&arg_type);
+		      pr_clear_value (&temp);
+		    }
+		  else
+		    {
+		      error = ER_FAILED;
+		    }
+		}
+	      pr_clear_value (&args);
+	    }
+	  else
+	    {
+	      error = ER_FAILED;
+	    }
+
+	  /* result type */
+	  DB_VALUE result_type;
+	  if (db_get (mop_p, SP_ATTR_RETURN_TYPE, &result_type) == NO_ERROR)
+	    {
+	      sig->arg_info.result_type = db_get_int (&result_type);
+	      pr_clear_value (&result_type);
+	    }
+	  else
+	    {
+	      error = ER_FAILED;
+	    }
+	}
+      else
+	{
+	  error = ER_FAILED;
+	}
+    }
+  else
+    {
+      /* should be never happened */
+      assert (false);
+      break;
+    }
+
+  return error;
 }
 
 /*
