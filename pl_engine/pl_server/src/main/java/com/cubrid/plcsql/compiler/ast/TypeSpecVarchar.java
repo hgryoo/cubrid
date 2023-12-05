@@ -30,32 +30,39 @@
 
 package com.cubrid.plcsql.compiler.ast;
 
-import com.cubrid.plcsql.compiler.Misc;
-import com.cubrid.plcsql.compiler.visitor.AstVisitor;
-import org.antlr.v4.runtime.ParserRuleContext;
+import java.util.HashMap;
+import java.util.Map;
 
-public class ExprList extends Expr {
+public class TypeSpecVarchar extends TypeSpecSimple {
 
-    @Override
-    public <R> R accept(AstVisitor<R> visitor) {
-        return visitor.visitExprList(this);
+    public static final int MAX_LEN = 1073741823;
+
+    // NOTE: no accept() method. inherit it from the parent TypeSpecSimple
+
+    public final int length;
+
+    public static synchronized TypeSpecVarchar getInstance(int length) {
+
+        assert length <= MAX_LEN && length >= 1;
+
+        TypeSpecVarchar ret = instances.get(length);
+        if (ret == null) {
+            String typicalValueStr = String.format("cast(? as varchar(%d))", length);
+            ret = new TypeSpecVarchar(typicalValueStr, length);
+            instances.put(length, ret);
+        }
+
+        return ret;
     }
 
-    public final NodeList<Expr> elems;
-
-    public ExprList(ParserRuleContext ctx, NodeList<Expr> elems) {
-        super(ctx);
-
-        assert elems != null;
-        this.elems = elems;
-    }
-
-    @Override
-    public String exprToJavaCode() {
-        return "Arrays.asList(\n" + Misc.indentLines(elems.toJavaCode(",\n"), 1) + "\n)";
-    }
-
-    // --------------------------------------------------
+    // ---------------------------------------------------------------------------
     // Private
-    // --------------------------------------------------
+    // ---------------------------------------------------------------------------
+
+    private static final Map<Integer, TypeSpecVarchar> instances = new HashMap<>();
+
+    private TypeSpecVarchar(String typicalValueStr, int length) {
+        super("String", "java.lang.String", IDX_STRING, typicalValueStr);
+        this.length = length;
+    }
 }

@@ -30,26 +30,39 @@
 
 package com.cubrid.plcsql.compiler.ast;
 
-import com.cubrid.plcsql.compiler.visitor.AstVisitor;
+import java.util.HashMap;
+import java.util.Map;
 
-public class TypeSpecNumeric extends TypeSpec {
+public class TypeSpecChar extends TypeSpecSimple {
 
-    @Override
-    public <R> R accept(AstVisitor<R> visitor) {
-        return visitor.visitTypeSpecNumeric(this);
+    public static final int MAX_LEN = 268435455;
+
+    // NOTE: no accept() method. inherit it from the parent TypeSpecSimple
+
+    public final int length;
+
+    public static synchronized TypeSpecChar getInstance(int length) {
+
+        assert length <= MAX_LEN && length >= 1;
+
+        TypeSpecChar ret = instances.get(length);
+        if (ret == null) {
+            String typicalValueStr = String.format("cast(? as char(%d))", length);
+            ret = new TypeSpecChar(typicalValueStr, length);
+            instances.put(length, ret);
+        }
+
+        return ret;
     }
 
-    public final int precision;
-    public final int scale;
+    // ---------------------------------------------------------------------------
+    // Private
+    // ---------------------------------------------------------------------------
 
-    public TypeSpecNumeric(int precision, int scale) {
-        super("BigDecimal");
-        this.precision = precision;
-        this.scale = scale;
-    }
+    private static final Map<Integer, TypeSpecChar> instances = new HashMap<>();
 
-    @Override
-    public String toJavaSignature() {
-        return "java.math.BigDecimal";
+    private TypeSpecChar(String typicalValueStr, int length) {
+        super("String", "java.lang.String", IDX_STRING, typicalValueStr);
+        this.length = length;
     }
 }
