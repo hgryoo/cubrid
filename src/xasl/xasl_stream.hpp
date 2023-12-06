@@ -32,6 +32,8 @@
 // forward def
 struct db_value;
 class regu_variable_node;
+struct regu_variable_list_node;
+struct xasl_node;
 
 namespace cubxasl
 {
@@ -41,7 +43,13 @@ namespace cubxasl
     struct node;
     struct spec_node;
   } // namespace json_table
+
+  struct method_spec_node;
 } // namespace cubxasl
+
+struct method_sig_list;
+struct method_sig_node;
+
 
 const size_t OFFSETS_PER_BLOCK = 4096;
 const size_t START_PTR_PER_BLOCK = 15;
@@ -69,9 +77,16 @@ char *stx_alloc_struct (THREAD_ENTRY *thread_p, int size);
 char *stx_build (THREAD_ENTRY *thread_p, char *ptr, cubxasl::json_table::spec_node &jts);
 char *stx_build (THREAD_ENTRY *thread_p, char *ptr, cubxasl::json_table::column &jtc);
 char *stx_build (THREAD_ENTRY *thread_p, char *ptr, cubxasl::json_table::node &jtn);
+
+char *stx_build (THREAD_ENTRY *thread_p, char *ptr, struct method_sig_node &ms);
+char *stx_build (THREAD_ENTRY *thread_p, char *ptr, struct method_sig_list &msl);
+char *stx_build (THREAD_ENTRY *thread_p, char *ptr, cubxasl::method_spec_node &mst);
+
 // next stx_build functions are not ported to xasl_stream.cpp and cannot be used for debug checks
 char *stx_build (THREAD_ENTRY *thread_p, char *ptr, db_value &val);
 char *stx_build (THREAD_ENTRY *thread_p, char *ptr, regu_variable_node &reguvar);
+char *stx_build (THREAD_ENTRY *thread_p, char *ptr, struct regu_variable_list_node &reguvar_list);
+char *stx_build (THREAD_ENTRY *thread_p, char *ptr, struct xasl_node & xasl);
 
 // dependencies not ported
 char *stx_build_db_value (THREAD_ENTRY *thread_p, char *tmp, db_value *ptr);
@@ -88,10 +103,16 @@ bool xasl_stream_compare (const cubxasl::json_table::column &first, const cubxas
 bool xasl_stream_compare (const cubxasl::json_table::node &first, const cubxasl::json_table::node &second);
 bool xasl_stream_compare (const cubxasl::json_table::spec_node &first, const cubxasl::json_table::spec_node &second);
 
+bool xasl_stream_compare (const struct method_sig_node &first, const struct method_sig_node &second);
+bool xasl_stream_compare (const struct method_sig_list &first, const struct method_sig_list &second);
+bool xasl_stream_compare (const cubxasl::method_spec_node &first, const cubxasl::method_spec_node &second);
+
 template <typename T>
 static void stx_alloc (THREAD_ENTRY *thread_p, T *&ptr);
 template <typename T>
 static void stx_alloc_array (THREAD_ENTRY *thread_p, T *&ptr, std::size_t count);
+template <typename T>
+static void stx_alloc_new (THREAD_ENTRY *thread_p, T *&ptr, std::size_t count);
 
 template <typename T>
 void stx_restore (THREAD_ENTRY *thread_p, char *&ptr, T *&target);
@@ -162,6 +183,52 @@ stx_restore (THREAD_ENTRY *thread_p, char *&ptr, T *&target)
 }
 
 template <typename T>
+static void
+stx_restore_new (THREAD_ENTRY *thread_p, char *&ptr, T *&target)
+{
+#if !defined (CS_MODE)
+  int offset;
+
+  ptr = or_unpack_int (ptr, &offset);
+  if (offset == 0)
+    {
+      target = NULL;
+    }
+  else
+    {
+      char *bufptr = &get_xasl_unpack_info_ptr (thread_p)->packed_xasl[offset];
+      target = (T *) stx_get_struct_visited_ptr (thread_p, bufptr);
+      if (target != NULL)
+	{
+	  return;
+	}
+      target = (T *) stx_alloc_struct (thread_p, (int) sizeof (T));
+      if (target == NULL)
+	{
+	  assert (false);
+	  return;
+	}
+      if (stx_mark_struct_visited (thread_p, bufptr, target) != NO_ERROR)
+	{
+	  assert (false);
+	  return;
+	}
+      
+      new (target) T;
+      if (stx_build (thread_p, bufptr, *target) == NULL)
+	{
+	  assert (false);
+	}
+    }
+#else // CS_MODE
+  // NOTE - in CS_MODE, we only need to do some debug checks and we don't have to do actual restoring
+  int dummy;
+  ptr = or_unpack_int (ptr, &dummy);
+  target = NULL;
+#endif  // CS_MODE
+}
+
+template <typename T>
 void stx_alloc (THREAD_ENTRY *thread_p, T *&ptr)
 {
   ptr = (T *) stx_alloc_struct (thread_p, (int) sizeof (T));
@@ -171,6 +238,16 @@ template <typename T>
 static void stx_alloc_array (THREAD_ENTRY *thread_p, T *&ptr, std::size_t count)
 {
   ptr = (T *) stx_alloc_struct (thread_p, (int) (count * sizeof (T)));
+}
+
+template <typename T>
+static void stx_alloc_new (THREAD_ENTRY *thread_p, T *&ptr, std::size_t count)
+{
+  ptr = (T *) stx_alloc_struct (thread_p, (int) (count * sizeof (T)));
+  for (int n = 0; n < count; ++n)
+  {
+    new (&ptr[n]) T ();
+  }
 }
 
 #endif // _XASL_STREAM_HPP_

@@ -72,7 +72,7 @@ namespace cubmethod
       void register_returning_cursor (cubthread::entry *thread_p, QUERY_ID query_id);
       void deregister_returning_cursor (cubthread::entry *thread_p, QUERY_ID query_id);
 
-      method_invoke_group *create_invoke_group (cubthread::entry *thread_p, const method_sig_list &siglist, bool is_scan);
+      method_invoke_group *create_invoke_group (cubthread::entry *thread_p, method_sig_list &siglist, bool is_scan);
 
       // Currently these functions are used for debugging purpose.
       // In the recursive call situation, each time the function is called, a new worker from the thread pool is assigned. With this code, you can easily know the current state.

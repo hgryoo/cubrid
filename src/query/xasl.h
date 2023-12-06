@@ -28,6 +28,7 @@
 #include <assert.h>
 
 #include "access_json_table.hpp"
+#include "access_method.hpp"
 #include "access_spec.hpp"
 #include "memory_hash.h"
 #include "method_def.hpp"
@@ -130,7 +131,6 @@ typedef struct cls_spec_node CLS_SPEC_TYPE;
 typedef struct list_spec_node LIST_SPEC_TYPE;
 typedef struct showstmt_spec_node SHOWSTMT_SPEC_TYPE;
 typedef struct set_spec_node SET_SPEC_TYPE;
-typedef struct method_spec_node METHOD_SPEC_TYPE;
 typedef struct dblink_spec_node DBLINK_SPEC_TYPE;
 typedef struct reguval_list_spec_node REGUVAL_LIST_SPEC_TYPE;
 typedef union hybrid_node HYBRID_NODE;
@@ -771,15 +771,6 @@ struct set_spec_node
   REGU_VARIABLE *set_ptr;	/* set regu variable */
 };
 
-struct method_spec_node
-{
-  REGU_VARIABLE_LIST method_regu_list;	/* regulator variable list */
-  XASL_NODE *xasl_node;		/* the XASL node that contains the */
-  /* list file ID for the method */
-  /* arguments */
-  METHOD_SIG_LIST *method_sig_list;	/* method signature list */
-};
-
 struct dblink_spec_node
 {
   REGU_VARIABLE_LIST dblink_regu_list_pred;	/* regu list for the predicate */
@@ -865,7 +856,7 @@ union hybrid_node
         ((ptr)->s.json_table_node)
 
 #define ACCESS_SPEC_METHOD_XASL_NODE(ptr) \
-        ((ptr)->s.method_node.xasl_node)
+        ((ptr)->s.method_node.xasl)
 
 #define ACCESS_SPEC_METHOD_REGU_LIST(ptr) \
         ((ptr)->s.method_node.method_regu_list)

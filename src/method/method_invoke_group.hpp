@@ -63,7 +63,7 @@ namespace cubmethod
   {
     public:
       method_invoke_group () = delete; // Not DefaultConstructible
-      method_invoke_group (cubthread::entry *thread_p, const method_sig_list &sigs, bool is_for_scan);
+      method_invoke_group (cubthread::entry *thread_p, method_sig_list &sigs, bool is_for_scan);
 
       method_invoke_group (method_invoke_group &&other) = delete; // Not MoveConstructible
       method_invoke_group (const method_invoke_group &copy) = delete; // Not CopyConstructible

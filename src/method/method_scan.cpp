@@ -75,16 +75,16 @@ namespace cubscan
 	    }
 	}
 
-      method_sig_node *sig = sig_list->method_sig;
-      while (sig)
-	{
-	  for (int i = 0; i < sig->num_method_args; i++)
-	    {
-	      int idx = sig->method_arg_pos [i];
-	      m_arg_use_vector [idx] = true;
-	    }
-	  sig = sig->next;
-	}
+      int num_methods = (int) sig_list->method_sigs.size ();
+      for (int n = 0; n < num_methods; ++n)
+      {
+        method_sig_node &sig = sig_list->method_sigs[n];
+        for (int i = 0; i < sig.num_method_args; i++)
+                {
+                int idx = sig.method_arg_pos [i];
+                m_arg_use_vector [idx] = true;
+                }
+      }
 
       if (m_dbval_list == nullptr)
 	{

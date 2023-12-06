@@ -439,10 +439,6 @@ jsp_call_stored_procedure (PARSER_CONTEXT * parser, PT_NODE * statement)
     {
       /* call sp */
       method_sig_list sig_list;
-
-      sig_list.method_sig = nullptr;
-      sig_list.num_methods = 0;
-
       error = jsp_make_method_sig_list (parser, statement, sig_list);
       if (error == NO_ERROR && locator_get_sig_interrupt () == 0)
 	{
@@ -1491,26 +1487,17 @@ jsp_make_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node, method_sig_li
 	goto end;
       }
 
-    sig_list.num_methods = 1;
-    sig = sig_list.method_sig = (METHOD_SIG *) db_private_alloc (NULL, sizeof (METHOD_SIG) * sig_list.num_methods);
+    sig_list.method_sigs.resize (1);
+    sig = &sig_list.method_sigs[0];
     if (sig)
       {
-	new (sig) METHOD_SIG ();	// placement new
-
 	sig->num_method_args = sig_num_args;
 	sig->method_type = METHOD_TYPE_JAVA_SP;
 
 	// method_name
 	const char *method_name = db_get_string (&method);
-	int method_name_len = db_get_string_size (&method);
-
+	// int method_name_len = db_get_string_size (&method);
 	sig->method_name.assign (method_name);
-
-	// auth_name
-	const char *auth_name = jsp_get_owner_name (parsed_method_name);
-	int auth_name_len = strlen (auth_name);
-
-	sig->auth_name.assign (auth_name);
 
 	sig->method_arg_pos.resize (sig_num_args + 1);
 	for (int i = 0; i < sig_num_args + 1; i++)
@@ -1540,10 +1527,7 @@ end:
   AU_ENABLE (save);
   if (error != NO_ERROR)
     {
-      if (sig)
-	{
-	  sig->freemem ();
-	}
+      sig_list.freemem ();
     }
 
   pr_clear_value (&method);

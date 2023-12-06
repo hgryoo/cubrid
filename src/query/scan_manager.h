@@ -43,6 +43,7 @@
 #include "query_evaluator.h"
 #include "query_list.h"
 #include "access_json_table.hpp"
+#include "access_method.hpp"
 #include "scan_json_table.hpp"
 #include "storage_common.h"	/* for PAGEID */
 #include "query_hash_scan.h"

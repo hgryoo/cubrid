@@ -294,7 +294,7 @@ extern bool xtran_should_connection_reset (THREAD_ENTRY * thread_p, bool has_upd
 extern int xsession_set_tran_auto_commit (THREAD_ENTRY * thread_p, bool auto_commit);
 
 // *INDENT-OFF*
-extern int xmethod_invoke_fold_constants (THREAD_ENTRY * thread_p, const method_sig_list &sig_list, std::vector<std::reference_wrapper<DB_VALUE>> &args, DB_VALUE &result);
+extern int xmethod_invoke_fold_constants (THREAD_ENTRY * thread_p, method_sig_list &sig_list, std::vector<std::reference_wrapper<DB_VALUE>> &args, DB_VALUE &result);
 // *INDENT-ON*
 
 extern void xsynonym_remove_xasl_by_oid (THREAD_ENTRY * thread_p, OID * oidp);

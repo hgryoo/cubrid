@@ -78,9 +78,7 @@ method_sig_node::pack (cubpacking::packer &serializator) const
 size_t
 method_sig_node::get_packed_size (cubpacking::packer &serializator, std::size_t start_offset) const
 {
-  size_t size = serializator.get_packed_int_size (start_offset); /* num_methods */
-
-  size += serializator.get_packed_string_size (method_name, size);
+  size_t size = serializator.get_packed_string_size (method_name, size); /* method_name */
 
   /* method type and num_method_args */
   size += serializator.get_packed_int_size (size);
@@ -170,9 +168,14 @@ method_sig_node::freemem ()
   arg_info.arg_type.clear ();
 }
 
+void
+method_sig_node::clear_xasl ()
+{
+  freemem ();
+}
+
 method_sig_list::method_sig_list ()
-  : num_methods {0}
-  , method_sig {nullptr}
+  : method_sigs {}
 {
   //
 }
@@ -183,22 +186,17 @@ method_sig_list::~method_sig_list ()
 }
 
 method_sig_list::method_sig_list (method_sig_list &&obj)
+  : method_sigs {std::move(obj.method_sigs)}
 {
-  num_methods = std::move (obj.num_methods);
-
-  method_sig = obj.method_sig;
-  obj.method_sig = nullptr;
+  //
 }
 
-method_sig_node &
-method_sig_node::operator= (method_sig_node &&obj)
+method_sig_list &
+method_sig_list::operator= (method_sig_list &&obj)
 {
   if (this != &obj)
     {
-        num_methods = std::move (obj.num_methods);
-
-        method_sig = obj.method_sig;
-        obj.method_sig = nullptr;
+        method_sigs = std::move (obj.method_sigs);
     }
 
   return *this;
@@ -207,24 +205,23 @@ method_sig_node::operator= (method_sig_node &&obj)
 void
 method_sig_list::freemem ()
 {
-  if (num_methods > 0)
-    {
-      assert (method_sig != nullptr);
-      for (int i = 0; i < num_methods; i++)
-	{
-	  method_sig[i]->~METHOD_SIG();
-	}
-      db_private_free_and_init (NULL, method_sig);
-    }
+  method_sigs.clear ();
+}
+
+void
+method_sig_list::clear_xasl ()
+{
+  freemem ();
 }
 
 void
 method_sig_list::pack (cubpacking::packer &serializator) const
 {
+  int num_methods = (int) method_sigs.size ();
   serializator.pack_int (num_methods);
   for (int i = 0; i < num_methods; i++)
     {
-      method_sig[i]->pack (serializator);
+      method_sigs[i].pack (serializator);
     }
 }
 
@@ -232,9 +229,11 @@ size_t
 method_sig_list::get_packed_size (cubpacking::packer &serializator, std::size_t start_offset) const
 {
   size_t size = serializator.get_packed_int_size (start_offset); /* num_methods */
+
+  int num_methods = (int) method_sigs.size ();
   for (int i = 0; i < num_methods; i++)
     {
-      size += method_sig[i]->get_packed_size (serializator, size);
+      size += method_sigs[i].get_packed_size (serializator, size);
     }
   return size;
 }
@@ -242,15 +241,12 @@ method_sig_list::get_packed_size (cubpacking::packer &serializator, std::size_t 
 void
 method_sig_list::unpack (cubpacking::unpacker &deserializator)
 {
+  int num_methods = 0;
   deserializator.unpack_int (num_methods);
-  method_sig = nullptr;
-  if (num_methods > 0)
-    {
-      method_sig = (METHOD_SIG *) db_private_alloc (NULL, sizeof (METHOD_SIG) * num_methods);
-      for (int i = 0; i < num_methods; i++)
-	{
-	  new (method_sig[i]) METHOD_SIG (); // placement new
-	  method_sig[i]->unpack (deserializator);
-	}
-    }
+
+  method_sigs.resize (num_methods);
+  for (int i = 0; i < num_methods; i++)
+  {
+        method_sigs[i].unpack (deserializator);
+  }
 }

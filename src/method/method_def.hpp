@@ -139,6 +139,7 @@ struct method_sig_node
   size_t get_packed_size (cubpacking::packer &serializator, std::size_t start_offset = 0) const;
 
   void freemem ();
+  void clear_xasl ();
 
   method_sig_node ();
   method_sig_node (method_sig_node &&); // move constructor
@@ -153,20 +154,23 @@ struct method_sig_node
 struct method_sig_list : public cubpacking::packable_object
 {
   /* signature for methods */
-  int num_methods;		/* number of signatures */
-  METHOD_SIG *method_sig;	/* method signature lists */
+  std::vector <METHOD_SIG> method_sigs;
 
   void pack (cubpacking::packer &serializator) const;
   void unpack (cubpacking::unpacker &deserializator);
   size_t get_packed_size (cubpacking::packer &serializator, std::size_t start_offset = 0) const;
 
   void freemem ();
+  void clear_xasl ();
 
   method_sig_list ();
-  ~method_sig_list ();
+  method_sig_list (method_sig_list &&); // move constructor
+  method_sig_list &operator= (method_sig_list &&rhs); // move assignemnt
 
   method_sig_list (const method_sig_list &obj) = delete; // copy constructor
   method_sig_list &operator= (const method_sig_list &rhs) = delete; // copy assignment
+  
+  ~method_sig_list ();
 };
 typedef struct method_sig_list METHOD_SIG_LIST;
 

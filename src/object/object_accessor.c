@@ -137,6 +137,9 @@ static int obj_send_method_va (MOP obj, SM_CLASS * class_, SM_METHOD * method, D
 static int obj_send_method_list (MOP obj, SM_CLASS * class_, SM_METHOD * method, DB_VALUE * returnval,
 				 DB_VALUE_LIST * arglist);
 
+static int obj_check_method_array (MOP obj, SM_CLASS * class_, SM_METHOD * method, DB_VALUE ** argarray);
+
+
 static int obj_send_method_array (MOP obj, SM_CLASS * class_, SM_METHOD * method, DB_VALUE * returnval,
 				  DB_VALUE ** argarray);
 
@@ -3125,6 +3128,76 @@ obj_desc_send_list (MOP obj, SM_DESCRIPTOR * desc, DB_VALUE * returnval, DB_VALU
 }
 
 /*
+ * obj_check_method_array - This checks a method where the arguments are
+ *                         supplied in an array of DB_VALUE pointers.
+ *                         Used by both obj_send_array() and
+ *                         obj_desc_send_array().
+ *    return: error code
+ *    obj(in): object to receive message
+ *    class(in): class structure
+ *    method(in): method structure
+ *    returnval(out): return value container
+ *    argarray(in): array of argument values
+ *
+ */
+
+static int
+obj_check_method_array (MOP obj, SM_CLASS * class_, SM_METHOD * method, DB_VALUE ** argarray)
+{
+  int error = NO_ERROR;
+  ARGSTATE state;
+  SM_METHOD_SIGNATURE *sig;
+  METHOD_FUNCTION func;
+  int expected;
+
+  func = method->function;
+  if (func == NULL)
+    {
+      error = sm_link_method (class_, method);
+      func = method->function;
+    }
+
+  if (func != NULL)
+    {
+      sig = method->signatures;
+
+      /*
+       * calculate the expected number of arguments
+       * allow the case where the arg count is set but there are no
+       * arg definitions, should be an error
+       */
+      expected = ((sig != NULL && sig->num_args) ? sig->num_args : OBJ_MAX_ARGS);
+
+      /* get the arguments into the cannonical array */
+      argstate_from_array (&state, argarray);
+
+      /* need to handle this gracefully someday */
+      if (state.noverflow)
+	{
+	  ERROR3 (error, ER_OBJ_TOO_MANY_ARGUMENTS, method->header.name, state.nargs + state.noverflow, OBJ_MAX_ARGS);
+	}
+      else
+	{
+	  /*
+	   * what happens when the actual count doesn't match the expected
+	   * count and there is no domain definition ?
+	   * for now, assume the supplied args are correct
+	   */
+
+	  /* check argument domains if there are any */
+	  if (sig != NULL && sig->args != NULL)
+	    {
+	      error = check_args (method, &state);
+	    }
+	}
+
+      cleanup_argstate (&state);
+    }
+
+  return (error);
+}
+
+/*
  * obj_send_method_array - This invokes a method where the arguments are
  *                         supplied in an array of DB_VALUE pointers.
  *                         Used by both obj_send_array() and
@@ -3196,6 +3269,60 @@ obj_send_method_array (MOP obj, SM_CLASS * class_, SM_METHOD * method, DB_VALUE 
     }
 
   return (error);
+}
+
+/*
+ * obj_check_array - Check a method using a name with arguments in an array.
+ *    return: error code
+ *    obj(in): object
+ *    name(in): method name
+ *    returnval(out): return value container
+ *    argarray(in): argument array
+ *
+ */
+int
+obj_check_method (MOP obj, const char *name)
+{
+  int error = NO_ERROR;
+  SM_CLASS *class_;
+  SM_METHOD *method;
+  bool class_method;
+  
+                METHOD_FUNCTION func;
+
+  if ((obj == NULL) || (name == NULL))
+    {
+      ERROR0 (error, ER_OBJ_INVALID_ARGUMENTS);
+    }
+  else
+    {
+        if (au_fetch_class (obj, &class_, AU_FETCH_READ, AU_SELECT) == NO_ERROR)
+        {
+                /* rare case when its ok to use this macro */
+                class_method = (IS_CLASS_MOP (obj)) ? true : false;
+                method = classobj_find_method (class_, name, class_method);
+                if (method == NULL)
+                {
+                ERROR1 (error, ER_OBJ_INVALID_METHOD, name);
+                }
+                else
+                {
+
+                        func = method->function;
+                        if (func == NULL)
+                        {
+                        error = sm_link_method (class_, method);
+                        func = method->function;
+                        }
+
+                        if (error == NO_ERROR) {
+                                error = er_errid ();
+                        }
+                }
+        }
+    }
+
+  return error;
 }
 
 /*

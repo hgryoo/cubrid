@@ -597,7 +597,7 @@ method_fixup_vobjs (DB_VALUE *value_p)
  *  sig_list(in) : method signature
  *  args(in) : method argument
  */
-int xmethod_invoke_fold_constants (THREAD_ENTRY *thread_p, const method_sig_list &sig_list,
+int xmethod_invoke_fold_constants (THREAD_ENTRY *thread_p, method_sig_list &sig_list,
 				   std::vector<std::reference_wrapper<DB_VALUE>> &args,
 				   DB_VALUE &result)
 {

@@ -63,7 +63,7 @@ namespace cubmethod
   }
 
   method_invoke_group *
-  runtime_context::create_invoke_group (cubthread::entry *thread_p, const method_sig_list &sig_list, bool is_scan)
+  runtime_context::create_invoke_group (cubthread::entry *thread_p, method_sig_list &sig_list, bool is_scan)
   {
     std::unique_lock<std::mutex> ulock (m_mutex);
 

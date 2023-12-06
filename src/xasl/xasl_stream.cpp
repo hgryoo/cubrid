@@ -302,7 +302,6 @@ stx_build_string (THREAD_ENTRY *thread_p, char *ptr, char *string)
 char *
 stx_restore_string (THREAD_ENTRY *thread_p, char *&ptr)
 {
-#if !defined (CS_MODE)
   char *string;
   int length;
   int offset = 0;
@@ -351,11 +350,6 @@ stx_restore_string (THREAD_ENTRY *thread_p, char *&ptr)
     }
 
   return string;
-#else   // CS_MODE
-  int dummy;
-  ptr = or_unpack_int (ptr, &dummy);
-  return NULL;
-#endif  // CS_MODE
 }
 
 char *
@@ -456,6 +450,77 @@ stx_build (THREAD_ENTRY *thread_p, char *ptr, cubxasl::json_table::spec_node &js
 }
 
 char *
+stx_build (THREAD_ENTRY *thread_p, char *ptr, struct method_sig_node & sig)
+{
+  char *method_name = stx_restore_string (thread_p, ptr);
+  assert (method_name);
+  if (method_name)
+    {
+      sig.method_name.assign (method_name);
+    }
+
+  ptr = or_unpack_int (ptr, (int *) &sig.method_type);
+  ptr = or_unpack_int (ptr, &sig.num_method_args);
+
+  int num_args = sig.num_method_args;
+  sig.method_arg_pos.resize (num_args + 1);
+
+for (int n = 0; n < num_args + 1; n++)
+{
+ptr = or_unpack_int (ptr, &sig.method_arg_pos[n]);
+}
+
+char *class_name = stx_restore_string (thread_p, ptr);
+if (class_name)
+{
+sig.class_name.assign (class_name);
+}
+
+sig.arg_info.arg_mode.resize (num_args, 0);
+sig.arg_info.arg_type.resize (num_args, 0);
+
+for (int n = 0; n < num_args; n++)
+{
+ptr = or_unpack_int (ptr, &sig.arg_info.arg_mode[n]);
+}
+for (int n = 0; n < num_args; n++)
+{
+ptr = or_unpack_int (ptr, &sig.arg_info.arg_type[n]);
+}
+
+ptr = or_unpack_int (ptr, &sig.arg_info.result_type);
+
+  return ptr;
+}
+
+char *
+stx_build (THREAD_ENTRY *thread_p, char *ptr, struct method_sig_list & msl)
+{
+  int num_methods = 0;
+  ptr = or_unpack_int (ptr, &num_methods);
+
+  msl.method_sigs.resize (num_methods);
+  for (int i = 0; i < num_methods; ++i)
+  {
+    ptr = stx_build (thread_p, ptr, msl.method_sigs[i]);
+  }
+  
+  return ptr;
+}
+
+char *
+stx_build (THREAD_ENTRY *thread_p, char *ptr, cubxasl::method_spec_node &mst)
+{
+  stx_restore (thread_p, ptr, mst.method_regu_list);
+
+  stx_restore (thread_p, ptr, mst.xasl);
+
+  stx_restore_new (thread_p, ptr, mst.method_sig_list);
+
+  return ptr;
+}
+
+char *
 stx_build (THREAD_ENTRY *thread_p, char *ptr, db_value &val)
 {
   return stx_build_db_value (thread_p, ptr, &val);
@@ -522,5 +587,47 @@ xasl_stream_compare (const cubxasl::json_table::spec_node &first, const cubxasl:
     {
       return false;
     }
+  return true;
+}
+
+
+bool
+xasl_stream_compare (const struct method_sig_node &first, const struct method_sig_node &second)
+{
+  if (first.num_method_args != second.num_method_args)
+    {
+      return false;
+    }
+
+  if (first.method_name.compare (second.method_name) != 0)
+    {
+      return false;
+    }
+
+  if (first.method_type != second.method_type)
+    {
+      return false;
+    }
+
+  // TODO: need more?
+
+  return true;
+}
+
+bool
+xasl_stream_compare (const struct method_sig_list &first, const struct method_sig_list &second)
+{
+  if (first.method_sigs.size () != second.method_sigs.size ())
+    {
+      return false;
+    }
+
+  return true;
+}
+
+bool
+xasl_stream_compare (const cubxasl::method_spec_node &first, const cubxasl::method_spec_node &second)
+{
+  // no compare
   return true;
 }

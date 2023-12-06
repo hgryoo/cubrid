@@ -45,6 +45,7 @@
 #include "db_json.hpp"
 #include "object_primitive.h"
 #include "db_client_type.hpp"
+#include "object_accessor.h"
 
 #include "dbtype.h"
 #define PT_CHAIN_LENGTH 10
@@ -9819,6 +9820,33 @@ pt_check_method (PARSER_CONTEXT * parser, PT_NODE * node)
 	      return;
 	    }
 	}
+
+        /*
+        int error = NO_ERROR;
+        METHOD_FUNCTION func;
+        func = method->function;
+        if (func == NULL)
+        {
+        error = sm_link_method (class_op, method);
+        func = method->function;
+        }
+
+        if (error == NO_ERROR) {
+            error = er_errid ();
+        }
+
+        if (error != NO_ERROR)
+        {
+                PT_ERRORm (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_METH_TARGET_NOT_OBJ);
+                return;
+        }
+        */
+
+        if (obj_check_method (class_op, method_name) != NO_ERROR)
+        {
+        PT_ERRORm (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_METH_TARGET_NOT_OBJ);
+        return;
+        }
     }
   else
     {
@@ -9842,6 +9870,16 @@ pt_check_method (PARSER_CONTEXT * parser, PT_NODE * node)
       PT_ERRORm (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_METH_ARG_NE_DEFINED);
       return;
     }
+
+    /*
+  if (obj_check_method (class_op, method_name) != NO_ERROR)
+    {
+      PT_ERRORm (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_METH_TARGET_NOT_OBJ);
+      return;
+    }
+    */
+
+  /* check */
 
 }
 

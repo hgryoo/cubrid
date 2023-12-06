@@ -820,6 +820,9 @@ struct json_t;
 #define PT_SYNONYM_IF_EXISTS(n)		((n)->info.synonym.if_exists)
 #define PT_SYNONYM_IS_DBLINKED(n)	((n)->info.synonym.is_dblinked)	/* for user.table@server */
 
+/* PT_METHOD_CALL_INFO */
+#define PT_METHOD_CALL_NAME(n)		((n)->info.method_call.method_name)
+
 /* Check node_type of PT_NODE */
 #define PT_NODE_IS_EXPR(n)		(PT_ASSERT_NOT_NULL ((n)), (n)->node_type == PT_EXPR)
 #define PT_NODE_IS_NAME(n)		(PT_ASSERT_NOT_NULL ((n)), (n)->node_type == PT_NAME)

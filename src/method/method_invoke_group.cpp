@@ -41,7 +41,7 @@ namespace cubmethod
 //////////////////////////////////////////////////////////////////////////
 // Method Group to invoke together
 //////////////////////////////////////////////////////////////////////////
-  method_invoke_group::method_invoke_group (cubthread::entry *thread_p, const method_sig_list &sig_list,
+  method_invoke_group::method_invoke_group (cubthread::entry *thread_p, method_sig_list &sig_list,
       bool is_for_scan = false)
     : m_id ((std::uint64_t) this)
     , m_thread_p (thread_p)
@@ -49,30 +49,29 @@ namespace cubmethod
     , m_cursor_set ()
     , m_handler_set ()
   {
-    assert (sig_list.num_methods > 0);
-
     // init runtime context
     session_get_method_runtime_context (thread_p, m_rctx);
 
     m_sid = thread_p->conn_entry->session_id;
     m_tid = logtb_find_current_tranid (thread_p);
 
-    method_sig_node *sig = sig_list.method_sig;
-    while (sig)
-      {
+    std::vector<method_sig_node> &sigs = sig_list.method_sigs;
+    int num_methods = (int) sigs.size ();
+    for (int i = 0; i < num_methods; i++)
+    {
 	method_invoke *mi = nullptr;
 
-	METHOD_TYPE type = sig->method_type;
+	METHOD_TYPE type = sigs[i].method_type;
 	switch (type)
 	  {
 	  case METHOD_TYPE_INSTANCE_METHOD:
 	  case METHOD_TYPE_CLASS_METHOD:
-	    mi = new method_invoke_builtin (this, sig);
+	    mi = new method_invoke_builtin (this, &sigs[i]);
 	    break;
 	  case METHOD_TYPE_JAVA_SP:
 	  {
 	    bool use_tcl = prm_get_bool_value (PRM_ID_PL_TRANSACTION_CONTROL);
-	    mi = new method_invoke_java (this, sig, use_tcl);
+	    mi = new method_invoke_java (this, &sigs[i], use_tcl);
 	  }
 	  break;
 	  default:
@@ -82,13 +81,11 @@ namespace cubmethod
 
 	m_kind_type.insert (type);
 	m_method_vector.push_back (mi);
-
-	sig = sig->next;
-      }
+    }
 
     DB_VALUE v;
     db_make_null (&v);
-    m_result_vector.resize (sig_list.num_methods, v);
+    m_result_vector.resize (num_methods, v);
     m_is_running = false;
     m_parameter_info = nullptr;
     m_is_for_scan = is_for_scan;

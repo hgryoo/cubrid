@@ -3132,6 +3132,12 @@ boot_define_stored_procedure (MOP class_mop)
       return error_code;
     }
 
+  error_code = smt_add_attribute (def, "pragma", "integer", NULL);
+  if (error_code != NO_ERROR)
+    {
+      return error_code;
+    }
+
   error_code = smt_add_attribute (def, "target", "varchar(4096)", NULL);
   if (error_code != NO_ERROR)
     {

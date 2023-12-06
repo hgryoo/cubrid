@@ -10870,7 +10870,7 @@ cleanup:
 }
 
 int
-method_invoke_fold_constants (const method_sig_list & sig_list,
+method_invoke_fold_constants (method_sig_list & sig_list,
 			      std::vector < std::reference_wrapper < DB_VALUE >> &args, DB_VALUE & result)
 {
 #if defined(CS_MODE)
@@ -10909,15 +10909,15 @@ method_invoke_fold_constants (const method_sig_list & sig_list,
 	    // *INDENT-ON*
 	unpacker.unpack_all (result, out_args);
 
-	method_sig_node *sig = sig_list.method_sig;
-	for (int i = 0; i < sig->num_method_args; i++)
+	const struct method_sig_node &sig = sig_list.method_sigs[0];
+	for (int i = 0; i < sig.num_method_args; i++)
 	  {
-	    if (sig->arg_info.arg_mode[i] == METHOD_ARG_MODE_IN)
+	    if (sig.arg_info.arg_mode[i] == METHOD_ARG_MODE_IN)
 	      {
 		continue;
 	      }
 
-	    int pos = sig->method_arg_pos[i];
+	    int pos = sig.method_arg_pos[i];
 
 	    DB_VALUE & arg = args[pos];
 	    DB_VALUE & out_arg = out_args[pos];

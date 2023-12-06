@@ -10456,20 +10456,20 @@ smethod_invoke_fold_constants (THREAD_ENTRY * thread_p, unsigned int rid, char *
     {
       /* 3) make out arguments */
 
-      method_sig_node *sig = sig_list.method_sig;
+      method_sig_node &sig = sig_list.method_sigs[0];
       // *INDENT-OFF*
       DB_VALUE dummy_null;
       db_make_null (&dummy_null);
-      std::vector<std::reference_wrapper<DB_VALUE>> out_args (sig->num_method_args, dummy_null);
+      std::vector<std::reference_wrapper<DB_VALUE>> out_args (sig.num_method_args, dummy_null);
       // *INDENT-ON*
-      for (int i = 0; i < sig->num_method_args; i++)
+      for (int i = 0; i < sig.num_method_args; i++)
 	{
-	  if (sig->arg_info.arg_mode[i] == METHOD_ARG_MODE_IN)
+	  if (sig.arg_info.arg_mode[i] == METHOD_ARG_MODE_IN)
 	    {
 	      continue;
 	    }
 
-	  int pos = sig->method_arg_pos[i];
+	  int pos = sig.method_arg_pos[i];
 	  out_args[pos] = std::ref (args[pos]);
 	}
 

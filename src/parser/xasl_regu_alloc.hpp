@@ -173,7 +173,7 @@ regu_array_new (T **ptr, size_t size)
     }
   for (size_t idx = 0; idx < size; idx++)
     {
-      new (ptr) T (); // placement new
+      new (&(*ptr)[idx]) T (); // placement new
       regu_init ((*ptr)[idx]);
     }
 }

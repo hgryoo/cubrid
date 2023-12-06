@@ -119,10 +119,11 @@ extern int obj_desc_get (MOP op, SM_DESCRIPTOR * desc, DB_VALUE * value);
 /* Method invocation */
 extern int obj_send_va (MOP obj, const char *name, DB_VALUE * returnval, va_list args);
 
+extern int obj_check_method (MOP obj, const char *name);
 extern int obj_send_list (MOP obj, const char *name, DB_VALUE * returnval, DB_VALUE_LIST * arglist);
 extern int obj_send_array (MOP obj, const char *name, DB_VALUE * returnval, DB_VALUE ** argarray);
-/* Method descriptor interface */
 
+/* Method descriptor interface */
 extern int obj_desc_send_va (MOP obj, SM_DESCRIPTOR * desc, DB_VALUE * returnval, va_list args);
 extern int obj_desc_send_list (MOP obj, SM_DESCRIPTOR * desc, DB_VALUE * returnval, DB_VALUE_LIST * arglist);
 extern int obj_desc_send_array (MOP obj, SM_DESCRIPTOR * desc, DB_VALUE * returnval, DB_VALUE ** argarray);
