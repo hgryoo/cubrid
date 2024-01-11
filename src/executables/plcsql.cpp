@@ -72,6 +72,7 @@ struct plcsql_argument
   std::string user_name;
   std::string passwd;
   std::string in_file;
+  std::string query;
 
   plcsql_argument ()
   {
@@ -103,6 +104,7 @@ utility_plcsql_usage (void)
 	   "-p, --password=PASS           user password; default: none\n"
 	   "-i, --input-file              path for input PL/CSQL file\n"
 	   "-v, --verbose                 verbose mode to print logs\n"
+           "-q, --query                   query\n"
 	   "-h, --help                    show usage\n");
 }
 
@@ -163,8 +165,9 @@ parse_options (int argc, char *argv[], plcsql_argument *pl_args)
   {
     {"user", 1, 0, 'u'},
     {"password", 1, 0, 'p'},
-    {"input-file", 1, 0, 'i'},
+    {"input-file", 0, 0, 'i'},
     {"verbose", 0, 0, 'v'},
+    {"query", 0, 0, 'q'},
     {0, 0, 0, 0}
   };
 
@@ -173,7 +176,7 @@ parse_options (int argc, char *argv[], plcsql_argument *pl_args)
       int option_index = 0;
       int option_key;
 
-      option_key = getopt_long (argc, argv, "u:p:i:vh", opts, &option_index);
+      option_key = getopt_long (argc, argv, "u:p:i:q:vh", opts, &option_index);
       if (option_key == -1)
 	{
 	  break;
@@ -191,6 +194,10 @@ parse_options (int argc, char *argv[], plcsql_argument *pl_args)
 
 	case 'i':
 	  pl_args->in_file.assign (optarg ? optarg : "");
+	  break;
+
+	case 'q':
+	  pl_args->query.assign (optarg ? optarg : "");
 	  break;
 
 	case 'v':
@@ -243,11 +250,31 @@ main (int argc, char *argv[])
 	goto exit_on_end;
       }
 
-    if (plcsql_read_file (plcsql_arg.in_file) != NO_ERROR)
-      {
-	PLCSQL_LOG_FORCE ("Reading PL/CSQL program is failed");
-	goto exit_on_end;
-      }
+    if (!plcsql_arg.query.empty() && !plcsql_arg.in_file.empty())
+    {
+        PLCSQL_LOG_FORCE ("Only 'i' or 'q' option should be specified");
+        goto exit_on_end;
+    }
+
+    if (plcsql_arg.query.empty() && plcsql_arg.in_file.empty())
+    {
+        PLCSQL_LOG_FORCE ("Only 'i' or 'q' option should be specified");
+        goto exit_on_end;
+    }
+
+    if (!plcsql_arg.query.empty())
+    {
+        input_string.assign (plcsql_arg.query);
+    }
+    else
+    {
+        if (plcsql_read_file (plcsql_arg.in_file) != NO_ERROR)
+        {
+                PLCSQL_LOG_FORCE ("Reading PL/CSQL program is failed");
+                goto exit_on_end;
+        }
+    }
+
 
     PLCSQL_LOG ("[Input File]");
     PLCSQL_LOG (input_string);
