@@ -81,6 +81,9 @@ namespace cubmethod
 
       oid_handler *get_oid_handler ();
 
+      /* ported from cas_handle */
+      query_handler *new_query_handler ();
+      
     private:
       /* handle related to query */
       int end_transaction (packing_unpacker &unpacker);
@@ -102,8 +105,6 @@ namespace cubmethod
       int get_sql_semantics (packing_unpacker &unpacker);
       int get_global_semantics (packing_unpacker &unpacker);
 
-      /* ported from cas_handle */
-      query_handler *new_query_handler ();
 
       std::multimap <std::string, int> m_sql_handler_map;
       std::unordered_map <uint64_t, int> m_qid_handler_map;

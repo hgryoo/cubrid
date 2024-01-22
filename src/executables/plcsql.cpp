@@ -32,9 +32,15 @@
 #include <iterator>
 #include <filesystem>
 
+#include "parser.h"
+#include "api_compat.h" /* DB_SESSION */
+#include "db.h"
 #include "dbi.h"
 #include "db_client_type.hpp"
 #include "error_manager.h"
+
+#include "method_callback.hpp"
+#include "method_query_handler.hpp"
 
 #define CS_MODE
 #include "network_interface_cl.h"
@@ -264,7 +270,33 @@ main (int argc, char *argv[])
 
     if (!plcsql_arg.query.empty())
     {
-        input_string.assign (plcsql_arg.query);
+        using namespace cubmethod;
+
+        query_handler *handler = get_callback_handler ()->new_query_handler ();
+
+        error = handler->prepare_compile (plcsql_arg.query);
+        std::string rewritten_query;
+        if (error == NO_ERROR)
+        {
+	    DB_SESSION *db_session = handler->get_db_session ();
+	    const prepare_info &info = handler->get_prepare_info ();
+
+	    PARSER_CONTEXT *parser = db_get_parser (db_session);
+	    PT_NODE *stmt = db_get_statement (db_session, 0);
+
+	    parser->custom_print |= PT_CONVERT_RANGE;
+	    rewritten_query = parser_print_tree (parser, stmt);
+        }
+        else
+        {
+            rewritten_query += "SELECT /* ";
+            rewritten_query += db_error_string (1);
+            rewritten_query += " */ 'Error:";
+            rewritten_query += std::to_string (db_error_code ());
+            rewritten_query += "';";
+        }
+
+        std::cout << rewritten_query;
     }
     else
     {
