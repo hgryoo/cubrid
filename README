@@ -1,3 +1,5 @@
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fhgryoo%2Fcubrid.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fhgryoo%2Fcubrid?ref=badge_shield)
+
 CUBRID Database Management System
 =================================
 CUBRID is a DBMS being supported by an active community of open source developers 
@@ -44,3 +46,7 @@ post your thoughts on our subreddit at https://www.reddit.com/r/CUBRID/.
 
 Sincerely,
 Your CUBRID Development Team.
+
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fhgryoo%2Fcubrid.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fhgryoo%2Fcubrid?ref=badge_large)
