@@ -41,9 +41,16 @@
 #define OR_BYTE_SIZE            1
 #define OR_SHORT_SIZE           2
 #define OR_INT_SIZE             4
+#define OR_INT64_SIZE           8
 #define OR_BIGINT_SIZE          8
 #define OR_FLOAT_SIZE           4
 #define OR_DOUBLE_SIZE          8
+
+#if __WORDSIZE == 32
+#define OR_PTR_SIZE             4
+#else /* __WORDSIZE == 32 */
+#define OR_PTR_SIZE             8
+#endif /* __WORDSIZE == 64 */
 
 #define OR_BIGINT_ALIGNED_SIZE  (OR_BIGINT_SIZE + MAX_ALIGNMENT)
 #define OR_DOUBLE_ALIGNED_SIZE  (OR_DOUBLE_SIZE + MAX_ALIGNMENT)
@@ -119,8 +126,9 @@
 #define OR_SHA1_SIZE		(5 * OR_INT_SIZE)
 
 /* NUMERIC RANGES */
-#define OR_MAX_BYTE 127
-#define OR_MIN_BYTE -128
+#define OR_MAX_BYTE_UNSIGNED 255	/* 0xFF */
+#define OR_MAX_BYTE 127		/* 0x7F */
+#define OR_MIN_BYTE -128	/* 0x80 */
 
 #define OR_MAX_SHORT_UNSIGNED 65535	/* 0xFFFF */
 #define OR_MAX_SHORT 32767	/* 0x7FFF */
@@ -163,5 +171,8 @@
 #define OR_MVCC_FLAG_VALID_PREV_VERSION   0x04
 
 #define OR_MVCC_REPID_MASK	  0x00FFFFFF
+
+/* MIDXKEY HEADER LAYOUT */
+#define OR_MULTI_MAX_OFFSET OR_MAX_BYTE_UNSIGNED
 
 #endif /* !_OBJECT_REPRESENTATION_CONSTANTS_H_ */

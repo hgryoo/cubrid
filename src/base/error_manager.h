@@ -42,6 +42,7 @@
 #include "error_code.h"
 
 #define ARG_FILE_LINE           __FILE__, __LINE__
+#define ARG_FILE_LINE_FUNC      __FILE__, __LINE__, __func__
 #define NULL_LEVEL              0
 
 /* Shorthand for simple warnings and errors */
@@ -170,6 +171,13 @@
     { \
       (error) = (code); \
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, (code), 4, (arg1), (arg2), (arg3), (arg4)); \
+    } \
+  while (0)
+
+#define ERROR_SET_ERROR_ONLY(code) \
+  do \
+    { \
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, (code), 0); \
     } \
   while (0)
 

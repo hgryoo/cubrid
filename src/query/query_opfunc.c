@@ -378,7 +378,7 @@ qdata_copy_db_value_to_tuple_value (DB_VALUE * dbval_p, bool clear_compressed_st
 	}
 
       val_size = pr_data_writeval_disk_size (dbval_p);
-      OR_BUF_INIT (buf, val_p, val_size);
+      or_init (&buf, val_p, val_size);
       rc = pr_type->data_writeval (&buf, dbval_p);
 
       if (rc != NO_ERROR)
@@ -5763,6 +5763,9 @@ qdata_divide_dbval (DB_VALUE * dbval1_p, DB_VALUE * dbval2_p, DB_VALUE * result_
   TP_DOMAIN *cast_dom2 = NULL;
   TP_DOMAIN_STATUS dom_status;
 
+  /* it should not be static because the parameter could be changed without broker restart */
+  bool oracle_compat_number = prm_get_bool_value (PRM_ID_ORACLE_COMPAT_NUMBER_BEHAVIOR);
+
   if ((domain_p != NULL && TP_DOMAIN_TYPE (domain_p) == DB_TYPE_NULL) || DB_IS_NULL (dbval1_p) || DB_IS_NULL (dbval2_p))
     {
       return NO_ERROR;
@@ -5792,6 +5795,15 @@ qdata_divide_dbval (DB_VALUE * dbval1_p, DB_VALUE * dbval2_p, DB_VALUE * result_
       /* cast number to DOUBLE */
       cast_dom1 = tp_domain_resolve_default (DB_TYPE_DOUBLE);
       cast_dom2 = tp_domain_resolve_default (DB_TYPE_DOUBLE);
+    }
+  else if (oracle_compat_number)
+    {
+      if (TP_IS_DISCRETE_NUMBER_TYPE (type1) && TP_IS_DISCRETE_NUMBER_TYPE (type2))
+	{
+	  /* cast number to NUMERIC */
+	  cast_dom1 = tp_domain_resolve_default (DB_TYPE_NUMERIC);
+	  cast_dom2 = tp_domain_resolve_default (DB_TYPE_NUMERIC);
+	}
     }
 
   if (cast_dom2 != NULL)
@@ -6363,7 +6375,7 @@ qdata_get_single_tuple_from_list_id (THREAD_ENTRY * thread_p, qfile_list_id * li
 	    }
 
 	  flag = (QFILE_TUPLE_VALUE_FLAG) qfile_locate_tuple_value (tuple_record.tpl, i, &ptr, &length);
-	  OR_BUF_INIT (buf, ptr, length);
+	  or_init (&buf, ptr, length);
 	  if (flag == V_BOUND)
 	    {
 	      if (pr_type_p->data_readval (&buf, value_list->val, domain_p, -1, true, NULL, 0) != NO_ERROR)
@@ -7551,9 +7563,16 @@ qdata_evaluate_sys_connect_by_path (THREAD_ENTRY * thread_p, void *xasl_p, regu_
 	  goto error;
 	}
 
-      while ((int) strlen (path_tmp) + 1 > len_result_path)
+      bool is_resize = false;
+      int need_size = (int) strlen (path_tmp) + 1;
+      while (need_size > len_result_path)
 	{
 	  len_result_path += SYS_CONNECT_BY_PATH_MEM_STEP;
+	  is_resize = true;
+	}
+
+      if (is_resize)
+	{
 	  db_private_free_and_init (thread_p, result_path);
 	  result_path = (char *) db_private_alloc (thread_p, sizeof (char) * len_result_path);
 	  if (result_path == NULL)
@@ -8572,7 +8591,7 @@ qdata_regexp_function (THREAD_ENTRY * thread_p, FUNCTION_TYPE * function_p, VAL_
 	function_p->tmp_obj->compiled_regex = new cub_compiled_regex ();
       }
 
-    cub_compiled_regex *compiled_regex = function_p->tmp_obj->compiled_regex;
+    cub_compiled_regex *&compiled_regex = function_p->tmp_obj->compiled_regex;
     error_status = regexp_func (function_p->value, args, no_args, &compiled_regex);
     if (error_status != NO_ERROR)
       {
@@ -8773,7 +8792,7 @@ error_return:
  */
 int
 qdata_apply_interpolation_function_coercion (DB_VALUE * f_value, tp_domain ** result_dom, DB_VALUE * result,
-					     FUNC_TYPE function)
+					     FUNC_CODE function)
 {
   DB_TYPE type;
   double d_result = 0;
@@ -8890,7 +8909,7 @@ end:
  */
 int
 qdata_interpolation_function_values (DB_VALUE * f_value, DB_VALUE * c_value, double row_num_d, double f_row_num_d,
-				     double c_row_num_d, tp_domain ** result_dom, DB_VALUE * result, FUNC_TYPE function)
+				     double c_row_num_d, tp_domain ** result_dom, DB_VALUE * result, FUNC_CODE function)
 {
   DB_DATE date;
   DB_DATETIME datetime;
@@ -9194,7 +9213,7 @@ end:
 int
 qdata_get_interpolation_function_result (THREAD_ENTRY * thread_p, QFILE_LIST_SCAN_ID * scan_id, tp_domain * domain,
 					 int pos, double row_num_d, double f_row_num_d, double c_row_num_d,
-					 DB_VALUE * result, tp_domain ** result_dom, FUNC_TYPE function)
+					 DB_VALUE * result, tp_domain ** result_dom, FUNC_CODE function)
 {
   int error = NO_ERROR;
   QFILE_TUPLE_RECORD tuple_record = { NULL, 0 };

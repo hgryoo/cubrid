@@ -1551,7 +1551,8 @@ fetch_peek_arith (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 	      goto error;
 	    }
 	}
-      if (DB_IS_NULL (peek_left) || (peek_third && DB_IS_NULL (peek_third)))
+      if (!prm_get_bool_value (PRM_ID_ORACLE_STYLE_EMPTY_STRING)
+	  && (DB_IS_NULL (peek_left) || DB_IS_NULL (peek_right) || (peek_third && DB_IS_NULL (peek_third))))
 	{
 	  PRIM_SET_NULL (arithptr->value);
 	}
@@ -3841,7 +3842,7 @@ fetch_peek_dbval (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 	      goto exit_on_error;
 	    }
 
-	  OR_BUF_INIT (buf, ptr, length);
+	  or_init (&buf, ptr, length);
 
 	  if (pr_type->data_readval (&buf, *peek_dbval, regu_var->value.pos_descr.dom, -1, false /* Don't copy */ ,
 				     NULL, 0) != NO_ERROR)
@@ -4324,7 +4325,7 @@ fetch_peek_dbval_pos (REGU_VARIABLE * regu_var, QFILE_TUPLE tpl, int pos, DB_VAL
 	  return ER_FAILED;
 	}
 
-      OR_BUF_INIT (buf, ptr, length);
+      or_init (&buf, ptr, length);
       /* read value from the tuple */
       if (pr_type->data_readval (&buf, *peek_dbval, pos_descr->dom, -1, false /* Don't copy */ , NULL, 0) != NO_ERROR)
 	{

@@ -60,6 +60,7 @@ static char **util_split_ha_sync (const char *str);
 static int util_get_ha_parameters (char **ha_node_list_p, char **ha_db_list_p, char **ha_sync_mode_p,
 				   const char **ha_copy_log_base_p, int *ha_max_mem_size_p);
 static bool util_is_replica_node (void);
+static int utility_system_class_def_compare (const void *a, const void *b);
 
 /*
  * utility_initialize() - initialize cubrid library
@@ -537,13 +538,14 @@ util_is_localhost (char *host)
  *
  * @return true if hostname_a is same as hostname_b
  */
+
 bool
 are_hostnames_equal (const char *hostname_a, const char *hostname_b)
 {
   const char *a;
   const char *b;
 
-  for (a = hostname_a, b = hostname_b; *a && *b && (*a == *b); ++a, ++b)
+  for (a = hostname_a, b = hostname_b; *a && *b && (toupper (*a) == toupper (*b)); ++a, ++b)
     ;
 
   if (*a == '\0' && *b != '\0')
@@ -556,7 +558,7 @@ are_hostnames_equal (const char *hostname_a, const char *hostname_b)
     }
   else
     {
-      return *a == *b;
+      return toupper (*a) == toupper (*b);
     }
 }
 
@@ -1331,7 +1333,7 @@ util_get_table_list_from_file (char *fname, dynamic_array * darray)
   while (1)
     {
       c = fgetc (fp);
-      if (c == ' ' || c == '\t' || c == ',' || c == '\n' || c == EOF)
+      if (char_isspace2 (c) || c == ',' || c == EOF)
 	{
 	  if (p != 0)
 	    {

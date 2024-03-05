@@ -15,7 +15,6 @@
 #   limitations under the License.
 # 
 #
-
 set(EXECUTABLE_SOURCES
   ${EXECUTABLES_DIR}/compactdb_cl.c
   ${EXECUTABLES_DIR}/compactdb_common.c
@@ -44,6 +43,7 @@ set(COMPAT_SOURCES
   ${COMPAT_DIR}/db_class.c
   ${COMPAT_DIR}/db_date.c
   ${COMPAT_DIR}/db_elo.c
+  ${COMPAT_DIR}/db_function.cpp
   ${COMPAT_DIR}/db_info.c
   ${COMPAT_DIR}/db_spatial.cpp
   ${COMPAT_DIR}/db_json.cpp
@@ -68,6 +68,7 @@ set(COMPAT_SOURCES_C
 
 set (COMPAT_HEADERS
   ${COMPAT_DIR}/dbtype_def.h
+  ${COMPAT_DIR}/db_function.hpp
   ${COMPAT_DIR}/db_json.hpp
   ${COMPAT_DIR}/db_json_allocator.hpp
   ${COMPAT_DIR}/db_json_path.hpp
@@ -112,6 +113,7 @@ set(BASE_SOURCES
   ${BASE_DIR}/misc_string.c
   ${BASE_DIR}/mprec.c
   ${BASE_DIR}/packer.cpp
+  ${BASE_DIR}/hide_password.cpp
   ${BASE_DIR}/get_clock_freq.c
   ${BASE_DIR}/perf.cpp
   ${BASE_DIR}/perf_monitor.c
@@ -251,7 +253,9 @@ set(OBJECT_SOURCES
   ${OBJECT_DIR}/authenticate.c
   ${OBJECT_DIR}/class_description.cpp
   ${OBJECT_DIR}/class_object.c
+  ${OBJECT_DIR}/deduplicate_key.c
   ${OBJECT_DIR}/elo.c
+  ${OBJECT_DIR}/identifier_store.cpp
   ${OBJECT_DIR}/lob_locator.cpp
   ${OBJECT_DIR}/object_accessor.c
   ${OBJECT_DIR}/object_description.cpp
@@ -265,6 +269,11 @@ set(OBJECT_SOURCES
   ${OBJECT_DIR}/quick_fit.c
   ${OBJECT_DIR}/schema_class_truncator.cpp
   ${OBJECT_DIR}/schema_manager.c
+  ${OBJECT_DIR}/schema_system_catalog.cpp
+  ${OBJECT_DIR}/schema_system_catalog_builder.cpp
+  ${OBJECT_DIR}/schema_system_catalog_definition.cpp
+  ${OBJECT_DIR}/schema_system_catalog_install.cpp
+  ${OBJECT_DIR}/schema_system_catalog_install_query_spec.cpp
   ${OBJECT_DIR}/schema_template.c
   ${OBJECT_DIR}/set_object.c
   ${OBJECT_DIR}/transform.c
@@ -329,13 +338,14 @@ set(TRANSACTION_HEADERS
   )
 
 set(STORAGE_SOURCES
-  ${STORAGE_DIR}/storage_common.c
+  ${STORAGE_DIR}/byte_order.c
+  ${STORAGE_DIR}/es.c
+  ${STORAGE_DIR}/es_common.c
+  ${STORAGE_DIR}/es_posix.c
+  ${STORAGE_DIR}/file_io.c
   ${STORAGE_DIR}/oid.c
   ${STORAGE_DIR}/statistics_cl.c
-  ${STORAGE_DIR}/file_io.c
-  ${STORAGE_DIR}/es_common.c
-  ${STORAGE_DIR}/es.c
-  ${STORAGE_DIR}/es_posix.c
+  ${STORAGE_DIR}/storage_common.c
   ${STORAGE_DIR}/tde.c
   )
 
@@ -526,11 +536,13 @@ endif(WIN32)
 target_include_directories(cubridcs PRIVATE ${FLEX_INCLUDE_DIRS} ${EP_INCLUDES})
 if(UNIX)
   target_link_libraries(cubridcs LINK_PRIVATE -Wl,-whole-archive ${EP_LIBS} -Wl,-no-whole-archive)
-  target_link_libraries(cubridcs LINK_PUBLIC ${CURSES_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
   target_link_libraries(cubridcs PUBLIC stdc++fs)
+  target_link_libraries(cubridcs LINK_PUBLIC ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
 else(UNIX)
   target_link_libraries(cubridcs LINK_PRIVATE ${EP_LIBS})
 endif(UNIX)
+# for dblink
+target_link_libraries(cubridcs cascci)
 
 add_dependencies(cubridcs gen_csql_grammar gen_csql_lexer gen_loader_grammar gen_loader_lexer)
 add_dependencies(cubridcs ${EP_TARGETS})

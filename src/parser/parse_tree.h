@@ -36,10 +36,12 @@
 #include "compile_context.h"
 #include "config.h"
 #include "cursor.h"
+#include "db_function.hpp"
 #include "json_table_def.h"
 #include "message_catalog.h"
 #include "string_opfunc.h"
 #include "system_parameter.h"
+#include "hide_password.h"
 
 // forward definitions
 struct json_t;
@@ -478,6 +480,14 @@ struct json_t;
            (n)->info.expr.op == PT_LT_INF || \
            (n)->info.expr.op == PT_RANGE ))
 
+#define PT_IS_EXPR_NODE_WITH_NON_PUSHABLE(n) \
+        ( (PT_IS_EXPR_NODE (n)) && \
+          ((n)->info.expr.op == PT_DRANDOM || \
+           (n)->info.expr.op == PT_DRAND || \
+           (n)->info.expr.op == PT_RANDOM || \
+           (n)->info.expr.op == PT_RAND || \
+           (n)->info.expr.op == PT_SYS_GUID ))
+
 #define PT_IS_EXPR_WITH_PRIOR_ARG(x) (PT_IS_EXPR_NODE (x) && \
 		PT_IS_EXPR_NODE_WITH_OPERATOR ((x)->info.expr.arg1, PT_PRIOR))
 
@@ -523,6 +533,12 @@ struct json_t;
                 (n)->info.query.is_order_dependent = (f); \
             } \
         } while (0)
+
+#define PT_IS_DBLINK_DML_QUERY(n) \
+	((n->node_type == PT_INSERT && n->info.insert.spec->info.spec.remote_server_name) \
+        || (n->node_type == PT_DELETE && n->info.delete_.spec->info.spec.remote_server_name) \
+        || (n->node_type == PT_UPDATE && n->info.update.spec->info.spec.remote_server_name) \
+        || (n->node_type == PT_MERGE && n->info.merge.into->info.spec.remote_server_name))
 
 #if !defined (SERVER_MODE)
 /* the following defines support host variable binding for internal statements.
@@ -637,6 +653,8 @@ struct json_t;
   (((p)->node_type == PT_FUNCTION) ? ((p)->info.function.coll_modifier - 1) :\
   (((p)->node_type == PT_DOT_) ? ((p)->info.dot.coll_modifier - 1) : (-1))))))
 
+#define PT_HAS_COLLATION_MODIFIER(p) (PT_GET_COLLATION_MODIFIER((p)) != -1)
+
 #define PT_SET_NODE_COLL_MODIFIER(p, coll)                  \
     do {                                                    \
       assert ((p) != NULL);				    \
@@ -738,15 +756,52 @@ struct json_t;
           ( (n)->info.method_call.method_type == PT_SP_PROCEDURE || \
             (n)->info.method_call.method_type == PT_SP_FUNCTION) )
 
+/* We would like to redefine the above macros below. And we will solve the below ones.
+ *   - There is no need to repeat null checks for each macro.
+ *
+ * Be sure to do the following before using the macro below.
+ *   - Check if PT_NODE is NULL.
+ *   - Check the node_type for PT_NODE.
+ */
+
+#ifdef NDEBUG
+#define PT_ASSERT_NOT_NULL(n)		((void) 0)
+#define PT_ASSERT_NODE_TYPE(n, t)	((void) 0)
+#else
+#define PT_ASSERT_NOT_NULL(n)		(assert ((n) != NULL))
+#define PT_ASSERT_NODE_TYPE(n, t)	(assert ((n) != NULL && (n)->node_type == (t)))
+#endif
+
 /* PT_NAME_INFO */
-#define PT_NAME_ORIGINAL(n)		((n)->info.name.original)
-#define PT_NAME_RESOLVED(n)		((n)->info.name.resolved)
+#define PT_NAME_ASSERT(n)		(PT_ASSERT_NODE_TYPE ((n), PT_NAME))
+#define PT_NAME_SPEC_ID(n)		(PT_NAME_ASSERT ((n)), (n)->info.name.spec_id)
+#define PT_NAME_ORIGINAL(n)		(PT_NAME_ASSERT ((n)), (n)->info.name.original)
+#define PT_NAME_RESOLVED(n)		(PT_NAME_ASSERT ((n)), (n)->info.name.resolved)
+#define PT_NAME_DB_OBJECT(n)		(PT_NAME_ASSERT ((n)), (n)->info.name.db_object)
 
 /* PT_CREATE_ENTITY */
-#define PT_CREATE_ENTITY_NAME(n)	((n)->info.create_entity.entity_name)
+#define PT_CREATE_ENTITY_ASSERT(n)	(PT_ASSERT_NODE_TYPE ((n), PT_CREATE_ENTITY))
+#define PT_CREATE_ENTITY_NAME(n)	(PT_CREATE_ENTITY_ASSERT ((n)), (n)->info.create_entity.entity_name)
+
+/* PT_EXPR */
+#define PT_EXPR_ASSERT(n)		(PT_ASSERT_NODE_TYPE ((n), PT_EXPR))
+#define PT_EXPR_OP(n)			(PT_EXPR_ASSERT ((n)), (n)->info.expr.op)
+#define PT_EXPR_ARG1(n)			(PT_EXPR_ASSERT ((n)), (n)->info.expr.arg1)
+#define PT_EXPR_ARG2(n)			(PT_EXPR_ASSERT ((n)), (n)->info.expr.arg2)
+#define PT_EXPR_ARG3(n)			(PT_EXPR_ASSERT ((n)), (n)->info.expr.arg3)
 
 /* PT_RENAME */
-#define PT_RENAME_NEW_NAME(n)		((n)->info.rename.new_name)
+#define PT_RENAME_ASSERT(n)		(PT_ASSERT_NODE_TYPE ((n), PT_RENAME))
+#define PT_RENAME_NEW_NAME(n)		(PT_RENAME_ASSERT ((n)), (n)->info.rename.new_name)
+
+/* PT_SPEC_INFO */
+#define PT_SPEC_ASSERT(n)		(PT_ASSERT_NODE_TYPE ((n), PT_SPEC))
+#define PT_SPEC_ENTITY_NAME(n)		(PT_SPEC_ASSERT ((n)), (n)->info.spec.entity_name)
+#define PT_SPEC_CTE_POINTER(n)		(PT_SPEC_ASSERT ((n)), (n)->info.spec.cte_pointer)
+#define PT_SPEC_DERIVED_TABLE(n)	(PT_SPEC_ASSERT ((n)), (n)->info.spec.derived_table)
+#define PT_SPEC_FLAT_ENTITY_LIST(n)	(PT_SPEC_ASSERT ((n)), (n)->info.spec.flat_entity_list)
+#define PT_SPEC_ID(n)			(PT_SPEC_ASSERT ((n)), (n)->info.spec.id)
+#define PT_SPEC_JOIN_TYPE(n)		(PT_SPEC_ASSERT ((n)), (n)->info.spec.join_type)
 
 /* PT_SYNONYM_INFO */
 #define PT_SYNONYM_NAME(n)		((n)->info.synonym.synonym_name)
@@ -763,12 +818,46 @@ struct json_t;
 #define PT_SYNONYM_ACCESS_MODIFIER(n)	((n)->info.synonym.access_modifier)
 #define PT_SYNONYM_OR_REPLACE(n)	((n)->info.synonym.or_replace)
 #define PT_SYNONYM_IF_EXISTS(n)		((n)->info.synonym.if_exists)
+#define PT_SYNONYM_IS_DBLINKED(n)	((n)->info.synonym.is_dblinked)	/* for user.table@server */
 
-#define PT_IS_SYNONYM_NODE(n) \
-	( (n)->node_type == PT_ALTER_SYNONYM || \
-	  (n)->node_type == PT_CREATE_SYNONYM || \
-	  (n)->node_type == PT_DROP_SYNONYM || \
-	  (n)->node_type == PT_RENAME_SYNONYM )
+/* Check node_type of PT_NODE */
+#define PT_NODE_IS_EXPR(n)		(PT_ASSERT_NOT_NULL ((n)), (n)->node_type == PT_EXPR)
+#define PT_NODE_IS_NAME(n)		(PT_ASSERT_NOT_NULL ((n)), (n)->node_type == PT_NAME)
+#define PT_NODE_IS_SPEC(n)		(PT_ASSERT_NOT_NULL ((n)), (n)->node_type == PT_SPEC)
+#define PT_NODE_IS_SYNONYM(n)		(PT_ASSERT_NOT_NULL ((n)),		\
+					 (n)->node_type == PT_ALTER_SYNONYM ||	\
+					 (n)->node_type == PT_CREATE_SYNONYM ||	\
+					 (n)->node_type == PT_DROP_SYNONYM ||	\
+					 (n)->node_type == PT_RENAME_SYNONYM)
+
+/* Check node_type of PT_SPEC */
+#define PT_SPEC_IS_ONLY(n)		(PT_SPEC_ASSERT ((n)), (n)->info.spec.only_all == PT_ONLY)
+#define PT_SPEC_IS_ALL(n)		(PT_SPEC_ASSERT ((n)), (n)->info.spec.only_all == PT_ALL)
+
+/* PT_SPEC_INFO */
+#define PT_SPEC_GET_DB_OBJECT(n, r)						\
+	do									\
+	  {									\
+	    PT_NODE *entity_name = PT_SPEC_ENTITY_NAME ((n));			\
+										\
+	    if (entity_name != NULL && PT_NODE_IS_NAME (entity_name))		\
+	      {									\
+		if (PT_NAME_DB_OBJECT (entity_name) != NULL)			\
+		  {								\
+		    (r) = PT_NAME_DB_OBJECT (entity_name);			\
+		  }								\
+		else								\
+		  {								\
+		    (r) = sm_find_class (PT_NAME_ORIGINAL (entity_name));	\
+		    assert ((r) != NULL);					\
+		  }								\
+	      }									\
+	    else								\
+	      {									\
+		(r) = NULL;							\
+	      }									\
+	  }									\
+	while (0)
 
 /*
  Enumerated types of parse tree statements
@@ -850,7 +939,13 @@ enum pt_custom_print
   /* Both PT_PRINT_NO_SPECIFIED_USER_NAME and PT_PRINT_NO_CURRENT_USER_NAME can be set.
    * Check PT_PRINT_NO_SPECIFIED_USER_NAME before PT_PRINT_NO_CURRENT_USER_NAME to set implicit priority. */
   PT_PRINT_NO_SPECIFIED_USER_NAME = (0x1 << 23),
-  PT_PRINT_NO_CURRENT_USER_NAME = (0x1 << 24)
+  PT_PRINT_NO_CURRENT_USER_NAME = (0x1 << 24),
+  /* the '@' sign has to be suppressed during printing remote-table speicification for pure remote query */
+  PT_PRINT_SUPPRESS_SERVER_NAME = (0x1 << 25),
+  /* suppress next_value to serial_next_value(...) or current_value to serial_current_value(...) */
+  PT_PRINT_SUPPRESS_SERIAL_CONV = (0x1 << 26),
+  /* suppress print various generated functions including suppress delete targe for dblink */
+  PT_PRINT_SUPPRESS_FOR_DBLINK = (0x1 << 27),
 };
 
 /* all statement node types should be assigned their API statement enumeration */
@@ -979,6 +1074,7 @@ enum pt_node_type
   PT_JSON_TABLE_NODE,
   PT_JSON_TABLE_COLUMN,
   PT_DBLINK_TABLE,
+  PT_DBLINK_TABLE_DML,
   PT_NODE_NUMBER,		/* This is the number of node types */
   PT_LAST_NODE_NUMBER = PT_NODE_NUMBER
 };
@@ -1282,6 +1378,9 @@ typedef UINT64 PT_HINT_ENUM;
 #define  PT_HINT_QUERY_NO_CACHE  0x100000000ULL	/* don't use the query cache (unused) */
 #define  PT_HINT_NO_PUSH_PRED  0x200000000ULL	/* do not push predicates */
 #define  PT_HINT_NO_MERGE  0x400000000ULL	/* do not merge view or in-line view */
+#define  PT_HINT_NO_ELIMINATE_JOIN  0x800000000ULL	/* do not eliminate join */
+#define  PT_HINT_SAMPLING_SCAN  0x1000000000ULL	/* SELECT sampling data instead of full data */
+#define  PT_HINT_LEADING  0x2000000000ULL	/* force specific table to join left-to-right */
 
 /* Codes for error messages */
 typedef enum
@@ -1609,7 +1708,8 @@ typedef enum
   PT_SPEC_FLAG_BTREE_NODE_INFO_SCAN = 0x200,	/* one of the spec's indexes will be scanned for b-tree node info */
   PT_SPEC_FLAG_MVCC_COND_REEV = 0x400,	/* the spec is used in mvcc condition reevaluation */
   PT_SPEC_FLAG_MVCC_ASSIGN_REEV = 0x800,	/* the spec is used in UPDATE assignment reevaluation */
-  PT_SPEC_FLAG_DOESNT_HAVE_UNIQUE = 0x1000	/* the spec was checked and does not have any uniques */
+  PT_SPEC_FLAG_DOESNT_HAVE_UNIQUE = 0x1000,	/* the spec was checked and does not have any uniques */
+  PT_SPEC_FLAG_SAMPLING_SCAN = 0x2000	/* spec for sampling scan */
 } PT_SPEC_FLAG;
 
 typedef enum
@@ -2021,11 +2121,13 @@ struct pt_index_info
   PT_ALTER_CODE code;
 
   int func_pos;			/* the position of the expression in the function index's column list */
-  int func_no_args;		/* number of arguments in the function index expression */
+  int func_no_args;		/* number of arguments in the function index expression
+				 * Appears only in function index expressions, excluding constants.  */
   bool reverse;			/* REVERSE */
   bool unique;			/* UNIQUE specified? */
   SM_INDEX_STATUS index_status;	/* Index status : NORMAL / ONLINE / INVISIBLE */
   int ib_threads;
+  short deduplicate_level;	/* -1: Not set yet, 0 : Not Use, others : mod by pow(2,deduplicate_level), refer to DEDUPLICATE_KEY_LEVEL_??? */
 };
 
 /* CREATE USER INFO */
@@ -2149,7 +2251,7 @@ struct pt_delete_info
   PT_NODE *cursor_name;		/* PT_NAME */
   PT_NODE *internal_stmts;	/* internally created statements to handle TEXT */
   PT_NODE *waitsecs_hint;	/* lock timeout in seconds */
-  PT_NODE *ordered_hint;	/* ORDERED_HINT hint's arguments (PT_NAME list) */
+  PT_NODE *leading_hint;	/* LEADING_HINT hint's arguments (PT_NAME list) */
   PT_NODE *use_nl_hint;		/* USE_NL hint's arguments (PT_NAME list) */
   PT_NODE *use_idx_hint;	/* USE_IDX hint's arguments (PT_NAME list) */
   PT_NODE *use_merge_hint;	/* USE_MERGE hint's arguments (PT_NAME list) */
@@ -2212,6 +2314,7 @@ struct pt_drop_session_var_info
 struct pt_spec_info
 {
   PT_NODE *entity_name;		/* PT_NAME */
+  PT_NODE *remote_server_name;	/* PT_NAME or PT_DBLINK_INFO */
   PT_NODE *cte_name;		/* PT_NAME */
   PT_NODE *cte_pointer;		/* PT_POINTER - points to the cte_definition */
   PT_NODE *except_list;		/* PT_SPEC */
@@ -2329,6 +2432,7 @@ struct pt_expr_info
   bool is_order_dependent;	/* true if expression is order dependent */
   PT_TYPE_ENUM recursive_type;	/* common type for recursive expression arguments (like PT_GREATEST, PT_LEAST,...) */
   int coll_modifier;		/* collation modifier = collation + 1 */
+  int pred_order;		/* for view-merge or predicate-push. pred is ordered by pred_order in qo_discover_edges */
 };
 
 /* FILE PATH INFO */
@@ -2341,7 +2445,7 @@ struct pt_file_path_info
 struct pt_function_info
 {
   PT_NODE *arg_list;		/* PT_EXPR(list) */
-  FUNC_TYPE function_type;	/* PT_COUNT, PT_AVG, ... */
+  FUNC_CODE function_type;	/* PT_COUNT, PT_AVG, ... */
   PT_MISC_TYPE all_or_distinct;	/* will be PT_ALL or PT_DISTINCT */
   const char *generic_name;	/* only for type PT_GENERIC */
   char hidden_column;		/* used for updates and deletes for the class OID column */
@@ -2656,6 +2760,7 @@ struct pt_name_info
 #define PT_NAME_FOR_UPDATE	   2048	/* Table name in FOR UPDATE clause */
 #define PT_NAME_DEFAULTF_ACCEPTS   4096	/* name of table/column that default function accepts: real table's, cte's */
 #define PT_NAME_INFO_USER_SPECIFIED 8192	/* resolved_name is added to original_name to make user_specified_name. */
+#define PT_NAME_INFO_SERVER_SPECIFIED 16384	/* server name is specified for dblink */
 
   short flag;
 #define PT_NAME_INFO_IS_FLAGED(e, f)    ((e)->info.name.flag & (short) (f))
@@ -2779,7 +2884,7 @@ struct pt_select_info
   PT_NODE *having;		/* PT_EXPR */
   PT_NODE *using_index;		/* PT_NAME (list) */
   PT_NODE *with_increment;	/* PT_NAME (list) */
-  PT_NODE *ordered;		/* PT_NAME (list) */
+  PT_NODE *leading;		/* PT_NAME (list) */
   PT_NODE *use_nl;		/* PT_NAME (list) */
   PT_NODE *use_idx;		/* PT_NAME (list) */
   PT_NODE *index_ss;		/* PT_NAME (list) */
@@ -2859,6 +2964,7 @@ struct pt_query_info
   PT_NODE *qcache_hint;		/* enable/disable query cache */
   PT_NODE *limit;		/* PT_VALUE (list) limit clause parameter(s) */
   void *xasl;			/* xasl proc pointer */
+  XASL_ID *cte_xasl_id;		/* xasl_id for CTE query */
   UINTPTR id;			/* query unique id # */
   PT_HINT_ENUM hint;		/* hint flag */
   bool is_order_dependent;	/* true if query is order dependent */
@@ -2954,7 +3060,7 @@ struct pt_update_info
   PT_NODE *check_where;		/* with check option predicate */
   PT_NODE *internal_stmts;	/* internally created statements to handle TEXT */
   PT_NODE *waitsecs_hint;	/* lock timeout in seconds */
-  PT_NODE *ordered_hint;	/* USE_NL hint's arguments (PT_NAME list) */
+  PT_NODE *leading_hint;	/* LEADING hint's arguments (PT_NAME list) */
   PT_NODE *use_nl_hint;		/* USE_NL hint's arguments (PT_NAME list) */
   PT_NODE *use_idx_hint;	/* USE_IDX hint's arguments (PT_NAME list) */
   PT_NODE *use_merge_hint;	/* USE_MERGE hint's arguments (PT_NAME list) */
@@ -3175,6 +3281,7 @@ struct pt_foreign_key_info
   PT_MISC_TYPE match_type;	/* full or partial */
   PT_MISC_TYPE delete_action;
   PT_MISC_TYPE update_action;
+  short deduplicate_level;	/* 0 : Not Use, others : mod by pow(2,deduplicate_level), refer to DEDUPLICATE_KEY_LEVEL_??? */
 };
 
 /* Info for the CONSTRAINT node */
@@ -3222,6 +3329,7 @@ struct pt_pointer_info
   PT_POINTER_TYPE type;		/* pointer type (normal pointer/reference) */
   double sel;			/* selectivity factor of the predicate */
   int rank;			/* rank factor for the same selectivity */
+  int pred_order;		/* for view-merge or predicate-push. pred is ordered by pred_order */
   bool do_walk;			/* apply walk on node bool */
 };
 
@@ -3235,6 +3343,8 @@ struct pt_stored_proc_info
   PT_MISC_TYPE type;
   unsigned or_replace:1;	/* OR REPLACE clause */
   PT_TYPE_ENUM ret_type;
+  PT_NODE *ret_data_type;
+
 };
 
 struct pt_prepare_info
@@ -3364,6 +3474,13 @@ typedef struct pt_dblink_info
   PARSER_VARCHAR *rewritten;	/* rewritten query string for dblink */
   PT_HOST_VAR_IDX_INFO host_vars;	/* host variable index info for rewritten query */
   bool is_name;			/*  */
+
+  char *remote_table_name;
+  PT_NODE *sel_list;
+  PT_NODE *owner_list;
+
+  void *remote_col_list;	/* remote table's column list */
+
 } PT_DBLINK_INFO;
 
 typedef struct pt_create_server_info
@@ -3432,6 +3549,7 @@ struct pt_synonym_info
   PT_NODE *comment;		/* PT_VALUE */
   unsigned or_replace:1;	/* OR REPLACE clause for CREATE SYNONYM */
   unsigned if_exists:1;		/* IF EXISTS clause for DROP SYNONYM */
+  unsigned is_dblinked:1;	/* server name specified */
 };
 
 /* Info field of the basic NODE
@@ -3640,6 +3758,9 @@ struct parser_node
   PARSER_VARCHAR *expr_before_const_folding;	/* text before constant folding (used by value, host var nodes) */
   PT_TYPE_ENUM type_enum;	/* type enumeration tag PT_TYPE_??? */
   CACHE_TIME cache_time;	/* client or server cache time */
+  int cte_host_var_count;	/* CTE host variable count */
+  int *cte_host_var_index;	/* CTE host variable index in non_recursive CTE node */
+
   struct
   {
     unsigned recompile:1;	/* the statement should be recompiled - used for plan cache */
@@ -3668,6 +3789,7 @@ struct parser_node
     unsigned is_system_generated_stmt:1;	/* is internally generated by system */
     unsigned use_auto_commit:1;	/* use autocommit */
     unsigned done_reduce_equality_terms:1;	/* reduce_equality_terms() is already called */
+    unsigned print_in_value_for_dblink:1;	/* for select ... where in (...) to print (...) not {...} */
   } flag;
   PT_STATEMENT_INFO info;	/* depends on 'node_type' field */
 };
@@ -3718,6 +3840,13 @@ typedef struct pt_plan_trace_info
   } trace;
 } PT_PLAN_TRACE_INFO;
 
+/* to save the remote column list for dblink */
+typedef struct remote_cols
+{
+  void *cols;
+  struct remote_cols *next;
+} REMOTE_COLS;
+
 typedef int (*PT_CASECMP_FUN) (const char *s1, const char *s2);
 typedef int (*PT_INT_FUNCTION) (PARSER_CONTEXT * c);
 
@@ -3758,6 +3887,7 @@ struct parser_context
   int host_var_count;		/* number of input host variables */
   int auto_param_count;		/* number of auto parameterized variables */
   int dbval_cnt;		/* to be assigned to XASL */
+  int *cte_host_var_index;	/* CTE host variable index in non_recursive CTE node */
   int line, column;		/* current input line and column */
 
   void *etc;			/* application context */
@@ -3790,6 +3920,10 @@ struct parser_context
   PT_PLAN_TRACE_INFO plan_trace[MAX_NUM_PLAN_TRACE];
 
   int max_print_len;		/* for pt_short_print */
+
+  REMOTE_COLS *dblink_remote;	/* for dblink, remote column list */
+
+  HIDE_PWD_INFO hide_pwd_info;
 
   struct
   {
@@ -3908,7 +4042,19 @@ enum cdc_ddl_object_type
 };
 typedef enum cdc_ddl_object_type CDC_DDL_OBJECT_TYPE;
 
+typedef struct
+{
+  int local_cnt;
+  int server_cnt;
+  int server_node_cnt;
+  int len[2];
+  char *server_full_name[2];
+  PT_NODE *server[2];
+  bool has_dblink_query;
+} SERVER_NAME_LIST;
+
 void pt_init_node (PT_NODE * node, PT_NODE_TYPE node_type);
+
 
 #ifdef __cplusplus
 extern "C"

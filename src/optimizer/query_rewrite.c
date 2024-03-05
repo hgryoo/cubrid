@@ -102,6 +102,20 @@ struct qo_reset_location_info
   bool found_outerjoin;
 };
 
+typedef struct qo_reduce_reference_info
+{
+  PT_NODE *pk_spec;
+  MOP pk_mop;
+  SM_CLASS_CONSTRAINT *pk_cons;
+  PT_NODE *fk_spec;
+  SM_CLASS_CONSTRAINT *fk_cons;
+  PT_NODE *exclude_pk_spec_point_list;
+  PT_NODE *exclude_fk_spec_point_list;
+  PT_NODE *join_pred_point_list;
+  PT_NODE *parent_pred_point_list;
+  PT_NODE *append_not_null_pred_list;
+} QO_REDUCE_REFERENCE_INFO;
+
 static PT_NODE *qo_reset_location (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk);
 
 static void qo_move_on_clause_of_explicit_join_to_where_clause (PARSER_CONTEXT * parser, PT_NODE ** fromp,
@@ -113,8 +127,21 @@ static PT_NODE *qo_optimize_queries_post (PARSER_CONTEXT * parser, PT_NODE * tre
 static PT_NODE *qo_get_name_cnt_by_spec (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *continue_walk);
 static PT_NODE *qo_collect_name_with_eq_const (PARSER_CONTEXT * parser, PT_NODE * on_cond, PT_NODE * spec);
 static PT_NODE *qo_reduce_outer_joined_tables (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * query);
-
-
+static void qo_reduce_joined_tables_referenced_by_foreign_key (PARSER_CONTEXT * parser, PT_NODE * query);
+static bool qo_is_exclude_spec (PT_NODE * exclude_spec_point_list, PT_NODE * spec);
+static bool qo_check_primary_key_referenced_by_foreign_key_in_parent_spec (PARSER_CONTEXT * parser, PT_NODE * query,
+									   QO_REDUCE_REFERENCE_INFO *
+									   reduce_reference_info);
+static bool qo_check_foreign_keys_referencing_primary_key_in_child_spec (PARSER_CONTEXT * parser, PT_NODE * query,
+									 QO_REDUCE_REFERENCE_INFO *
+									 reduce_reference_info);
+static bool qo_check_foreign_key_referencing_primary_key_in_child_spec (PARSER_CONTEXT * parser, PT_NODE * query,
+									QO_REDUCE_REFERENCE_INFO *
+									reduce_reference_info);
+static bool qo_check_reduce_predicate_for_parent_spec (PARSER_CONTEXT * parser, PT_NODE * query,
+						       QO_REDUCE_REFERENCE_INFO * reduce_reference_info);
+static void qo_reduce_predicate_for_parent_spec (PARSER_CONTEXT * parser, PT_NODE * query,
+						 QO_REDUCE_REFERENCE_INFO * reduce_reference_info);
 
 #define QO_CHECK_AND_REDUCE_EQUALITY_TERMS(parser, node, where) \
   do { \
@@ -210,6 +237,7 @@ qo_check_nullable_expr (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int 
 	case PT_IFNULL:
 	case PT_ISNULL:
 	case PT_CONCAT_WS:
+	case PT_NULLSAFE_EQ:
 	  /* NEED FUTURE OPTIMIZATION */
 	  (*nullable_cntp)++;
 	  break;
@@ -1126,6 +1154,10 @@ qo_collect_name_spec (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *c
 {
   PT_NAME_SPEC_INFO *info = (PT_NAME_SPEC_INFO *) arg;
 
+  /* To fall through from PT_DOT to PT_NAME, the `node` is changed in PT_DOT.
+   * The original `node` needs to be backed up in order to return it later. */
+  PT_NODE *backup_node = node;
+
   *continue_walk = PT_CONTINUE_WALK;
 
   switch (node->node_type)
@@ -1204,7 +1236,7 @@ qo_collect_name_spec (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *c
 
 	  name_coll = PT_GET_COLLATION_MODIFIER (info->c_name);
 
-	  if (name_coll == -1 && info->c_name->data_type != NULL)
+	  if (!PT_HAS_COLLATION_MODIFIER (info->c_name) && info->c_name->data_type != NULL)
 	    {
 	      name_coll = info->c_name->data_type->info.data_type.collation_id;
 	    }
@@ -1234,7 +1266,7 @@ qo_collect_name_spec (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *c
       *continue_walk = PT_STOP_WALK;
     }
 
-  return node;
+  return backup_node;
 }
 
 /*
@@ -1329,6 +1361,10 @@ qo_reduce_equality_terms (PARSER_CONTEXT * parser, PT_NODE * node, PT_NODE ** wh
   PT_NODE *save_where_next;
   bool copy_arg2;
   PT_NODE *dt1, *dt2;
+  bool cut_off;
+  PT_NODE *expr_prev = NULL;
+  PT_NODE *opd1, *opd2;
+  DB_VALUE *dbv1, *dbv2;
 
   /* init */
   orgp = wherep;
@@ -1813,6 +1849,55 @@ qo_reduce_equality_terms (PARSER_CONTEXT * parser, PT_NODE * node, PT_NODE ** wh
       *orgp = parser_append_node (join_term_list, *orgp);
     }
 
+  /* remove always-true term */
+  while ((expr = ((expr_prev) ? expr_prev->next : *orgp)))
+    {
+      PT_OP_TYPE op = expr->info.expr.op;
+      cut_off = false;
+      opd1 = expr->info.expr.arg1;
+      opd2 = expr->info.expr.arg2;
+
+      if (expr->or_next == NULL)
+	{
+	  if (opd1 && opd2 && op == PT_EQ && opd1->node_type == PT_VALUE && opd2->node_type == PT_VALUE)
+	    {
+	      dbv1 = pt_value_to_db (parser, opd1);
+	      dbv2 = pt_value_to_db (parser, opd2);
+	      if (db_value_compare (dbv1, dbv2) == DB_EQ)
+		{
+		  cut_off = true;
+		}
+	    }
+	}
+      else
+	{
+	  /*
+	   * give up
+	   */
+	  ;
+	}
+
+      if (cut_off)
+	{
+	  /* cut if off from CNF list */
+	  if (expr_prev)
+	    {
+	      expr_prev->next = expr->next;
+	    }
+	  else
+	    {
+	      *orgp = expr->next;
+	    }
+	  expr->next = NULL;
+	  parser_free_tree (parser, expr);
+	}
+      else
+	{
+	  expr_prev = expr;
+	}
+    }
+
+
 }
 
 /*
@@ -1887,14 +1972,14 @@ qo_reduce_order_by_for (PARSER_CONTEXT * parser, PT_NODE * node)
       /* replace orderby_num() to groupby_num() */
       node->info.query.orderby_for = pt_lambda_with_arg (parser, node->info.query.orderby_for, ord_num, grp_num,
 							 false /* loc_check: DEFAULT */ ,
-							 0 /* type: DEFAULT */ ,
+							 2 /* type: don't walk into subquery */ ,
 							 false /* dont_replace: DEFAULT */ );
 
       /* Even though node->info.q.query.q.select has no orderby_num so far, it is a safe guard to prevent potential
        * rewrite problem. */
       node->info.query.q.select.list = pt_lambda_with_arg (parser, node->info.query.q.select.list, ord_num, grp_num,
 							   false /* loc_check: DEFAULT */ ,
-							   0 /* type: DEFAULT */ ,
+							   2 /* type: don't walk into subquery */ ,
 							   false /* dont_replace: DEFAULT */ );
 
       node->info.query.q.select.having =
@@ -2176,13 +2261,13 @@ qo_reduce_order_by (PARSER_CONTEXT * parser, PT_NODE * node)
 		  node->info.query.orderby_for =
 		    pt_lambda_with_arg (parser, node->info.query.orderby_for, ord_num, ins_num,
 					false /* loc_check: DEFAULT */ ,
-					0 /* type: DEFAULT */ ,
+					2 /* type: don't walk into subquery */ ,
 					false /* dont_replace: DEFAULT */ );
 
 		  node->info.query.q.select.list =
 		    pt_lambda_with_arg (parser, node->info.query.q.select.list, ord_num, ins_num,
 					false /* loc_check: DEFAULT */ ,
-					0 /* type: DEFAULT */ ,
+					2 /* type: don't walk into subquery */ ,
 					false /* dont_replace: DEFAULT */ );
 
 		  node->info.query.q.select.where =
@@ -2224,7 +2309,7 @@ qo_reduce_order_by (PARSER_CONTEXT * parser, PT_NODE * node)
 		  /* replace orderby_num() to groupby_num() */
 		  node->info.query.q.select.list = pt_lambda_with_arg (parser, node->info.query.q.select.list, ord_num,
 								       grp_num, false /* loc_check: DEFAULT */ ,
-								       0 /* type: DEFAULT */ ,
+								       2 /* type: don't walk into subquery */ ,
 								       false /* dont_replace: DEFAULT */ );
 
 		  parser_free_tree (parser, ord_num);
@@ -2336,7 +2421,7 @@ qo_converse_sarg_terms (PARSER_CONTEXT * parser, PT_NODE * where)
 	      arg1 = arg1->info.expr.arg1;
 	    }
 
-	  if (op_type == PT_BETWEEN && arg1_arg1 && pt_is_attr (arg1))
+	  if (op_type == PT_BETWEEN && arg1_arg1 && (pt_is_attr (arg1) || pt_is_function_index_expression (arg1)))
 	    {
 	      /* term in the form of '-attr between opd1 and opd2' convert to '-attr >= opd1 and -attr <= opd2' */
 
@@ -2374,11 +2459,11 @@ qo_converse_sarg_terms (PARSER_CONTEXT * parser, PT_NODE * where)
 	  /* add sargable attribute to attr_list */
 	  if (arg1 && arg2 && pt_converse_op (op_type) != 0)
 	    {
-	      if (pt_is_attr (arg1))
+	      if (pt_is_attr (arg1) || pt_is_function_index_expression (arg1))
 		{
 		  for (attr = attr_list; attr; attr = attr->next)
 		    {
-		      if (pt_name_equal (parser, attr, arg1))
+		      if (pt_check_path_eq (parser, attr, arg1) == 0)
 			{
 			  attr->line_number++;	/* increase attribute count */
 			  break;
@@ -2398,11 +2483,11 @@ qo_converse_sarg_terms (PARSER_CONTEXT * parser, PT_NODE * where)
 		    }
 		}
 
-	      if (pt_is_attr (arg2))
+	      if (pt_is_attr (arg2) || pt_is_function_index_expression (arg2))
 		{
 		  for (attr = attr_list; attr; attr = attr->next)
 		    {
-		      if (pt_name_equal (parser, attr, arg2))
+		      if (pt_check_path_eq (parser, attr, arg2) == 0)
 			{
 			  attr->line_number++;	/* increase attribute count */
 			  break;
@@ -2487,7 +2572,7 @@ qo_converse_sarg_terms (PARSER_CONTEXT * parser, PT_NODE * where)
 		    }
 		}
 	      else if (op_type != 0 && arg1_arg1
-		       && (pt_is_attr (arg1_arg1)
+		       && ((pt_is_attr (arg1_arg1) || pt_is_function_index_expression (arg1_arg1))
 			   || (pt_is_expr_node (arg1_arg1) && arg1_arg1->info.expr.op == PT_UNARY_MINUS))
 		       && pt_is_const (arg2))
 		{
@@ -2513,7 +2598,7 @@ qo_converse_sarg_terms (PARSER_CONTEXT * parser, PT_NODE * where)
 		    }
 		}
 	      else if (op_type != 0 && arg2_arg1
-		       && (pt_is_attr (arg2->info.expr.arg1)
+		       && ((pt_is_attr (arg2_arg1) || pt_is_function_index_expression (arg2_arg1))
 			   || (pt_is_expr_node (arg2_arg1) && arg2_arg1->info.expr.op == PT_UNARY_MINUS))
 		       && pt_is_const (arg1))
 		{
@@ -2586,21 +2671,21 @@ qo_converse_sarg_terms (PARSER_CONTEXT * parser, PT_NODE * where)
 
 	    }
 	  /* sargable term, where 'op_type' is one of '=', '<' '<=', '>', or '>=' */
-	  else if (arg1 && arg2 && (op_type = pt_converse_op (op_type)) != 0 && pt_is_attr (arg2))
+	  else if (arg1 && arg2 && (op_type = pt_converse_op (op_type)) != 0
+		   && (pt_is_attr (arg2) || pt_is_function_index_expression (arg2)))
 	    {
-
-	      if (pt_is_attr (arg1))
+	      if (pt_is_attr (arg1) || pt_is_function_index_expression (arg1))
 		{
 		  /* term in the form of 'attr op attr' */
 
 		  arg1_cnt = arg2_cnt = 0;	/* init */
 		  for (attr = attr_list; attr; attr = attr->next)
 		    {
-		      if (pt_name_equal (parser, attr, arg1))
+		      if (pt_check_path_eq (parser, attr, arg1) == 0)
 			{
 			  arg1_cnt = attr->line_number;
 			}
-		      else if (pt_name_equal (parser, attr, arg2))
+		      else if (pt_check_path_eq (parser, attr, arg2) == 0)
 			{
 			  arg2_cnt = attr->line_number;
 			}
@@ -2852,7 +2937,7 @@ qo_search_comp_pair_term (PARSER_CONTEXT * parser, PT_NODE * start)
       arg2 = arg2->info.expr.arg1;
     }
   find_const = pt_is_const_expr_node (arg2);
-  find_attr = pt_is_attr (start->info.expr.arg2);
+  find_attr = (pt_is_attr (start->info.expr.arg2) || pt_is_function_index_expression (start->info.expr.arg2));
 
   arg_prior_start = start->info.expr.arg1;	/* original value */
   if (arg_prior_start->info.expr.op == PT_PRIOR)
@@ -2878,7 +2963,8 @@ qo_search_comp_pair_term (PARSER_CONTEXT * parser, PT_NODE * start)
 
       if (node->info.expr.op == op_type1 || node->info.expr.op == op_type2)
 	{
-	  if (find_const && pt_is_attr (arg_prior) && (pt_check_path_eq (parser, arg_prior_start, arg_prior) == 0))
+	  if (find_const && (pt_is_attr (arg_prior) || pt_is_function_index_expression (arg_prior))
+	      && (pt_check_path_eq (parser, arg_prior_start, arg_prior) == 0))
 	    {
 	      /* skip out unary minus expr */
 	      arg2 = node->info.expr.arg2;
@@ -2892,7 +2978,8 @@ qo_search_comp_pair_term (PARSER_CONTEXT * parser, PT_NODE * start)
 		  break;
 		}
 	    }
-	  if (find_attr && pt_is_attr (arg_prior) && pt_is_attr (node->info.expr.arg2)
+	  if (find_attr && (pt_is_attr (arg_prior) || pt_is_function_index_expression (arg_prior))
+	      && (pt_is_attr (node->info.expr.arg2) || pt_is_function_index_expression (node->info.expr.arg2))
 	      && (pt_check_path_eq (parser, arg_prior_start, node->info.expr.arg1) == 0)
 	      && (pt_check_class_eq (parser, start->info.expr.arg2, node->info.expr.arg2) == 0))
 	    {
@@ -2921,7 +3008,7 @@ qo_search_comp_pair_term (PARSER_CONTEXT * parser, PT_NODE * start)
 static void
 qo_reduce_comp_pair_terms (PARSER_CONTEXT * parser, PT_NODE ** wherep)
 {
-  PT_NODE *node, *pair, *lower, *upper, *prev, *next, *arg2;
+  PT_NODE *node, *pair, *lower, *upper, *prev, *next, *arg1, *arg2;
   int location;
   DB_VALUE *lower_val, *upper_val;
   DB_VALUE_COMPARE_RESULT cmp;
@@ -2929,12 +3016,17 @@ qo_reduce_comp_pair_terms (PARSER_CONTEXT * parser, PT_NODE ** wherep)
   /* traverse CNF list */
   for (node = *wherep; node; node = node->next)
     {
-      if (node->node_type != PT_EXPR
-	  || (!pt_is_attr (node->info.expr.arg1)
-	      && (!PT_IS_EXPR_WITH_PRIOR_ARG (node) || !pt_is_attr (node->info.expr.arg1->info.expr.arg1)))
-	  || node->or_next != NULL)
+      if (node->node_type != PT_EXPR || node->or_next != NULL)
 	{
-	  /* neither expression node, LHS is attribute, nor one predicate term */
+	  /* neither expression node nor one predicate term */
+	  continue;
+	}
+
+      arg1 = pt_get_first_arg_ignore_prior (node);
+
+      if (!pt_is_attr (arg1) && !pt_is_function_index_expression (arg1))
+	{
+	  /* LHS is not an attribute */
 	  continue;
 	}
 
@@ -3359,8 +3451,8 @@ qo_reduce_outer_joined_tables (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE 
       return query;
     }
 
-  /* check no_merge sql hint */
-  if (query->info.query.q.select.hint & PT_HINT_NO_MERGE)
+  /* check no_eliminate_join sql hint */
+  if (query->info.query.q.select.hint & PT_HINT_NO_ELIMINATE_JOIN)
     {
       return query;
     }
@@ -3497,6 +3589,1311 @@ end:
       parser_free_tree (parser, point_list);
     }
   return query;
+}
+
+/*
+ * qo_reduce_joined_tables_referenced_by_foreign_key () - Removes a table with a primary key from a join
+ *                                                        with a table with a foreign key referencing it.
+ *   return: void
+ *   parser(in): parser context
+ *   query(in): query to check
+ *
+ * Note: A table with a primary key is removed from a join with a table with a foreign key
+ *       that references the primary key. There must be no references to the table to be removed
+ *       other than join predicates. This is because the relationship between a primary key and a foreign key
+ *       replaces a data filter of a join. If a table with a primary key is removed, a predicate for IS NOT NULL
+ *       may be added, as it cannot filter on NULL.
+ *
+ *    e.g. drop if exists child, parent;
+ *         create table parent (c1 int primary key, c2 int);
+ *         create table child (c1 int, parent_c1 int references parent (c1), c2 int);
+ *
+ *         select c.* from child c inner join parent p on p.c1 = c.parent_c1 where c.c2 = 1;
+ *         select c.* from child c, parent p where c.parent_c1 = p.c1 and c.c2 = 1;
+ *           -> select c.* from child c where c.c2 = 1 and c.parent_c1 is not null;
+ *
+ *         select c.* from child c inner join parent p on p.c1 = c.parent_c1 where p.c2 = 1;
+ *         select c.* from child c, parent p where c.parent_c1 = p.c1 and p.c2 = 1;
+ *           -> do not change.
+ */
+static void
+qo_reduce_joined_tables_referenced_by_foreign_key (PARSER_CONTEXT * parser, PT_NODE * query)
+{
+  QO_REDUCE_REFERENCE_INFO reduce_reference_info;
+  PT_NODE *curr_pk_spec = NULL, *prev_pk_spec = NULL, *next_pk_spec = NULL;
+  PT_NODE *curr_fk_spec = NULL;
+  bool has_reduce = false;
+
+  assert (parser != NULL && query != NULL);
+
+  memset (&reduce_reference_info, 0, sizeof (QO_REDUCE_REFERENCE_INFO));
+
+  if (query->node_type != PT_SELECT)
+    {
+      return;
+    }
+
+  if (query->info.query.q.select.hint & PT_HINT_NO_ELIMINATE_JOIN)
+    {
+      return;
+    }
+
+  if (query->info.query.q.select.where == NULL)
+    {
+      return;
+    }
+
+  do
+    {
+      has_reduce = false;
+
+      for (prev_pk_spec = NULL, curr_pk_spec = query->info.query.q.select.from; curr_pk_spec != NULL;
+	   prev_pk_spec = curr_pk_spec, curr_pk_spec = curr_pk_spec->next)
+	{
+	  if (qo_is_exclude_spec (reduce_reference_info.exclude_pk_spec_point_list, curr_pk_spec))
+	    {
+	      continue;		/* curr_pk_spec->next */
+	    }
+
+	  reduce_reference_info.pk_spec = curr_pk_spec;
+
+	  if (!qo_check_primary_key_referenced_by_foreign_key_in_parent_spec (parser, query, &reduce_reference_info))
+	    {
+	      if (er_has_error ())
+		{
+		  goto exit_on_fail_with_cleanup;
+		}
+
+	      continue;		/* curr_pk_spec->next */
+	    }
+
+	  for (curr_fk_spec = query->info.query.q.select.from; curr_fk_spec != NULL; curr_fk_spec = curr_fk_spec->next)
+	    {
+	      if (curr_pk_spec == curr_fk_spec)
+		{
+		  continue;	/* curr_fk_spec->next */
+		}
+
+	      if (qo_is_exclude_spec (reduce_reference_info.exclude_fk_spec_point_list, curr_fk_spec))
+		{
+		  continue;	/* curr_fk_spec->next */
+		}
+
+	      reduce_reference_info.fk_spec = curr_fk_spec;
+
+	      if (qo_check_foreign_keys_referencing_primary_key_in_child_spec (parser, query, &reduce_reference_info))
+		{
+		  break;
+		}
+	      else
+		{
+		  if (er_has_error ())
+		    {
+		      goto exit_on_fail_with_cleanup;
+		    }
+
+		  continue;	/* curr_fk_spec->next */
+		}
+	    }
+
+	  if (curr_fk_spec == NULL)
+	    {
+	      /* not found */
+	      continue;		/* curr_pk_spec->next */
+	    }
+
+	  qo_reduce_predicate_for_parent_spec (parser, query, &reduce_reference_info);
+
+	  assert (reduce_reference_info.join_pred_point_list == NULL);
+	  assert (reduce_reference_info.parent_pred_point_list == NULL);
+	  assert (reduce_reference_info.append_not_null_pred_list == NULL);
+
+	  next_pk_spec = curr_pk_spec->next;
+
+	  if (prev_pk_spec != NULL)
+	    {
+	      prev_pk_spec->next = next_pk_spec;
+	    }
+	  else
+	    {
+	      query->info.query.q.select.from = next_pk_spec;
+	    }
+
+	  /* reset location */
+	  qo_reset_spec_location (parser, next_pk_spec, query);
+
+	  parser_free_node (parser, curr_pk_spec);
+	  curr_pk_spec = next_pk_spec;
+
+	  has_reduce = true;
+
+	  if (curr_pk_spec == NULL)
+	    {
+	      /* first again */
+	      break;
+	    }
+	}
+    }
+  while (has_reduce);
+
+  /* end */
+
+exit_on_fail_with_cleanup:
+  if (reduce_reference_info.exclude_pk_spec_point_list != NULL)
+    {
+      parser_free_tree (parser, reduce_reference_info.exclude_pk_spec_point_list);
+      reduce_reference_info.exclude_pk_spec_point_list = NULL;
+    }
+
+  if (reduce_reference_info.exclude_fk_spec_point_list != NULL)
+    {
+      parser_free_tree (parser, reduce_reference_info.exclude_fk_spec_point_list);
+      reduce_reference_info.exclude_fk_spec_point_list = NULL;
+    }
+
+  if (reduce_reference_info.join_pred_point_list != NULL)
+    {
+      parser_free_tree (parser, reduce_reference_info.join_pred_point_list);
+      reduce_reference_info.join_pred_point_list = NULL;
+    }
+
+  if (reduce_reference_info.parent_pred_point_list != NULL)
+    {
+      parser_free_tree (parser, reduce_reference_info.parent_pred_point_list);
+      reduce_reference_info.parent_pred_point_list = NULL;
+    }
+
+  if (reduce_reference_info.append_not_null_pred_list != NULL)
+    {
+      parser_free_tree (parser, reduce_reference_info.append_not_null_pred_list);
+      reduce_reference_info.append_not_null_pred_list = NULL;
+    }
+
+  return;
+}
+
+/*
+ * qo_is_exclude_spec () - Whether the given spec exists in the list of specs to exclude.
+ *   return: bool
+ *   exclude_spec_point_list(in): list of specs to exclude
+ *   spec(in): spec to find
+ *
+ * Note: In the qo_reduce_joined_tables_referenced_by_foreign_key() function,
+ *       if the checked spec does not need to be checked again, it is added to the list of specs to exclude.
+ */
+static bool
+qo_is_exclude_spec (PT_NODE * exclude_spec_point_list, PT_NODE * spec)
+{
+  PT_NODE *exclude_spec_point = NULL, *exclude_spec = NULL;
+
+  for (exclude_spec_point = exclude_spec_point_list; exclude_spec_point != NULL;
+       exclude_spec_point = exclude_spec_point->next)
+    {
+      exclude_spec = exclude_spec_point;
+      CAST_POINTER_TO_NODE (exclude_spec);
+
+      if (exclude_spec == spec)
+	{
+	  return true;
+	}
+    }
+
+  return false;
+}
+
+/*
+ * qo_check_primary_key_referenced_by_foreign_key_in_parent_spec () - Whether the given spec has a primary key
+ *                                                                    referenced by a foreign key.
+ *   return: bool
+ *   parser(in): parser context
+ *   query(in): query to check
+ *   reduce_reference_info(in/out): Information needed to check
+ *
+ * Note: If the given spec can be removed, set the memory object pointer of the given spec and a constraint pointer
+ *       of a primary key to reduce_reference_info. And the predicates of the given spec are added
+ *       to the join_pred_point_list.
+ * 
+ *       In the following cases, add to the exclude_pk_spec_point_list.
+ *         1. Access to hierarchical tables.
+ *         2. Not an inner join or natural join.
+ *         3. CTEs or derived tables.
+ *         4. No primary key.
+ *         5. No foreign key referencing the primary key.
+ *         6. Non-join predicates exist.
+ */
+static bool
+qo_check_primary_key_referenced_by_foreign_key_in_parent_spec (PARSER_CONTEXT * parser, PT_NODE * query,
+							       QO_REDUCE_REFERENCE_INFO * reduce_reference_info)
+{
+  PT_NODE *curr_pk_spec = NULL;
+  MOP curr_pk_mop = NULL;
+  SM_CLASS_CONSTRAINT *curr_pk_cons = NULL;
+  PT_NODE *join_pred_point_list = NULL;
+  PT_NODE *parent_pred_point_list = NULL;
+  PT_NODE *curr_pred_point = NULL;
+  PT_NODE *curr_pred = NULL, *next_pred = NULL;
+  int cons_attr_cnt;
+  unsigned int cons_attr_flag;
+  int i;
+
+  assert (parser != NULL && query != NULL);
+  assert (reduce_reference_info != NULL);
+  assert (reduce_reference_info->pk_spec != NULL);
+
+  reduce_reference_info->pk_mop = NULL;
+  reduce_reference_info->pk_cons = NULL;
+
+  if (reduce_reference_info->join_pred_point_list != NULL)
+    {
+      parser_free_tree (parser, reduce_reference_info->join_pred_point_list);
+      reduce_reference_info->join_pred_point_list = NULL;
+    }
+
+  if (reduce_reference_info->parent_pred_point_list != NULL)
+    {
+      parser_free_tree (parser, reduce_reference_info->parent_pred_point_list);
+      reduce_reference_info->parent_pred_point_list = NULL;
+    }
+
+  curr_pk_spec = reduce_reference_info->pk_spec;
+  assert (PT_NODE_IS_SPEC (curr_pk_spec));
+
+  /* PT_ALL is not supported. */
+  if (PT_SPEC_IS_ALL (curr_pk_spec))
+    {
+      goto exit_on_fail_with_exclude;
+    }
+
+  switch (PT_SPEC_JOIN_TYPE (curr_pk_spec))
+    {
+    case PT_JOIN_NONE:
+      /* fallthrough */
+    case PT_JOIN_INNER:
+      /* fallthrough */
+    case PT_JOIN_NATURAL:
+      break;
+
+    case PT_JOIN_CROSS:
+      /* fallthrough */
+    case PT_JOIN_LEFT_OUTER:
+      /* fallthrough */
+    case PT_JOIN_RIGHT_OUTER:
+      /* fallthrough */
+    case PT_JOIN_FULL_OUTER:
+      /* fallthrough */
+    case PT_JOIN_UNION:
+      /* fallthrough */
+    default:
+      goto exit_on_fail_with_exclude;
+    }
+
+  PT_SPEC_GET_DB_OBJECT (curr_pk_spec, curr_pk_mop);
+  if (curr_pk_mop == NULL)
+    {
+      /* CTEs and derived tables are excluded. */
+      goto exit_on_fail_with_exclude;
+    }
+
+  for (curr_pk_cons = sm_class_constraints (curr_pk_mop); curr_pk_cons != NULL; curr_pk_cons = curr_pk_cons->next)
+    {
+      if (curr_pk_cons->type == SM_CONSTRAINT_PRIMARY_KEY)
+	{
+	  /* found */
+	  break;
+	}
+    }
+
+  if (curr_pk_cons == NULL || curr_pk_cons->fk_info == NULL)
+    {
+      /* No primary key or no foreign key referencing the primary key. */
+      goto exit_on_fail_with_exclude;
+    }
+
+  /* There must be no non-join predicates. */
+  for (curr_pred = query->info.query.q.select.where; curr_pred != NULL; curr_pred = curr_pred->next)
+    {
+      SPEC_CNT_INFO info;
+
+      memset (&info, 0, sizeof (SPEC_CNT_INFO));
+      info.spec = curr_pk_spec;
+
+      next_pred = curr_pred->next;
+      curr_pred->next = NULL;
+
+      parser_walk_tree (parser, curr_pred, qo_get_name_cnt_by_spec, &info, NULL, NULL);
+
+      curr_pred->next = next_pred;
+
+      if (info.my_spec_cnt >= 1)
+	{
+	  if (curr_pred->or_next == NULL && PT_NODE_IS_EXPR (curr_pred) && PT_EXPR_OP (curr_pred) == PT_EQ)
+	    {
+	      if (pt_is_attr (PT_EXPR_ARG1 (curr_pred)) && pt_is_attr (PT_EXPR_ARG2 (curr_pred)))
+		{
+		  join_pred_point_list = parser_append_node (pt_point (parser, curr_pred), join_pred_point_list);
+		  continue;
+		}
+
+	      /* Some predicates are non-join predicates, but can be reduced by predicate fulfillment.
+	       * 
+	       *   e.g. drop table if exists child, parent;
+	       *        reate table parent (c1 int, c2 int, primary key (c1, c2));
+	       *        create table child (c1 int, c2 int);
+	       *        alter table child add constraint foreign key (c1, c2) references parent (c1, c2);
+	       *
+	       *        select c.* from child c, parent p where c.c1 = p.c1 and c.c2 = p.c2 and p.c1 = 1;
+	       * 
+	       *        -- rewritten query
+	       *        select c.* from child c, parent p where c.c1 = p.c1 and c.c2 = p.c2 and p.c1 = 1 and c.c1 = 1;
+	       * 
+	       *        -- execute query
+	       *        select c.* from child c where c.c1 = 1;
+	       *
+	       * 'p.c1 = 1' is a reference to the parent, but can be reduced if 'c.c1 = 1' exists.
+	       * In the rewrite query, since 'c.c1 = 1' is added by predicate fulfillment, eliminate join is possible
+	       * even if 'p.c1 = 1' exists.
+	       */
+	      if ((pt_is_attr (PT_EXPR_ARG1 (curr_pred)) && qo_is_reduceable_const (PT_EXPR_ARG2 (curr_pred))) ||
+		  (pt_is_attr (PT_EXPR_ARG2 (curr_pred)) && qo_is_reduceable_const (PT_EXPR_ARG1 (curr_pred))))
+		{
+		  parent_pred_point_list = parser_append_node (pt_point (parser, curr_pred), parent_pred_point_list);
+		  continue;
+		}
+
+	      goto exit_on_fail_with_exclude;
+	    }
+	  else
+	    {
+	      /* Non-join predicates exist. */
+	      goto exit_on_fail_with_exclude;
+	    }
+	}
+    }
+
+  if (join_pred_point_list == NULL)
+    {
+      /* There are no join predicates. */
+      goto exit_on_fail_with_exclude;
+    }
+
+  /* We need to check if all the attributes of the constraint are used in predicated. */
+  for (i = 0; curr_pk_cons->attributes[i] != NULL; i++);
+
+  /* Set the bits of cons_attr_flag to 1 as many as the number of attributes in the constraint.
+   * And if an attribute of the constraint is used in a predicate, it sets the bit of that index to 0.
+   * After checking the predicates, if cons_attr_flag is 0, we know that all the attributes of the constraint
+   * are used in the predicate. */
+  cons_attr_cnt = i;
+  cons_attr_flag = (1 << i) - 1;
+
+  /* The columns of join predicates must be in the primary key. */
+  for (curr_pred_point = join_pred_point_list; curr_pred_point != NULL; curr_pred_point = curr_pred_point->next)
+    {
+      SM_ATTRIBUTE *pk_cons_attr = NULL;
+      PT_NODE *pk_pred_attr = NULL;
+      PT_NODE *arg1 = NULL, *arg2 = NULL;
+      int i = 0;
+
+      curr_pred = curr_pred_point;
+      CAST_POINTER_TO_NODE (curr_pred);
+
+      assert (PT_NODE_IS_EXPR (curr_pred));
+      assert (PT_EXPR_OP (curr_pred) == PT_EQ);
+      assert (PT_NODE_IS_NAME (PT_EXPR_ARG1 (curr_pred)));
+      assert (PT_NODE_IS_NAME (PT_EXPR_ARG2 (curr_pred)));
+
+      arg1 = PT_EXPR_ARG1 (curr_pred);
+      arg2 = PT_EXPR_ARG2 (curr_pred);
+
+      if (PT_SPEC_ID (curr_pk_spec) == PT_NAME_SPEC_ID (arg1))
+	{
+	  pk_pred_attr = PT_EXPR_ARG1 (curr_pred);
+	}
+      else if (PT_SPEC_ID (curr_pk_spec) == PT_NAME_SPEC_ID (arg2))
+	{
+	  pk_pred_attr = PT_EXPR_ARG2 (curr_pred);
+	}
+      else
+	{
+	  /* Already checked before. */
+	  assert (false);
+	  goto exit_on_fail_with_exclude;
+	}
+
+      for (i = 0; curr_pk_cons->attributes[i] != NULL; i++)
+	{
+	  if (intl_identifier_casecmp (curr_pk_cons->attributes[i]->header.name, PT_NAME_ORIGINAL (pk_pred_attr)) == 0)
+	    {
+	      /* found */
+	      pk_cons_attr = curr_pk_cons->attributes[i];
+
+	      /* If an attribute of the constraint is used in a predicate, it sets the bit of that index to 0. */
+	      cons_attr_flag &= ~(1 << i);
+
+	      break;		/* curr_pred_point->next */
+	    }
+	}
+
+      if (pk_cons_attr == NULL)
+	{
+	  /* not found */
+	  goto exit_on_fail_with_cleanup;
+	}
+    }
+
+  assert (curr_pred_point == NULL);
+
+  /* If cons_attr_flag is non-zero, then all the attributes of the constraint are not used in the predicate. */
+  if (cons_attr_flag != 0)
+    {
+      goto exit_on_fail_with_exclude;
+    }
+
+  {
+    SPEC_CNT_INFO info;
+    PT_NODE *backup_from = NULL;
+    PT_NODE *backup_where = NULL;
+
+    /* qo_get_name_cnt_by_spec_without_oncond does not check PT_EXPR in the select_list.
+     * qo_get_name_cnt_by_spec increases my_spec_cnt too much if from exists.
+     * So I check both.
+     */
+
+    /* STEP 1 */
+    memset (&info, 0, sizeof (SPEC_CNT_INFO));
+    info.spec = curr_pk_spec;
+
+    backup_from = query->info.query.q.select.from;
+    backup_where = query->info.query.q.select.where;
+    query->info.query.q.select.from = NULL;
+    query->info.query.q.select.where = NULL;
+
+    parser_walk_tree (parser, query, qo_get_name_cnt_by_spec, &info, NULL, NULL);
+
+    query->info.query.q.select.from = backup_from;
+    query->info.query.q.select.where = backup_where;
+
+    if (info.my_spec_cnt >= 1)
+      {
+	goto exit_on_fail_with_exclude;
+      }
+
+    /* STEP 2 */
+    memset (&info, 0, sizeof (SPEC_CNT_INFO));
+    info.spec = curr_pk_spec;
+
+    parser_walk_tree (parser, query->info.query.q.select.from, qo_get_name_cnt_by_spec_without_oncond, &info, NULL,
+		      NULL);
+
+    if (info.my_spec_cnt >= 1)
+      {
+	goto exit_on_fail_with_exclude;
+      }
+  }
+
+  reduce_reference_info->pk_mop = curr_pk_mop;
+  reduce_reference_info->pk_cons = curr_pk_cons;
+  reduce_reference_info->join_pred_point_list = join_pred_point_list;
+  reduce_reference_info->parent_pred_point_list = parent_pred_point_list;
+
+  return true;
+
+exit_on_fail_with_exclude:
+  reduce_reference_info->exclude_pk_spec_point_list =
+    parser_append_node (pt_point (parser, curr_pk_spec), reduce_reference_info->exclude_pk_spec_point_list);
+  /* fallthrough */
+
+exit_on_fail_with_cleanup:
+  if (join_pred_point_list != NULL)
+    {
+      parser_free_tree (parser, join_pred_point_list);
+      join_pred_point_list = NULL;
+    }
+
+  if (parent_pred_point_list != NULL)
+    {
+      parser_free_tree (parser, parent_pred_point_list);
+      parent_pred_point_list = NULL;
+    }
+
+exit_on_fail:
+  return false;
+}
+
+/*
+ * qo_check_foreign_keys_referencing_primary_key_in_child_spec () - Whether the given spec has a foreign key
+ *                                                                  referencing a primary key.
+ *   return: bool
+ *   parser(in): parser context
+ *   query(in): query to check
+ *   reduce_reference_info(in/out): Information needed to check
+ *
+ * Note: For each foreign key of a given spec, it is checked
+ *       in the qo_check_foreign_key_referencing_primary_key_in_child_spec() function.
+ * 
+ *       In the following cases, add to the exclude_fk_spec_point_list.
+ *         1. Access to hierarchical tables.
+ *         2. Not an inner join or natural join.
+ *         3. CTEs or derived tables.
+ *         4. No foreign key.
+ */
+static bool
+qo_check_foreign_keys_referencing_primary_key_in_child_spec (PARSER_CONTEXT * parser, PT_NODE * query,
+							     QO_REDUCE_REFERENCE_INFO * reduce_reference_info)
+{
+  PT_NODE *curr_fk_spec = NULL;
+  MOP curr_fk_mop = NULL;
+  SM_CLASS_CONSTRAINT *curr_fk_cons = NULL;
+
+  assert (parser != NULL && query != NULL);
+  assert (reduce_reference_info != NULL);
+  assert (reduce_reference_info->pk_spec != NULL);
+  assert (reduce_reference_info->pk_mop != NULL);
+  assert (reduce_reference_info->pk_cons != NULL);
+  assert (reduce_reference_info->fk_spec != NULL);
+  assert (reduce_reference_info->join_pred_point_list != NULL);
+
+  reduce_reference_info->fk_cons = NULL;
+
+  if (reduce_reference_info->append_not_null_pred_list != NULL)
+    {
+      parser_free_tree (parser, reduce_reference_info->append_not_null_pred_list);
+      reduce_reference_info->append_not_null_pred_list = NULL;
+    }
+
+  curr_fk_spec = reduce_reference_info->fk_spec;
+  assert (PT_NODE_IS_SPEC (curr_fk_spec));
+
+  /* PT_ALL is not supported. */
+  if (PT_SPEC_IS_ALL (curr_fk_spec))
+    {
+      goto exit_on_fail_with_exclude;
+    }
+
+  switch (PT_SPEC_JOIN_TYPE (curr_fk_spec))
+    {
+    case PT_JOIN_NONE:
+      /* fallthrough */
+    case PT_JOIN_INNER:
+      /* fallthrough */
+    case PT_JOIN_NATURAL:
+      break;
+
+    case PT_JOIN_CROSS:
+      /* fallthrough */
+    case PT_JOIN_LEFT_OUTER:
+      /* fallthrough */
+    case PT_JOIN_RIGHT_OUTER:
+      /* fallthrough */
+    case PT_JOIN_FULL_OUTER:
+      /* fallthrough */
+    case PT_JOIN_UNION:
+      /* fallthrough */
+    default:
+      goto exit_on_fail_with_exclude;
+    }
+
+  PT_SPEC_GET_DB_OBJECT (curr_fk_spec, curr_fk_mop);
+  if (curr_fk_mop == NULL)
+    {
+      /* CTEs and derived tables are excluded. */
+      goto exit_on_fail_with_exclude;
+    }
+
+  for (curr_fk_cons = sm_class_constraints (curr_fk_mop); curr_fk_cons != NULL; curr_fk_cons = curr_fk_cons->next)
+    {
+      if (curr_fk_cons->type != SM_CONSTRAINT_FOREIGN_KEY)
+	{
+	  continue;
+	}
+
+      reduce_reference_info->fk_cons = curr_fk_cons;
+
+      if (!qo_check_foreign_key_referencing_primary_key_in_child_spec (parser, query, reduce_reference_info))
+	{
+	  if (er_has_error ())
+	    {
+	      goto exit_on_fail;
+	    }
+
+	  continue;
+	}
+
+      if (reduce_reference_info->parent_pred_point_list == NULL)
+	{
+	  return true;
+	}
+
+      if (qo_check_reduce_predicate_for_parent_spec (parser, query, reduce_reference_info))
+	{
+	  return true;
+	}
+      else
+	{
+	  if (er_has_error ())
+	    {
+	      goto exit_on_fail;
+	    }
+
+	  continue;
+	}
+    }
+
+  assert (curr_fk_cons == NULL);
+
+  if (reduce_reference_info->fk_cons == NULL)
+    {
+      /* No foreign key */
+      goto exit_on_fail_with_exclude;
+    }
+
+  goto exit_on_fail;
+
+exit_on_fail_with_exclude:
+  reduce_reference_info->exclude_fk_spec_point_list =
+    parser_append_node (pt_point (parser, curr_fk_spec), reduce_reference_info->exclude_fk_spec_point_list);
+
+exit_on_fail:
+  return false;
+}
+
+/*
+ * qo_check_foreign_key_referencing_primary_key_in_child_spec () - Whether the given spec has a foreign key
+ *                                                                 referencing a primary key.
+ *   return: bool
+ *   parser(in): parser context
+ *   query(in): query to check
+ *   reduce_reference_info(in/out): Information needed to check
+ *
+ * Note: Check whether the primary key of pk_spec in reduce_reference_info is referenced by the foreign key of fk_spec
+ *       in reduce_reference_info. And check whether the column used in the join predicates exists in the primary key
+ *       and the foreign key. If there is no not null constraint on the column existing in the foreign key,
+ *       add a predicate for IS NOT NULL.
+ */
+static bool
+qo_check_foreign_key_referencing_primary_key_in_child_spec (PARSER_CONTEXT * parser, PT_NODE * query,
+							    QO_REDUCE_REFERENCE_INFO * reduce_reference_info)
+{
+  PT_NODE *curr_pk_spec = NULL, *curr_fk_spec = NULL;
+  MOP curr_pk_mop = NULL;
+  SM_CLASS_CONSTRAINT *curr_pk_cons = NULL, *curr_fk_cons = NULL;
+  SM_ATTRIBUTE *pk_cons_attr, *fk_cons_attr;
+  PT_NODE *join_pred_point_list = NULL;
+  PT_NODE *append_not_null_pred_list = NULL;
+  PT_NODE *curr_pred_point = NULL;
+  PT_NODE *curr_pred = NULL;
+  PT_NODE *pk_pred_attr, *fk_pred_attr;
+  PT_NODE *copy_fk_pred_attr, *fk_not_null_pred;
+  int cons_attr_cnt;
+  unsigned int cons_attr_flag;
+  PT_NODE *arg1, *arg2;
+  int i = 0;
+
+  assert (parser != NULL && query != NULL);
+  assert (reduce_reference_info != NULL);
+  assert (reduce_reference_info->pk_spec != NULL);
+  assert (reduce_reference_info->pk_mop != NULL);
+  assert (reduce_reference_info->pk_cons != NULL);
+  assert (reduce_reference_info->fk_spec != NULL);
+  assert (reduce_reference_info->fk_cons != NULL);
+  assert (reduce_reference_info->join_pred_point_list != NULL);
+  assert (reduce_reference_info->append_not_null_pred_list == NULL);
+
+  curr_pk_spec = reduce_reference_info->pk_spec;
+  curr_pk_mop = reduce_reference_info->pk_mop;
+  curr_pk_cons = reduce_reference_info->pk_cons;
+  curr_fk_spec = reduce_reference_info->fk_spec;
+  curr_fk_cons = reduce_reference_info->fk_cons;
+  join_pred_point_list = reduce_reference_info->join_pred_point_list;
+
+  assert (curr_fk_cons->type == SM_CONSTRAINT_FOREIGN_KEY);
+
+  /* We must check that the oid of the parent table is equal to the fk_info->ref_class_oid
+   * of the foreign key constraint.
+   * 
+   *   e.g. drop table if exists child, parent, super_parent;
+   *        create table super_parent (c1 int primary key);
+   *        create table parent under super_parent (c2 int);
+   *        create table child (c1 int);
+   *        alter table child add constraint foreign key (c1) references parent (c1);
+   *
+   *        -- irreducible
+   *        select c.* from child c, super_parent s where c.c1 = s.c1;
+   *
+   *        -- reducible
+   *        select c.* from child c, parent s where c.c1 = s.c1;
+   */
+
+  /* WS_OID or WS_REAL_OID, which one? */
+  if (!OID_EQ (WS_REAL_OID (curr_pk_mop), &curr_fk_cons->fk_info->ref_class_oid))
+    {
+      goto exit_on_fail;
+    }
+
+  if (!BTID_IS_EQUAL (&(curr_pk_cons->index_btid), &(curr_fk_cons->fk_info->ref_class_pk_btid)))
+    {
+      goto exit_on_fail;
+    }
+
+  /* We need to check if all the attributes of the constraint are used in predicated.
+   *
+   *   e.g. drop table if exists child, parent;
+   *        create table parent (c1 int, c2 int, primary key (c1, c2));
+   *        create table child (c1 int, c2 int);
+   *        alter table child add constraint foreign key (c1, c2) references parent (c1, c2);
+   *
+   *        -- irreducible
+   *        select c.* from child c, parent p where c.c1 = p.c1;
+   *        select c.* from child c, parent p where c.c2 = p.c2;
+   *        select c.* from child c, parent p where c.c1 = p.c1 and c.c1 = p.c1;
+   *
+   *        -- reducible
+   *        select c.* from child c, parent p where c.c1 = p.c1 and c.c2 = p.c2;
+   */
+  for (i = 0; curr_pk_cons->attributes[i] != NULL && curr_fk_cons->attributes[i] != NULL; i++);
+
+  /* Set the bits of cons_attr_flag to 1 as many as the number of attributes in the constraint.
+   * And if an attribute of the constraint is used in a predicate, it sets the bit of that index to 0.
+   * After checking the predicates, if cons_attr_flag is 0, we know that all the attributes of the constraint
+   * are used in the predicate. */
+  cons_attr_cnt = i;
+  cons_attr_flag = (1 << i) - 1;
+
+  for (curr_pred_point = join_pred_point_list; curr_pred_point != NULL; curr_pred_point = curr_pred_point->next)
+    {
+      curr_pred = curr_pred_point;
+      CAST_POINTER_TO_NODE (curr_pred);
+
+      assert (PT_NODE_IS_EXPR (curr_pred));
+      assert (PT_EXPR_OP (curr_pred) == PT_EQ);
+      assert (PT_NODE_IS_NAME (PT_EXPR_ARG1 (curr_pred)));
+      assert (PT_NODE_IS_NAME (PT_EXPR_ARG2 (curr_pred)));
+
+      arg1 = PT_EXPR_ARG1 (curr_pred);
+      arg2 = PT_EXPR_ARG2 (curr_pred);
+
+      if (PT_SPEC_ID (curr_pk_spec) == PT_NAME_SPEC_ID (arg1))
+	{
+	  pk_pred_attr = PT_EXPR_ARG1 (curr_pred);
+	}
+      else if (PT_SPEC_ID (curr_pk_spec) == PT_NAME_SPEC_ID (arg2))
+	{
+	  pk_pred_attr = PT_EXPR_ARG2 (curr_pred);
+	}
+      else
+	{
+	  /* Already checked before. */
+	  assert (false);
+	  goto exit_on_fail_with_cleanup;
+	}
+
+      if (PT_SPEC_ID (curr_fk_spec) == PT_NAME_SPEC_ID (arg1))
+	{
+	  fk_pred_attr = PT_EXPR_ARG1 (curr_pred);
+	}
+      else if (PT_SPEC_ID (curr_fk_spec) == PT_NAME_SPEC_ID (arg2))
+	{
+	  fk_pred_attr = PT_EXPR_ARG2 (curr_pred);
+	}
+      else
+	{
+	  goto exit_on_fail_with_cleanup;
+	}
+
+      assert (pk_pred_attr != NULL);
+      assert (fk_pred_attr != NULL);
+
+      for (i = 0; curr_pk_cons->attributes[i] != NULL && curr_fk_cons->attributes[i] != NULL; i++)
+	{
+	  pk_cons_attr = curr_pk_cons->attributes[i];
+	  fk_cons_attr = curr_fk_cons->attributes[i];
+
+	  if (intl_identifier_casecmp (pk_cons_attr->header.name, PT_NAME_ORIGINAL (pk_pred_attr)) == 0)
+	    {
+	      if (intl_identifier_casecmp (fk_cons_attr->header.name, PT_NAME_ORIGINAL (fk_pred_attr)) == 0)
+		{
+		  /* If there is no not null constraint on a column of the table with the foreign key,
+		   * predicates for IS NOT NULL must be added. */
+		  if (!(fk_cons_attr->flags & SM_ATTFLAG_NON_NULL))
+		    {
+		      copy_fk_pred_attr = parser_copy_tree (parser, fk_pred_attr);
+		      fk_not_null_pred = parser_make_expression (parser, PT_IS_NOT_NULL, copy_fk_pred_attr, NULL, NULL);
+		      append_not_null_pred_list = parser_append_node (fk_not_null_pred, append_not_null_pred_list);
+		    }
+
+		  /* If an attribute of the constraint is used in a predicate, it sets the bit of that index to 0. */
+		  cons_attr_flag &= ~(1 << i);
+
+		  break;	/* curr_pred_point->next */
+		}
+	      else
+		{
+		  /* It cannot be reduced in fk_child_c1_c2 but can be reduced in fk_child_c2_c1.
+		   * 
+		   *   e.g. drop if exists child, parent;
+		   *        create table parent (c1 int, c2 int, primary key (c1, c2));
+		   *        create table child (c1 int, c2 int);
+		   *        alter table child add constraint foreign key (c1, c2) references parent (c1, c2);
+		   *        alter table child add constraint foreign key (c2, c1) references parent (c1, c2);
+		   *
+		   *        select c.* from child c, parent p where c.c1 = p.c2 and c.c2 = p.c1;
+		   */
+		  goto exit_on_fail_with_cleanup;
+		}
+	    }
+	}
+    }
+
+  assert (curr_pred_point == NULL);
+
+  /* If cons_attr_flag is non-zero, then all the attributes of the constraint are not used in the predicate. */
+  if (cons_attr_flag != 0)
+    {
+      goto exit_on_fail_with_cleanup;
+    }
+
+  reduce_reference_info->append_not_null_pred_list = append_not_null_pred_list;
+
+  return true;
+
+exit_on_fail_with_cleanup:
+  if (append_not_null_pred_list != NULL)
+    {
+      parser_free_tree (parser, append_not_null_pred_list);
+      append_not_null_pred_list = NULL;
+    }
+  /* fallthrough */
+
+exit_on_fail:
+  return false;
+}
+
+/*
+ * qo_check_reduce_predicate_for_parent_spec () - Whether the non-join predicate on the parent is reducible.
+ *
+ *   return: bool
+ *   parser(in): parser context
+ *   query(in): query to check
+ *   reduce_reference_info(in/out): Information needed to check
+ *
+ * Note: Checks if there is a predicate on the child equal to the non-join predicate of the parent.
+ */
+static bool
+qo_check_reduce_predicate_for_parent_spec (PARSER_CONTEXT * parser, PT_NODE * query,
+					   QO_REDUCE_REFERENCE_INFO * reduce_reference_info)
+{
+  PT_NODE *fk_spec;
+  SM_CLASS_CONSTRAINT *pk_cons, *fk_cons;
+  SM_ATTRIBUTE *pk_cons_attr, *fk_cons_attr;
+  PT_NODE *join_pred_point_list;
+  PT_NODE *parent_pred_point_list;
+  PT_NODE *child_pred_point_list;
+  PT_NODE *curr_pred, *next_pred;
+  PT_NODE *curr_parent_pred_point, *curr_parent_pred;
+  PT_NODE *curr_child_pred_point, *curr_child_pred;
+  PT_NODE *parent_pred_attr, *parent_pred_const;
+  PT_NODE *child_pred_attr, *child_pred_const;
+  const char *parent_pred_attr_str, *parent_pred_const_str;
+  const char *child_pred_attr_str, *child_pred_const_str;
+  PT_NODE *arg1, *arg2;
+  int i;
+
+  assert (parser != NULL && query != NULL);
+  assert (reduce_reference_info != NULL);
+  assert (reduce_reference_info->pk_cons != NULL);
+  assert (reduce_reference_info->fk_spec != NULL);
+  assert (reduce_reference_info->fk_cons != NULL);
+  assert (reduce_reference_info->join_pred_point_list != NULL);
+  assert (reduce_reference_info->parent_pred_point_list != NULL);
+
+  pk_cons = reduce_reference_info->pk_cons;
+  fk_spec = reduce_reference_info->fk_spec;
+  fk_cons = reduce_reference_info->fk_cons;
+  join_pred_point_list = reduce_reference_info->join_pred_point_list;
+  parent_pred_point_list = reduce_reference_info->parent_pred_point_list;
+  child_pred_point_list = NULL;
+
+  /* child_pred_point_list */
+  for (curr_pred = query->info.query.q.select.where; curr_pred != NULL; curr_pred = curr_pred->next)
+    {
+      SPEC_CNT_INFO info;
+
+      if (curr_pred->or_next != NULL)
+	{
+	  continue;
+	}
+
+      memset (&info, 0, sizeof (SPEC_CNT_INFO));
+      info.spec = fk_spec;
+
+      next_pred = curr_pred->next;
+      curr_pred->next = NULL;
+
+      parser_walk_tree (parser, curr_pred, qo_get_name_cnt_by_spec, &info, NULL, NULL);
+
+      curr_pred->next = next_pred;
+
+      if (info.my_spec_cnt >= 1)
+	{
+	  if (curr_pred->node_type == PT_EXPR && curr_pred->info.expr.op == PT_EQ)
+	    {
+	      arg1 = curr_pred->info.expr.arg1;
+	      arg2 = curr_pred->info.expr.arg2;
+
+	      if ((pt_is_attr (arg1) && qo_is_reduceable_const (arg2)) ||
+		  (pt_is_attr (arg2) && qo_is_reduceable_const (arg1)))
+		{
+		  child_pred_point_list = parser_append_node (pt_point (parser, curr_pred), child_pred_point_list);
+		  continue;
+		}
+	    }
+	}
+    }
+
+  /* parent_pred_point_list */
+  for (curr_parent_pred_point = parent_pred_point_list; curr_parent_pred_point != NULL;
+       curr_parent_pred_point = curr_parent_pred_point->next)
+    {
+      curr_parent_pred = curr_parent_pred_point;
+      CAST_POINTER_TO_NODE (curr_parent_pred);
+
+      assert (curr_parent_pred->node_type == PT_EXPR);
+
+      arg1 = curr_parent_pred->info.expr.arg1;
+      arg2 = curr_parent_pred->info.expr.arg2;
+
+      if (pt_is_attr (arg1))
+	{
+	  parent_pred_attr = arg1;
+	  parent_pred_const = arg2;
+	}
+      else
+	{
+	  assert (arg2->node_type == PT_NAME);
+	  parent_pred_attr = arg2;
+	  parent_pred_const = arg1;
+	}
+
+      parent_pred_attr_str = parent_pred_attr->info.name.original;
+
+      fk_cons_attr = NULL;
+      for (i = 0; pk_cons->attributes[i] != NULL && fk_cons->attributes[i] != NULL; i++)
+	{
+	  pk_cons_attr = pk_cons->attributes[i];
+
+	  if (intl_identifier_casecmp (pk_cons_attr->header.name, parent_pred_attr_str) == 0)
+	    {
+	      fk_cons_attr = fk_cons->attributes[i];
+	      break;
+	    }
+	}
+
+      if (fk_cons_attr == NULL)
+	{
+	  /* not found */
+	  goto exit_on_fail_with_cleanup;
+	}
+
+      /* child_pred_point_list */
+      for (curr_child_pred_point = child_pred_point_list; curr_child_pred_point != NULL;
+	   curr_child_pred_point = curr_child_pred_point->next)
+	{
+	  curr_child_pred = curr_child_pred_point;
+	  CAST_POINTER_TO_NODE (curr_child_pred);
+
+	  assert (curr_child_pred->node_type == PT_EXPR);
+
+	  arg1 = curr_child_pred->info.expr.arg1;
+	  arg2 = curr_child_pred->info.expr.arg2;
+
+	  if (pt_is_attr (arg1))
+	    {
+	      child_pred_attr = arg1;
+	      child_pred_const = arg2;
+	    }
+	  else
+	    {
+	      assert (arg2->node_type == PT_NAME);
+	      child_pred_attr = arg2;
+	      child_pred_const = arg1;
+	    }
+
+	  child_pred_attr_str = child_pred_attr->info.name.original;
+
+	  if (intl_identifier_casecmp (fk_cons_attr->header.name, child_pred_attr_str) == 0)
+	    {
+	      unsigned int save_custom;
+
+	      save_custom = parser->custom_print;	/* save */
+	      parser->custom_print |= PT_CONVERT_RANGE;
+
+	      parent_pred_const_str = parser_print_tree (parser, parent_pred_const);
+	      child_pred_const_str = parser_print_tree (parser, child_pred_const);
+
+	      parser->custom_print = save_custom;	/* restore */
+
+	      if (pt_str_compare (parent_pred_const_str, child_pred_const_str, CASE_INSENSITIVE) == 0)
+		{
+		  break;
+		}
+	    }
+	}
+
+      if (child_pred_point_list == NULL)
+	{
+	  /* not found */
+	  goto exit_on_fail_with_cleanup;
+	}
+    }
+
+  assert (curr_parent_pred_point == NULL);
+
+  if (child_pred_point_list != NULL)
+    {
+      parser_free_tree (parser, child_pred_point_list);
+      child_pred_point_list = NULL;
+    }
+
+  return true;
+
+exit_on_fail_with_cleanup:
+  if (child_pred_point_list != NULL)
+    {
+      parser_free_tree (parser, child_pred_point_list);
+      child_pred_point_list = NULL;
+    }
+  /* fallthrough */
+
+exit_on_fail:
+  return false;
+}
+
+/*
+ * qo_reduce_predicate_for_parent_spec () - The join predicates for pk_spec in reduce_reference_info are removed.
+ *   return: bool
+ *   parser(in): parser context
+ *   query(in): query to check
+ *   reduce_reference_info(in/out): Information needed to check
+ *
+ * Note: Predicates in append_not_null_pred_list of reduce_reference_info are added without duplicates.
+ */
+static void
+qo_reduce_predicate_for_parent_spec (PARSER_CONTEXT * parser, PT_NODE * query,
+				     QO_REDUCE_REFERENCE_INFO * reduce_reference_info)
+{
+  PT_NODE *curr_pred_point = NULL, *prev_pred_point = NULL, *next_pred_point = NULL;
+  PT_NODE *curr_pred = NULL, *prev_pred = NULL, *next_pred = NULL, *parent_pred = NULL;
+  PT_NODE *curr_append_pred = NULL, *prev_append_pred = NULL, *next_append_pred = NULL;
+  PT_NODE *curr_pred_arg = NULL, *curr_append_pred_arg = NULL;
+
+  assert (parser != NULL && query != NULL);
+  assert (reduce_reference_info->join_pred_point_list != NULL);
+
+  prev_pred = NULL;
+  curr_pred = query->info.query.q.select.where;
+  while (curr_pred != NULL)
+    {
+      for (parent_pred = NULL, prev_pred_point = NULL, curr_pred_point = reduce_reference_info->join_pred_point_list;
+	   curr_pred_point != NULL; prev_pred_point = curr_pred_point, curr_pred_point = curr_pred_point->next)
+	{
+	  parent_pred = curr_pred_point;
+	  CAST_POINTER_TO_NODE (parent_pred);
+
+	  if (curr_pred == parent_pred)
+	    {
+	      /* found */
+	      break;
+	    }
+	}
+
+      next_pred = curr_pred->next;
+
+      if (curr_pred_point == NULL)
+	{
+	  /* not found */
+	  prev_pred = curr_pred;
+	  curr_pred = next_pred;
+	  continue;
+	}
+
+      /* found */
+      if (prev_pred != NULL)
+	{
+	  prev_pred->next = next_pred;
+	}
+      else
+	{
+	  query->info.query.q.select.where = next_pred;
+	}
+      parser_free_node (parser, curr_pred);
+      curr_pred = next_pred;
+
+      next_pred_point = curr_pred_point->next;
+
+      if (prev_pred_point != NULL)
+	{
+	  prev_pred_point->next = next_pred_point;
+	}
+      else
+	{
+	  reduce_reference_info->join_pred_point_list = next_pred_point;
+	}
+      parser_free_node (parser, curr_pred_point);
+      curr_pred_point = next_pred_point;
+    }
+
+  assert (reduce_reference_info->join_pred_point_list == NULL);
+
+  prev_pred = NULL;
+  curr_pred = query->info.query.q.select.where;
+  while (curr_pred != NULL && reduce_reference_info->parent_pred_point_list != NULL)
+    {
+      for (parent_pred = NULL, prev_pred_point = NULL, curr_pred_point =
+	   reduce_reference_info->parent_pred_point_list; curr_pred_point != NULL;
+	   prev_pred_point = curr_pred_point, curr_pred_point = curr_pred_point->next)
+	{
+	  parent_pred = curr_pred_point;
+	  CAST_POINTER_TO_NODE (parent_pred);
+
+	  if (curr_pred == parent_pred)
+	    {
+	      /* found */
+	      break;
+	    }
+	}
+
+      next_pred = curr_pred->next;
+
+      if (curr_pred_point == NULL)
+	{
+	  /* not found */
+	  prev_pred = curr_pred;
+	  curr_pred = next_pred;
+	  continue;
+	}
+
+      /* found */
+      if (prev_pred != NULL)
+	{
+	  prev_pred->next = next_pred;
+	}
+      else
+	{
+	  query->info.query.q.select.where = next_pred;
+	}
+      parser_free_node (parser, curr_pred);
+      curr_pred = next_pred;
+
+      next_pred_point = curr_pred_point->next;
+
+      if (prev_pred_point != NULL)
+	{
+	  prev_pred_point->next = next_pred_point;
+	}
+      else
+	{
+	  reduce_reference_info->parent_pred_point_list = next_pred_point;
+	}
+      parser_free_node (parser, curr_pred_point);
+      curr_pred_point = next_pred_point;
+    }
+
+  assert (reduce_reference_info->parent_pred_point_list == NULL);
+
+  prev_append_pred = NULL;
+  curr_append_pred = reduce_reference_info->append_not_null_pred_list;
+  while (curr_append_pred != NULL)
+    {
+      assert (PT_NODE_IS_EXPR (curr_append_pred));
+      assert (PT_EXPR_OP (curr_append_pred) == PT_IS_NOT_NULL);
+      assert (PT_NODE_IS_NAME (PT_EXPR_ARG1 (curr_append_pred)));
+
+      next_append_pred = curr_append_pred->next;
+
+      for (curr_pred = next_append_pred; curr_pred != NULL; curr_pred = curr_pred->next)
+	{
+	  curr_pred_arg = PT_EXPR_ARG1 (curr_pred);
+	  curr_append_pred_arg = PT_EXPR_ARG1 (curr_append_pred);
+
+	  if (pt_name_equal (parser, curr_pred_arg, curr_append_pred_arg))
+	    {
+	      /* found */
+	      break;
+	    }
+	}
+
+      if (curr_pred == NULL)
+	{
+	  /* not found */
+	  prev_append_pred = curr_append_pred;
+	  curr_append_pred = next_append_pred;
+	  continue;
+	}
+
+      /* found */
+      if (prev_append_pred != NULL)
+	{
+	  prev_append_pred->next = next_append_pred;
+	}
+      else
+	{
+	  reduce_reference_info->append_not_null_pred_list = next_append_pred;
+	}
+      parser_free_node (parser, curr_append_pred);
+      curr_append_pred = next_append_pred;
+    }
+
+  prev_append_pred = NULL;
+  curr_append_pred = reduce_reference_info->append_not_null_pred_list;
+  while (curr_append_pred != NULL)
+    {
+      for (curr_pred = query->info.query.q.select.where; curr_pred != NULL; curr_pred = curr_pred->next)
+	{
+	  if (PT_NODE_IS_EXPR (curr_pred) && PT_EXPR_OP (curr_pred) == PT_IS_NOT_NULL
+	      && PT_NODE_IS_NAME (PT_EXPR_ARG1 (curr_pred)))
+	    {
+	      curr_pred_arg = PT_EXPR_ARG1 (curr_pred);
+	      curr_append_pred_arg = PT_EXPR_ARG1 (curr_append_pred);
+
+	      if (pt_name_equal (parser, curr_pred_arg, curr_append_pred_arg))
+		{
+		  /* found */
+		  break;
+		}
+	    }
+	}
+
+      next_append_pred = curr_append_pred->next;
+
+      if (curr_pred == NULL)
+	{
+	  /* not found */
+	  prev_append_pred = curr_append_pred;
+	  curr_append_pred = next_append_pred;
+	  continue;
+	}
+
+      /* found */
+      if (prev_append_pred != NULL)
+	{
+	  prev_append_pred->next = next_append_pred;
+	}
+      else
+	{
+	  reduce_reference_info->append_not_null_pred_list = next_append_pred;
+	}
+      parser_free_node (parser, curr_append_pred);
+      curr_append_pred = next_append_pred;
+    }
+
+  if (reduce_reference_info->append_not_null_pred_list != NULL)
+    {
+      query->info.query.q.select.where =
+	parser_append_node (reduce_reference_info->append_not_null_pred_list, query->info.query.q.select.where);
+      reduce_reference_info->append_not_null_pred_list = NULL;
+    }
+
+  return;
 }
 
 /*
@@ -4489,18 +5886,32 @@ qo_convert_to_range_helper (PARSER_CONTEXT * parser, PT_NODE * node)
 	}
       /* if node had prior check that sibling also contains prior and vice-versa */
 
-      if (!pt_is_attr (sibling_prior) && !pt_is_instnum (sibling_prior))
+      if (!pt_is_attr (sibling_prior) && !pt_is_function_index_expression (sibling_prior)
+	  && !pt_is_instnum (sibling_prior))
 	{
 	  /* LHS is not an attribute */
 	  prev = prev->or_next;
 	  continue;
 	}
 
-      if ((node_prior->node_type != sibling_prior->node_type)
-	  || (pt_is_attr (node_prior) && pt_is_attr (sibling_prior)
-	      && pt_check_path_eq (parser, node_prior, sibling_prior)))
+      if (node_prior->node_type != sibling_prior->node_type)
+	{
+	  prev = prev->or_next;
+	  continue;
+	}
+
+      if ((pt_is_attr (node_prior) || pt_is_function_index_expression (node_prior))
+	  && (pt_is_attr (sibling_prior) || pt_is_function_index_expression (sibling_prior))
+	  && pt_check_path_eq (parser, node_prior, sibling_prior))
 	{
 	  /* pt_check_path_eq() return non-zero if two are different */
+	  prev = prev->or_next;
+	  continue;
+	}
+
+      if ((pt_is_instnum (node_prior) && !pt_is_instnum (sibling_prior))
+	  || (!pt_is_instnum (node_prior) && pt_is_instnum (sibling_prior)))
+	{
 	  prev = prev->or_next;
 	  continue;
 	}
@@ -5233,7 +6644,7 @@ qo_convert_to_range (PARSER_CONTEXT * parser, PT_NODE ** wherep)
 	    }
 	  else
 	    {
-	      is_attr = pt_is_attr (arg1_prior);
+	      is_attr = (pt_is_attr (arg1_prior) || pt_is_function_index_expression (arg1_prior));
 	    }
 
 	  if (!is_attr && !pt_is_instnum (arg1_prior))
@@ -5713,12 +7124,10 @@ qo_apply_range_intersection (PARSER_CONTEXT * parser, PT_NODE ** wherep)
 
       arg1_prior = pt_get_first_arg_ignore_prior (node);
 
-      if (!pt_is_attr (arg1_prior) && !pt_is_instnum (arg1_prior))
+      if (!pt_is_attr (arg1_prior) && !pt_is_function_index_expression (arg1_prior) && !pt_is_instnum (arg1_prior))
 	{
 	  /* LHS is not an attribute */
-
 	  node_prev = node_prev ? node_prev->next : *wherep;
-
 	  continue;
 	}
 
@@ -5795,7 +7204,8 @@ qo_apply_range_intersection (PARSER_CONTEXT * parser, PT_NODE ** wherep)
 	    }
 	  /* if node had prior check that sibling also contains prior and vice-versa */
 
-	  if (!pt_is_attr (sibling_prior) && !pt_is_instnum (sibling_prior))
+	  if (!pt_is_attr (sibling_prior) && !pt_is_function_index_expression (sibling_prior)
+	      && !pt_is_instnum (sibling_prior))
 	    {
 	      /* LHS is not an attribute */
 	      sibling_prev = sibling_prev->next;
@@ -5808,11 +7218,24 @@ qo_apply_range_intersection (PARSER_CONTEXT * parser, PT_NODE ** wherep)
 	      continue;
 	    }
 
-	  if ((arg1_prior->node_type != sibling_prior->node_type)
-	      || (pt_is_attr (arg1_prior) && pt_is_attr (sibling_prior)
-		  && pt_check_path_eq (parser, arg1_prior, sibling_prior)))
+	  if (arg1_prior->node_type != sibling_prior->node_type)
+	    {
+	      sibling_prev = sibling_prev->next;
+	      continue;
+	    }
+
+	  if ((pt_is_attr (arg1_prior) || pt_is_function_index_expression (arg1_prior))
+	      && (pt_is_attr (sibling_prior) || pt_is_function_index_expression (sibling_prior))
+	      && pt_check_path_eq (parser, arg1_prior, sibling_prior))
 	    {
 	      /* pt_check_path_eq() return non-zero if two are different */
+	      sibling_prev = sibling_prev->next;
+	      continue;
+	    }
+
+	  if ((pt_is_instnum (arg1_prior) && !pt_is_instnum (sibling_prior))
+	      || (!pt_is_instnum (arg1_prior) && pt_is_instnum (sibling_prior)))
+	    {
 	      sibling_prev = sibling_prev->next;
 	      continue;
 	    }
@@ -7007,7 +8430,8 @@ qo_do_auto_parameterize (PARSER_CONTEXT * parser, PT_NODE * where)
 
 	  node_prior = pt_get_first_arg_ignore_prior (dnf_node);
 
-	  if (!pt_is_attr (node_prior) && !pt_is_instnum (node_prior) && !pt_is_orderbynum (node_prior))
+	  if (!pt_is_attr (node_prior) && !pt_is_function_index_expression (node_prior) && !pt_is_instnum (node_prior)
+	      && !pt_is_orderbynum (node_prior))
 	    {
 	      /* neither LHS is an attribute, inst_num, nor orderby_num */
 	      continue;
@@ -8020,6 +9444,8 @@ qo_optimize_queries (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int *co
 	    {
 	      parser_free_tree (parser, point_list);
 	    }
+
+	  qo_reduce_joined_tables_referenced_by_foreign_key (parser, node);
 	}
 
       /* auto-parameterization is safe when it is done as the last step of rewrite optimization */

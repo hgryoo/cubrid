@@ -186,7 +186,8 @@ static PT_NODE *mq_rewrite_agg_names (PARSER_CONTEXT * parser, PT_NODE * node, v
 static PT_NODE *mq_rewrite_agg_names_post (PARSER_CONTEXT * parser, PT_NODE * node, void *void_arg, int *continue_walk);
 static bool mq_conditionally_add_objects (PARSER_CONTEXT * parser, PT_NODE * flat, DB_OBJECT *** classes, int *index,
 					  int *max);
-static PT_UPDATABILITY mq_updatable_local (PARSER_CONTEXT * parser, PT_NODE * statement, DB_OBJECT *** classes, int *i);
+static PT_UPDATABILITY mq_updatable_local (PARSER_CONTEXT * parser, PT_NODE * statement, DB_OBJECT *** classes, int *i,
+					   int *max);
 static PT_NODE *mq_substitute_select_in_statement (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * query_spec,
 						   PT_NODE * class_);
 static PT_NODE *mq_substitute_select_for_inline_view (PARSER_CONTEXT * parser, PT_NODE * statement,
@@ -219,8 +220,6 @@ static PUSHABLE_TYPE mq_is_pushable_subquery (PARSER_CONTEXT * parser, PT_NODE *
 					      PT_NODE * class_spec, bool is_vclass, PT_NODE * order_by,
 					      PT_NODE * class_);
 static PUSHABLE_TYPE mq_is_removable_select_list (PARSER_CONTEXT * parser, PT_NODE * subquery, PT_NODE * mainquery);
-static PT_NODE *pt_remove_cast_wrap_for_dblink (PARSER_CONTEXT * parser, PT_NODE * old_node, void *arg,
-						int *continue_walk);
 static void pt_copypush_terms (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * query, PT_NODE * term_list,
 			       FIND_ID_TYPE type);
 static int mq_copypush_sargable_terms_dblink (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * spec,
@@ -1669,7 +1668,7 @@ static PUSHABLE_TYPE
 mq_is_pushable_subquery (PARSER_CONTEXT * parser, PT_NODE * subquery, PT_NODE * mainquery, PT_NODE * class_spec,
 			 bool is_vclass, PT_NODE * order_by, PT_NODE * class_)
 {
-  PT_NODE *pred, *statement_spec = NULL, *orderby_for;
+  PT_NODE *pred, *statement_spec = NULL, *orderby_for, *select_list;
   CHECK_PUSHABLE_INFO cpi;
   bool is_pushable_query, is_outer_joined;
   bool is_only_spec, is_rownum_only, is_orderby_for;
@@ -1690,27 +1689,32 @@ mq_is_pushable_subquery (PARSER_CONTEXT * parser, PT_NODE * subquery, PT_NODE * 
     case PT_SELECT:
       statement_spec = mainquery->info.query.q.select.from;
       pred = mainquery->info.query.q.select.where;
+      select_list = mainquery->info.query.q.select.list;
       break;
 
     case PT_UPDATE:
       statement_spec = mainquery->info.update.spec;
       pred = mainquery->info.update.search_cond;
+      select_list = NULL;
       break;
 
     case PT_DELETE:
       statement_spec = mainquery->info.delete_.spec;
       pred = mainquery->info.delete_.search_cond;
+      select_list = NULL;
       break;
 
     case PT_INSERT:
       /* since INSERT can not have a spec list or statement conditions, there is nothing to check */
       statement_spec = mainquery->info.insert.spec;
       pred = NULL;
+      select_list = NULL;
       break;
 
     case PT_MERGE:
       statement_spec = mainquery->info.merge.into;
       pred = mainquery->info.merge.insert.search_cond;
+      select_list = NULL;
       break;
 
     default:
@@ -1772,7 +1776,7 @@ mq_is_pushable_subquery (PARSER_CONTEXT * parser, PT_NODE * subquery, PT_NODE * 
       return NON_PUSHABLE;
     }
   /* determine if spec is outer joined */
-  if (!is_only_spec && mq_is_outer_join_spec (parser, class_spec))
+  if (!is_only_spec && (mq_is_outer_join_spec (parser, class_spec) || MQ_IS_OUTER_JOIN_SPEC (class_spec)))
     {
       /* not pushable */
       return NON_PUSHABLE;
@@ -1786,7 +1790,7 @@ mq_is_pushable_subquery (PARSER_CONTEXT * parser, PT_NODE * subquery, PT_NODE * 
   /* subquery has order_by and main query has inst_num or analytic or order-sensitive aggrigation */
   if (subquery->info.query.order_by
       && ((!is_rownum_only && pt_has_inst_num (parser, pred)) || pt_has_analytic (parser, mainquery)
-	  || pt_has_order_sensitive_agg (parser, mainquery)))
+	  || pt_has_order_sensitive_agg (parser, mainquery) || pt_has_expr_of_inst_in_sel_list (parser, select_list)))
     {
       /* not pushable */
       return NON_PUSHABLE;
@@ -2019,6 +2023,7 @@ mq_update_order_by (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * quer
   PT_NODE *attributes, *attr, *prev_order;
   PT_NODE *save_data_type, *node, *result, *order_by;
   PT_NODE *free_node = NULL, *save_next, *where;
+  PT_NODE *ord_num = NULL, *ins_num = NULL, *prev_orderby_for;
   int attr_count;
   int i;
   UINTPTR spec_id;
@@ -2162,30 +2167,33 @@ mq_update_order_by (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * quer
 
   statement->info.query.order_by = parser_append_node (order_by, statement->info.query.order_by);
 
+  /* generate orderby_num(), inst_num() */
+  if (!(ord_num = parser_new_node (parser, PT_EXPR)) || !(ins_num = parser_new_node (parser, PT_EXPR)))
+    {
+      if (ord_num)
+	{
+	  parser_free_tree (parser, ord_num);
+	}
+      PT_ERRORm (parser, statement, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_OUT_OF_MEMORY);
+      return NULL;
+    }
+  ord_num->type_enum = PT_TYPE_BIGINT;
+  ord_num->info.expr.op = PT_ORDERBY_NUM;
+  PT_EXPR_INFO_SET_FLAG (ord_num, PT_EXPR_INFO_ORDERBYNUM_C);
+
+  ins_num->type_enum = PT_TYPE_BIGINT;
+  ins_num->info.expr.op = PT_INST_NUM;
+  PT_EXPR_INFO_SET_FLAG (ins_num, PT_EXPR_INFO_INSTNUM_C);
+
+  /* replace rownum of select-list to orderby_num */
+  statement->info.query.q.select.list =
+    pt_lambda_with_arg (parser, statement->info.query.q.select.list, ins_num, ord_num, false, 2, false);
+
+  /* replace rownum of where to orderby_num */
   where = statement->info.query.q.select.where;
   if (where != NULL && PT_EXPR_INFO_IS_FLAGED (where, PT_EXPR_INFO_ROWNUM_ONLY) && statement->info.query.order_by)
     {
-      /* replace orderby_num() to inst_num() */
-      PT_NODE *ord_num = NULL, *ins_num = NULL, *prev_orderby_for;
-
-      /* generate orderby_num(), inst_num() */
-      if (!(ord_num = parser_new_node (parser, PT_EXPR)) || !(ins_num = parser_new_node (parser, PT_EXPR)))
-	{
-	  PT_ERRORm (parser, statement, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_OUT_OF_MEMORY);
-	  return NULL;
-	}
-
-      ord_num->type_enum = PT_TYPE_BIGINT;
-      ord_num->info.expr.op = PT_ORDERBY_NUM;
-      PT_EXPR_INFO_SET_FLAG (ord_num, PT_EXPR_INFO_ORDERBYNUM_C);
-
-      ins_num->type_enum = PT_TYPE_BIGINT;
-      ins_num->info.expr.op = PT_INST_NUM;
-      PT_EXPR_INFO_SET_FLAG (ins_num, PT_EXPR_INFO_INSTNUM_C);
-
-      where = pt_lambda_with_arg (parser, where, ins_num, ord_num, false, 0, false);
-      statement->info.query.q.select.list =
-	pt_lambda_with_arg (parser, statement->info.query.q.select.list, ins_num, ord_num, false, 0, false);
+      where = pt_lambda_with_arg (parser, where, ins_num, ord_num, false, 2, false);
 
       /* move prev orderby_for to orderby_for */
       prev_orderby_for = parser_copy_tree (parser, query_spec->info.query.orderby_for);
@@ -3373,6 +3381,14 @@ pt_check_pushable (PARSER_CONTEXT * parser, PT_NODE * tree, void *arg, int *cont
 	  cinfop->method_found = true;	/* not pushable */
 	}
       break;
+
+    case PT_EXPR:
+      if (PT_IS_EXPR_NODE_WITH_NON_PUSHABLE (tree))
+	{
+	  cinfop->method_found = true;
+	}
+      break;
+
     default:
       break;
     }				/* switch (tree->node_type) */
@@ -3491,6 +3507,13 @@ pt_check_pushable_subquery_select_list (PARSER_CONTEXT * parser, PT_NODE * query
 	      case PT_METHOD_CALL:
 		cinfo.method_found = true;	/* not pushable */
 		break;
+
+	      case PT_EXPR:
+		if (PT_IS_EXPR_NODE_WITH_NON_PUSHABLE (list))
+		  {
+		    cinfo.method_found = true;
+		    break;
+		  }
 
 	      default:		/* do traverse */
 		parser_walk_leaves (parser, list, pt_check_pushable, &cinfo, NULL, NULL);
@@ -3781,6 +3804,7 @@ pt_copypush_terms (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * query, PT_
   PARSER_VARCHAR *rewritten = NULL;
   PARSER_VARCHAR *pushed_pred, *query_str, *col_list;
   unsigned int save_custom;
+  int max_pred_order;
 
   if (query == NULL || term_list == NULL)
     {
@@ -3808,19 +3832,33 @@ pt_copypush_terms (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * query, PT_
 	}
       else
 	{
+	  /* Set predicates to be evaluated first */
+	  max_pred_order = pt_get_max_pred_order (parser, push_term_list);
+	  pt_set_pred_order (parser, query->info.query.q.select.where, max_pred_order + 1);
+
 	  /* push into WHERE clause */
 	  query->info.query.q.select.where = parser_append_node (push_term_list, query->info.query.q.select.where);
 	}
       break;
     case PT_DBLINK_TABLE:
+
+      if (pt_check_dblink_column_alias (parser, query) != NO_ERROR)
+	{
+	  return;
+	}
+
       /* copy terms */
       query->info.dblink_table.pushed_pred = parser_copy_tree_list (parser, term_list);
+
       /* remove the cast wrap from pushed predicate */
       query->info.dblink_table.pushed_pred =
 	parser_walk_tree (parser, query->info.dblink_table.pushed_pred, pt_remove_cast_wrap_for_dblink, NULL, NULL,
 			  NULL);
+
+      /* print the pushed predicates */
       save_custom = parser->custom_print;
-      parser->custom_print |= PT_CONVERT_RANGE | PT_SUPPRESS_RESOLVED | PT_PRINT_NO_HOST_VAR_INDEX;
+      parser->custom_print |=
+	PT_CONVERT_RANGE | PT_SUPPRESS_RESOLVED | PT_PRINT_NO_HOST_VAR_INDEX | PT_PRINT_SUPPRESS_FOR_DBLINK;
       pushed_pred = pt_print_and_list (parser, query->info.dblink_table.pushed_pred);
 
       /* wrapped query SELECT * FROM */
@@ -3830,7 +3868,7 @@ pt_copypush_terms (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * query, PT_
 
       /* alias name: cublink */
       rewritten = pt_append_bytes (parser, rewritten, ") cublink", 9);
-
+#if 0
       if (query->info.dblink_table.cols != NULL)
 	{
 	  /* aliased column list */
@@ -3839,7 +3877,7 @@ pt_copypush_terms (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * query, PT_
 	  rewritten = pt_append_varchar (parser, rewritten, col_list);
 	  rewritten = pt_append_bytes (parser, rewritten, ")", 1);
 	}
-
+#endif
       if (pushed_pred != NULL)
 	{
 	  /* where predicate */
@@ -3911,25 +3949,15 @@ mq_is_rownum_only_predicate (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * 
       return false;
     }
 
-  /* check if select list of mainquery has expr of instnum */
-  col = node->info.query.q.select.list;
-  while (col)
-    {
-      /* cut off next */
-      save_next = col->next;
-      col->next = NULL;
-
-      if (!PT_IS_INSTNUM (col) && pt_has_inst_num (parser, col))
-	{
-	  col->next = save_next;
-	  return false;
-	}
-      col->next = save_next;
-      col = col->next;
-    }
-
   /* subquery check */
   if (!pt_is_select (subquery))
+    {
+      return false;
+    }
+
+  /* check if select list of mainquery has expr of instnum */
+  col = node->info.query.q.select.list;
+  if (pt_has_expr_of_inst_in_sel_list (parser, col))
     {
       return false;
     }
@@ -4087,6 +4115,66 @@ mq_copypush_sargable_terms_dblink (PARSER_CONTEXT * parser, PT_NODE * statement,
 #endif
 
 /*
+ * mq_is_dblink_pushable_term () - check if the predicate is pushable for dblink
+ *   return: bool
+ *   parser(in):
+ *   term(in):
+ */
+static bool
+mq_is_dblink_pushable_term (PARSER_CONTEXT * parser, PT_NODE * term)
+{
+  if (term->node_type == PT_EXPR)
+    {
+      if (pt_is_operator_logical (term->info.expr.op) || pt_is_operator_arith (term->info.expr.op))
+	{
+	  if (mq_is_dblink_pushable_term (parser, term->info.expr.arg1))
+	    {
+	      if (term->info.expr.arg2)
+		{
+		  if (mq_is_dblink_pushable_term (parser, term->info.expr.arg2))
+		    {
+		      /* every argument is pushable */
+		      return true;
+		    }
+		  /* some argument is not pushable */
+		  return false;
+		}
+	      /* every argument is pushable */
+	      return true;
+	    }
+
+	  /* it's not pushable because the expression may have function-like */
+	  return false;
+	}
+      else
+	{
+	  /* wrapped cast should be pushed and it will be removed while rewriting the dblink query */
+	  if (term->info.expr.op == PT_CAST && PT_EXPR_INFO_IS_FLAGED (term, PT_EXPR_INFO_CAST_WRAP))
+	    {
+	      /* it needs to check if the argument is pushable */
+	      if (mq_is_dblink_pushable_term (parser, term->info.expr.arg1))
+		{
+		  return true;
+		}
+	    }
+
+	  /* other expression like built-in and stored function and etc. */
+	  return false;
+	}
+    }
+
+  switch (term->node_type)
+    {
+    case PT_NAME:
+    case PT_HOST_VAR:
+    case PT_VALUE:
+      return true;
+    default:
+      return false;
+    }
+}
+
+/*
  * mq_copypush_sargable_terms_helper() -
  *   return:
  *   parser(in):
@@ -4127,7 +4215,7 @@ mq_copypush_sargable_terms_helper (PARSER_CONTEXT * parser, PT_NODE * statement,
   int push_cnt, push_correlated_cnt, copy_cnt;
   PT_NODE *temp;
   int nullable_cnt;		/* nullable terms count */
-  PT_NODE *save_next;
+  PT_NODE *save_next, *in_spec;
   bool is_outer_joined;
 
   /* init */
@@ -4175,8 +4263,18 @@ mq_copypush_sargable_terms_helper (PARSER_CONTEXT * parser, PT_NODE * statement,
   is_outer_joined = mq_is_outer_join_spec (parser, spec);
 
   /* term(predicate) check */
+  in_spec = statement->info.query.q.select.from;
   for (term = statement->info.query.q.select.where; term; term = term->next)
     {
+      /* check for dblink's function term */
+      if (in_spec->info.spec.derived_table_type == PT_DERIVED_DBLINK_TABLE)
+	{
+	  if (!mq_is_dblink_pushable_term (parser, term))
+	    {
+	      continue;
+	    }
+	}
+
       /* check for on_cond term */
       assert (term->node_type == PT_EXPR || term->node_type == PT_VALUE);
       if ((term->node_type == PT_EXPR && term->info.expr.location > 0)
@@ -4714,8 +4812,8 @@ mq_rewrite_aggregate_as_derived (PARSER_CONTEXT * parser, PT_NODE * agg_sel)
   derived->info.query.q.select.hint = agg_sel->info.query.q.select.hint;
   agg_sel->info.query.q.select.hint = PT_HINT_NONE;
 
-  derived->info.query.q.select.ordered = agg_sel->info.query.q.select.ordered;
-  agg_sel->info.query.q.select.ordered = NULL;
+  derived->info.query.q.select.leading = agg_sel->info.query.q.select.leading;
+  agg_sel->info.query.q.select.leading = NULL;
 
   derived->info.query.q.select.use_nl = agg_sel->info.query.q.select.use_nl;
   agg_sel->info.query.q.select.use_nl = NULL;
@@ -5336,6 +5434,13 @@ mq_translate_insert (PARSER_CONTEXT * parser, PT_NODE * insert_statement)
 	  flat = from->info.spec.flat_entity_list;
 	  if (flat == NULL)
 	    {
+	      if (from_spec->remote_server_name)
+		{
+		  assert (from_spec->remote_server_name->node_type == PT_DBLINK_TABLE_DML);
+		  last = &temp->next;
+		  continue;
+		}
+
 	      assert (false);
 	      return NULL;
 	    }
@@ -9925,6 +10030,10 @@ mq_class_lambda (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * class_,
 	{
 	  (*where_part)->info.expr.paren_type = 1;
 	}
+
+      /* Set predicates to be evaluated first */
+      pt_set_pred_order (parser, class_where_part, 1);
+
       /* The "where clause" is in the form of a list of CNF "and" terms. In order to "and" together the view's "where
        * clause" with the statement's, we must maintain this list of terms. Using a 'PT_AND' node here will have the
        * effect of losing the "and" terms on the tail of either list. */
@@ -10587,6 +10696,9 @@ mq_inline_view_lambda (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * d
 	{
 	  (*where_part)->info.expr.paren_type = 1;
 	}
+      /* Set predicates to be evaluated first */
+      pt_set_pred_order (parser, class_where_part, 1);
+
       /* The "where clause" is in the form of a list of CNF "and" terms. In order to "and" together the view's "where
        * clause" with the statement's, we must maintain this list of terms. Using a 'PT_AND' node here will have the
        * effect of losing the "and" terms on the tail of either list. */
@@ -13627,9 +13739,9 @@ mq_copy_sql_hint (PARSER_CONTEXT * parser, PT_NODE * dest_query, PT_NODE * src_q
       dest_query->info.query.q.select.hint =
 	(PT_HINT_ENUM) (dest_query->info.query.q.select.hint | src_query->info.query.q.select.hint);
 
-      dest_query->info.query.q.select.ordered =
-	parser_append_node (parser_copy_tree_list (parser, src_query->info.query.q.select.ordered),
-			    dest_query->info.query.q.select.ordered);
+      dest_query->info.query.q.select.leading =
+	parser_append_node (parser_copy_tree_list (parser, src_query->info.query.q.select.leading),
+			    dest_query->info.query.q.select.leading);
 
       dest_query->info.query.q.select.use_nl =
 	parser_append_node (parser_copy_tree_list (parser, src_query->info.query.q.select.use_nl),

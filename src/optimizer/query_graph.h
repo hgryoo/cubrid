@@ -94,6 +94,7 @@ struct qo_attr_info
 {
   /* cumulative stats for all attributes under this umbrella */
   QO_ATTR_CUM_STATS cum_stats;
+  INT64 ndv;			/* Number of Distinct Values of column */
 };
 
 struct qo_index_entry
@@ -587,6 +588,9 @@ typedef enum
 #define QO_IS_FAKE_TERM(t)	(QO_TERM_CLASS(t) & 0x08)
 #define QO_IS_DEP_TERM(t)	(QO_TERM_CLASS(t) == QO_TC_DEP_LINK || QO_TERM_CLASS(t) == QO_TC_DEP_JOIN)
 
+#define QO_IS_NL_JOIN(p)	(p->plan_un.join.join_method == QO_JOINMETHOD_IDX_JOIN || \
+				 p->plan_un.join.join_method == QO_JOINMETHOD_NL_JOIN)
+
 struct qo_term
 {
   /*
@@ -705,6 +709,9 @@ struct qo_term
   int *multi_col_segs;
   int multi_col_cnt;
 
+  /* for view-merge or predicate-push. pred is ordered by pred_order desc in qo_discover_edges */
+  int pred_order;
+
   /*
    * WARNING!!! WARNING!!! WARNING!!!
    *
@@ -736,6 +743,7 @@ struct qo_term
 #define QO_TERM_FLAG(t)	        (t)->flag
 #define QO_TERM_MULTI_COL_SEGS(t)  (t)->multi_col_segs
 #define QO_TERM_MULTI_COL_CNT(t)   (t)->multi_col_cnt
+#define QO_TERM_PRED_ORDER(t)   (t)->pred_order
 
 
 #define QO_TERM_EQUAL_OP             1	/* is equal op ? */

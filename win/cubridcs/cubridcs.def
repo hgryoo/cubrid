@@ -6,7 +6,8 @@ EXPORTS
 	basename_r
     cfg_find_db
     cfg_free_directory
-    char_isdigit
+    char_properties_ptr
+    char_lower_mapper_ptr
     css_connect_to_master_for_info
     css_connect_to_master_timeout
     css_does_master_exist
@@ -410,7 +411,12 @@ EXPORTS
     msgcat_final
     msgcat_message
     net_client_ping_server
+    ntohs
+    ntohl
     ntohi64
+    htons
+    htonl
+    htoni64
     numeric_db_value_print
     os_set_signal_handler
     prm_get_master_port_id
@@ -523,9 +529,7 @@ EXPORTS
     prm_get_commit_on_shutdown
 ;
 ; cubrid_esql reference's functions
-;
-    char_isupper
-    char_tolower
+;    
     envvar_root
     hashpjw
     intl_mbs_casecmp
@@ -974,3 +978,4 @@ EXPORTS
   db_json_val_from_str
   gethostbyname_uhost
   getnameinfo_uhost
+  trim

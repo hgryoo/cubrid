@@ -1755,28 +1755,6 @@ pgbuf_fix_with_retry (THREAD_ENTRY * thread_p, const VPID * vpid, PAGE_FETCH_MOD
 }
 
 /*
- * below two functions are dummies for Windows build
- * (which defined at cubridsa.def)
- */
-#if defined(WINDOWS)
-#if !defined(NDEBUG)
-PAGE_PTR
-pgbuf_fix_release (THREAD_ENTRY * thread_p, const VPID * vpid, PAGE_FETCH_MODE fetch_mode,
-		   PGBUF_LATCH_MODE request_mode, PGBUF_LATCH_CONDITION condition)
-{
-  return NULL;
-}
-#else
-PAGE_PTR
-pgbuf_fix_debug (THREAD_ENTRY * thread_p, const VPID * vpid, PAGE_FETCH_MODE fetch_mode, PGBUF_LATCH_MODE request_mode,
-		 PGBUF_LATCH_CONDITION condition, const char *caller_file, int caller_line)
-{
-  return NULL;
-}
-#endif
-#endif
-
-/*
  * pgbuf_fix () -
  *   return: Pointer to the page or NULL
  *   vpid(in): Complete Page identifier
@@ -1787,7 +1765,7 @@ pgbuf_fix_debug (THREAD_ENTRY * thread_p, const VPID * vpid, PAGE_FETCH_MODE fet
 #if !defined(NDEBUG)
 PAGE_PTR
 pgbuf_fix_debug (THREAD_ENTRY * thread_p, const VPID * vpid, PAGE_FETCH_MODE fetch_mode, PGBUF_LATCH_MODE request_mode,
-		 PGBUF_LATCH_CONDITION condition, const char *caller_file, int caller_line)
+		 PGBUF_LATCH_CONDITION condition, const char *caller_file, int caller_line, const char *caller_func)
 #else /* NDEBUG */
 PAGE_PTR
 pgbuf_fix_release (THREAD_ENTRY * thread_p, const VPID * vpid, PAGE_FETCH_MODE fetch_mode,
@@ -2196,7 +2174,7 @@ try_again:
 #if !defined (NDEBUG)
 int
 pgbuf_promote_read_latch_debug (THREAD_ENTRY * thread_p, PAGE_PTR * pgptr_p, PGBUF_PROMOTE_CONDITION condition,
-				const char *caller_file, int caller_line)
+				const char *caller_file, int caller_line, const char *caller_func)
 #else /* NDEBUG */
 int
 pgbuf_promote_read_latch_release (THREAD_ENTRY * thread_p, PAGE_PTR * pgptr_p, PGBUF_PROMOTE_CONDITION condition)
@@ -2441,7 +2419,8 @@ end:
  */
 #if !defined (NDEBUG)
 void
-pgbuf_unfix_debug (THREAD_ENTRY * thread_p, PAGE_PTR pgptr, const char *caller_file, int caller_line)
+pgbuf_unfix_debug (THREAD_ENTRY * thread_p, PAGE_PTR pgptr, const char *caller_file, int caller_line,
+		   const char *caller_func)
 #else /* NDEBUG */
 void
 pgbuf_unfix (THREAD_ENTRY * thread_p, PAGE_PTR pgptr)
@@ -4281,8 +4260,14 @@ pgbuf_copy_from_area (THREAD_ENTRY * thread_p, const VPID * vpid, int start_offs
  *   pgptr(in): Pointer to page
  *   free_page(in): Free the page too ?
  */
+#if !defined(NDEBUG)
+void
+pgbuf_set_dirty_debug (THREAD_ENTRY * thread_p, PAGE_PTR pgptr, bool free_page, const char *caller_file,
+		       int caller_line, const char *caller_func)
+#else
 void
 pgbuf_set_dirty (THREAD_ENTRY * thread_p, PAGE_PTR pgptr, bool free_page)
+#endif
 {
   PGBUF_BCB *bufptr;
 
@@ -4339,25 +4324,6 @@ pgbuf_get_lsa (PAGE_PTR pgptr)
 }
 
 /*
- * pgbuf_page_has_changed () - check if page has change based on current LSA and a previous reference LSA
- *   return: page lsa
- *   pgptr(in): Pointer to page
- */
-int
-pgbuf_page_has_changed (PAGE_PTR pgptr, LOG_LSA * ref_lsa)
-{
-  LOG_LSA curr_lsa;
-
-  LSA_COPY (&curr_lsa, pgbuf_get_lsa (pgptr));
-
-  if (!LSA_EQ (ref_lsa, &curr_lsa))
-    {
-      return 1;
-    }
-  return 0;
-}
-
-/*
  * pgbuf_set_lsa () - Set the log sequence address of the page to the given lsa
  *   return: page lsa or NULL
  *   pgptr(in): Pointer to page
@@ -4365,8 +4331,14 @@ pgbuf_page_has_changed (PAGE_PTR pgptr, LOG_LSA * ref_lsa)
  *
  * Note: This function is for the exclusive use of the log and recovery manager.
  */
+#if !defined(NDEBUG)
+const LOG_LSA *
+pgbuf_set_lsa_debug (THREAD_ENTRY * thread_p, PAGE_PTR pgptr, const LOG_LSA * lsa_ptr, const char *caller_file,
+		     int caller_line, const char *caller_func)
+#else
 const LOG_LSA *
 pgbuf_set_lsa (THREAD_ENTRY * thread_p, PAGE_PTR pgptr, const LOG_LSA * lsa_ptr)
+#endif
 {
   PGBUF_BCB *bufptr;
 
@@ -11435,7 +11407,7 @@ pgbuf_compare_hold_vpid_for_sort (const void *p1, const void *p2)
 int
 pgbuf_ordered_fix_debug (THREAD_ENTRY * thread_p, const VPID * req_vpid, PAGE_FETCH_MODE fetch_mode,
 			 const PGBUF_LATCH_MODE request_mode, PGBUF_WATCHER * req_watcher, const char *caller_file,
-			 int caller_line)
+			 int caller_line, const char *caller_func)
 #else /* NDEBUG */
 int
 pgbuf_ordered_fix_release (THREAD_ENTRY * thread_p, const VPID * req_vpid, PAGE_FETCH_MODE fetch_mode,
@@ -11518,7 +11490,9 @@ pgbuf_ordered_fix_release (THREAD_ENTRY * thread_p, const VPID * req_vpid, PAGE_
     }
 
 #if !defined(NDEBUG)
-  ret_pgptr = pgbuf_fix_debug (thread_p, req_vpid, fetch_mode, request_mode, latch_condition, caller_file, caller_line);
+  ret_pgptr =
+    pgbuf_fix_debug (thread_p, req_vpid, fetch_mode, request_mode, latch_condition, caller_file, caller_line,
+		     caller_func);
 #else
   ret_pgptr = pgbuf_fix_release (thread_p, req_vpid, fetch_mode, request_mode, latch_condition);
 #endif
@@ -11911,7 +11885,7 @@ pgbuf_ordered_fix_release (THREAD_ENTRY * thread_p, const VPID * req_vpid, PAGE_
 	}
       pgptr =
 	pgbuf_fix_debug (thread_p, req_vpid, fetch_mode, request_mode, PGBUF_UNCONDITIONAL_LATCH, caller_file,
-			 caller_line);
+			 caller_line, caller_func);
 #else
       pgptr = pgbuf_fix_release (thread_p, req_vpid, fetch_mode, request_mode, PGBUF_UNCONDITIONAL_LATCH);
 #endif
@@ -12007,7 +11981,7 @@ pgbuf_ordered_fix_release (THREAD_ENTRY * thread_p, const VPID * req_vpid, PAGE_
 #if !defined(NDEBUG)
       pgptr =
 	pgbuf_fix_debug (thread_p, &(ordered_holders_info[i].vpid), curr_fetch_mode, curr_request_mode,
-			 PGBUF_UNCONDITIONAL_LATCH, caller_file, caller_line);
+			 PGBUF_UNCONDITIONAL_LATCH, caller_file, caller_line, caller_func);
 #else
       pgptr =
 	pgbuf_fix_release (thread_p, &(ordered_holders_info[i].vpid), curr_fetch_mode, curr_request_mode,
@@ -12112,7 +12086,7 @@ pgbuf_ordered_fix_release (THREAD_ENTRY * thread_p, const VPID * req_vpid, PAGE_
 #if !defined(NDEBUG)
 	      pgptr =
 		pgbuf_fix_debug (thread_p, &(ordered_holders_info[i].vpid), curr_fetch_mode, curr_request_mode,
-				 PGBUF_UNCONDITIONAL_LATCH, caller_file, caller_line);
+				 PGBUF_UNCONDITIONAL_LATCH, caller_file, caller_line, caller_func);
 #else
 	      pgptr =
 		pgbuf_fix_release (thread_p, &(ordered_holders_info[i].vpid), curr_fetch_mode, curr_request_mode,
@@ -12290,7 +12264,7 @@ pgbuf_get_groupid_and_unfix (THREAD_ENTRY * thread_p, const VPID * req_vpid, PAG
 #if !defined (NDEBUG)
 void
 pgbuf_ordered_unfix_debug (THREAD_ENTRY * thread_p, PGBUF_WATCHER * watcher_object, const char *caller_file,
-			   int caller_line)
+			   int caller_line, const char *caller_func)
 #else /* NDEBUG */
 void
 pgbuf_ordered_unfix (THREAD_ENTRY * thread_p, PGBUF_WATCHER * watcher_object)
@@ -12339,7 +12313,7 @@ pgbuf_ordered_unfix (THREAD_ENTRY * thread_p, PGBUF_WATCHER * watcher_object)
 
 #if !defined(NDEBUG)
   pgbuf_watcher_init_debug (watcher_object, caller_file, caller_line, false);
-  pgbuf_unfix_debug (thread_p, pgptr, caller_file, caller_line);
+  pgbuf_unfix_debug (thread_p, pgptr, caller_file, caller_line, caller_func);
 #else
   pgbuf_unfix (thread_p, pgptr);
 #endif
@@ -14154,8 +14128,11 @@ pgbuf_rv_dealloc_undo_compensate (THREAD_ENTRY * thread_p, LOG_RCV * rcv)
  */
 int
 pgbuf_fix_if_not_deallocated_with_caller (THREAD_ENTRY * thread_p, const VPID * vpid, PGBUF_LATCH_MODE latch_mode,
-					  PGBUF_LATCH_CONDITION latch_condition, PAGE_PTR * page,
-					  const char *caller_file, int caller_line)
+					  PGBUF_LATCH_CONDITION latch_condition, PAGE_PTR * page
+#if !defined (NDEBUG)
+					  , const char *caller_file, int caller_line, const char *caller_func
+#endif
+  )
 {
   DISK_ISVALID isvalid;
   int error_code = NO_ERROR;
@@ -14186,7 +14163,8 @@ pgbuf_fix_if_not_deallocated_with_caller (THREAD_ENTRY * thread_p, const VPID * 
   *page = pgbuf_fix_release (thread_p, vpid, OLD_PAGE_MAYBE_DEALLOCATED, latch_mode, latch_condition);
 #else /* !NDEBUG */
   *page =
-    pgbuf_fix_debug (thread_p, vpid, OLD_PAGE_MAYBE_DEALLOCATED, latch_mode, latch_condition, caller_file, caller_line);
+    pgbuf_fix_debug (thread_p, vpid, OLD_PAGE_MAYBE_DEALLOCATED, latch_mode, latch_condition, caller_file, caller_line,
+		     caller_func);
 #endif /* !NDEBUG */
   if (*page == NULL && !log_is_in_crash_recovery_and_not_yet_completes_redo ())
     {

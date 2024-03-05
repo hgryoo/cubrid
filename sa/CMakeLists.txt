@@ -15,7 +15,6 @@
 #   limitations under the License.
 # 
 #
-
 set(EXECUTABLE_SOURCES
   ${EXECUTABLES_DIR}/csql.c
   ${EXECUTABLES_DIR}/csql_session.c
@@ -46,6 +45,7 @@ set(COMPAT_SOURCES
   ${COMPAT_DIR}/db_date.c
   ${COMPAT_DIR}/db_elo.c
   ${COMPAT_DIR}/db_info.c
+  ${COMPAT_DIR}/db_function.cpp
   ${COMPAT_DIR}/db_json.cpp
   ${COMPAT_DIR}/db_json_allocator.cpp
   ${COMPAT_DIR}/db_json_path.cpp
@@ -89,6 +89,7 @@ set(BASE_SOURCES
   ${BASE_DIR}/unicode_support.c
   ${BASE_DIR}/memory_hash.c
   ${BASE_DIR}/packer.cpp
+  ${BASE_DIR}/hide_password.cpp
   ${BASE_DIR}/get_clock_freq.c
   ${BASE_DIR}/perf.cpp
   ${BASE_DIR}/perf_monitor.c
@@ -289,7 +290,9 @@ set(OBJECT_SOURCES
   ${OBJECT_DIR}/authenticate.c
   ${OBJECT_DIR}/class_description.cpp
   ${OBJECT_DIR}/class_object.c
+  ${OBJECT_DIR}/deduplicate_key.c
   ${OBJECT_DIR}/elo.c
+  ${OBJECT_DIR}/identifier_store.cpp
   ${OBJECT_DIR}/lob_locator.cpp
   ${OBJECT_DIR}/object_description.cpp
   ${OBJECT_DIR}/object_domain.c
@@ -303,6 +306,11 @@ set(OBJECT_SOURCES
   ${OBJECT_DIR}/quick_fit.c
   ${OBJECT_DIR}/schema_class_truncator.cpp
   ${OBJECT_DIR}/schema_manager.c
+  ${OBJECT_DIR}/schema_system_catalog.cpp
+  ${OBJECT_DIR}/schema_system_catalog_builder.cpp
+  ${OBJECT_DIR}/schema_system_catalog_definition.cpp
+  ${OBJECT_DIR}/schema_system_catalog_install.cpp
+  ${OBJECT_DIR}/schema_system_catalog_install_query_spec.cpp
   ${OBJECT_DIR}/schema_template.c
   ${OBJECT_DIR}/set_object.c
   ${OBJECT_DIR}/transform.c
@@ -419,10 +427,11 @@ set(STORAGE_SOURCES
   ${STORAGE_DIR}/btree.c
   ${STORAGE_DIR}/btree_load.c
   ${STORAGE_DIR}/btree_unique.cpp
+  ${STORAGE_DIR}/byte_order.c
   ${STORAGE_DIR}/catalog_class.c
   ${STORAGE_DIR}/compactdb_sr.c
-  ${STORAGE_DIR}/double_write_buffer.c
   ${STORAGE_DIR}/disk_manager.c
+  ${STORAGE_DIR}/double_write_buffer.c
   ${STORAGE_DIR}/es.c
   ${STORAGE_DIR}/es_common.c
   ${STORAGE_DIR}/es_owfs.c
@@ -642,9 +651,14 @@ if(WIN32)
   target_link_libraries(cubridsa LINK_PRIVATE ws2_32 ${JVM_LIBS})
   set_target_properties(cubridsa PROPERTIES LINK_FLAGS "/DEF:\"${CMAKE_SOURCE_DIR}/win/cubridsa/cubridsa.def\"" LINK_FLAGS_RELEASE "/NODEFAULTLIB:libcmt.lib" LINK_FLAGS_DEBUG "/NODEFAULTLIB:msvcrt.lib")
 endif(WIN32)
+
+# include target_external_dependencies function
+include (expand_dependency)
+
 if(UNIX)
 target_external_dependencies(cubridsa
   LIBNCURSES
+  LIBEDIT
   )
 endif(UNIX)
 target_external_dependencies(cubridsa
@@ -667,7 +681,7 @@ target_include_directories(cubridsa PRIVATE
 if(UNIX)
   # find out what this means:
   # target_link_libraries(cubridsa LINK_PRIVATE -Wl,-whole-archive cas ${EP_LIBS} -Wl,-no-whole-archive)
-  target_link_libraries(cubridsa LINK_PUBLIC ${CURSES_LIBRARIES} ${CMAKE_DL_LIBS})
+  target_link_libraries(cubridsa LINK_PUBLIC ${CMAKE_DL_LIBS})
   target_link_libraries(cubridsa PUBLIC stdc++fs)
 endif(UNIX)
 # for dblink

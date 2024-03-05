@@ -82,6 +82,7 @@ extern void shf_create (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 extern void shf_destroy (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern void shf_destroy_when_new (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern void shf_heap_reclaim_addresses (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
+extern void shf_get_maxslotted_reclength (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern void stde_is_loaded (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern void sfile_apply_tde_to_class_files (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern void sdblink_get_crypt_keys (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
@@ -120,7 +121,6 @@ extern void sboot_find_last_temp (THREAD_ENTRY * thread_p, unsigned int rid, cha
 extern void sboot_change_ha_mode (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern void sboot_notify_ha_log_applier_state (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern void sqst_update_statistics (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
-extern void sqst_update_all_statistics (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern void sbtree_add_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern void sbtree_load_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern void sbtree_delete_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);

@@ -350,7 +350,11 @@ check_is_array (const T & a)
 #endif /* WINDOWS */
 #define PATH_CURRENT    '.'
 
+#if defined (WINDOWS)
+#define IS_PATH_SEPARATOR(c) ((c) == PATH_SEPARATOR || (c) == '/')
+#else
 #define IS_PATH_SEPARATOR(c) ((c) == PATH_SEPARATOR)
+#endif
 
 #if defined (WINDOWS)
 #define IS_ABS_PATH(p) IS_PATH_SEPARATOR((p)[0]) \
@@ -981,8 +985,6 @@ extern int timeval_to_timespec (struct timespec *to, const struct timeval *from)
 extern FILE *port_open_memstream (char **ptr, size_t * sizeloc);
 
 extern void port_close_memstream (FILE * fp, char **ptr, size_t * sizeloc);
-
-extern char *trim (char *str);
 
 extern int parse_bigint (INT64 * ret_p, const char *str_p, int base);
 

@@ -383,8 +383,7 @@ typedef enum
 /* Message id in the set MSGCAT_UTIL_SET_LOADJAVA */
 typedef enum
 {
-  LOADJAVA_ARG_FORCE_OVERWRITE = 5,
-  LOADJAVA_ARG_FORCE_OVERWRITE_HELP = 6
+  LOADJAVA_MSG_USAGE = 60
 } MSGCAT_LOADJAVA_MSG;
 
 /* Message id in the set MSGCAT_UTIL_SET_COMPACTDB */
@@ -503,8 +502,9 @@ typedef enum
   LOADDB_MSG_TABLE_IS_MISSING = 120,
   LOADDB_MSG_IGNORED_CLASS = 121,
   LOADDB_MSG_EXCEED_MAX_USER_LEN = 122,
+  LOADDB_MSG_EMPTY_SCHEMA_FILE_LIST = 123,
 
-  LOADDB_MSG_USAGE = 123
+  LOADDB_MSG_USAGE = 124
 } MSGCAT_LOADDB_MSG;
 
 /* Message id in the set MSGCAT_UTIL_SET_MIGDB */
@@ -1172,6 +1172,8 @@ typedef struct _ha_config
 /* lockdb option list */
 #define LOCK_OUTPUT_FILE_S                      'o'
 #define LOCK_OUTPUT_FILE_L                      "output-file"
+#define LOCK_DISPLAY_CONTENTION_S               'c'
+#define LOCK_DISPLAY_CONTENTION_L               "contention"
 
 /* optimizedb option list */
 #define OPTIMIZE_CLASS_NAME_S                   'n'
@@ -1317,6 +1319,8 @@ typedef struct _ha_config
 #define LOAD_COMPARE_STORAGE_ORDER_L            "compare-storage-order"
 #define LOAD_NO_USER_SPECIFIED_NAME_S           11825
 #define LOAD_NO_USER_SPECIFIED_NAME_L           "no-user-specified-name"
+#define LOAD_SCHEMA_FILE_LIST_S                 11826
+#define LOAD_SCHEMA_FILE_LIST_L                 "schema-file-list"
 
 /* unloaddb option list */
 #define UNLOAD_INPUT_CLASS_FILE_S               'i'
@@ -1359,6 +1363,12 @@ typedef struct _ha_config
 #define UNLOAD_KEEP_STORAGE_ORDER_L		"keep-storage-order"
 #define UNLOAD_LATEST_IMAGE_S                   11919
 #define UNLOAD_LATEST_IMAGE_L                   "latest-image"
+#define UNLOAD_SPLIT_SCHEMA_FILES_S             11920
+#define UNLOAD_SPLIT_SCHEMA_FILES_L             "split-schema-files"
+#define UNLOAD_AS_DBA_S                         11921
+#define UNLOAD_AS_DBA_L                         "as-dba"
+#define UNLOAD_SKIP_INDEX_DETAIL_S              11922	/* support for SUPPORT_DEDUPLICATE_KEY_MODE */
+#define UNLOAD_SKIP_INDEX_DETAIL_L              "skip-index-detail"	/* support for SUPPORT_DEDUPLICATE_KEY_MODE */
 
 /* compactdb option list */
 #define COMPACT_VERBOSE_S                       'v'
@@ -1431,6 +1441,8 @@ typedef struct _ha_config
 #define CSQL_QUERY_COLUMN_ENCLOSURE_L		"enclosure"
 #define CSQL_LOADDB_OUTPUT_S			'd'
 #define CSQL_LOADDB_OUTPUT_L			"loaddb-output"
+#define CSQL_SYSADM_REBUILD_CATALOG_S           12020
+#define CSQL_SYSADM_REBUILD_CATALOG_L           "sysadm-rebuild-catalog"
 
 #define COMMDB_SERVER_LIST_S                    'P'
 #define COMMDB_SERVER_LIST_L                    "server-list"

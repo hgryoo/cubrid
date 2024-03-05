@@ -2373,11 +2373,14 @@ slock_dump (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen
   int file_size;
   char *buffer;
   int buffer_size;
+  int is_contention;
   int send_size;
+  char *ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
   char *reply = OR_ALIGNED_BUF_START (a_reply);
 
-  (void) or_unpack_int (request, &buffer_size);
+  ptr = or_unpack_int (request, &buffer_size);
+  ptr = or_unpack_int (ptr, &is_contention);
 
   buffer = (char *) db_private_alloc (thread_p, buffer_size);
   if (buffer == NULL)
@@ -2395,7 +2398,7 @@ slock_dump (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen
       return;
     }
 
-  xlock_dump (thread_p, outfp);
+  xlock_dump (thread_p, outfp, is_contention);
   file_size = ftell (outfp);
 
   /*
@@ -2582,6 +2585,32 @@ shf_heap_reclaim_addresses (THREAD_ENTRY * thread_p, unsigned int rid, char *req
       boot_compact_stop (thread_p);
     }
 
+}
+
+/*
+ * shf_get_maxslotted_reclength -
+ *
+ * return:
+ *
+ *   rid(in):
+ *   request(in):
+ *   reqlen(in):
+ *
+ * NOTE:
+ */
+void
+shf_get_maxslotted_reclength (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
+{
+  OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
+  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  int maxslotted_reclength;
+
+  (void) xheap_get_maxslotted_reclength (maxslotted_reclength);
+
+  reply = OR_ALIGNED_BUF_START (a_reply);
+  (void) or_pack_int (reply, maxslotted_reclength);
+
+  css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
 }
 
 /*
@@ -3973,42 +4002,27 @@ sqst_update_statistics (THREAD_ENTRY * thread_p, unsigned int rid, char *request
   char *ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
   char *reply = OR_ALIGNED_BUF_START (a_reply);
+  CLASS_ATTR_NDV class_attr_ndv = CLASS_ATTR_NDV_INITIALIZER;
 
-  ptr = or_unpack_oid (request, &classoid);
-  ptr = or_unpack_int (ptr, &with_fullscan);
+  ptr = or_unpack_int (request, &class_attr_ndv.attr_cnt);
 
-  error = xstats_update_statistics (thread_p, &classoid, (with_fullscan ? STATS_WITH_FULLSCAN : STATS_WITH_SAMPLING));
-  if (error != NO_ERROR)
+  class_attr_ndv.attr_ndv = (ATTR_NDV *) malloc (sizeof (ATTR_NDV) * (class_attr_ndv.attr_cnt + 1));
+  if (class_attr_ndv.attr_ndv == NULL)
     {
       (void) return_error_to_client (thread_p, rid);
     }
 
-  (void) or_pack_errcode (reply, error);
-  css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
-}
+  for (int i = 0; i < class_attr_ndv.attr_cnt + 1; i++)
+    {
+      ptr = or_unpack_int (ptr, &class_attr_ndv.attr_ndv[i].id);
+      ptr = or_unpack_int64 (ptr, &class_attr_ndv.attr_ndv[i].ndv);
+    }
+  ptr = or_unpack_oid (ptr, &classoid);
+  ptr = or_unpack_int (ptr, &with_fullscan);
 
-/*
- * sqst_update_all_statistics -
- *
- * return:
- *
- *   rid(in):
- *   request(in):
- *   reqlen(in):
- *
- * NOTE:
- */
-void
-sqst_update_all_statistics (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
-{
-  int error, with_fullscan;
-  char *ptr;
-  OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-
-  ptr = or_unpack_int (request, &with_fullscan);
-
-  error = xstats_update_all_statistics (thread_p, (with_fullscan ? STATS_WITH_FULLSCAN : STATS_WITH_SAMPLING));
+  error =
+    xstats_update_statistics (thread_p, &classoid, (with_fullscan ? STATS_WITH_FULLSCAN : STATS_WITH_SAMPLING),
+			      &class_attr_ndv);
   if (error != NO_ERROR)
     {
       (void) return_error_to_client (thread_p, rid);
@@ -4038,6 +4052,8 @@ sbtree_add_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int 
   OID class_oid;
   int attr_id, unique_pk;
   char *ptr;
+  int deduplicate_key_pos = -1;
+
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_BTID_ALIGNED_SIZE) a_reply;
   char *reply = OR_ALIGNED_BUF_START (a_reply);
 
@@ -4046,8 +4062,10 @@ sbtree_add_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int 
   ptr = or_unpack_oid (ptr, &class_oid);
   ptr = or_unpack_int (ptr, &attr_id);
   ptr = or_unpack_int (ptr, &unique_pk);
+  ptr = or_unpack_int (ptr, &deduplicate_key_pos);	/* support for SUPPORT_DEDUPLICATE_KEY_MODE */
 
-  return_btid = xbtree_add_index (thread_p, &btid, key_type, &class_oid, attr_id, unique_pk, 0, 0, 0);
+  return_btid =
+    xbtree_add_index (thread_p, &btid, key_type, &class_oid, attr_id, unique_pk, 0, 0, 0, deduplicate_key_pos);
   if (return_btid == NULL)
     {
       (void) return_error_to_client (thread_p, rid);
@@ -5141,7 +5159,14 @@ sqmgr_execute_query (THREAD_ENTRY * thread_p, unsigned int rid, char *request, i
 	  css_send_abort_to_client (thread_p->conn_entry, rid);
 	  return;
 	}
-      xperfmon_server_copy_stats (thread_p, base_stats);
+      if (prm_get_bool_value (PRM_ID_SQL_TRACE_EXECUTION_PLAN) == true)
+	{
+	  xperfmon_server_copy_stats (thread_p, base_stats);
+	}
+      else
+	{
+	  xperfmon_server_copy_stats_for_trace (thread_p, base_stats);
+	}
 
       tsc_getticks (&start_tick);
 
@@ -5384,8 +5409,16 @@ null_list:
 	      goto exit;
 	    }
 
-	  xperfmon_server_copy_stats (thread_p, current_stats);
-	  perfmon_calc_diff_stats (diff_stats, current_stats, base_stats);
+	  if (prm_get_bool_value (PRM_ID_SQL_TRACE_EXECUTION_PLAN) == true)
+	    {
+	      xperfmon_server_copy_stats (thread_p, current_stats);
+	      perfmon_calc_diff_stats (diff_stats, current_stats, base_stats);
+	    }
+	  else
+	    {
+	      xperfmon_server_copy_stats_for_trace (thread_p, current_stats);
+	      perfmon_calc_diff_stats_for_trace (diff_stats, current_stats, base_stats);
+	    }
 
 	  if (response_time >= trace_slow_msec)
 	    {
@@ -5591,7 +5624,8 @@ event_log_slow_query (THREAD_ENTRY * thread_p, EXECUTION_INFO * info, int time, 
     }
 
   event_log_print_client_info (tran_index, indent);
-  fprintf (log_fp, "%*csql: %s\n", indent, ' ', info->sql_hash_text ? info->sql_hash_text : "(UNKNOWN HASH_TEXT)");
+  event_log_sql_without_user_oid (log_fp, "%*csql: %s\n", indent,
+				  info->sql_hash_text ? info->sql_hash_text : "(UNKNOWN HASH_TEXT)");
 
   if (tdes->num_exec_queries <= MAX_NUM_EXEC_QUERY_HISTORY)
     {
@@ -5637,7 +5671,8 @@ event_log_many_ioreads (THREAD_ENTRY * thread_p, EXECUTION_INFO * info, int time
     }
 
   event_log_print_client_info (tran_index, indent);
-  fprintf (log_fp, "%*csql: %s\n", indent, ' ', info->sql_hash_text ? info->sql_hash_text : "(UNKNOWN HASH_TEXT)");
+  event_log_sql_without_user_oid (log_fp, "%*csql: %s\n", indent,
+				  info->sql_hash_text ? info->sql_hash_text : "(UNKNOWN HASH_TEXT)");
 
   if (tdes->num_exec_queries <= MAX_NUM_EXEC_QUERY_HISTORY)
     {
@@ -5677,7 +5712,8 @@ event_log_temp_expand_pages (THREAD_ENTRY * thread_p, EXECUTION_INFO * info)
     }
 
   event_log_print_client_info (tran_index, indent);
-  fprintf (log_fp, "%*csql: %s\n", indent, ' ', info->sql_hash_text ? info->sql_hash_text : "(UNKNOWN HASH_TEXT)");
+  event_log_sql_without_user_oid (log_fp, "%*csql: %s\n", indent,
+				  info->sql_hash_text ? info->sql_hash_text : "(UNKNOWN HASH_TEXT)");
 
   if (tdes->num_exec_queries <= MAX_NUM_EXEC_QUERY_HISTORY)
     {
@@ -10332,28 +10368,68 @@ sloaddb_interrupt (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int
 void
 sloaddb_update_stats (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *buffer = NULL;
+  char *buffer = NULL, *ptr = NULL;
   int buffer_size = 0;
-
+  int oid_cnt = 0;
+  OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
+  char *reply = OR_ALIGNED_BUF_START (a_reply);
   load_session *session = NULL;
   int error_code = session_get_load_session (thread_p, session);
-  if (error_code == NO_ERROR)
-    {
-      assert (session != NULL);
+  std::vector < const cubload::class_entry * >class_entries;
 
-      session->update_class_statistics (*thread_p);
+  if (error_code != NO_ERROR)
+    {
+      goto end;
+    }
+  assert (session != NULL);
+
+  /* check disable_statistics */
+  if (session->get_args ().disable_statistics || session->get_args ().syntax_check)
+    {
+      error_code = NO_ERROR;
+      goto end;
     }
 
-  if (er_errid () != NO_ERROR || er_has_error ())
+  session->get_class_registry ().get_all_class_entries (class_entries);
+
+for (const cubload::class_entry * class_entry:class_entries)
     {
-      return_error_to_client (thread_p, rid);
+      if (!class_entry->is_ignored ())
+	{
+	  oid_cnt++;
+	}
     }
 
-  OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  /* start packing result */
+  /* buffer_size is (int:number of OIDs) + size of packed OIDs */
+  buffer_size = OR_INT_SIZE + (oid_cnt * sizeof (OID));
+  buffer = (char *) db_private_alloc (thread_p, buffer_size);
+  if (buffer == NULL)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, buffer_size);
+      error_code = ER_OUT_OF_VIRTUAL_MEMORY;
+      goto end;
+    }
+  ptr = or_pack_int (buffer, oid_cnt);
+for (const cubload::class_entry * class_entry:class_entries)
+    {
+      if (!class_entry->is_ignored ())
+	{
+	  OID *class_oid = const_cast < OID * >(&class_entry->get_class_oid ());
+	  ptr = or_pack_oid (ptr, class_oid);
+	}
+    }
 
-  or_pack_int (reply, error_code);
-  css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
+end:
+  char *ptr2 = or_pack_int (reply, buffer_size);
+  ptr2 = or_pack_int (ptr2, error_code);
+  css_send_reply_and_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply), buffer,
+				     buffer_size);
+
+  if (buffer != NULL)
+    {
+      db_private_free_and_init (thread_p, buffer);
+    }
 }
 
 void
@@ -10414,10 +10490,12 @@ smethod_invoke_fold_constants (THREAD_ENTRY * thread_p, unsigned int rid, char *
     {
       /* 3) make out arguments */
 
-      // *INDENT-OFF*
-      std::vector<std::reference_wrapper<DB_VALUE>> out_args;
-      // *INDENT-ON*
       method_sig_node *sig = sig_list.method_sig;
+      // *INDENT-OFF*
+      DB_VALUE dummy_null;
+      db_make_null (&dummy_null);
+      std::vector<std::reference_wrapper<DB_VALUE>> out_args (sig->num_method_args, dummy_null);
+      // *INDENT-ON*
       for (int i = 0; i < sig->num_method_args; i++)
 	{
 	  if (sig->arg_info.arg_mode[i] == METHOD_ARG_MODE_IN)
@@ -10426,7 +10504,7 @@ smethod_invoke_fold_constants (THREAD_ENTRY * thread_p, unsigned int rid, char *
 	    }
 
 	  int pos = sig->method_arg_pos[i];
-	  out_args.push_back (std::ref (args[pos]));
+	  out_args[pos] = std::ref (args[pos]);
 	}
 
       /* 4) pack */
