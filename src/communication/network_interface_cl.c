@@ -11285,6 +11285,7 @@ mmon_get_server_info (MMON_SERVER_INFO & server_info)
 #else /* CS_MODE */
   er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_NOT_IN_STANDALONE, 1, "memmon");
   return ER_NOT_IN_STANDALONE;
+#endif
 }
 
 int

@@ -57,6 +57,16 @@ struct mmon_metainfo
   int magic_number;
 };
 
+#if !defined (NDEBUG)
+typedef struct mmon_debug_info MMON_DEBUG_INFO;
+struct mmon_debug_info
+{
+  char filename[255];
+  int line;
+  bool is_exist;
+};
+#endif
+
 namespace cubmem
 {
   // IMPORTANT!!
@@ -95,8 +105,9 @@ namespace cubmem
       inline char *get_metainfo_pos (char *ptr, size_t size);
       inline void make_stat_name (char *buf, const char *file, const int line);
 #if !defined (NDEBUG)
-      void check_add_stat_tracking_error_is_exist (MMON_METAINFO *metainfo);
+      // void check_add_stat_tracking_error_is_exist (MMON_METAINFO *metainfo);
       void check_sub_stat_tracking_error_is_exist (MMON_METAINFO *metainfo);
+      void check_add_stat_tracking_error (MMON_METAINFO *metainfo);
 #endif
 
     private:
@@ -175,7 +186,7 @@ retry:
     m_meta_alloc_count++;
 
 #if !defined (NDEBUG)
-    check_add_stat_tracking_error_is_exist (metainfo);
+    //check_add_stat_tracking_error_is_exist (metainfo);
 #endif
   }
 

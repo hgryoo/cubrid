@@ -27,16 +27,6 @@
 
 #include "memory_monitor_sr.hpp"
 
-#if !defined (NDEBUG)
-typedef struct mmon_debug_info MMON_DEBUG_INFO;
-struct mmon_debug_info
-{
-  char filename[255];
-  int line;
-  bool is_exist;
-};
-#endif
-
 namespace cubmem
 {
   std::atomic<uint64_t> m_stat_map[MMON_MAP_RESERVE_SIZE] = {};
@@ -128,16 +118,16 @@ namespace cubmem
 	    //    the memory is deallocated without unset the flag.
 	    //    If cub_alloc() is then called to reuse that memory, it is considered
 	    //    an error in memory tracking.
-	    fprintf (stderr, "metainfo pointer %p is already allocated by %s:%d
-		     but %s:%d is the allocation request of this round\n", metainfo,
-		     debug_search->second.filename, debug_search->second.line, file, line);
+	    fprintf (stderr, "metainfo pointer %p is already allocated by %s:%d"
+		     "but %s:%d is the allocation request of this round\n", metainfo,
+		     debug_search->second.filename, debug_search->second.line, __FILE__, __LINE__);
 	    fflush (stderr);
 	    assert (false);
 	  }
 	else
 	  {
-	    sprintf (debug_search->second.filename, "%s", file);
-	    debug_search->second.line = line;
+	    sprintf (debug_search->second.filename, "%s", __FILE__);
+	    debug_search->second.line = __LINE__;
 	    debug_search->second.is_exist = true;
 	  }
       }
@@ -145,8 +135,8 @@ namespace cubmem
       {
 	MMON_DEBUG_INFO debug_info;
 
-	sprintf (debug_info.filename, "%s", file);
-	debug_info.line = line;
+	sprintf (debug_info.filename, "%s", __FILE__);
+	debug_info.line = __LINE__;
 	debug_info.is_exist = true;
 
 	std::pair<tbb::concurrent_unordered_map<intptr_t, MMON_DEBUG_INFO>::iterator, bool> debug_insert;
