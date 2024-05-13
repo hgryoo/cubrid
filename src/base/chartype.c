@@ -208,6 +208,9 @@ trim (char *str)
  * If you need any changes to the contents of the above array, you can refer to build_chartype_table() to recreate it.
  */
 // build mapper and prop table
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
 
 static const int A_GRAVE_ACCENT = 192;
 static const int MULT_ISO8859 = 215;

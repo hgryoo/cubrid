@@ -259,4 +259,7 @@ extern void sflashback_get_loginfo (THREAD_ENTRY * thread_p, unsigned int rid, c
 
 /* memmon */
 extern void smmon_get_server_info (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
+/* PL/CSQL */
+extern void splcsql_transfer_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
+
 #endif /* _NETWORK_INTERFACE_SR_H_ */

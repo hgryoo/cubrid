@@ -54,6 +54,7 @@
 #include "method_def.hpp"
 #include "dynamic_array.h"
 #include "flashback_cl.h"
+#include "method_compile_def.hpp"
 #include "memory_monitor_common.hpp"
 
 // forward declarations
@@ -453,4 +454,10 @@ extern int flashback_get_loginfo (int trid, char *user, OID * classlist, int num
 				  LOG_LSA * end_lsa, int *num_item, bool forward, char **info_list,
 				  int *invalid_class_idx);
 extern int mmon_get_server_info (MMON_SERVER_INFO & server_info);
+
+/* PL/CSQL */
+EXPORT_IMPORT extern int plcsql_transfer_file (const std::string & input_file, const bool & verbose,
+					       PLCSQL_COMPILE_INFO & compile_info);
+
+
 #endif /* _NETWORK_INTERFACE_CL_H_ */

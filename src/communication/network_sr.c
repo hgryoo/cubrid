@@ -742,6 +742,11 @@ net_server_init (void)
   /* memmon */
   req_p = &net_Requests[NET_SERVER_MMON_GET_SERVER_INFO];
   req_p->processing_function = smmon_get_server_info;
+
+  /* PL/CSQL */
+  req_p = &net_Requests[NET_SERVER_PLCSQL_TRANSFER_FILE];
+  req_p->processing_function = splcsql_transfer_file;
+
 }
 
 /*
