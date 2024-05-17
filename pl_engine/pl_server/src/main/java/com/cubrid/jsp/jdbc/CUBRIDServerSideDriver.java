@@ -134,6 +134,7 @@ public class CUBRIDServerSideDriver implements Driver {
 
     private void setDefaultProperties(Properties info) {
         info.setProperty("transaction_control", "false");
+        info.setProperty("charSet", "utf-8");
     }
 
     @Override

@@ -108,7 +108,7 @@ public class SUBindParameter extends SUParameter {
         int cnt = paramMode.length;
         packer.packInt(cnt);
         for (int i = 0; i < cnt; i++) {
-            packer.packValue(values[i], types[i], ExecuteThread.charSet);
+            packer.packValue(values[i], types[i]);
             packer.packInt((int) paramMode[i]);
         }
     }

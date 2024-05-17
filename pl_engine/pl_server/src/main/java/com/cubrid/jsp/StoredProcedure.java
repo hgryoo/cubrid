@@ -341,7 +341,7 @@ public class StoredProcedure {
         } else if (o instanceof BigDecimal) {
             val = new NumericValue(((BigDecimal) o));
         } else if (o instanceof String) {
-            val = new StringValue((String) o);
+            val = new StringValue(((String) o).getBytes ());
         } else if (o instanceof java.sql.Date) {
             val = new DateValue((java.sql.Date) o);
         } else if (o instanceof java.sql.Time) {
@@ -353,7 +353,8 @@ public class StoredProcedure {
         } else if (o instanceof ResultSet) {
             val = new ResultSetValue((ResultSet) o);
         } else if (o instanceof byte[]) {
-            val = new SetValue((byte[]) o);
+            // CUBRID doesn't have byte type
+            val = new StringValue((byte[]) o);
         } else if (o instanceof short[]) {
             val = new SetValue((short[]) o);
         } else if (o instanceof int[]) {

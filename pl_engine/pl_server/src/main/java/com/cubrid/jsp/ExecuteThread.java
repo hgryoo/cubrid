@@ -64,9 +64,6 @@ import javax.tools.JavaCompiler;
 import javax.tools.ToolProvider;
 
 public class ExecuteThread extends Thread {
-
-    public static String charSet = "UTF-8";
-
     private Socket client;
 
     private DataInputStream input;
@@ -308,7 +305,18 @@ public class ExecuteThread extends Thread {
         ctx.checkTranId(tid);
 
         StoredProcedure procedure = makeStoredProcedure(unpacker);
+
+        String prevCharset = null;
+        if (ctx.getConnectionProperty() != null) {
+                prevCharset = ctx.getCharset();
+                ctx.setCharset(ctx.getConnectionProperty().getProperty("charSet"));
+        }
+
         Value result = procedure.invoke();
+
+        if (prevCharset != null) {
+          ctx.setCharset(prevCharset);
+        }
 
         /* send results */
         sendResult(result, procedure);
@@ -398,8 +406,7 @@ public class ExecuteThread extends Thread {
                 Value v = sp.makeOutValue(args[i].getResolved());
                 packer.packValue(
                         ValueUtilities.resolveValue(args[i].getDbType(), v),
-                        args[i].getDbType(),
-                        this.charSet);
+                        args[i].getDbType());
             }
         }
     }
@@ -416,7 +423,7 @@ public class ExecuteThread extends Thread {
 
         packer.packInt(RequestCode.RESULT);
         packer.align(DataUtilities.MAX_ALIGNMENT);
-        packer.packValue(resolvedResult, procedure.getReturnType(), this.charSet);
+        packer.packValue(resolvedResult, procedure.getReturnType());
         returnOutArgs(procedure, packer);
 
         resultBuffer = packer.getBuffer();

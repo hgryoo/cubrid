@@ -149,7 +149,7 @@ public class CUBRIDPacker {
     }
 
     // TODO: legacy implementation, this function will be modified
-    public void packValue(Object result, int ret_type, String charset)
+    public void packValue(Object result, int ret_type)
             throws UnsupportedEncodingException {
         if (result == null) {
             packInt(DBType.DB_NULL);
@@ -170,16 +170,19 @@ public class CUBRIDPacker {
             packDouble(((Double) result).doubleValue());
         } else if (result instanceof BigDecimal) {
             packInt(DBType.DB_NUMERIC);
-            packString(((BigDecimal) result).toPlainString(), charset);
+            packString(((BigDecimal) result).toPlainString());
         } else if (result instanceof String) {
             packInt(DBType.DB_STRING);
-            packString((String) result, charset);
+            packString((String) result);
+        } else if (result instanceof byte[]) {
+            packInt(DBType.DB_STRING);
+            packCString((byte[]) result);
         } else if (result instanceof java.sql.Date) {
             packInt(DBType.DB_DATE);
-            packString(result.toString(), charset);
+            packString(result.toString());
         } else if (result instanceof java.sql.Time) {
             packInt(DBType.DB_TIME);
-            packString(result.toString(), charset);
+            packString(result.toString());
         } else if (result instanceof java.sql.Timestamp) {
             packInt(ret_type);
             if (ret_type == DBType.DB_DATETIME) {
@@ -203,16 +206,16 @@ public class CUBRIDPacker {
             packInt(array.length);
             for (int i = 0; i < array.length; i++) {
                 array[i] = new Integer(((int[]) result)[i]);
-                packValue(array[i], ret_type, charset);
+                packValue(array[i], ret_type);
             }
-            packValue(array, ret_type, charset);
+            packValue(array, ret_type);
         } else if (result instanceof short[]) {
             int length = ((short[]) result).length;
             Short[] array = new Short[length];
             packInt(array.length);
             for (int i = 0; i < array.length; i++) {
                 array[i] = new Short(((short[]) result)[i]);
-                packValue(array, ret_type, charset);
+                packValue(array, ret_type);
             }
         } else if (result instanceof float[]) {
             int length = ((float[]) result).length;
@@ -220,7 +223,7 @@ public class CUBRIDPacker {
             packInt(array.length);
             for (int i = 0; i < array.length; i++) {
                 array[i] = new Float(((float[]) result)[i]);
-                packValue(array[i], ret_type, charset);
+                packValue(array[i], ret_type);
             }
         } else if (result instanceof double[]) {
             int length = ((double[]) result).length;
@@ -228,7 +231,7 @@ public class CUBRIDPacker {
             packInt(array.length);
             for (int i = 0; i < array.length; i++) {
                 array[i] = new Double(((double[]) result)[i]);
-                packValue(array[i], ret_type, charset);
+                packValue(array[i], ret_type);
             }
         } else if (result instanceof Object[]) {
             packInt(ret_type);
@@ -236,7 +239,7 @@ public class CUBRIDPacker {
 
             packInt(arr.length);
             for (int i = 0; i < arr.length; i++) {
-                packValue(arr[i], ret_type, charset);
+                packValue(arr[i], ret_type);
             }
         } else {
             // FIXME: treat as NULL

@@ -55,7 +55,7 @@ public class Context {
     private int prevRequestId = 0;
 
     // charset
-    private String charSet = "UTF-8";
+    private String charSet = System.getProperty("file.encoding");
 
     // single server-side connection per Context
     private CUBRIDServerSideConnection connection = null;
@@ -89,11 +89,15 @@ public class Context {
     }
 
     public synchronized Connection getConnection(Properties prop) {
+        this.connectionInfo = prop;
         if (this.connection == null) {
-            this.connectionInfo = prop;
             this.connection = new CUBRIDServerSideConnection(this);
         }
         return connection;
+    }
+
+    public Properties getConnectionProperty () {
+            return connectionInfo;
     }
 
     public void closeConnection(Connection conn) throws SQLException {
@@ -118,6 +122,10 @@ public class Context {
 
     public String getCharset() {
         return charSet;
+    }
+
+    public void setCharset (String charset) {
+        this.charSet = charset;
     }
 
     public void checkHeader(Header header) {

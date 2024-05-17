@@ -42,39 +42,49 @@ import java.time.LocalTime;
 import java.time.ZonedDateTime;
 
 public class StringValue extends Value {
-
-    private String value;
+    private byte[] value;
 
     public StringValue(String value) {
+        super();
+        this.value = value.getBytes ();
+    }
+
+    public StringValue(byte[] value) {
         super();
         this.value = value;
     }
 
     public StringValue(String value, int mode, int dbType) {
         super(mode);
+        this.value = value.getBytes ();
+        this.dbType = dbType;
+    }
+
+    public StringValue(byte[] value, int mode, int dbType) {
+        super(mode);
         this.value = value;
         this.dbType = dbType;
     }
 
     public byte toByte() throws TypeMismatchException {
-        try {
-            return Byte.parseByte(value);
-        } catch (NumberFormatException e) {
-            throw new TypeMismatchException(e.getMessage());
+        if (value.length == 1) {
+                return value[0];
+        } else {
+                throw new TypeMismatchException();
         }
     }
 
     public short toShort() throws TypeMismatchException {
         try {
-            return Short.parseShort(value);
-        } catch (NumberFormatException e) {
-            throw new TypeMismatchException(e.getMessage());
-        }
+                return Short.parseShort(new String(value));
+            } catch (NumberFormatException e) {
+                throw new TypeMismatchException(e.getMessage());
+            }
     }
 
     public int toInt() throws TypeMismatchException {
         try {
-            return Integer.parseInt(value);
+            return Integer.parseInt(new String(value));
         } catch (NumberFormatException e) {
             throw new TypeMismatchException(e.getMessage());
         }
@@ -82,7 +92,7 @@ public class StringValue extends Value {
 
     public long toLong() throws TypeMismatchException {
         try {
-            return Long.parseLong(value);
+            return Long.parseLong(new String(value));
         } catch (NumberFormatException e) {
             throw new TypeMismatchException(e.getMessage());
         }
@@ -90,7 +100,7 @@ public class StringValue extends Value {
 
     public float toFloat() throws TypeMismatchException {
         try {
-            return Float.parseFloat(value);
+            return Float.parseFloat(new String(value));
         } catch (NumberFormatException e) {
             throw new TypeMismatchException(e.getMessage());
         }
@@ -98,62 +108,42 @@ public class StringValue extends Value {
 
     public double toDouble() throws TypeMismatchException {
         try {
-            return Double.parseDouble(value);
+            return Double.parseDouble(new String(value));
         } catch (NumberFormatException e) {
             throw new TypeMismatchException(e.getMessage());
         }
     }
 
     public Byte toByteObject() throws TypeMismatchException {
-        try {
-            return Byte.valueOf(value);
-        } catch (NumberFormatException e) {
-            throw new TypeMismatchException(e.getMessage());
-        }
+        return toByte ();
     }
 
     public Short toShortObject() throws TypeMismatchException {
-        try {
-            return Short.valueOf(value);
-        } catch (NumberFormatException e) {
-            throw new TypeMismatchException(e.getMessage());
-        }
+        return toShort ();
     }
 
     public Integer toIntegerObject() throws TypeMismatchException {
-        try {
-            return Integer.valueOf(value);
-        } catch (NumberFormatException e) {
-            throw new TypeMismatchException(e.getMessage());
-        }
+        return toInt ();
     }
 
     public Long toLongObject() throws TypeMismatchException {
-        try {
-            return Long.valueOf(value);
-        } catch (NumberFormatException e) {
-            throw new TypeMismatchException(e.getMessage());
-        }
+        return toLong ();
     }
 
     public Float toFloatObject() throws TypeMismatchException {
-        try {
-            return Float.valueOf(value);
-        } catch (NumberFormatException e) {
-            throw new TypeMismatchException(e.getMessage());
-        }
+        return toFloat ();
     }
 
     public Double toDoubleObject() throws TypeMismatchException {
         try {
-            return Double.valueOf(value);
+            return toDouble ();
         } catch (NumberFormatException e) {
             throw new TypeMismatchException(e.getMessage());
         }
     }
 
     public Date toDate() throws TypeMismatchException {
-        LocalDate lDate = DateTimeParser.DateLiteral.parse(value);
+        LocalDate lDate = DateTimeParser.DateLiteral.parse(new String(value));
         if (lDate == null) {
             throw new TypeMismatchException("invalid DATE string: " + value);
         } else if (lDate.equals(DateTimeParser.nullDate)) {
@@ -164,7 +154,7 @@ public class StringValue extends Value {
     }
 
     public Time toTime() throws TypeMismatchException {
-        LocalTime lTime = DateTimeParser.TimeLiteral.parse(value);
+        LocalTime lTime = DateTimeParser.TimeLiteral.parse(new String(value));
         if (lTime == null) {
             throw new TypeMismatchException("invalid TIME string: " + value);
         } else {
@@ -173,7 +163,7 @@ public class StringValue extends Value {
     }
 
     public Timestamp toTimestamp() throws TypeMismatchException {
-        ZonedDateTime lTimestamp = DateTimeParser.TimestampLiteral.parse(value);
+        ZonedDateTime lTimestamp = DateTimeParser.TimestampLiteral.parse(new String(value));
         if (lTimestamp == null) {
             throw new TypeMismatchException("invalid TIMESTAMP string: " + value);
         } else if (lTimestamp.equals(DateTimeParser.nullDatetimeUTC)) {
@@ -184,7 +174,7 @@ public class StringValue extends Value {
     }
 
     public Timestamp toDatetime() throws TypeMismatchException {
-        LocalDateTime lDatetime = DateTimeParser.DatetimeLiteral.parse(value);
+        LocalDateTime lDatetime = DateTimeParser.DatetimeLiteral.parse(new String(value));
         if (lDatetime == null) {
             throw new TypeMismatchException("invalid DATETIME string: " + value);
         } else if (lDatetime.equals(DateTimeParser.nullDatetime)) {
@@ -196,7 +186,7 @@ public class StringValue extends Value {
 
     public BigDecimal toBigDecimal() throws TypeMismatchException {
         try {
-            return new BigDecimal(value);
+            return new BigDecimal(new String(value));
         } catch (NumberFormatException e) {
             throw new TypeMismatchException(e.getMessage());
         }
@@ -207,82 +197,82 @@ public class StringValue extends Value {
     }
 
     public String toString() {
-        return value;
+        return new String (value);
     }
 
     public byte[] toByteArray() throws TypeMismatchException {
-        return new byte[] {toByteObject().byteValue()};
+        return value;
     }
 
     public short[] toShortArray() throws TypeMismatchException {
-        return new short[] {toShortObject().shortValue()};
+        throw new TypeMismatchException();
     }
 
     public int[] toIntegerArray() throws TypeMismatchException {
-        return new int[] {toIntegerObject().intValue()};
+        throw new TypeMismatchException();
     }
 
     public long[] toLongArray() throws TypeMismatchException {
-        return new long[] {toLongObject().longValue()};
+        throw new TypeMismatchException();
     }
 
     public float[] toFloatArray() throws TypeMismatchException {
-        return new float[] {toFloatObject().floatValue()};
+        throw new TypeMismatchException();
     }
 
     public double[] toDoubleArray() throws TypeMismatchException {
-        return new double[] {toDoubleObject().doubleValue()};
+        throw new TypeMismatchException();
     }
 
     public BigDecimal[] toBigDecimalArray() throws TypeMismatchException {
-        return new BigDecimal[] {toBigDecimal()};
+        throw new TypeMismatchException();
     }
 
     public Date[] toDateArray() throws TypeMismatchException {
-        return new Date[] {toDate()};
+        throw new TypeMismatchException();
     }
 
     public Time[] toTimeArray() throws TypeMismatchException {
-        return new Time[] {toTime()};
+        throw new TypeMismatchException();
     }
 
     public Timestamp[] toTimestampArray() throws TypeMismatchException {
-        return new Timestamp[] {toTimestamp()};
+        throw new TypeMismatchException();
     }
 
     public Timestamp[] toDatetimeArray() throws TypeMismatchException {
-        return new Timestamp[] {toDatetime()};
+        throw new TypeMismatchException();
     }
 
     public Object[] toObjectArray() throws TypeMismatchException {
-        return new Object[] {toObject()};
+        throw new TypeMismatchException();
     }
 
     public String[] toStringArray() throws TypeMismatchException {
-        return new String[] {toString()};
+        throw new TypeMismatchException();
     }
 
     public Byte[] toByteObjArray() throws TypeMismatchException {
-        return new Byte[] {toByteObject()};
+        throw new TypeMismatchException();
     }
 
     public Double[] toDoubleObjArray() throws TypeMismatchException {
-        return new Double[] {toDoubleObject()};
+        throw new TypeMismatchException();
     }
 
     public Float[] toFloatObjArray() throws TypeMismatchException {
-        return new Float[] {toFloatObject()};
+        throw new TypeMismatchException();
     }
 
     public Integer[] toIntegerObjArray() throws TypeMismatchException {
-        return new Integer[] {toIntegerObject()};
+        throw new TypeMismatchException();
     }
 
     public Long[] toLongObjArray() throws TypeMismatchException {
-        return new Long[] {toLongObject()};
+        throw new TypeMismatchException();
     }
 
     public Short[] toShortObjArray() throws TypeMismatchException {
-        return new Short[] {toShortObject()};
+        throw new TypeMismatchException();
     }
 }
