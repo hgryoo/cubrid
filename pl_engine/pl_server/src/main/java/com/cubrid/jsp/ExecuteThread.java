@@ -45,6 +45,7 @@ import com.cubrid.jsp.data.DataUtilities;
 import com.cubrid.jsp.exception.ExecuteException;
 import com.cubrid.jsp.exception.TypeMismatchException;
 import com.cubrid.jsp.protocol.Header;
+import com.cubrid.jsp.protocol.PackableObject;
 import com.cubrid.jsp.protocol.PrepareArgs;
 import com.cubrid.jsp.protocol.RequestCode;
 import com.cubrid.jsp.value.Value;
@@ -94,7 +95,6 @@ public class ExecuteThread extends Thread {
     private CUBRIDPacker packer;
 
     private StoredProcedure storedProcedure = null;
-    private PrepareArgs prepareArgs = null;
 
     private Context ctx = null;
 
@@ -140,6 +140,7 @@ public class ExecuteThread extends Thread {
             try {
                 header = listenCommand();
                 ContextManager.registerThread(Thread.currentThread().getId(), ctx.getSessionId());
+                PackableObject resultObject = null;
                 switch (header.code) {
                         /*
                          * the following two request codes are for processing java stored procedure
@@ -147,11 +148,12 @@ public class ExecuteThread extends Thread {
                          */
                     case RequestCode.PREPARE_ARGS:
                         {
-                            processPrepare();
+                            resultObject = RequestAPI.prepare(ctx);
                             break;
                         }
                     case RequestCode.INVOKE_SP:
                         {
+                            unpacker.setBuffer(ctx.getInboundQueue().take());
                             processStoredProcedure();
                             ctx = null;
                             break;
@@ -309,7 +311,6 @@ public class ExecuteThread extends Thread {
     }
 
     private void processStoredProcedure() throws Exception {
-        unpacker.setBuffer(ctx.getInboundQueue().take());
         long id = unpacker.unpackBigint();
         int tid = unpacker.unpackInt();
 

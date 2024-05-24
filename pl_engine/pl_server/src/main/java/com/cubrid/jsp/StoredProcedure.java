@@ -31,7 +31,9 @@
 
 package com.cubrid.jsp;
 
+import com.cubrid.jsp.context.Context;
 import com.cubrid.jsp.context.ContextManager;
+import com.cubrid.jsp.data.CUBRIDUnpacker;
 import com.cubrid.jsp.exception.ExecuteException;
 import com.cubrid.jsp.exception.TypeMismatchException;
 import com.cubrid.jsp.value.BooleanValue;
@@ -69,6 +71,33 @@ public class StoredProcedure {
 
     public StoredProcedure(String signature, String authUser, Value[] args, int returnType)
             throws Exception {
+        initialize (signature, authUser, args, returnType);
+    }
+
+    public StoredProcedure (CUBRIDUnpacker unpacker) throws Exception {
+        String methodSig = unpacker.unpackCString();
+        String authUser = unpacker.unpackCString();
+        int paramCount = unpacker.unpackInt();
+
+        Value[] arguments = ContextManager.getContextofCurrentThread().getPrepareArgsStack().peek().getArgs();
+        Value[] methodArgs = new Value[paramCount];
+        for (int i = 0; i < paramCount; i++) {
+            int pos = unpacker.unpackInt();
+            int mode = unpacker.unpackInt();
+            int type = unpacker.unpackInt();
+
+            Value val = arguments[pos];
+            val.setMode(mode);
+            val.setDbType(type);
+
+            methodArgs[i] = val;
+        }
+        int returnType = unpacker.unpackInt();
+
+        initialize (methodSig, authUser, arguments, returnType);
+    }
+
+    public void initialize (String signature, String authUser, Value[] args, int returnType) throws Exception {
         this.signature = signature;
         this.authUser = authUser;
         this.args = args;

@@ -1,8 +1,9 @@
 package com.cubrid.jsp.protocol;
 
+import com.cubrid.jsp.data.CUBRIDPacker;
 import com.cubrid.jsp.data.CUBRIDUnpacker;
 
-public class Header {
+public class Header implements PackableObject {
 
     public static final int EMPTY_SESSION_ID = 0;
     public static final int BYTES = getHeaderSize();
@@ -35,4 +36,11 @@ public class Header {
     public static int getHeaderSize() {
         return 16;
     }
+
+        @Override
+        public void pack(CUBRIDPacker packer) {
+                packer.packBigInt(id);
+                packer.packInt(code);
+                packer.packInt(requestId);
+        }
 }

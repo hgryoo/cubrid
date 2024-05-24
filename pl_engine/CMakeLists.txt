@@ -54,7 +54,7 @@ add_custom_command(TARGET pl_build
 
 add_custom_target(pl_unittest)
 add_custom_command(TARGET pl_unittest
-  COMMAND ${GRADLE_EXECUTABLE} cleanTest test -p ${PL_ENGINE_SOURCE_DIR} -DbuildDir=${PL_ENGINE_BUILD_DIR} ${LOCAL_JDBC_PATH_COMMAND}
+  COMMAND ${GRADLE_EXECUTABLE} cleanTest test -p ${PL_ENGINE_SOURCE_DIR} -PbuildDir=${PL_ENGINE_BUILD_DIR} ${LOCAL_JDBC_PATH_COMMAND}
 )
 add_dependencies(pl_unittest pl_build)
 

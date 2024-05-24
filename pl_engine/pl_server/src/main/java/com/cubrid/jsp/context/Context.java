@@ -32,16 +32,20 @@
 package com.cubrid.jsp.context;
 
 import com.cubrid.jsp.ExecuteThread;
+import com.cubrid.jsp.StoredProcedure;
 import com.cubrid.jsp.TargetMethodCache;
 import com.cubrid.jsp.classloader.ClassLoaderManager;
 import com.cubrid.jsp.classloader.ContextClassLoader;
 import com.cubrid.jsp.jdbc.CUBRIDServerSideConnection;
 import com.cubrid.jsp.protocol.Header;
+import com.cubrid.jsp.protocol.PrepareArgs;
 import com.cubrid.plcsql.builtin.MessageBuffer;
 import java.nio.ByteBuffer;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.Deque;
 import java.util.Properties;
+import java.util.Stack;
 import java.util.concurrent.LinkedBlockingQueue;
 
 public class Context {
@@ -80,8 +84,18 @@ public class Context {
     // message buffer for DBMS_OUTPUT
     private MessageBuffer messageBuffer;
 
+    // runtime
+    private Stack<PrepareArgs> argumentStack = null;
+    private Stack<StoredProcedure> procedureStack = null;
+
     public Context(long id) {
         sessionId = id;
+
+        // user sessions
+        if (id >= 0) {
+          argumentStack = new Stack<> ();
+          procedureStack = new Stack<> ();
+        }
     }
 
     public long getSessionId() {
@@ -203,5 +217,13 @@ public class Context {
     // TODO: move this function to proper place
     public static ExecuteThread getCurrentExecuteThread() {
         return (ExecuteThread) Thread.currentThread();
+    }
+
+    public Stack<PrepareArgs> getPrepareArgsStack () {
+        return argumentStack;
+    }
+
+    public Stack<StoredProcedure> getProcedureStack () {
+        return procedureStack;
     }
 }

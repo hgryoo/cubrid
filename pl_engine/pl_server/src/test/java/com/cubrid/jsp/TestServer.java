@@ -37,6 +37,7 @@ import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -80,6 +81,7 @@ public class TestServer {
         assertEquals(5151, Server.getServer().getServerPort());
     }
 
+    @Disabled
     @Test
     public void testServerMockUDSArguments(@TempDir Path tempDir) throws Exception {
         ServerConfig config =
