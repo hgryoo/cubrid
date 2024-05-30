@@ -7768,7 +7768,8 @@ pt_to_regu_variable (PARSER_CONTEXT * parser, PT_NODE * node, UNBOX unbox)
 		}
 	      else
 		{
-		assert (false)}
+		  assert (false);
+		}
 	      break;
 
 	    case PT_EXPR:
