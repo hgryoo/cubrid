@@ -6880,7 +6880,6 @@ pt_make_function (PARSER_CONTEXT * parser, int function_code, const REGU_VARIABL
   return regu;
 }
 
-
 /*
  * pt_function_to_regu () - takes a PT_FUNCTION and converts to a regu_variable
  *   return: A NULL return indicates an error occurred
@@ -7757,14 +7756,19 @@ pt_to_regu_variable (PARSER_CONTEXT * parser, PT_NODE * node, UNBOX unbox)
 	         pt_to_regu_variable() : generate regu_var for jsp function
 	         fetch_peek_dbval() : fetch regu_var for jsp function
 	       */
-
-	      /* a method call that can be evaluated as a constant expression. */
-	      regu_alloc (val);
-	      pt_evaluate_tree (parser, node, val, 1);
-	      if (!pt_has_error (parser))
+	      if (PT_IS_METHOD (node))
 		{
-		  regu = pt_make_regu_constant (parser, val, pt_node_to_db_type (node), node);
+		  /* a method call that can be evaluated as a constant expression. */
+		  regu_alloc (val);
+		  pt_evaluate_tree (parser, node, val, 1);
+		  if (!pt_has_error (parser))
+		    {
+		      regu = pt_make_regu_constant (parser, val, pt_node_to_db_type (node), node);
+		    }
 		}
+	      else
+		{
+		assert (false)}
 	      break;
 
 	    case PT_EXPR:
