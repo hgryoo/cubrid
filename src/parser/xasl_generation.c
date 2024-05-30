@@ -3846,7 +3846,7 @@ pt_to_method_sig_list (PARSER_CONTEXT * parser, PT_NODE * node_list, PT_NODE * s
 
 	      (*tail)->method_type = PT_IS_CLASS_METHOD (node) ? METHOD_TYPE_CLASS_METHOD : METHOD_TYPE_INSTANCE_METHOD;
 	    }
-	  else if (PT_IS_JAVA_SP (node))
+	  else if (PT_IS_SP (node))
 	    {
 	      (*tail)->class_name = NULL;
 	      (*tail)->method_type = METHOD_TYPE_JAVA_SP;

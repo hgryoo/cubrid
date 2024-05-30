@@ -751,7 +751,7 @@ struct json_t;
         ( (n) && (n)->node_type == PT_METHOD_CALL && \
           (n)->info.method_call.method_type == PT_IS_INST_MTHD )
 
-#define PT_IS_JAVA_SP(n) \
+#define PT_IS_SP(n) \
         ( (n) && (n)->node_type == PT_METHOD_CALL && \
           ( (n)->info.method_call.method_type == PT_SP_PROCEDURE || \
             (n)->info.method_call.method_type == PT_SP_FUNCTION) )
