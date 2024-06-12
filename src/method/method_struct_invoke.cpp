@@ -224,6 +224,35 @@ namespace cubmethod
     transaction_control = tc;
   }
 
+  invoke_java::invoke_java (METHOD_GROUP_ID id, int tid, cubxasl::sp_node *sp_node, bool tc)
+    : group_id (id)
+    , tran_id (tid)
+  {
+    signature.assign (sp_node->target);
+    auth.assign (sp_node->auth);
+    num_args = sp_node->arg_size;
+    result_type = sp_node->result_type;
+    if (num_args > 0)
+      {
+	arg_pos.resize (num_args);
+	arg_mode.resize (num_args);
+	arg_type.resize (num_args);
+	arg_default_size.resize (num_args);
+	arg_default.resize (num_args);
+
+	for (int i = 0; i < num_args; i++)
+	  {
+	    arg_pos[i] = i;
+	    arg_mode[i] = sp_node->arg_mode[i];
+	    arg_type[i] = sp_node->arg_type[i];
+	    arg_default_size[i] = sp_node->arg_default_value_size[i];
+	    arg_default[i] = sp_node->arg_default_value[i];
+	  }
+      }
+
+    transaction_control = tc;
+  }
+
   void
   invoke_java::pack (cubpacking::packer &serializator) const
   {

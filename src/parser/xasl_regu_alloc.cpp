@@ -31,6 +31,7 @@
 #include "xasl_aggregate.hpp"
 #include "xasl_analytic.hpp"
 #include "xasl_predicate.hpp"
+#include "xasl_sp.hpp"
 
 #include <cstring>
 
@@ -286,6 +287,23 @@ regu_init (function_node &fnode)
   fnode.tmp_obj = NULL;
 
   regu_alloc (fnode.value);
+}
+
+void
+regu_init (cubxasl::sp_node &sp)
+{
+  sp.name = NULL;
+  sp.auth = NULL;
+  sp.type = 0;
+  sp.arg_size = 0;
+  sp.args = NULL;
+  sp.arg_mode = NULL;
+  sp.arg_type = NULL;
+  sp.arg_default_value = NULL;
+  sp.arg_default_value_size = NULL;
+  sp.result_type = 0;
+
+  regu_alloc (sp.value);
 }
 
 void

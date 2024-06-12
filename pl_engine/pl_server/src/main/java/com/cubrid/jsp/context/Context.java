@@ -136,7 +136,7 @@ public class Context {
 
         if (tranactionId != tid) {
             // re-cretae dynamic class loader
-            if (classLoader
+            if (classLoader != null && classLoader
                             .getInitializedTime()
                             .compareTo(
                                     ClassLoaderManager.getLastModifiedTimeOfPath(

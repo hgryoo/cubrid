@@ -145,6 +145,7 @@ namespace cubxasl
 using AGGREGATE_TYPE = cubxasl::aggregate_list_node;
 using ANALYTIC_EVAL_TYPE = cubxasl::analytic_eval_type;
 using PRED_EXPR = cubxasl::pred_expr;
+using SP_TYPE = cubxasl::sp_node;
 // *INDENT-ON*
 
 #if defined (SERVER_MODE) || defined (SA_MODE)

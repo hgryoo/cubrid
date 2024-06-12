@@ -319,9 +319,9 @@ public class ExecuteThread extends Thread {
 
         StoredProcedure procedure = makeStoredProcedure(unpacker);
 
-        pushUser(procedure.getAuthUser());
+        // pushUser(procedure.getAuthUser());
         Value result = procedure.invoke();
-        popUser();
+        // popUser();
 
         /* send results */
         sendResult(result, procedure);

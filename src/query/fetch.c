@@ -55,6 +55,7 @@
 #include "thread_entry.hpp"
 
 #include "dbtype.h"
+#include "sp_executor.hpp"
 
 static int fetch_peek_arith (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr * vd, OID * obj_oid,
 			     QFILE_TUPLE tpl, DB_VALUE ** peek_dbval);
@@ -3929,6 +3930,63 @@ fetch_peek_dbval (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 	      || REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_FETCH_NOT_CONST));
       break;
 
+    case TYPE_SP:		/* fetch stored procedure value */
+      {
+	if (REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_FETCH_ALL_CONST))
+	  {
+	    *peek_dbval = regu_var->value.sp_ptr->value;
+	    return NO_ERROR;
+	  }
+
+	assert (!REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_FETCH_ALL_CONST));
+
+	{
+	  /* clear any value from a previous iteration */
+
+	  pr_clear_value (regu_var->value.sp_ptr->value);
+	  cubsp::sp_executor group (thread_p, *regu_var->value.sp_ptr);
+	  error = group.execute (vd, obj_oid, tpl);
+	  if (error != NO_ERROR)
+	    {
+	      goto exit_on_error;
+	    }
+
+	  *peek_dbval = regu_var->value.sp_ptr->value;
+	  // const operands
+
+	  /* check for the first time */
+	  if (!REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_FETCH_ALL_CONST)
+	      && !REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_FETCH_NOT_CONST))
+	    {
+	      int not_const = 0;
+
+	      regu_variable_list_node *operand;
+	      operand = regu_var->value.sp_ptr->args;
+	      while (operand != NULL)
+		{
+		  if (!REGU_VARIABLE_IS_FLAGED (&(operand->value), REGU_VARIABLE_FETCH_ALL_CONST))
+		    {
+		      not_const++;
+		      break;
+		    }
+		  operand = operand->next;
+		}
+
+	      if (not_const == 0)
+		{
+		  REGU_VARIABLE_SET_FLAG (regu_var, REGU_VARIABLE_FETCH_ALL_CONST);
+		  assert (!REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_FETCH_NOT_CONST));
+		}
+	      else
+		{
+		  REGU_VARIABLE_SET_FLAG (regu_var, REGU_VARIABLE_FETCH_NOT_CONST);
+		  assert (!REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_FETCH_ALL_CONST));
+		}
+	    }
+	}
+      }
+      break;
+
     case TYPE_FUNC:		/* fetch function value */
       if (REGU_VARIABLE_IS_FLAGED (regu_var, REGU_VARIABLE_FETCH_ALL_CONST))
 	{
@@ -4863,6 +4921,7 @@ fetch_force_not_const_recursive (REGU_VARIABLE & reguvar)
       case TYPE_INARITH:
       case TYPE_OUTARITH:
       case TYPE_FUNC:
+      case TYPE_SP:
         REGU_VARIABLE_SET_FLAG (&regu, REGU_VARIABLE_FETCH_NOT_CONST);
         break;
       default:

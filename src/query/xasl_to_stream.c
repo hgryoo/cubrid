@@ -44,6 +44,7 @@
 #include "xasl_predicate.hpp"
 #include "xasl_stream.hpp"
 #include "xasl_unpack_info.hpp"
+#include "xasl_sp.hpp"
 
 #define    BYTE_SIZE        OR_INT_SIZE
 #define    LONG_SIZE        OR_INT_SIZE
@@ -78,6 +79,7 @@ static int xts_save_aggregate_type (const AGGREGATE_TYPE * aggregate);
 static int xts_save_function_type (const FUNCTION_TYPE * function);
 static int xts_save_analytic_type (const ANALYTIC_TYPE * analytic);
 static int xts_save_analytic_eval_type (const ANALYTIC_EVAL_TYPE * analytic);
+static int xts_save_sp_type (const SP_TYPE * sp);
 static int xts_save_srlist_id (const QFILE_SORTED_LIST_ID * sort_list_id);
 static int xts_save_list_id (const QFILE_LIST_ID * list_id);
 static int xts_save_arith_type (const ARITH_TYPE * arithmetic);
@@ -183,6 +185,7 @@ static char *xts_process_aggregate_type (char *ptr, const AGGREGATE_TYPE * aggre
 static char *xts_process_analytic_type (char *ptr, const ANALYTIC_TYPE * analytic);
 static char *xts_process_analytic_eval_type (char *ptr, const ANALYTIC_EVAL_TYPE * analytic);
 static char *xts_process_function_type (char *ptr, const FUNCTION_TYPE * function);
+static char *xts_process_sp_type (char *ptr, const SP_TYPE * sp);
 static char *xts_process_srlist_id (char *ptr, const QFILE_SORTED_LIST_ID * sort_list_id);
 static char *xts_process_sort_list (char *ptr, const SORT_LIST * sort_list);
 static char *xts_process_method_sig_list (char *ptr, const METHOD_SIG_LIST * method_sig_list);
@@ -240,6 +243,7 @@ static int xts_sizeof_db_value (const DB_VALUE * ptr);
 static int xts_sizeof_arith_type (const ARITH_TYPE * ptr);
 static int xts_sizeof_aggregate_type (const AGGREGATE_TYPE * ptr);
 static int xts_sizeof_function_type (const FUNCTION_TYPE * ptr);
+static int xts_sizeof_sp_type (const SP_TYPE * ptr);
 static int xts_sizeof_analytic_type (const ANALYTIC_TYPE * ptr);
 static int xts_sizeof_analytic_eval_type (const ANALYTIC_EVAL_TYPE * ptr);
 static int xts_sizeof_srlist_id (const QFILE_SORTED_LIST_ID * ptr);
@@ -543,6 +547,74 @@ xts_save_aggregate_type (const AGGREGATE_TYPE * aggregate)
     }
 
   buf = xts_process_aggregate_type (buf_p, aggregate);
+  if (buf == NULL)
+    {
+      offset = ER_FAILED;
+      goto end;
+    }
+  assert (buf <= buf_p + size);
+
+  memcpy (&xts_Stream_buffer[offset], buf_p, size);
+
+end:
+  if (is_buf_alloced)
+    {
+      free_and_init (buf_p);
+    }
+
+  return offset;
+}
+
+static int
+xts_save_sp_type (const SP_TYPE * sp)
+{
+  int offset;
+  int size;
+  OR_ALIGNED_BUF (sizeof (*sp) * 2) a_buf;
+  char *buf = OR_ALIGNED_BUF_START (a_buf);
+  char *buf_p = NULL;
+  bool is_buf_alloced = false;
+
+  if (sp == NULL)
+    {
+      return NO_ERROR;
+    }
+
+  offset = xts_get_offset_visited_ptr (sp);
+  if (offset != ER_FAILED)
+    {
+      return offset;
+    }
+
+  size = xts_sizeof_sp_type (sp);
+  if (size == ER_FAILED)
+    {
+      return ER_FAILED;
+    }
+
+  offset = xts_reserve_location_in_stream (size);
+  if (offset == ER_FAILED || xts_mark_ptr_visited (sp, offset) == ER_FAILED)
+    {
+      return ER_FAILED;
+    }
+
+  if (size <= (int) OR_ALIGNED_BUF_SIZE (a_buf))
+    {
+      buf_p = buf;
+    }
+  else
+    {
+      buf_p = (char *) malloc (size);
+      if (buf_p == NULL)
+	{
+	  xts_Xasl_errcode = ER_OUT_OF_VIRTUAL_MEMORY;
+	  return ER_FAILED;
+	}
+
+      is_buf_alloced = true;
+    }
+
+  buf = xts_process_sp_type (buf_p, sp);
   if (buf == NULL)
     {
       offset = ER_FAILED;
@@ -5341,6 +5413,15 @@ xts_pack_regu_variable_value (char *ptr, const REGU_VARIABLE * regu_var)
       ptr = or_pack_int (ptr, offset);
       break;
 
+    case TYPE_SP:
+      offset = xts_save_sp_type (regu_var->value.sp_ptr);
+      if (offset == ER_FAILED)
+	{
+	  return NULL;
+	}
+      ptr = or_pack_int (ptr, offset);
+      break;
+
     case TYPE_FUNC:
       offset = xts_save_function_type (regu_var->value.funcp);
       if (offset == ER_FAILED)
@@ -5563,6 +5644,85 @@ xts_process_aggregate_type (char *ptr, const AGGREGATE_TYPE * aggregate)
 
       ptr = or_pack_int (ptr, offset);
     }
+
+  return ptr;
+}
+
+static char *
+xts_process_sp_type (char *ptr, const SP_TYPE * sp)
+{
+  int offset;
+
+  offset = xts_save_db_value (sp->value);
+  if (offset == ER_FAILED)
+    {
+      return NULL;
+    }
+  ptr = or_pack_int (ptr, offset);
+
+  offset = xts_save_string (sp->name);
+  if (offset == ER_FAILED)
+    {
+      return NULL;
+    }
+  ptr = or_pack_int (ptr, offset);
+
+  offset = xts_save_string (sp->auth);
+  if (offset == ER_FAILED)
+    {
+      return NULL;
+    }
+  ptr = or_pack_int (ptr, offset);
+
+  ptr = or_pack_int (ptr, sp->type);
+  ptr = or_pack_int (ptr, sp->arg_size);
+
+  offset = xts_save_regu_variable_list (sp->args);
+  if (offset == ER_FAILED)
+    {
+      return NULL;
+    }
+  ptr = or_pack_int (ptr, offset);
+
+  offset = xts_save_int_array (sp->arg_mode, sp->arg_size);
+  if (offset == ER_FAILED)
+    {
+      return NULL;
+    }
+  ptr = or_pack_int (ptr, offset);
+
+  offset = xts_save_int_array (sp->arg_type, sp->arg_size);
+  if (offset == ER_FAILED)
+    {
+      return NULL;
+    }
+  ptr = or_pack_int (ptr, offset);
+
+  for (int i = 0; i < sp->arg_size; i++)
+    {
+      offset = xts_save_string (sp->arg_default_value[i]);
+      if (offset == ER_FAILED)
+	{
+	  return NULL;
+	}
+      ptr = or_pack_int (ptr, offset);
+    }
+
+  offset = xts_save_int_array (sp->arg_default_value_size, sp->arg_size);
+  if (offset == ER_FAILED)
+    {
+      return NULL;
+    }
+  ptr = or_pack_int (ptr, offset);
+
+  ptr = or_pack_int (ptr, sp->result_type);
+
+  offset = xts_save_string (sp->target);
+  if (offset == ER_FAILED)
+    {
+      return NULL;
+    }
+  ptr = or_pack_int (ptr, offset);
 
   return ptr;
 }
@@ -7283,6 +7443,10 @@ xts_get_regu_variable_value_size (const REGU_VARIABLE * regu_var)
       size = PTR_SIZE;		/* arithptr */
       break;
 
+    case TYPE_SP:
+      size = PTR_SIZE;
+      break;
+
     case TYPE_FUNC:
       size = PTR_SIZE;		/* funcp */
       break;
@@ -7435,6 +7599,32 @@ xts_sizeof_aggregate_type (const AGGREGATE_TYPE * aggregate)
 	  size += tmp_size;
 	}
     }
+
+  return size;
+}
+
+/*
+ * xts_sizeof_function_type () -
+ *   return:
+ *   ptr(in)    :
+ */
+static int
+xts_sizeof_sp_type (const SP_TYPE * sp)
+{
+  int size = 0;
+
+  size += (PTR_SIZE		/* value */
+	   + PTR_SIZE		/* name */
+	   + PTR_SIZE		/* auth */
+	   + OR_INT_SIZE	/* type */
+	   + OR_INT_SIZE	/* arg_size */
+	   + PTR_SIZE		/* args */
+	   + PTR_SIZE		// (sp->arg_size * OR_INT_SIZE)   /* arg_mode */
+	   + PTR_SIZE		// (sp->arg_size * OR_INT_SIZE)   /* arg_type */
+	   + PTR_SIZE * sp->arg_size	// (sp->arg_size * PTR_SIZE)      /* arg_default_value */
+	   + PTR_SIZE		// (sp->arg_size * OR_INT_SIZE)   /* arg_default_value_size */
+	   + OR_INT_SIZE	/* result_type */
+	   + PTR_SIZE);		/* target */
 
   return size;
 }

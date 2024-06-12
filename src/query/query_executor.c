@@ -80,6 +80,7 @@
 #include "xasl_aggregate.hpp"
 #include "xasl_analytic.hpp"
 #include "xasl_predicate.hpp"
+#include "xasl_sp.hpp"
 
 #include <vector>
 
@@ -1554,6 +1555,10 @@ qexec_clear_regu_var (THREAD_ENTRY * thread_p, XASL_NODE * xasl_p, REGU_VARIABLE
     case TYPE_INARITH:
     case TYPE_OUTARITH:
       pg_cnt += qexec_clear_arith_list (thread_p, xasl_p, regu_var->value.arithptr, is_final);
+      break;
+    case TYPE_SP:
+      pr_clear_value (regu_var->value.sp_ptr->value);
+      pg_cnt += qexec_clear_regu_list (thread_p, xasl_p, regu_var->value.sp_ptr->args, is_final);
       break;
     case TYPE_FUNC:
       pr_clear_value (regu_var->value.funcp->value);
@@ -7591,6 +7596,10 @@ qexec_reset_regu_variable (REGU_VARIABLE * var)
     case TYPE_FUNC:
       /* use funcp */
       qexec_reset_regu_variable_list (var->value.funcp->operand);
+      break;
+    case TYPE_SP:
+      /* use sp_ptr */
+      qexec_reset_regu_variable_list (var->value.sp_ptr->args);
       break;
     default:
       break;
@@ -16298,6 +16307,17 @@ qexec_replace_prior_regu_vars_prior_expr (THREAD_ENTRY * thread_p, regu_variable
       }
       break;
 
+    case TYPE_SP:
+      {
+	REGU_VARIABLE_LIST r = regu->value.sp_ptr->args;
+	while (r)
+	  {
+	    qexec_replace_prior_regu_vars_prior_expr (thread_p, &r->value, xasl, connect_by_ptr);
+	    r = r->next;
+	  }
+      }
+      break;
+
     default:
       break;
     }
@@ -16344,6 +16364,18 @@ qexec_replace_prior_regu_vars (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu, XA
 	  }
       }
       break;
+
+    case TYPE_SP:
+      {
+	REGU_VARIABLE_LIST r = regu->value.sp_ptr->args;
+	while (r)
+	  {
+	    qexec_replace_prior_regu_vars (thread_p, &r->value, xasl);
+	    r = r->next;
+	  }
+      }
+      break;
+
 
     default:
       break;

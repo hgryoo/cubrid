@@ -25,6 +25,7 @@
 #include "method_def.hpp"
 #include "mem_block.hpp"
 #include "packable_object.hpp"
+#include "xasl_sp.hpp"
 
 /*
  * method_struct_invoke.hpp
@@ -102,6 +103,7 @@ namespace cubmethod
   {
     invoke_java () = delete;
     invoke_java (METHOD_GROUP_ID group_id, int tran_id, method_sig_node *sig, bool tc);
+    invoke_java (METHOD_GROUP_ID group_id, int tran_id, cubxasl::sp_node *sp_node, bool tc);
 
     void pack (cubpacking::packer &serializator) const override;
     void unpack (cubpacking::unpacker &deserializator) override;

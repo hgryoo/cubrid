@@ -42,9 +42,11 @@
 #include "xasl_predicate.hpp"
 #include "xasl_stream.hpp"
 #include "xasl_unpack_info.hpp"
+#include "xasl_sp.hpp"
 
 static ACCESS_SPEC_TYPE *stx_restore_access_spec_type (THREAD_ENTRY * thread_p, char **ptr, void *arg);
 static AGGREGATE_TYPE *stx_restore_aggregate_type (THREAD_ENTRY * thread_p, char *ptr);
+static SP_TYPE *stx_restore_sp_type (THREAD_ENTRY * thread_p, char *ptr);
 static FUNCTION_TYPE *stx_restore_function_type (THREAD_ENTRY * thread_p, char *ptr);
 static ANALYTIC_TYPE *stx_restore_analytic_type (THREAD_ENTRY * thread_p, char *ptr);
 static ANALYTIC_EVAL_TYPE *stx_restore_analytic_eval_type (THREAD_ENTRY * thread_p, char *ptr);
@@ -138,6 +140,8 @@ static char *stx_build_analytic_eval_type (THREAD_ENTRY * thread_p, char *tmp, A
 static char *stx_build_srlist_id (THREAD_ENTRY * thread_p, char *tmp, QFILE_SORTED_LIST_ID * ptr);
 static char *stx_build_sort_list (THREAD_ENTRY * thread_p, char *tmp, SORT_LIST * ptr);
 static char *stx_build_connectby_proc (THREAD_ENTRY * thread_p, char *tmp, CONNECTBY_PROC_NODE * ptr);
+static char *stx_build_sp_type (THREAD_ENTRY * thread_p, char *tmp, SP_TYPE * ptr);
+
 
 static REGU_VALUE_LIST *stx_regu_value_list_alloc_and_init (THREAD_ENTRY * thread_p);
 static REGU_VALUE_ITEM *stx_regu_value_item_alloc_and_init (THREAD_ENTRY * thread_p);
@@ -420,6 +424,37 @@ stx_restore_aggregate_type (THREAD_ENTRY * thread_p, char *ptr)
     }
 
   return aggregate;
+}
+
+static SP_TYPE *
+stx_restore_sp_type (THREAD_ENTRY * thread_p, char *ptr)
+{
+  SP_TYPE *sp;
+
+  if (ptr == NULL)
+    {
+      return NULL;
+    }
+
+  sp = (SP_TYPE *) stx_get_struct_visited_ptr (thread_p, ptr);
+  if (sp != NULL)
+    {
+      return sp;
+    }
+
+  sp = (SP_TYPE *) stx_alloc_struct (thread_p, sizeof (*sp));
+  if (sp == NULL)
+    {
+      stx_set_xasl_errcode (thread_p, ER_OUT_OF_VIRTUAL_MEMORY);
+      return NULL;
+    }
+
+  if (stx_mark_struct_visited (thread_p, ptr, sp) == ER_FAILED || stx_build_sp_type (thread_p, ptr, sp) == NULL)
+    {
+      return NULL;
+    }
+
+  return sp;
 }
 
 static FUNCTION_TYPE *
@@ -5561,6 +5596,22 @@ stx_unpack_regu_variable_value (THREAD_ENTRY * thread_p, char *ptr, REGU_VARIABL
 	}
       break;
 
+    case TYPE_SP:
+      ptr = or_unpack_int (ptr, &offset);
+      if (offset == 0)
+	{
+	  regu_var->value.sp_ptr = NULL;
+	}
+      else
+	{
+	  regu_var->value.sp_ptr = stx_restore_sp_type (thread_p, &xasl_unpack_info_p->packed_xasl[offset]);
+	  if (regu_var->value.sp_ptr == NULL)
+	    {
+	      goto error;
+	    }
+	}
+      break;
+
     case TYPE_ATTR_ID:
     case TYPE_SHARED_ATTR_ID:
     case TYPE_CLASS_ATTR_ID:
@@ -5918,6 +5969,119 @@ stx_build_aggregate_type (THREAD_ENTRY * thread_p, char *ptr, AGGREGATE_TYPE * a
 error:
   stx_set_xasl_errcode (thread_p, ER_OUT_OF_VIRTUAL_MEMORY);
   return NULL;
+}
+
+static char *
+stx_build_sp_type (THREAD_ENTRY * thread_p, char *ptr, SP_TYPE * sp)
+{
+  int tmp, offset;
+  XASL_UNPACK_INFO *xasl_unpack_info = get_xasl_unpack_info_ptr (thread_p);
+
+  ptr = or_unpack_int (ptr, &offset);
+  if (offset == 0)
+    {
+      sp->value = NULL;
+    }
+  else
+    {
+      sp->value = stx_restore_db_value (thread_p, &xasl_unpack_info->packed_xasl[offset]);
+      if (sp->value == NULL)
+	{
+	  stx_set_xasl_errcode (thread_p, ER_OUT_OF_VIRTUAL_MEMORY);
+	  return NULL;
+	}
+      assert (sp->value->need_clear == false);
+    }
+
+  sp->name = stx_restore_string (thread_p, ptr);
+  if (sp->name == NULL)
+    {
+      assert (false);
+      return NULL;
+    }
+
+  sp->auth = stx_restore_string (thread_p, ptr);
+
+  ptr = or_unpack_int (ptr, (int *) &sp->type);
+  ptr = or_unpack_int (ptr, (int *) &sp->arg_size);
+
+  ptr = or_unpack_int (ptr, &offset);
+  if (offset == 0)
+    {
+      sp->args = NULL;
+    }
+  else
+    {
+      sp->args = stx_restore_regu_variable_list (thread_p, &xasl_unpack_info->packed_xasl[offset]);
+      if (sp->args == NULL)
+	{
+	  stx_set_xasl_errcode (thread_p, ER_OUT_OF_VIRTUAL_MEMORY);
+	  return NULL;
+	}
+    }
+
+  // arg_mode
+  ptr = or_unpack_int (ptr, &offset);
+  if (offset == 0 || sp->arg_size == 0)
+    {
+      sp->arg_mode = NULL;
+    }
+  else
+    {
+      sp->arg_mode = stx_restore_int_array (thread_p, &xasl_unpack_info->packed_xasl[offset], sp->arg_size);
+      if (sp->arg_mode == NULL)
+	{
+	  return NULL;
+	}
+    }
+
+  // arg_type
+  ptr = or_unpack_int (ptr, &offset);
+  if (offset == 0 || sp->arg_size == 0)
+    {
+      sp->arg_type = NULL;
+    }
+  else
+    {
+      sp->arg_type = stx_restore_int_array (thread_p, &xasl_unpack_info->packed_xasl[offset], sp->arg_size);
+      if (sp->arg_type == NULL)
+	{
+	  return NULL;
+	}
+    }
+
+  sp->arg_default_value = (char **) malloc (sizeof (char *) * sp->arg_size);
+  if (sp->arg_default_value == NULL)
+    {
+      stx_set_xasl_errcode (thread_p, ER_OUT_OF_VIRTUAL_MEMORY);
+      return NULL;
+    }
+
+  for (int i = 0; i < sp->arg_size; i++)
+    {
+      sp->arg_default_value[i] = stx_restore_string (thread_p, ptr);
+    }
+
+  ptr = or_unpack_int (ptr, &offset);
+  if (offset == 0 || sp->arg_size == 0)
+    {
+      sp->arg_default_value_size = NULL;
+    }
+  else
+    {
+      sp->arg_default_value_size =
+	stx_restore_int_array (thread_p, &xasl_unpack_info->packed_xasl[offset], sp->arg_size);
+      if (sp->arg_default_value_size == NULL)
+	{
+	  return NULL;
+	}
+    }
+
+  ptr = or_unpack_int (ptr, (int *) &sp->result_type);
+
+  sp->target = stx_restore_string (thread_p, ptr);
+
+  return ptr;
 }
 
 static char *
