@@ -882,7 +882,10 @@ jsp_create_stored_procedure (PARSER_CONTEXT *parser, PT_NODE *statement)
       PT_NODE *default_value = p->info.sp_param.default_value;
       if (default_value)
 	{
-	  pt_evaluate_tree (parser, default_value->info.data_default.default_value, &arg_info.default_value, 1);
+	  // pt_evaluate_tree (parser, default_value->info.data_default.default_value, &arg_info.default_value, 1);
+
+	  const char *default_value_str = parser_print_tree (parser, default_value->info.data_default.default_value);
+	  db_make_string (&arg_info.default_value, default_value_str);
 	  arg_info.is_optional = true;
 	}
       else

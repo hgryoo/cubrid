@@ -9501,6 +9501,7 @@ pt_check_default_value_param_for_stored_procedure (PARSER_CONTEXT * parser, PT_N
       return error;
     }
 
+#if 0
   if (default_value_node->info.data_default.default_expr_type != DB_DEFAULT_NONE)
     {
       PT_ERRORmf (parser,
@@ -9509,7 +9510,9 @@ pt_check_default_value_param_for_stored_procedure (PARSER_CONTEXT * parser, PT_N
 		  MSGCAT_SEMANTIC_DEFAULT_EXPR_NOT_ALLOWED,
 		  pt_short_print (parser, default_value_node->info.data_default.default_value));
     }
-  else
+#endif
+
+  if (default_value_node->info.data_default.default_expr_type == DB_DEFAULT_NONE)
     {
       error =
 	pt_coerce_value_for_default_value (parser, default_value, default_value, param->type_enum,
