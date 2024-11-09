@@ -2367,6 +2367,12 @@ jsp_get_default_expr_node_list (PARSER_CONTEXT *parser, cubpl::pl_signature &sig
 
       if (default_next_node != NULL)
 	{
+	  default_next_node = pt_semantic_type (parser, default_next_node, NULL);
+	  if (default_next_node == NULL)
+	    {
+	      return NULL;
+	    }
+
 	  default_next_node_list = parser_append_node (default_next_node, default_next_node_list);
 	}
     }
