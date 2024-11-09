@@ -9512,6 +9512,7 @@ pt_check_default_value_param_for_stored_procedure (PARSER_CONTEXT * parser, PT_N
     }
 #endif
 
+#if 0
   if (default_value_node->info.data_default.default_expr_type == DB_DEFAULT_NONE)
     {
       error =
@@ -9525,6 +9526,7 @@ pt_check_default_value_param_for_stored_procedure (PARSER_CONTEXT * parser, PT_N
 		       default_value_print, pt_get_type_name (param->type_enum, param->data_type));
 	}
     }
+#endif
 
   return error;
 }

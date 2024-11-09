@@ -76,6 +76,7 @@ namespace cubpl
     serializator.pack_int (lang);
     serializator.pack_int (num_args);
 
+    dbvalue_java sp_val;
     for (int i = 0; i < num_args; i++)
       {
 	serializator.pack_int (arg_mode[i]);
@@ -103,6 +104,7 @@ namespace cubpl
     size += serializator.get_packed_int_size (size); // lang
     size += serializator.get_packed_int_size (size); // num_args
 
+    dbvalue_java sp_val;
     for (int i = 0; i < num_args; i++)
       {
 	size += serializator.get_packed_int_size (size); // arg_mode

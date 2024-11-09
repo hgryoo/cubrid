@@ -49,8 +49,6 @@ import com.cubrid.jsp.exception.TypeMismatchException;
 import com.cubrid.jsp.protocol.Header;
 import com.cubrid.jsp.protocol.PrepareArgs;
 import com.cubrid.jsp.protocol.RequestCode;
-import com.cubrid.jsp.value.NullValue;
-import com.cubrid.jsp.value.StringValue;
 import com.cubrid.jsp.value.Value;
 import com.cubrid.jsp.value.ValueUtilities;
 import com.cubrid.plcsql.compiler.PlcsqlCompilerMain;
@@ -438,8 +436,6 @@ public class ExecuteThread extends Thread {
 
             val.setMode(mode);
             val.setDbType(type);
-
-            methodArgs[i] = val;
         }
         int returnType = unpacker.unpackInt();
 

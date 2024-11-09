@@ -65,6 +65,8 @@
 #include "authenticate_access_auth.hpp"
 #include "pl_signature.hpp"
 #include "oid.h"
+#include "string_buffer.hpp"
+#include "db_value_printer.hpp"
 
 #define PT_NODE_SP_NAME(node) \
   (((node)->info.sp.name == NULL) ? "" : \
@@ -132,6 +134,7 @@ static int drop_stored_procedure_code (const char *name);
 static int alter_stored_procedure_code (PARSER_CONTEXT *parser, MOP sp_mop, const char *name, const char *owner_str,
 					int sp_recompile);
 
+static int jsp_default_value_string (PARSER_CONTEXT *parser, PT_NODE *node, std::string &out);
 static int check_execute_authorization (const MOP sp_obj, const DB_AUTH au_type);
 
 extern bool ssl_client;
@@ -619,7 +622,7 @@ jsp_evaluate_arguments (PARSER_CONTEXT *parser, PT_NODE *statement,
 	  db_make_null (db_value);
 
 	  /* must call pt_evaluate_tree */
-	  pt_evaluate_tree (parser, vc, db_value, 1);
+	  pt_evaluate_tree_having_serial (parser, vc, db_value, 1);
 	  if (pt_has_error (parser))
 	    {
 	      /* to maintain the list to free all the allocated */
@@ -669,90 +672,61 @@ jsp_call_stored_procedure (PARSER_CONTEXT *parser, PT_NODE *statement)
   DB_VALUE ret_value;
   db_make_null (&ret_value);
 
+  /* call sp */
   std::vector <std::reference_wrapper <DB_VALUE>> args;
-
-  error = jsp_evaluate_arguments (parser, statement, args);
-  if (pt_has_error (parser))
+  cubpl::pl_signature sig;
+  error = jsp_make_pl_signature (parser, statement, NULL, sig);
+  if (error == NO_ERROR)
     {
-      pt_report_to_ersys (parser, PT_SEMANTIC);
-      error = er_errid ();
-    }
-  else
-    {
-      /* call sp */
-      cubpl::pl_signature sig;
-      error = jsp_make_pl_signature (parser, statement, NULL, sig);
-
-      // evaluate defaults
       PT_NODE *default_next_node_list = jsp_get_default_expr_node_list (parser, sig);
-      while (default_next_node_list)
+      if (default_next_node_list != NULL)
 	{
-	  DB_VALUE *db_value;
-	  if (PT_IS_CONST (default_next_node_list))
-	    {
-	      db_value = pt_value_to_db (parser, default_next_node_list);
-	    }
-	  else
-	    {
-	      db_value = (DB_VALUE *) malloc (sizeof (DB_VALUE));
-	      if (db_value == NULL)
-		{
-		  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1,
-			  sizeof (DB_VALUE));
-		}
-
-	      db_make_null (db_value);
-
-	      /* must call pt_evaluate_tree */
-	      pt_evaluate_tree (parser, default_next_node_list, db_value, 1);
-	      if (pt_has_error (parser))
-		{
-		  /* to maintain the list to free all the allocated */
-		  db_value_clear (db_value);
-		  error = ER_FAILED;
-                  break;
-		}
-	    }
-
-          args.emplace_back (std::ref (*db_value));
-	  default_next_node_list = default_next_node_list->next;
+	  error = qp_get_server_info (parser, SI_SYS_DATETIME);
 	}
-
-      if (error == NO_ERROR && locator_get_sig_interrupt () == 0)
+      statement->info.method_call.arg_list = parser_append_node (default_next_node_list,
+					     statement->info.method_call.arg_list);
+      error = jsp_evaluate_arguments (parser, statement, args);
+      if (pt_has_error (parser))
 	{
-	  std::vector <DB_VALUE> out_args;
-	  error = pl_call (sig, args, out_args, ret_value);
-	  if (error == NO_ERROR)
+	  pt_report_to_ersys (parser, PT_SEMANTIC);
+	  error = er_errid ();
+	}
+    }
+
+  if (error == NO_ERROR && locator_get_sig_interrupt () == 0)
+    {
+      std::vector <DB_VALUE> out_args;
+      error = pl_call (sig, args, out_args, ret_value);
+      if (error == NO_ERROR)
+	{
+	  for (int i = 0, j = 0; i < sig.arg.arg_size; i++)
 	    {
-	      for (int i = 0, j = 0; i < sig.arg.arg_size; i++)
+	      if (sig.arg.arg_mode[i] == SP_MODE_IN)
 		{
-		  if (sig.arg.arg_mode[i] == SP_MODE_IN)
-		    {
-		      continue;
-		    }
-
-		  DB_VALUE &arg = args[i];
-		  DB_VALUE &out_arg = out_args[j++];
-
-		  db_value_clear (&arg);
-		  db_value_clone (&out_arg, &arg);
-		  db_value_clear (&out_arg);
+		  continue;
 		}
+
+	      DB_VALUE &arg = args[i];
+	      DB_VALUE &out_arg = out_args[j++];
+
+	      db_value_clear (&arg);
+	      db_value_clone (&out_arg, &arg);
+	      db_value_clear (&out_arg);
 	    }
 	}
     }
 
-      PT_NODE *vc = statement->info.method_call.arg_list;
-      for (int i = 0; i < (int) args.size () && vc; i++)
+  PT_NODE *vc = statement->info.method_call.arg_list;
+  for (int i = 0; i < (int) args.size () && vc; i++)
+    {
+      if (!PT_IS_CONST (vc))
 	{
-	  if (!PT_IS_CONST (vc))
-	    {
-	      DB_VALUE &arg = args[i];
-	      db_value_clear (&arg);
-	      free (&arg);
-	    }
-	  vc = vc->next;
+	  DB_VALUE &arg = args[i];
+	  db_value_clear (&arg);
+	  free (&arg);
 	}
+      vc = vc->next;
+    }
 
   if (error == NO_ERROR)
     {
@@ -824,6 +798,91 @@ jsp_drop_stored_procedure (PARSER_CONTEXT *parser, PT_NODE *statement)
     }
 
   return err;
+}
+
+/*
+ * jsp_default_value_string
+ *   return:
+ *   parser(in/out): parser environment
+ *   statement(in): a default_value node
+ *
+ * Note:
+ */
+static int
+jsp_default_value_string (PARSER_CONTEXT *parser, PT_NODE *node, std::string &out)
+{
+  int error = NO_ERROR;
+
+  DB_DEFAULT_EXPR default_expr;
+  pt_get_default_expression_from_data_default_node (parser, node, &default_expr);
+
+  out.clear ();
+  if (default_expr.default_expr_type != DB_DEFAULT_NONE)
+    {
+      if (default_expr.default_expr_type == NULL_DEFAULT_EXPRESSION_OPERATOR)
+	{
+	  DB_VALUE *value = pt_value_to_db (parser, node->info.data_default.default_value);
+	  if (!DB_IS_NULL (value))
+	    {
+	      string_buffer sb;
+	      sb.clear ();
+	      db_sprint_value (value, sb);
+
+	      out.append (sb.get_buffer ());
+	    }
+	  else
+	    {
+	      // empty out consider as NULL
+	    }
+	}
+      else
+	{
+	  if (default_expr.default_expr_op == T_TO_CHAR)
+	    {
+	      out.append ("TO_CHAR(");
+	    }
+
+	  const char *default_value_expr_type_string = db_default_expression_string (default_expr.default_expr_type);
+	  if (default_value_expr_type_string != NULL)
+	    {
+	      out.append (default_value_expr_type_string);
+	    }
+	  else
+	    {
+	      out.append (parser_print_tree (parser, node));
+	    }
+
+	  if (default_expr.default_expr_op == T_TO_CHAR)
+	    {
+	      if (default_expr.default_expr_format != NULL)
+		{
+		  out.append (", \'");
+		  out.append (default_expr.default_expr_format);
+		  out.append ("\'");
+		}
+
+	      out.append (")");
+	    }
+	}
+    }
+  else
+    {
+      DB_VALUE *value = pt_value_to_db (parser, node->info.data_default.default_value);
+      if (!DB_IS_NULL (value))
+	{
+	  string_buffer sb;
+	  sb.clear ();
+	  db_sprint_value (value, sb);
+
+	  out.append (sb.get_buffer ());
+	}
+      else
+	{
+	  // empty out consider as NULL
+	}
+    }
+
+  return error;
 }
 
 /*
@@ -915,15 +974,30 @@ jsp_create_stored_procedure (PARSER_CONTEXT *parser, PT_NODE *statement)
       PT_NODE *default_value = p->info.sp_param.default_value;
       if (default_value)
 	{
-	  // pt_evaluate_tree (parser, default_value->info.data_default.default_value, &arg_info.default_value, 1);
+	  std::string default_value_str;
+	  if (jsp_default_value_string (parser, default_value, default_value_str) == NO_ERROR)
+	    {
+	      if (!default_value_str.empty ())
+		{
+		  db_make_string (&arg_info.default_value, ws_copy_string (default_value_str.c_str ()));
+		}
+	      else
+		{
+		  db_make_null (&arg_info.default_value);
+		}
 
-	  const char *default_value_str = parser_print_tree (parser, default_value->info.data_default.default_value);
-	  db_make_string (&arg_info.default_value, default_value_str);
-	  arg_info.is_optional = true;
+	      arg_info.is_optional = true;
+	    }
+	  else
+	    {
+	      ASSERT_ERROR ();
+	      goto error_exit;
+	    }
 	}
       else
 	{
 	  db_make_null (&arg_info.default_value);
+	  arg_info.is_optional = false; // explicitly
 	}
 
       arg_info.comment = (char *) PT_NODE_SP_ARG_COMMENT (p);

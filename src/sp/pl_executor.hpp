@@ -54,8 +54,8 @@ namespace cubpl
     int num_args;
     std::vector<int> arg_mode;
     std::vector<int> arg_type;
-    std::vector<int> arg_default_size;
-    std::vector<char *> arg_default;
+    std::vector<bool> arg_optional;
+    std::vector<DB_VALUE> arg_default_value; // evaluated
     int result_type;
 
     bool transaction_control; // TODO: wrap it with proper structs
