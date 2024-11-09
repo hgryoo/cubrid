@@ -682,6 +682,42 @@ jsp_call_stored_procedure (PARSER_CONTEXT *parser, PT_NODE *statement)
       /* call sp */
       cubpl::pl_signature sig;
       error = jsp_make_pl_signature (parser, statement, NULL, sig);
+
+      // evaluate defaults
+      PT_NODE *default_next_node_list = jsp_get_default_expr_node_list (parser, sig);
+      while (default_next_node_list)
+	{
+	  DB_VALUE *db_value;
+	  if (PT_IS_CONST (default_next_node_list))
+	    {
+	      db_value = pt_value_to_db (parser, default_next_node_list);
+	    }
+	  else
+	    {
+	      db_value = (DB_VALUE *) malloc (sizeof (DB_VALUE));
+	      if (db_value == NULL)
+		{
+		  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1,
+			  sizeof (DB_VALUE));
+		}
+
+	      db_make_null (db_value);
+
+	      /* must call pt_evaluate_tree */
+	      pt_evaluate_tree (parser, default_next_node_list, db_value, 1);
+	      if (pt_has_error (parser))
+		{
+		  /* to maintain the list to free all the allocated */
+		  db_value_clear (db_value);
+		  error = ER_FAILED;
+                  break;
+		}
+	    }
+
+          args.emplace_back (std::ref (*db_value));
+	  default_next_node_list = default_next_node_list->next;
+	}
+
       if (error == NO_ERROR && locator_get_sig_interrupt () == 0)
 	{
 	  std::vector <DB_VALUE> out_args;
@@ -706,8 +742,6 @@ jsp_call_stored_procedure (PARSER_CONTEXT *parser, PT_NODE *statement)
 	}
     }
 
-  if (error == NO_ERROR)
-    {
       PT_NODE *vc = statement->info.method_call.arg_list;
       for (int i = 0; i < (int) args.size () && vc; i++)
 	{
@@ -719,7 +753,6 @@ jsp_call_stored_procedure (PARSER_CONTEXT *parser, PT_NODE *statement)
 	    }
 	  vc = vc->next;
 	}
-    }
 
   if (error == NO_ERROR)
     {
@@ -2184,4 +2217,85 @@ check_execute_authorization (const MOP sp_obj, const DB_AUTH au_type)
     }
 
   return error;
+}
+
+PT_NODE *
+jsp_get_default_expr_node_list (PARSER_CONTEXT *parser, cubpl::pl_signature &sig)
+{
+  PT_NODE *default_next_node_list = NULL;
+  PT_NODE *default_next_node = NULL;
+  for (int i = 0; i < sig.arg.arg_size; i++)
+    {
+      if (sig.arg.arg_default_value_size[i] == 0)
+	{
+	  default_next_node = pt_make_string_value (parser, NULL);
+	}
+      else if (sig.arg.arg_default_value_size[i] > 0)
+	{
+	  DB_DEFAULT_EXPR default_expr;
+	  pt_get_default_expression_from_string (parser, sig.arg.arg_default_value[i], sig.arg.arg_default_value_size[i],
+						 &default_expr);
+
+	  // from pt_resolve_default_value
+	  if (default_expr.default_expr_type != DB_DEFAULT_NONE)
+	    {
+	      PT_OP_TYPE op = pt_op_type_from_default_expr_type (default_expr.default_expr_type);
+	      PT_NODE *default_op_value_node = pt_expression_0 (parser, op);
+
+	      if (default_expr.default_expr_op == NULL_DEFAULT_EXPRESSION_OPERATOR)
+		{
+		  default_next_node = default_op_value_node;
+		}
+	      else
+		{
+		  PT_NODE *arg1, *arg2, *arg3;
+		  arg1 = default_op_value_node;
+		  bool has_user_format = default_expr.default_expr_format ? true : false;
+		  arg2 = pt_make_string_value (parser, default_expr.default_expr_format);
+
+		  if (arg2 == NULL)
+		    {
+		      parser_free_tree (parser, default_op_value_node);
+		      return NULL;
+		    }
+
+		  arg3 = parser_new_node (parser, PT_VALUE);
+		  if (arg3 == NULL)
+		    {
+		      parser_free_tree (parser, default_op_value_node);
+		      parser_free_tree (parser, arg2);
+		      return NULL;
+		    }
+
+		  arg3->type_enum = PT_TYPE_INTEGER;
+		  const char *lang_str = prm_get_string_value (PRM_ID_INTL_DATE_LANG);
+		  int flag = 0;
+		  lang_set_flag_from_lang (lang_str, has_user_format, 0, &flag);
+		  arg3->info.value.data_value.i = (long) flag;
+
+		  default_next_node = parser_make_expression (parser, PT_TO_CHAR, arg1, arg2, arg3);
+		  if (default_next_node == NULL)
+		    {
+		      parser_free_tree (parser, default_op_value_node);
+		      parser_free_tree (parser, arg2);
+		      parser_free_tree (parser, arg3);
+		      return NULL;
+		    }
+		}
+	    }
+	  else
+	    {
+	      default_next_node = pt_make_string_value (parser, sig.arg.arg_default_value[i]);
+	      default_next_node = pt_wrap_with_cast_op (parser, default_next_node, pt_db_to_type_enum ((DB_TYPE) sig.arg.arg_type[i]),
+				  TP_FLOATING_PRECISION_VALUE, 0, NULL);
+	    }
+	}
+
+      if (default_next_node != NULL)
+	{
+	  default_next_node_list = parser_append_node (default_next_node, default_next_node_list);
+	}
+    }
+
+  return default_next_node_list;
 }

@@ -434,22 +434,7 @@ public class ExecuteThread extends Thread {
         for (int i = 0; i < paramCount; i++) {
             int mode = unpacker.unpackInt();
             int type = unpacker.unpackInt();
-            int defaultValSize = unpacker.unpackInt();
-            String defaultVal = null;
-
-            Value val = null;
-            if (defaultValSize == -1) {
-                val = arguments[i];
-            } else if (defaultValSize > 0) {
-                defaultVal = unpacker.unpackCString();
-                val = new StringValue(defaultVal);
-            } else if (defaultValSize == 0) {
-                val = new NullValue();
-            } else {
-                assert false;
-                // internal error
-                val = new NullValue();
-            }
+            Value val = arguments[i];
 
             val.setMode(mode);
             val.setDbType(type);
