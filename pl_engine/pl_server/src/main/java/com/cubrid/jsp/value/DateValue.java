@@ -34,28 +34,14 @@ package com.cubrid.jsp.value;
 import com.cubrid.jsp.exception.TypeMismatchException;
 import java.sql.Date;
 import java.sql.Timestamp;
-import java.util.Calendar;
+import java.time.LocalDate;
 
 public class DateValue extends Value {
-    private Date date;
+    private LocalDate localDate;
+    private Date date = null;
 
-    public DateValue(int year, int mon, int day) {
-        super();
-        Calendar cal = Calendar.getInstance();
-        cal.set(year, mon, day, 0, 0, 0);
-        cal.set(Calendar.MILLISECOND, 0);
-
-        date = new Date(cal.getTimeInMillis());
-    }
-
-    public DateValue(int year, int mon, int day, int mode, int dbType) {
-        super(mode);
-        Calendar cal = Calendar.getInstance();
-        cal.set(year, mon, day, 0, 0, 0);
-        cal.set(Calendar.MILLISECOND, 0);
-
-        date = new Date(cal.getTimeInMillis());
-        this.dbType = dbType;
+    public DateValue (LocalDate lDate) {
+        this.localDate = lDate;
     }
 
     public DateValue(Date date) {
@@ -64,15 +50,18 @@ public class DateValue extends Value {
     }
 
     public Date toDate() throws TypeMismatchException {
+        if (date == null) {
+          date = Date.valueOf (localDate);
+        }
         return date;
     }
 
     public Timestamp toTimestamp() throws TypeMismatchException {
-        return new Timestamp(date.getTime());
+        return Timestamp.valueOf(localDate.atStartOfDay());
     }
 
     public Timestamp toDatetime() throws TypeMismatchException {
-        return new Timestamp(date.getTime());
+        return Timestamp.valueOf(localDate.atStartOfDay());
     }
 
     public Object toObject() throws TypeMismatchException {
@@ -80,7 +69,7 @@ public class DateValue extends Value {
     }
 
     public String toString() {
-        return date.toString();
+        return localDate.toString();
     }
 
     public Date[] toDateArray() throws TypeMismatchException {

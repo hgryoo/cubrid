@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 Search Solution Corporation.
+ *
  * Copyright (c) 2016 CUBRID Corporation.
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -29,49 +29,17 @@
  *
  */
 
-package com.cubrid.jsp.value;
+package com.cubrid.jsp;
 
-import com.cubrid.jsp.exception.TypeMismatchException;
-import java.sql.Time;
-import java.time.LocalTime;
+import java.net.Socket;
 
-public class TimeValue extends Value {
-    private LocalTime localTime;
-    private Time time = null;
+public class BootstrapThread extends Thread {
+        private Socket client;
 
-    public TimeValue(LocalTime lTime) {
-        this.localTime = lTime;
-    }
-
-    public TimeValue(Time time) {
-        this.time = time;
-        assert time.getTime() % 1000L == 0;
-    }
-
-    public Time toTime() throws TypeMismatchException {
-        if (time == null) {
-            time = Time.valueOf(localTime);
+        BootstrapThread(Socket client) {
+                super();
+                this.client = client;
         }
-        return time;
-    }
 
-    public Object toObject() throws TypeMismatchException {
-        return toTime();
-    }
-
-    public String toString() {
-        return localTime.toString();
-    }
-
-    public Time[] toTimeArray() throws TypeMismatchException {
-        return new Time[] {toTime()};
-    }
-
-    public Object[] toObjectArray() throws TypeMismatchException {
-        return new Object[] {toObject()};
-    }
-
-    public String[] toStringArray() throws TypeMismatchException {
-        return new String[] {toString()};
-    }
+        
 }

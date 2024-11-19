@@ -35,43 +35,22 @@ import com.cubrid.jsp.exception.TypeMismatchException;
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
-import java.util.Calendar;
+import java.time.Instant;
+import java.time.ZoneId;
 
 public class DatetimeValue extends Value {
+    private Instant instant;
+    private ZoneId zoneId;
     private Timestamp timestamp;
 
-    public DatetimeValue(int year, int mon, int day, int hour, int min, int sec, int msec) {
-        super();
-
-        Calendar c = Calendar.getInstance();
-        c.set(year, mon, day, hour, min, sec);
-        c.set(Calendar.MILLISECOND, msec);
-
-        timestamp = new Timestamp(c.getTimeInMillis());
+    public DatetimeValue(long utime, ZoneId zoneId) {
+        this.instant = Instant.ofEpochSecond(utime);
+        this.zoneId = zoneId;
+        this.timestamp = Timestamp.from(instant);
     }
 
-    public DatetimeValue(
-            int year,
-            int mon,
-            int day,
-            int hour,
-            int min,
-            int sec,
-            int msec,
-            int mode,
-            int dbType) {
-        super(mode);
-
-        Calendar c = Calendar.getInstance();
-        c.set(year, mon, day, hour, min, sec);
-        c.set(Calendar.MILLISECOND, msec);
-
-        timestamp = new Timestamp(c.getTimeInMillis());
-        this.dbType = dbType;
-    }
-
-    public DatetimeValue(Timestamp timestamp) {
-        this.timestamp = timestamp;
+    public DatetimeValue(long utime) {
+        this (utime, ZoneId.of("UTC"));
     }
 
     public Date toDate() throws TypeMismatchException {
@@ -90,6 +69,14 @@ public class DatetimeValue extends Value {
             throw new TypeMismatchException("out of valid range of a Timestamp: " + timestamp);
         }
         return ret;
+    }
+
+    public Instant getInstant() {
+        return instant;
+    }
+
+    public ZoneId getZoneId() {
+        return zoneId;
     }
 
     public Timestamp toDatetime() throws TypeMismatchException {

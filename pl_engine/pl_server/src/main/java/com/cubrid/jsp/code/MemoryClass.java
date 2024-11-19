@@ -54,6 +54,10 @@ public class MemoryClass {
     public Class<?> getLoadedClass() {
         return loadedClass;
     }
+    
+    public void setLoadedClass (Class<?> loadedClass) {
+                this.loadedClass = loadedClass;
+            }
 
     public void clear() {
         if (this.loadedCode != null) {

@@ -79,6 +79,14 @@ public class ValueUtilities {
             case DBType.DB_DATETIME:
                 resolvedResult = value.toDatetime();
                 break;
+            case DBType.DB_TIMESTAMPLTZ:
+                break;
+            case DBType.DB_DATETIMELTZ:
+                break;
+            case DBType.DB_TIMESTAMPTZ:
+                break;
+            case DBType.DB_DATETIMETZ:
+                break;
             case DBType.DB_SHORT:
                 resolvedResult = value.toShortObject();
                 break;

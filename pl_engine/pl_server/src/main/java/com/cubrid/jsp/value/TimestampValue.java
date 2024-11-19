@@ -35,34 +35,31 @@ import com.cubrid.jsp.exception.TypeMismatchException;
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
-import java.util.Calendar;
+import java.time.Instant;
+import java.time.ZoneId;
 
 public class TimestampValue extends Value {
+    private Instant instant;
+    private ZoneId zoneId;
+
     private Timestamp timestamp;
 
-    public TimestampValue(int year, int mon, int day, int hour, int min, int sec) {
-        super();
-        Calendar cal = Calendar.getInstance();
-        cal.set(year, mon, day, hour, min, sec);
-        cal.set(Calendar.MILLISECOND, 0);
-
-        this.timestamp = new Timestamp(cal.getTimeInMillis());
+    public TimestampValue(long utime, ZoneId zoneId) {
+        this.instant = Instant.ofEpochSecond(utime);
+        this.zoneId = zoneId;
+        this.timestamp = Timestamp.from(instant);
     }
 
-    public TimestampValue(
-            int year, int mon, int day, int hour, int min, int sec, int mode, int dbType) {
-        super(mode);
-        Calendar cal = Calendar.getInstance();
-        cal.clear();
-        cal.set(year, mon, day, hour, min, sec);
-        cal.set(Calendar.MILLISECOND, 0);
-
-        this.timestamp = new Timestamp(cal.getTimeInMillis());
-        this.dbType = dbType;
+    public TimestampValue(long utime) {
+        this (utime, ZoneId.of("UTC"));
+    }
+    
+    public Instant getInstant() {
+        return instant;
     }
 
-    public TimestampValue(Timestamp timestamp) {
-        this.timestamp = timestamp;
+    public ZoneId getZoneId() {
+        return zoneId;
     }
 
     public Date toDate() throws TypeMismatchException {

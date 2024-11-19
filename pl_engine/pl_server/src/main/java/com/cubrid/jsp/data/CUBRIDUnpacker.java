@@ -34,6 +34,13 @@ package com.cubrid.jsp.data;
 import com.cubrid.jsp.exception.TypeMismatchException;
 import com.cubrid.jsp.value.*;
 import java.nio.ByteBuffer;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.Calendar;
 
 public class CUBRIDUnpacker {
@@ -185,46 +192,51 @@ public class CUBRIDUnpacker {
                 break;
             case DBType.DB_DATE:
                 {
-                    int year = unpackInt();
-                    int month = unpackInt();
-                    int day = unpackInt();
-
-                    arg = new DateValue(year, month, day);
+                    long d = unpackBigint();
+                    LocalDate lDate = LocalDate.ofEpochDay(d);
+                    arg = new DateValue(lDate);
                 }
                 break;
             case DBType.DB_TIME:
                 {
-                    int hour = unpackInt();
-                    int min = unpackInt();
-                    int sec = unpackInt();
-
-                    Calendar cal = Calendar.getInstance();
-                    cal.set(0, 0, 0, hour, min, sec);
-
-                    arg = new TimeValue(hour, min, sec);
+                    long t = unpackBigint();
+                    LocalTime lTime = LocalTime.ofSecondOfDay(t);
+                    arg = new TimeValue(lTime);
                 }
                 break;
             case DBType.DB_TIMESTAMP:
+            case DBType.DB_TIMESTAMPLTZ:
                 {
-                    int year = unpackInt();
-                    int month = unpackInt();
-                    int day = unpackInt();
-                    int hour = unpackInt();
-                    int min = unpackInt();
-                    int sec = unpackInt();
-                    arg = new TimestampValue(year, month, day, hour, min, sec);
+                    long utime = unpackBigint();
+                    arg = new TimestampValue(utime, ZoneId.of("UTC"));
+                }
+                break;
+            case DBType.DB_TIMESTAMPTZ:
+                {
+                    long utime = unpackBigint();
+                    String zoneStr = unpackCString();
+                    arg = new TimestampValue(utime, ZoneId.of(zoneStr));
                 }
                 break;
             case DBType.DB_DATETIME:
+            case DBType.DB_DATETIMELTZ:
                 {
-                    int year = unpackInt();
-                    int month = unpackInt();
-                    int day = unpackInt();
-                    int hour = unpackInt();
-                    int min = unpackInt();
-                    int sec = unpackInt();
-                    int msec = unpackInt();
-                    arg = new DatetimeValue(year, month, day, hour, min, sec, msec);
+                    long d = unpackBigint();
+                    long t = unpackBigint();
+
+                    long val = d * 86400000 /* MILLISECONDS OF ONE DAY */ + t;
+
+                    arg = new DatetimeValue(val, ZoneId.of("UTC"));
+                }
+                break;
+            case DBType.DB_DATETIMETZ:
+                {
+                   long d = unpackBigint();
+                   long t = unpackBigint();
+                   String zoneStr = unpackCString();
+
+                   long val = d * 86400000 /* MILLISECONDS OF ONE DAY */ + t;
+                   arg = new DatetimeValue(val, ZoneId.of(zoneStr));
                 }
                 break;
             case DBType.DB_SET:
@@ -286,48 +298,54 @@ public class CUBRIDUnpacker {
                 break;
             case DBType.DB_DATE:
                 {
-                    int year = unpackInt();
-                    int month = unpackInt();
-                    int day = unpackInt();
-
-                    arg = new DateValue(year, month, day, mode, dbType);
+                        long d = unpackBigint();
+                        LocalDate lDate = LocalDate.ofEpochDay(d);
+                        arg = new DateValue(lDate);
                 }
                 break;
             case DBType.DB_TIME:
                 {
-                    int hour = unpackInt();
-                    int min = unpackInt();
-                    int sec = unpackInt();
-
-                    Calendar cal = Calendar.getInstance();
-                    cal.set(0, 0, 0, hour, min, sec);
-
-                    arg = new TimeValue(hour, min, sec, mode, dbType);
+                        long t = unpackBigint();
+                        LocalTime lTime = LocalTime.ofSecondOfDay(t);
+                        arg = new TimeValue(lTime);
                 }
                 break;
-            case DBType.DB_TIMESTAMP:
-                {
-                    int year = unpackInt();
-                    int month = unpackInt();
-                    int day = unpackInt();
-                    int hour = unpackInt();
-                    int min = unpackInt();
-                    int sec = unpackInt();
-                    arg = new TimestampValue(year, month, day, hour, min, sec, mode, dbType);
-                }
-                break;
-            case DBType.DB_DATETIME:
-                {
-                    int year = unpackInt();
-                    int month = unpackInt();
-                    int day = unpackInt();
-                    int hour = unpackInt();
-                    int min = unpackInt();
-                    int sec = unpackInt();
-                    int msec = unpackInt();
-                    arg = new DatetimeValue(year, month, day, hour, min, sec, msec, mode, dbType);
-                }
-                break;
+                case DBType.DB_TIMESTAMP:
+                case DBType.DB_TIMESTAMPLTZ:
+                    {
+                        long utime = unpackBigint();
+                        arg = new TimestampValue(utime, ZoneId.of("UTC"));
+                    }
+                    break;
+                case DBType.DB_TIMESTAMPTZ:
+                    {
+                        long utime = unpackBigint();
+                        String zoneStr = unpackCString();
+                        arg = new TimestampValue(utime, ZoneId.of(zoneStr));
+                    }
+                    break;
+                case DBType.DB_DATETIME:
+                case DBType.DB_DATETIMELTZ:
+                    {
+                        long d = unpackBigint();
+                        long t = unpackBigint();
+    
+                        long val = d * 86400000 /* MILLISECONDS OF ONE DAY */ + t;
+    
+                        arg = new DatetimeValue(val, ZoneId.of("UTC"));
+                    }
+                    break;
+                case DBType.DB_DATETIMETZ:
+                    {
+                       long d = unpackBigint();
+                       long t = unpackBigint();
+                       String zoneStr = unpackCString();
+    
+                       long val = d * 86400000 /* MILLISECONDS OF ONE DAY */ + t;
+                       arg = new DatetimeValue(val, ZoneId.of(zoneStr));
+                    }
+                    break;
+    
             case DBType.DB_SET:
             case DBType.DB_MULTISET:
             case DBType.DB_SEQUENCE:

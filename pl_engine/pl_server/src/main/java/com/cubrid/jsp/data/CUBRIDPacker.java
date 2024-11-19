@@ -38,8 +38,10 @@ import cubrid.sql.CUBRIDOID;
 import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
 import java.text.SimpleDateFormat;
+import java.time.ZonedDateTime;
 
 public class CUBRIDPacker {
     private ByteBuffer buffer;
@@ -98,7 +100,7 @@ public class CUBRIDPacker {
     }
 
     public void packString(String value) {
-        packCString(value.getBytes());
+        packCString(value.getBytes(StandardCharsets.UTF_8));
     }
 
     public void packString(String value, String charset) throws UnsupportedEncodingException {
@@ -187,13 +189,13 @@ public class CUBRIDPacker {
             packString(result.toString(), charset);
         } else if (result instanceof java.sql.Timestamp) {
             packInt(ret_type);
-            if (ret_type == DBType.DB_DATETIME) {
+            if (ret_type == DBType.DB_DATETIME || ret_type == DBType.DB_DATETIMELTZ) {
                 if (result.equals(ValueUtilities.NULL_DATETIME)) {
                     packString("0000-00-00 00:00:00.000");
                 } else {
                     packString(result.toString());
                 }
-            } else {
+            } else if (ret_type == DBType.DB_TIMESTAMP || ret_type == DBType.DB_TIMESTAMPLTZ) {
                 if (result.equals(ValueUtilities.NULL_TIMESTAMP)) {
                     packString("0000-00-00 00:00:00");
                 } else {
@@ -201,6 +203,8 @@ public class CUBRIDPacker {
                     packString(formatter.format(result));
                 }
             }
+        } else if (result instanceof ZonedDateTime) {
+            packInt(DBType.DB_DATETIMETZ);
         } else if (result instanceof CUBRIDOID) {
             packInt(DBType.DB_OBJECT);
             byte[] oid = ((CUBRIDOID) result).getOID();

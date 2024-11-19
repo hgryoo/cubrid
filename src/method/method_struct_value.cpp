@@ -26,6 +26,7 @@
 #include "object_representation.h" /* db_string_put_cs_and_collation() */
 #include "object_primitive.h"
 #include "language_support.h" /* lang_* () */
+#include "tz_support.h" /* tz_id_to_str() */
 
 #include "memory_private_allocator.hpp" /* cubmem::PRIVATE_BLOCK_ALLOCATOR */
 
@@ -36,6 +37,8 @@
 #include <cstring>
 // XXX: SHOULD BE THE LAST INCLUDE HEADER
 #include "memory_wrapper.hpp"
+
+#define TZ_NAME_MAX_SIZE 64
 
 namespace cubmethod
 {
@@ -129,56 +132,57 @@ namespace cubmethod
 
       case DB_TYPE_DATE:
       {
-	int year, month, day;
-	db_date_decode (db_get_date (&v), &month, &day, &year);
-	serializator.pack_int (year);
-	serializator.pack_int (month - 1);
-	serializator.pack_int (day);
+        DB_TIME *date = db_get_date (&v);
+        serializator.pack_bigint ((uint64_t) *date); // DB_DATE (unsigned_int) to BIGINT
       }
       break;
 
       case DB_TYPE_TIME:
       {
-	int hour, min, sec;
-	db_time_decode (db_get_time (&v), &hour, &min, &sec);
-	serializator.pack_int (hour);
-	serializator.pack_int (min);
-	serializator.pack_int (sec);
+        DB_TIME *time = db_get_time (&v);
+        serializator.pack_bigint ((uint64_t) *time); // DB_TIME (unsigned_int) to BIGINT
       }
       break;
 
       case DB_TYPE_TIMESTAMP:
+      case DB_TYPE_TIMESTAMPLTZ:
       {
-	int year, month, day, hour, min, sec;
 	DB_TIMESTAMP *timestamp = db_get_timestamp (&v);
-	DB_DATE date;
-	DB_TIME time;
-	(void) db_timestamp_decode_ses (timestamp, &date, &time);
-	db_date_decode (&date, &month, &day, &year);
-	db_time_decode (&time, &hour, &min, &sec);
+        serializator.pack_bigint ((uint64_t) *timestamp); // UTIME (unsigned_int) to BIGINT
+      }
+      break;
 
-	serializator.pack_int (year);
-	serializator.pack_int (month - 1);
-	serializator.pack_int (day);
-	serializator.pack_int (hour);
-	serializator.pack_int (min);
-	serializator.pack_int (sec);
+      case DB_TYPE_TIMESTAMPTZ:
+      {
+        DB_TIMESTAMPTZ *ts_tz_p = db_get_timestamptz (&v);
+        char zone_str [TZ_NAME_MAX_SIZE];
+        (void) tz_id_to_str (&ts_tz_p->tz_id, zone_str, TZ_NAME_MAX_SIZE);
+
+        serializator.pack_bigint ((uint64_t) ts_tz_p->timestamp); // UTIME (unsigned_int) to BIGINT
+        serializator.pack_c_string (zone_str, TZ_NAME_MAX_SIZE); // TZ_ID (unsigned_int) to BIGINT
       }
       break;
 
       case DB_TYPE_DATETIME:
+      case DB_TYPE_DATETIMELTZ:
       {
-	int year, month, day, hour, min, sec, msec;
 	DB_DATETIME *datetime = db_get_datetime (&v);
-	db_datetime_decode (datetime, &month, &day, &year, &hour, &min, &sec, &msec);
 
-	serializator.pack_int (year);
-	serializator.pack_int (month - 1);
-	serializator.pack_int (day);
-	serializator.pack_int (hour);
-	serializator.pack_int (min);
-	serializator.pack_int (sec);
-	serializator.pack_int (msec);
+        serializator.pack_bigint ((uint64_t) datetime->date); // UTIME (unsigned_int) to BIGINT
+        serializator.pack_bigint ((uint64_t) datetime->time);
+      }
+      break;
+
+      case DB_TYPE_DATETIMETZ:
+      {
+	DB_DATETIMETZ *datetime_tz = db_get_datetimetz (&v);
+        DB_DATETIME datetime = datetime_tz->datetime;
+        char zone_str [TZ_NAME_MAX_SIZE];
+        (void) tz_id_to_str (&datetime_tz->tz_id, zone_str, TZ_NAME_MAX_SIZE);
+
+        serializator.pack_bigint ((uint64_t) datetime.date); // UTIME (unsigned_int) to BIGINT
+        serializator.pack_bigint ((uint64_t) datetime.time);
+        serializator.pack_c_string (zone_str, TZ_NAME_MAX_SIZE); // TZ_ID (unsigned_int) to BIGINT
       }
       break;
 
@@ -360,31 +364,26 @@ namespace cubmethod
 
       case DB_TYPE_DATE:
       case DB_TYPE_TIME:
-
-	size += serializator.get_packed_int_size (size); /* hour */
-	size += serializator.get_packed_int_size (size); /* min */
-	size += serializator.get_packed_int_size (size); /* sec */
+      case DB_TYPE_TIMESTAMP:
+      case DB_TYPE_TIMESTAMPLTZ:
+	size += serializator.get_packed_bigint_size (size);
 	break;
 
-      case DB_TYPE_TIMESTAMP:
-
-	size += serializator.get_packed_int_size (size); /* year */
-	size += serializator.get_packed_int_size (size); /* month */
-	size += serializator.get_packed_int_size (size); /* day */
-	size += serializator.get_packed_int_size (size); /* hour */
-	size += serializator.get_packed_int_size (size); /* min */
-	size += serializator.get_packed_int_size (size); /* sec */
+      case DB_TYPE_TIMESTAMPTZ:
+	size += serializator.get_packed_bigint_size (size);
+        size += serializator.get_packed_c_string_size (NULL, TZ_NAME_MAX_SIZE, size);
 	break;
 
       case DB_TYPE_DATETIME:
+      case DB_TYPE_DATETIMELTZ:
+	size += serializator.get_packed_bigint_size (size);
+	size += serializator.get_packed_bigint_size (size);
+	break;
 
-	size += serializator.get_packed_int_size (size); /* year */
-	size += serializator.get_packed_int_size (size); /* month */
-	size += serializator.get_packed_int_size (size); /* day */
-	size += serializator.get_packed_int_size (size); /* hour */
-	size += serializator.get_packed_int_size (size); /* min */
-	size += serializator.get_packed_int_size (size); /* sec */
-	size += serializator.get_packed_int_size (size); /* msec */
+      case DB_TYPE_DATETIMETZ:
+	size += serializator.get_packed_bigint_size (size);
+	size += serializator.get_packed_bigint_size (size);
+        size += serializator.get_packed_c_string_size (NULL, TZ_NAME_MAX_SIZE, size);
 	break;
 
       case DB_TYPE_SET:
@@ -631,6 +630,41 @@ namespace cubmethod
       }
       break;
 
+      case DB_TYPE_TIMESTAMPLTZ:
+      {
+	DB_TIMESTAMP timestamp;
+	cubmem::extensible_block blk { cubmem::PRIVATE_BLOCK_ALLOCATOR };
+	deserializator.unpack_string_to_memblock (blk);
+	if (db_string_to_timestampltz (blk.get_ptr (), &timestamp) != NO_ERROR)
+	  {
+	    assert (false);
+	    return;
+	  }
+	else
+	  {
+	    db_make_timestampltz (v, timestamp);
+	  }
+      }
+      break;
+
+      case DB_TYPE_TIMESTAMPTZ:
+      {
+	DB_TIMESTAMPTZ timestamptz;
+        bool has_zone = false;
+	cubmem::extensible_block blk { cubmem::PRIVATE_BLOCK_ALLOCATOR };
+	deserializator.unpack_string_to_memblock (blk);
+	if (db_string_to_timestamptz (blk.get_ptr (), &timestamptz, &has_zone) != NO_ERROR)
+	  {
+	    assert (false);
+	    return;
+	  }
+	else
+	  {
+	    db_make_timestamptz (v, &timestamptz);
+	  }
+      }
+      break;
+
       case DB_TYPE_DATETIME:
       {
 	DB_DATETIME datetime;
@@ -644,6 +678,41 @@ namespace cubmethod
 	else
 	  {
 	    db_make_datetime (v, &datetime);
+	  }
+      }
+      break;
+
+      case DB_TYPE_DATETIMELTZ:
+      {
+	DB_DATETIME datetime;
+	cubmem::extensible_block blk { cubmem::PRIVATE_BLOCK_ALLOCATOR };
+	deserializator.unpack_string_to_memblock (blk);
+	if (db_string_to_datetimeltz (blk.get_ptr (), &datetime) != NO_ERROR)
+	  {
+	    assert (false);
+	    return;
+	  }
+	else
+	  {
+	    db_make_datetimeltz (v, &datetime);
+	  }
+      }
+      break;
+
+      case DB_TYPE_DATETIMETZ:
+      {
+	DB_DATETIMETZ datetimetz;
+        bool has_zone = false;
+	cubmem::extensible_block blk { cubmem::PRIVATE_BLOCK_ALLOCATOR };
+	deserializator.unpack_string_to_memblock (blk);
+	if (db_string_to_datetimetz (blk.get_ptr (), &datetimetz, &has_zone) != NO_ERROR)
+	  {
+	    assert (false);
+	    return;
+	  }
+	else
+	  {
+	    db_make_datetimetz (v, &datetimetz);
 	  }
       }
       break;
