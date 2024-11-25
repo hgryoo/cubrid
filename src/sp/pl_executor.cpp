@@ -115,7 +115,14 @@ namespace cubpl
 
 //////////////////////////////////////////////////
   executor::executor (pl_signature &sig)
+    : executor (sig, nullptr)
+  {
+        // 
+  }
+
+  executor::executor (pl_signature &sig, sp_code_cache *code_cache)
     : m_sig (sig)
+    , m_code_cache (code_cache)
   {
     m_stack = get_session ()->create_and_push_stack (nullptr);
   }
@@ -932,27 +939,64 @@ exit:
     int code = METHOD_CALLBACK_GET_CODE_ATTR;
 
     std::string attr_name;
+    unpacker.unpack_all (attr_name);
+    
+    DB_VALUE *res_value = nullptr;
+    if (m_code_cache != nullptr)
+    {
+        if (attr_name.compare (SP_ATTR_TIMESTAMP) == 0)
+        {
+                res_value = m_code_cache->key;
+        }
+        else if (attr_name.compare (SP_ATTR_OBJECT_CODE) == 0)
+        {
+                res_value = m_code_cache->code;
+        }
+    }
 
     DB_VALUE res;
     db_make_null (&res);
-    unpacker.unpack_all (attr_name);
+    if (res_value == nullptr)
+    {
+        OID *code_oid = &m_sig.ext.sp.code_oid;
+        if (OID_ISNULL (code_oid))
+        {
+                error = ER_FAILED;
+        }
 
-    OID *code_oid = &m_sig.ext.sp.code_oid;
-    if (OID_ISNULL (code_oid))
-      {
-	error = ER_FAILED;
-      }
+        if (error == NO_ERROR)
+        {
+                error = sp_get_code_attr (&thread_ref, attr_name, code_oid, &res);
+        }
 
-    if (error == NO_ERROR)
-      {
-	error = sp_get_code_attr (&thread_ref, attr_name, code_oid, &res);
-      }
+        if (error == NO_ERROR && m_code_cache != nullptr)
+        {
+                if (m_code_cache->key == nullptr && attr_name.compare (SP_ATTR_TIMESTAMP) == 0)
+                {
+                        db_value_clone (&res, m_code_cache->key);
+                }
+                else if (m_code_cache->code == nullptr && attr_name.compare (SP_ATTR_OBJECT_CODE) == 0)
+                {
+                         db_value_clone (&res, m_code_cache->code);
+                }
+        }
+
+        if (DB_IS_NULL (&res))
+        {
+                res_value = nullptr;
+                error = ER_FAILED;
+        }
+        else
+        {
+                res_value = &res;
+        }
+    }
 
     cubmem::block blk;
     if (error == NO_ERROR)
       {
 	dbvalue_java java_packer;
-	java_packer.value = &res;
+	java_packer.value = res_value;
 
 	blk = std::move (pack_data_block (error, java_packer));
       }

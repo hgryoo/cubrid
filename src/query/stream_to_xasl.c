@@ -6085,6 +6085,15 @@ stx_build_sp_type (THREAD_ENTRY * thread_p, char *ptr, SP_TYPE * sp)
 	}
     }
 
+  sp->code_cache = (SP_CODE_CACHE *) stx_alloc_struct (thread_p, sizeof (SP_CODE_CACHE));
+  if (sp->code_cache == NULL)
+    {
+      stx_set_xasl_errcode (thread_p, ER_OUT_OF_VIRTUAL_MEMORY);
+      return NULL;
+    }
+  sp->code_cache->key = NULL;
+  sp->code_cache->code = NULL;
+
   return ptr;
 }
 

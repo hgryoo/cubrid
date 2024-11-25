@@ -26,6 +26,7 @@
 #include "dbtype_def.h"
 #include "storage_common.h"
 #include "pl_signature.hpp"
+#include "sp_code.hpp"
 
 // forward definitions
 struct regu_variable_list_node;
@@ -38,6 +39,8 @@ namespace cubxasl
     cubpl::pl_signature *sig;
     regu_variable_list_node *args;
     DB_VALUE *value; // return value
+    
+    SP_CODE_CACHE* code_cache;
   };
 };
 

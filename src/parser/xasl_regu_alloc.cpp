@@ -285,6 +285,7 @@ regu_init (cubxasl::sp_node &sp)
 {
   sp.args = NULL;
   sp.sig = NULL;
+  sp.code_cache = NULL;
 
   regu_alloc (sp.value);
 

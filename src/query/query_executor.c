@@ -1596,7 +1596,12 @@ qexec_clear_regu_var (THREAD_ENTRY * thread_p, XASL_NODE * xasl_p, REGU_VARIABLE
       if (is_final)
 	{
 	  delete regu_var->value.sp_ptr->sig;
-	  regu_var->value.sp_ptr->sig = nullptr;
+	  regu_var->value.sp_ptr->sig = NULL;
+
+          if (regu_var->value.sp_ptr->code_cache)
+          {
+                regu_var->value.sp_ptr->code_cache->clear ();
+          }
 	}
       break;
     case TYPE_FUNC:
