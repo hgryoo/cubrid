@@ -3970,7 +3970,7 @@ fetch_peek_dbval (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 	pr_clear_value (regu_var->value.sp_ptr->value);
 	fetch_force_not_const_recursive (*regu_var);
 
-	cubpl::executor executor (*regu_var->value.sp_ptr->sig);
+	cubpl::executor executor (*regu_var->value.sp_ptr->sig, regu_var->value.sp_ptr->code_cache);
 
 	error = executor.fetch_args_peek (regu_var->value.sp_ptr->args, vd, obj_oid, tpl);
 	if (error != NO_ERROR)

@@ -28,8 +28,8 @@
 #include <vector>
 
 #include "dbtype_def.h"
+#include "thread_compat.hpp"
 #include "query_list.h" /* QUERY_ID, QFILE_LIST_ID */
-#include "query_manager.h"
 
 // thread_entry.hpp
 namespace cubthread
@@ -50,6 +50,17 @@ enum SP_CODE_ATTRIBUTES
   SPC_ATTR_OCODE_INDEX,
   SPC_ATTR_MAX_INDEX
 };
+
+struct sp_code_cache
+{
+        DB_VALUE *key; // transaction key cache
+        DB_VALUE *code; // object code cache
+
+        sp_code_cache ();
+        
+        void clear ();
+};
+typedef struct sp_code_cache SP_CODE_CACHE;
 
 int sp_get_code_attr (THREAD_ENTRY *thread_p, const std::string &attr_name, const OID *sp_oidp, DB_VALUE *result);
 #endif				/* _SP_CODE_HPP_ */

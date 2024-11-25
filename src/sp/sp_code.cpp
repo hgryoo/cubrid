@@ -262,3 +262,25 @@ exit_on_error:
 
   return error;
 }
+
+sp_code_cache::sp_code_cache ()
+: key (nullptr)
+, code (nullptr)
+{
+}
+
+void
+sp_code_cache::clear ()
+{
+        if (key != nullptr)
+        {
+                db_value_clear (key);
+                db_private_free_and_init (NULL, key);
+        }
+        
+        if (code != nullptr)
+        {
+                db_value_clear (code);
+                db_private_free_and_init (NULL, code);
+        }
+}

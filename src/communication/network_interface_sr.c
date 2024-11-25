@@ -10523,7 +10523,7 @@ spl_call (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
   std::vector < std::reference_wrapper < DB_VALUE >> ref_args (args.begin (), args.end ());
 
   /* 2) invoke */
-  cubpl::executor executor (sig);
+  cubpl::executor executor ((cubpl::pl_signature &) sig);
   error_code = executor.fetch_args_peek (ref_args);
   if (error_code == NO_ERROR)
     {

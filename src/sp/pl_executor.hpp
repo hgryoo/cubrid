@@ -30,6 +30,7 @@
 #include "pl_execution_stack_context.hpp"
 #include "pl_signature.hpp"
 #include "pl_session.hpp"
+#include "sp_code.hpp"
 
 // forward definitions
 struct regu_variable_list_node;
@@ -64,6 +65,7 @@ namespace cubpl
     public:
       executor () = delete; // Not DefaultConstructible
       executor (pl_signature &sig);
+      executor (pl_signature &sig, sp_code_cache *code_cache);
 
       executor (executor &&other) = delete; // Not MoveConstructible
       executor (const executor &copy) = delete; // Not CopyConstructible
@@ -88,6 +90,7 @@ namespace cubpl
     private:
       execution_stack *m_stack;
       pl_signature &m_sig;
+      SP_CODE_CACHE *m_code_cache;
 
       std::vector <std::reference_wrapper <DB_VALUE>> m_args;
       std::vector <DB_VALUE> m_out_args;
