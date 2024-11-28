@@ -1788,8 +1788,6 @@ process_server (int command_type, int argc, char **argv, bool show_usage, bool c
 	      break;
 	    }
 
-	  (void) process_pl (command_type, 1, (const char **) &token, false, true, process_window_service, false);
-
 	  print_message (stdout, MSGCAT_UTIL_GENERIC_START_STOP_3S, PRINT_SERVER_NAME, PRINT_CMD_STOP, token);
 
 	  if (is_server_running (CHECK_SERVER, token, 0))
@@ -2829,7 +2827,7 @@ process_pl_restart (const char *db_name, bool suppress_message, bool process_win
 
   if (!suppress_message)
     {
-      print_message (stdout, MSGCAT_UTIL_GENERIC_START_STOP_3S, PRINT_PL_NAME, PRINT_CMD_STOP, db_name);
+      print_message (stdout, MSGCAT_UTIL_GENERIC_START_STOP_3S, PRINT_PL_NAME, PRINT_CMD_RESTART, db_name);
     }
   UTIL_PL_SERVER_STATUS_E pl_status = is_pl_running (db_name);
   if (pl_status == PL_SERVER_RUNNING)
@@ -2838,7 +2836,7 @@ process_pl_restart (const char *db_name, bool suppress_message, bool process_win
 	{
 #if defined(WINDOWS)
 	  const char *args[] = { UTIL_WIN_SERVICE_CONTROLLER_NAME, PRINT_CMD_JAVASP,
-	    COMMAND_TYPE_RESTART, db_name, NULL
+	    COMMAND_TYPE_STOP, db_name, NULL
 	  };
 
 	  status = proc_execute (UTIL_WIN_SERVICE_CONTROLLER_NAME, args, true, false, false, NULL);
