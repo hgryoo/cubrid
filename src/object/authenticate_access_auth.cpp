@@ -68,18 +68,23 @@ au_auth_accessor::create_new_auth ()
   if (au_class_mop == nullptr)
     {
       au_class_mop = sm_find_class (CT_CLASSAUTH_NAME);
-      if (au_class_mop == NULL || WS_MOP_IS_NULL (au_class_mop))
+      if (WS_MOP_IS_NULL (au_class_mop))
 	{
 	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_AU_MISSING_CLASS, 1, CT_CLASSAUTH_NAME);
 	}
     }
 
-  m_au_obj = db_create_internal (au_class_mop);
-  if (m_au_obj == NULL)
+  int error = er_errid ();
+  if (error == NO_ERROR)
     {
-      assert (er_errid () != NO_ERROR);
+      m_au_obj = db_create_internal (au_class_mop);
+      if (m_au_obj == NULL)
+	{
+	  assert (er_errid () != NO_ERROR);
+	}
     }
-  return er_errid ();
+
+  return error;
 }
 
 int
@@ -98,6 +103,10 @@ au_auth_accessor::set_new_auth (DB_OBJECT_TYPE obj_type, MOP au_obj, MOP grantor
   if (m_au_obj == nullptr)
     {
       error = create_new_auth ();
+      if (error != NO_ERROR)
+	{
+	  return error;
+	}
     }
 
   db_make_object (&value, grantor);
