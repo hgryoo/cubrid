@@ -716,7 +716,7 @@ exit:
 	s_code = cursor->next_row ();
 	int tuple_index = cursor->get_current_index ();
 	int tuple_size = cursor->get_current_tuple_size ();
-	if (s_code == S_END || total_tuple_size > max_fetch_size)
+	if (s_code == S_END)
 	  {
 	    break;
 	  }
@@ -736,6 +736,11 @@ exit:
 	  }
 
 	total_tuple_size += tuple_size;
+
+	if (total_tuple_size > max_fetch_size)
+	  {
+	    break;
+	  }
       }
 
     cubmem::block blk;
