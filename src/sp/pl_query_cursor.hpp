@@ -64,6 +64,7 @@ namespace cubpl
 
       QUERY_ID get_query_id ();
       int get_current_index ();
+      int get_current_tuple_size ();
       std::vector<DB_VALUE> get_current_tuple ();
       OID *get_current_oid ();
       int get_tuple_value (int index, DB_VALUE &result);
@@ -83,6 +84,7 @@ namespace cubpl
 
       std::vector<DB_VALUE> m_current_tuple;
       int m_current_row_index;
+      int m_current_tuple_size;
 
       // bool is_updatable;		/* Cursor updatable ? */
       bool m_is_oid_included;		/* Cursor has first hidden oid col. */

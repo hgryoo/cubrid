@@ -57,6 +57,7 @@ namespace cubpl
       {
 	db_make_null (&val);
       }
+    m_current_tuple_size = 0;
 
     return NO_ERROR;
   }
@@ -149,6 +150,7 @@ namespace cubpl
     SCAN_CODE scan_code = qfile_scan_list_next (m_thread, &m_scan_id, &tuple_record, PEEK);
     if (scan_code == S_SUCCESS)
       {
+	m_current_tuple_size = 0;
 	m_current_row_index++;
 
 	char *ptr;
@@ -182,6 +184,7 @@ namespace cubpl
 		    qfile_close_scan (m_thread, &m_scan_id);
 		    return S_ERROR;
 		  }
+		m_current_tuple_size += length;
 	      }
 	  }
       }
@@ -234,6 +237,12 @@ namespace cubpl
   query_cursor::get_current_index ()
   {
     return m_current_row_index;
+  }
+
+  int
+  query_cursor::get_current_tuple_size ()
+  {
+    return m_current_tuple_size;
   }
 
   OID *

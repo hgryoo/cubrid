@@ -707,12 +707,16 @@ exit:
     */
     fetch_count = cursor->get_fetch_count ();
 
+    const int max_fetch_size = 16 * 1024; /* 16 KB */
+
+    int total_tuple_size = 0;
     int start_index = cursor->get_current_index ();
     while (s_code == S_SUCCESS)
       {
 	s_code = cursor->next_row ();
 	int tuple_index = cursor->get_current_index ();
-	if (s_code == S_END || tuple_index - start_index >= fetch_count)
+	int tuple_size = cursor->get_current_tuple_size ();
+	if (s_code == S_END || total_tuple_size > max_fetch_size)
 	  {
 	    break;
 	  }
@@ -730,6 +734,8 @@ exit:
 	  {
 	    info.tuples.emplace_back (tuple_index, tuple_values);
 	  }
+
+	total_tuple_size += tuple_size;
       }
 
     cubmem::block blk;
