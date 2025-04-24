@@ -77,6 +77,7 @@
 #include "db.h"
 #include "object_accessor.h"
 #include "boot_cl.h"
+#include "faiss/IndexHNSW.h"
 
 #if defined (SUPPRESS_STRLEN_WARNING)
 #define strlen(s1)  ((int) strlen(s1))
@@ -10678,7 +10679,7 @@ allocate_index (MOP classop, SM_CLASS * class_, DB_OBJLIST * subclasses, SM_CLAS
       fk_refcls_pk_btid = &(con->fk_info->ref_class_pk_btid);
       fk_name = con->fk_info->name;
     }
-  else				/* if (con->type == SM_CONSTRAINT_INDEX || con->type == SM_CONSTRAINT_REVERSE_INDEX) */
+  else				/* if (con->type == SM_CONSTRAINT_INDEX || con->type == SM_CONSTRAINT_REVERSE_INDEX || con->type == SM_CONSTRAINT_VECTOR_INDEX) */
     {
       reverse = (con->type == SM_CONSTRAINT_INDEX) ? false : true;
     }
@@ -10812,9 +10813,16 @@ allocate_index (MOP classop, SM_CLASS * class_, DB_OBJLIST * subclasses, SM_CLAS
   // TODO: optimize has_instances case
   if (!class_->load_index_from_heap || !has_instances || index_status == SM_ONLINE_INDEX_BUILDING_IN_PROGRESS)
     {
-      error =
-	btree_add_index (index, domain, WS_OID (classop), attrs[0]->id, unique_pk,
-			 dk_sm_deduplicate_key_position (n_attrs, attrs, function_index));
+      if (con->type == SM_CONSTRAINT_VECTOR_INDEX)
+	{
+	  error = hnsw_add_index (index, 10, 32, 100, faiss::METRIC_L2);
+	}
+      else
+	{
+	  error =
+	    btree_add_index (index, domain, WS_OID (classop), attrs[0]->id, unique_pk,
+			     dk_sm_deduplicate_key_position (n_attrs, attrs, function_index));
+	}
     }
   /* If there are instances, load all of them (including applicable subclasses) into the new B-tree */
   else
@@ -10876,19 +10884,32 @@ deallocate_index (SM_CLASS_CONSTRAINT * cons, BTID * index)
 {
   int error = NO_ERROR;
   SM_CLASS_CONSTRAINT *con;
+  SM_CONSTRAINT_TYPE ctype;
   int ref_count = 0;
 
   for (con = cons; con != NULL; con = con->next)
     {
       if (BTID_IS_EQUAL (index, &con->index_btid))
 	{
+	  ctype = con->type;
 	  ref_count++;
 	}
     }
 
+  // TODO : Constraint with given BTID exists only once. If is not, ctype can be overwriten can call wrong index delete function.
+  // To prevent this, we need to refactor this code to guarantee that ctype is unique for given BTID.
+  assert (ref_count == 1);
+
   if (ref_count == 1)
     {
-      error = btree_delete_index (index);
+      if (ctype == SM_CONSTRAINT_VECTOR_INDEX)
+	{
+	  error = hnsw_delete_index (index);
+	}
+      else
+	{
+	  error = btree_delete_index (index);
+	}
     }
 
   return error;
@@ -11300,7 +11321,8 @@ allocate_foreign_key (MOP classop, SM_CLASS * class_, SM_CLASS_CONSTRAINT * con,
       con->index_btid = existing_con->index_btid;
 
       assert (existing_con->type == SM_CONSTRAINT_FOREIGN_KEY || existing_con->type == SM_CONSTRAINT_UNIQUE
-	      || existing_con->type == SM_CONSTRAINT_PRIMARY_KEY || existing_con->type == SM_CONSTRAINT_INDEX);
+	      || existing_con->type == SM_CONSTRAINT_PRIMARY_KEY || existing_con->type == SM_CONSTRAINT_INDEX
+	      || existing_con->type == SM_CONSTRAINT_VECTOR_INDEX);
       if (existing_con->type != SM_CONSTRAINT_FOREIGN_KEY)
 	{
 	  if (check_fk_validity (classop, class_, con->attributes, con->asc_desc, &(con->fk_info->ref_class_oid),
@@ -11370,7 +11392,8 @@ allocate_disk_structures_index (MOP classop, SM_CLASS * class_, SM_CLASS_CONSTRA
 	{
 	  error = allocate_unique_constraint (classop, class_, con, subclasses, template_);
 	}
-      else if (con->type == SM_CONSTRAINT_INDEX || con->type == SM_CONSTRAINT_REVERSE_INDEX)
+      else if (con->type == SM_CONSTRAINT_INDEX || con->type == SM_CONSTRAINT_REVERSE_INDEX
+	       || con->type == SM_CONSTRAINT_VECTOR_INDEX)
 	{
 	  error = allocate_index (classop, class_, NULL, con);
 	}
@@ -11385,7 +11408,7 @@ allocate_disk_structures_index (MOP classop, SM_CLASS * class_, SM_CLASS_CONSTRA
 	}
 
       /* check for safe guard */
-      if (BTID_IS_NULL (&con->index_btid))
+      if (con->type != SM_CONSTRAINT_VECTOR_INDEX && BTID_IS_NULL (&con->index_btid))
 	{
 	  return ER_FAILED;	/* unknown error */
 	}
@@ -12139,7 +12162,8 @@ transfer_disk_structures (MOP classop, SM_CLASS * class_, SM_TEMPLATE * flat)
 		  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 0);
 		}
 	    }
-	  else if (con->type == SM_CONSTRAINT_INDEX || con->type == SM_CONSTRAINT_REVERSE_INDEX)
+	  else if (con->type == SM_CONSTRAINT_INDEX || con->type == SM_CONSTRAINT_REVERSE_INDEX
+		   || con->type == SM_CONSTRAINT_VECTOR_INDEX)
 	    {
 	      error = classobj_put_index (&(flat->properties), con, &(con->index_btid), NULL, NULL, false);
 	      if (error != NO_ERROR)
@@ -14042,6 +14066,12 @@ sm_drop_index (MOP classop, const char *constraint_name)
 
   if (found == NULL)
     {
+      ctype = SM_CONSTRAINT_VECTOR_INDEX;
+      found = classobj_find_class_constraint (class_->constraints, ctype, constraint_name);
+    }
+
+  if (found == NULL)
+    {
       ERROR1 (error, ER_SM_NO_INDEX, constraint_name);
     }
   else
@@ -14768,6 +14798,7 @@ sm_add_constraint (MOP classop, DB_CONSTRAINT_TYPE constraint_type, const char *
     case DB_CONSTRAINT_UNIQUE:
     case DB_CONSTRAINT_REVERSE_UNIQUE:
     case DB_CONSTRAINT_PRIMARY_KEY:
+    case DB_CONSTRAINT_VECTOR_INDEX:
       DB_AUTH auth;
       bool is_secondary_index;
 
@@ -14778,7 +14809,8 @@ sm_add_constraint (MOP classop, DB_CONSTRAINT_TYPE constraint_type, const char *
 	}
       set_savepoint = true;
 
-      is_secondary_index = (constraint_type == DB_CONSTRAINT_INDEX || constraint_type == DB_CONSTRAINT_REVERSE_INDEX);
+      is_secondary_index = (constraint_type == DB_CONSTRAINT_INDEX || constraint_type == DB_CONSTRAINT_REVERSE_INDEX
+			    || constraint_type == DB_CONSTRAINT_VECTOR_INDEX);
 
       if (is_secondary_index)
 	{
@@ -15034,7 +15066,7 @@ sm_drop_constraint (MOP classop, DB_CONSTRAINT_TYPE constraint_type, const char 
   int error = NO_ERROR;
   SM_TEMPLATE *def = NULL;
 
-  if (mysql_index_name && constraint_type == DB_CONSTRAINT_INDEX)
+  if (mysql_index_name && (constraint_type == DB_CONSTRAINT_INDEX || constraint_type == DB_CONSTRAINT_VECTOR_INDEX))
     {
       SM_CLASS *smcls = NULL;
 
@@ -15049,7 +15081,8 @@ sm_drop_constraint (MOP classop, DB_CONSTRAINT_TYPE constraint_type, const char 
 
 	  if (constraint != NULL
 	      && (constraint->type == SM_CONSTRAINT_INDEX || constraint->type == SM_CONSTRAINT_REVERSE_INDEX
-		  || constraint->type == SM_CONSTRAINT_UNIQUE || constraint->type == SM_CONSTRAINT_REVERSE_UNIQUE))
+		  || constraint->type == SM_CONSTRAINT_UNIQUE || constraint->type == SM_CONSTRAINT_REVERSE_UNIQUE
+		  || constraint->type == SM_CONSTRAINT_VECTOR_INDEX))
 	    {
 	      constraint_type = db_constraint_type (constraint);
 	    }
@@ -15060,6 +15093,7 @@ sm_drop_constraint (MOP classop, DB_CONSTRAINT_TYPE constraint_type, const char 
     {
     case DB_CONSTRAINT_INDEX:
     case DB_CONSTRAINT_REVERSE_INDEX:
+    case SM_CONSTRAINT_VECTOR_INDEX:
       error = sm_drop_index (classop, constraint_name);
       break;
 
@@ -15143,7 +15177,7 @@ sm_is_possible_to_recreate_constraint (MOP class_mop, const SM_CLASS * const cla
     }
 
   if (constraint->type == SM_CONSTRAINT_NOT_NULL || constraint->type == SM_CONSTRAINT_INDEX
-      || constraint->type == SM_CONSTRAINT_REVERSE_INDEX)
+      || constraint->type == SM_CONSTRAINT_REVERSE_INDEX || constraint->type == SM_CONSTRAINT_VECTOR_INDEX)
     {
       return true;
     }
@@ -16039,6 +16073,7 @@ sm_is_global_only_constraint (MOP classmop, SM_CLASS_CONSTRAINT * constraint, in
     case SM_CONSTRAINT_REVERSE_INDEX:
     case SM_CONSTRAINT_FOREIGN_KEY:
     case SM_CONSTRAINT_NOT_NULL:
+    case SM_CONSTRAINT_VECTOR_INDEX:
       /* always local */
       return NO_ERROR;
     case SM_CONSTRAINT_PRIMARY_KEY:

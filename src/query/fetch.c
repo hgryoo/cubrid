@@ -21,6 +21,7 @@
  * fetch.c - Object/Tuple value fetch routines
  */
 
+#include "db_function.hpp"
 #ident "$Id$"
 
 #include "config.h"
@@ -4204,6 +4205,7 @@ fetch_peek_dbval (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 	    case F_REGEXP_LIKE:
 	    case F_REGEXP_REPLACE:
 	    case F_REGEXP_SUBSTR:
+	    case F_VECTOR_DISTANCE:
 	      {
 		regu_variable_list_node *operand;
 
@@ -4415,6 +4417,11 @@ fetch_peek_dbval (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 	case F_REGEXP_LIKE:
 	case F_REGEXP_REPLACE:
 	case F_REGEXP_SUBSTR:
+	case F_VECTOR_DISTANCE:
+	case F_L1_DISTANCE:
+	case F_L2_DISTANCE:
+	case F_INNER_PRODUCT:
+	case F_COSINE_DISTANCE:
 	  break;
 
 	default:

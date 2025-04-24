@@ -51,6 +51,7 @@
 #include "db_json.hpp"
 #include "string_buffer.hpp"
 #include "db_value_printer.hpp"
+#include "db_vector.hpp"
 
 #if !defined (SERVER_MODE)
 #include "work_space.h"
@@ -254,6 +255,8 @@ TP_DOMAIN tp_Set_domain = { NULL, NULL, &tp_Set, DOMAIN_INIT3 };
 TP_DOMAIN tp_Multiset_domain = { NULL, NULL, &tp_Multiset, DOMAIN_INIT3 };
 
 TP_DOMAIN tp_Sequence_domain = { NULL, NULL, &tp_Sequence, DOMAIN_INIT3 };
+
+TP_DOMAIN tp_Vector_domain = { NULL, NULL, &tp_Vector, DOMAIN_INIT3 };
 
 TP_DOMAIN tp_Midxkey_domain_list_heads[TP_NUM_MIDXKEY_DOMAIN_LIST] = {
   {NULL, NULL, &tp_Midxkey, DOMAIN_INIT3},
@@ -579,6 +582,7 @@ static int tp_atodatetimetz (const DB_VALUE * src, DB_DATETIMETZ * temp);
 static int tp_atonumeric (const DB_VALUE * src, DB_VALUE * temp);
 static int tp_atof (const DB_VALUE * src, double *num_value, DB_DATA_STATUS * data_stat);
 static int tp_atobi (const DB_VALUE * src, DB_BIGINT * num_value, DB_DATA_STATUS * data_stat);
+static int tp_atovector (DB_VALUE const *src, DB_VALUE * result);
 #if defined(ENABLE_UNUSED_FUNCTION)
 static char *tp_itoa (int value, char *string, int radix);
 #endif
@@ -4993,6 +4997,56 @@ tp_atof (const DB_VALUE * src, double *num_value, DB_DATA_STATUS * data_stat)
 }
 
 /*
+ * tp_str_to_vector - Coerce a string to a vector.
+ *    return: NO_ERROR or error code.
+ *    src(in): string DB_VALUE
+ *    result(out): vector DB_VALUE
+ * Note:
+ *    Accepts strings that are not null terminated. Don't call this unless
+ *    src is a string db_value.
+ */
+static int
+tp_atovector (const DB_VALUE * src, DB_VALUE * result)
+{
+  const char *p = db_get_string (src);
+  const char *end = p + db_get_string_size (src);
+  int count = 0;
+  const int number_buffer_size = 64;
+  char number_buffer[number_buffer_size];
+  int buffer_idx;
+  const int max_vector_size = 2000;
+  float float_array[max_vector_size];
+  DB_SET *vec = NULL;
+  DB_VALUE e_val;
+
+  int error = db_string_to_vector (p, db_get_string_size (src), float_array, &count);
+  if (error != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+
+  // Create vector and populate it
+  vec = db_vec_create (NULL, NULL, 0);
+  if (vec == NULL)
+    {
+      assert (er_errid () != NO_ERROR);
+      return er_errid ();
+    }
+
+  db_make_vector (result, vec);
+  for (int i = 0; i < count; ++i)
+    {
+      db_make_float (&e_val, float_array[i]);
+      if (db_seq_put (db_get_set (result), i, &e_val) != NO_ERROR)
+	{
+	  return ER_FAILED;
+	}
+    }
+
+  return NO_ERROR;
+}
+
+/*
  * tp_atobi - Coerce a string to a bigint.
  *    return: NO_ERROR or error code
  *    src(in): string DB_VALUE
@@ -9123,6 +9177,24 @@ tp_value_cast_internal (const DB_VALUE * src, DB_VALUE * dest, const TP_DOMAIN *
 	}
       break;
 
+    case DB_TYPE_VECTOR:
+      switch (original_type)
+	{
+	case DB_TYPE_CHAR:
+	case DB_TYPE_VARCHAR:
+	case DB_TYPE_NCHAR:
+	case DB_TYPE_VARNCHAR:
+	  {
+
+	    err = tp_atovector (src, target);
+	    break;
+
+	  }
+	default:
+	  status = DOMAIN_INCOMPATIBLE;
+	  break;
+	}
+      break;
     case DB_TYPE_VOBJ:
       if (original_type == DB_TYPE_VOBJ)
 	{
@@ -9534,6 +9606,77 @@ tp_value_cast_internal (const DB_VALUE * src, DB_VALUE * dest, const TP_DOMAIN *
 	      }
 	  }
 	  break;
+
+
+	case DB_TYPE_VECTOR:
+	  {
+	    DB_VALUE element;
+	    SETREF *setref = db_get_set (src);
+	    if (setref)
+	      {
+		DB_VALUE str;
+		db_value_domain_init (&str, DB_TYPE_VARCHAR, TP_FLOATING_PRECISION_VALUE, 0);
+
+		std::ostringstream oss;
+
+		oss << "[";
+
+		int vector_dim = db_set_size (setref);
+		for (int i = 0; i < vector_dim; i++)
+		  {
+		    if (db_set_get (setref, i, &element) != NO_ERROR)
+		      {
+			status = DOMAIN_ERROR;
+			break;
+		      }
+
+		    tp_ftoa (&element, &str);
+
+		    if (DB_IS_NULL (&str))
+		      {
+			status = DOMAIN_ERROR;
+			break;
+		      }
+
+		    oss << db_get_string (&str);
+		    if (i < vector_dim - 1)
+		      {
+			oss << ", ";
+		      }
+		    db_value_clear (&str);
+		  }
+		oss << "]";
+
+		char *new_string = db_private_strdup (NULL, oss.str ().c_str ());
+		if (!new_string)
+		  {
+		    status = DOMAIN_ERROR;
+		    break;
+		  }
+
+		// check varchar's precision e.g.) 'select cast (vec as varchar (1)) from tbl;'
+		int new_string_len = oss.str ().size ();
+
+		if (db_value_precision (target) != TP_FLOATING_PRECISION_VALUE
+		    && db_value_precision (target) < new_string_len)
+		  {
+		    status = DOMAIN_OVERFLOW;
+		    db_private_free_and_init (NULL, new_string);
+		  }
+		else
+		  {
+		    make_desired_string_db_value (desired_type, desired_domain, new_string, target, &status,
+						  &data_stat);
+		  }
+	      }
+	    else
+	      {
+		status = DOMAIN_ERROR;
+		break;
+	      }
+	  }
+	  break;
+
 
 	case DB_TYPE_DATE:
 	case DB_TYPE_TIME:
@@ -11426,6 +11569,7 @@ tp_valid_indextype (DB_TYPE type)
     case DB_TYPE_NCHAR:
     case DB_TYPE_VARNCHAR:
     case DB_TYPE_ENUMERATION:
+    case DB_TYPE_VECTOR:
       return 1;
     default:
       return 0;

@@ -29,6 +29,7 @@ set(COMPAT_SOURCES
   ${COMPAT_DIR}/db_macro.c
   ${COMPAT_DIR}/db_set.c
   ${COMPAT_DIR}/db_value_printer.cpp
+  ${COMPAT_DIR}/db_vector.cpp
   )
 set (COMPAT_HEADERS
   ${COMPAT_DIR}/dbtype_def.h
@@ -40,6 +41,7 @@ set (COMPAT_HEADERS
   ${COMPAT_DIR}/db_set.h
   ${COMPAT_DIR}/db_set_function.h
   ${COMPAT_DIR}/dbtype_function.i
+  ${COMPAT_DIR}/db_vector.hpp
   )
 
 set(THREAD_SOURCES
@@ -253,6 +255,7 @@ set(QUERY_SOURCES
   ${QUERY_DIR}/string_regex_std.cpp
   ${QUERY_DIR}/string_regex_re2.cpp
   ${QUERY_DIR}/vacuum.c  
+  ${QUERY_DIR}/vector_opfunc.cpp
   ${QUERY_DIR}/xasl_cache.c
   )
 set(QUERY_HEADERS
@@ -398,6 +401,7 @@ set(STORAGE_SOURCES
   ${STORAGE_DIR}/storage_common.c
   ${STORAGE_DIR}/system_catalog.c
   ${STORAGE_DIR}/tde.c
+  ${STORAGE_DIR}/hnsw.cpp
   )
 set(STORAGE_HEADERS
   ${STORAGE_DIR}/btree_unique.hpp
@@ -436,6 +440,7 @@ set(LOADDB_SOURCES
   ${LOADDB_DIR}/load_db_value_converter.cpp
   ${LOADDB_DIR}/load_driver.cpp
   ${LOADDB_DIR}/load_error_handler.cpp
+  ${LOADDB_DIR}/load_open_data.cpp
   ${LOADDB_DIR}/load_semantic_helper.cpp
   ${LOADDB_DIR}/load_server_loader.cpp
   ${LOADDB_DIR}/load_session.cpp

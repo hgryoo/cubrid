@@ -20,6 +20,7 @@
  * query_executor.c - Query evaluator module
  */
 
+#include "db_function.hpp"
 #ident "$Id$"
 
 
@@ -1616,6 +1617,11 @@ qexec_clear_regu_var (THREAD_ENTRY * thread_p, XASL_NODE * xasl_p, REGU_VARIABLE
 	    case F_REGEXP_LIKE:
 	    case F_REGEXP_REPLACE:
 	    case F_REGEXP_SUBSTR:
+	    case F_VECTOR_DISTANCE:
+	    case F_L1_DISTANCE:
+	    case F_L2_DISTANCE:
+	    case F_INNER_PRODUCT:
+	    case F_COSINE_DISTANCE:
 	      {
 		if (regu_var->value.funcp->tmp_obj->compiled_regex)
 		  {
@@ -25059,6 +25065,9 @@ qexec_schema_get_type_name_from_id (DB_TYPE id)
 
     case DB_TYPE_SEQUENCE:
       return "SEQUENCE";
+
+    case DB_TYPE_VECTOR:
+      return "VECTOR";
 
     case DB_TYPE_NCHAR:
       return "NCHAR";

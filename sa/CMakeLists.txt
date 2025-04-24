@@ -60,6 +60,7 @@ set(COMPAT_SOURCES
   ${COMPAT_DIR}/db_temp.c
   ${COMPAT_DIR}/db_value_printer.cpp
   ${COMPAT_DIR}/db_vdb.c
+  ${COMPAT_DIR}/db_vector.cpp
   ${COMPAT_DIR}/db_virt.c
   ${COMPAT_DIR}/dbtype_function.c
   )
@@ -286,6 +287,7 @@ set(QUERY_SOURCES
   ${QUERY_DIR}/string_regex_std.cpp
   ${QUERY_DIR}/string_regex_re2.cpp
   ${QUERY_DIR}/vacuum.c
+  ${QUERY_DIR}/vector_opfunc.cpp
   ${QUERY_DIR}/xasl_cache.c
   ${QUERY_DIR}/xasl_to_stream.c
   )
@@ -486,6 +488,7 @@ set(STORAGE_SOURCES
   ${STORAGE_DIR}/storage_common.c
   ${STORAGE_DIR}/system_catalog.c
   ${STORAGE_DIR}/tde.c
+  ${STORAGE_DIR}/hnsw.cpp
   )
 set(STORAGE_HEADERS
   ${STORAGE_DIR}/btree_unique.hpp
@@ -524,6 +527,7 @@ set(LOADDB_SOURCES
   ${LOADDB_DIR}/load_error_handler.cpp
   ${LOADDB_DIR}/load_object.c
   ${LOADDB_DIR}/load_object_table.c
+  ${LOADDB_DIR}/load_open_data.cpp
   ${LOADDB_DIR}/load_sa_loader.cpp
   ${LOADDB_DIR}/load_semantic_helper.cpp
   )
@@ -696,6 +700,9 @@ if(UNIX)
 target_external_dependencies(cubridsa
   LIBNCURSES
   LIBEDIT
+  HDF
+  ZLIB
+  HIGHFIVE
   )
 endif(UNIX)
 target_external_dependencies(cubridsa
@@ -706,6 +713,7 @@ target_external_dependencies(cubridsa
   LZ4
   RAPIDJSON
   RE2
+  LIBFAISS
   )
 target_include_directories(cubridsa PRIVATE
   ${FLEX_INCLUDE_DIRS}
