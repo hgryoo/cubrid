@@ -56,12 +56,12 @@ static faiss::idx_t encode_oid (const OID &oid);
 static OID decode_oid (faiss::idx_t encoded_oid);
 
 BTID *
-xhnsw_add_index (THREAD_ENTRY *thread_p, BTID *btid, int dimension = 10, int hnsw_M = 128, int hnsw_efConstruction = 40,
+xhnsw_add_index (THREAD_ENTRY *thread_p, BTID *btid, int dimension = 10, int hnsw_M = 16, int hnsw_efConstruction = 64,
 		 enum faiss::MetricType metric_type = faiss::METRIC_L2)
 {
   get_new_hnsw_index_id ();
 
-  auto hnsw_index = new faiss::IndexHNSWFlat (dimension, hnsw_M, metric_type);
+  auto hnsw_index = new faiss::IndexHNSWCagra (dimension, hnsw_M, metric_type);
   hnsw_index->hnsw.efConstruction = hnsw_efConstruction;
 
   auto index = std::make_unique<faiss::IndexIDMap> (hnsw_index);
@@ -101,7 +101,14 @@ int xhnsw_delete_index (THREAD_ENTRY *thread_p, BTID *btid)
   int hnsw_id = btid->root_pageid;
   auto it = hnsw_index_map.find (hnsw_id);
 
-  if (it != hnsw_index_map.end())
+  if (it == hnsw_index_map.end())
+    {
+      er_log_debug (ARG_FILE_LINE, "HNSW Index not found with ID %d", hnsw_id);
+      // assert (false);
+      // return ER_FAILED;
+      return NO_ERROR;
+    }
+  else
     {
       er_log_debug (ARG_FILE_LINE, "HNSW Index deleted with ID %d", hnsw_id);
       hnsw_print_index_info (btid);
