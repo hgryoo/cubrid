@@ -893,7 +893,10 @@ typedef enum
   T_CURRENT_DATE,
   T_CURRENT_TIME,
   T_CONV_TZ,
+  T_DISTANCE_OP_COSINE,
   T_DISTANCE_OP_EUCLIDEAN,
+  T_DISTANCE_OP_MANHATTAN,
+  T_DISTANCE_OP_NEG_INNER_PROD,
 } OPERATOR_TYPE;		/* arithmetic operator types */
 
 /************************************************************************/

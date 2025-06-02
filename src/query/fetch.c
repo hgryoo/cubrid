@@ -183,7 +183,10 @@ fetch_peek_arith (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
     case T_MUL:
     case T_DIV:
     case T_MOD:
+    case T_DISTANCE_OP_COSINE:
     case T_DISTANCE_OP_EUCLIDEAN:
+    case T_DISTANCE_OP_MANHATTAN:
+    case T_DISTANCE_OP_NEG_INNER_PROD:
       {
 	if (arithptr->opcode == T_DISTANCE_OP_EUCLIDEAN)
 	  {
@@ -824,10 +827,43 @@ fetch_peek_arith (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 	}
       break;
 
+    case T_DISTANCE_OP_COSINE:
+      {
+	DB_VALUE *args[2] = { peek_left, peek_right };
+	int err = vector_cosine_distance (arithptr->value, args, 2);
+	if (err != NO_ERROR)
+	  {
+	    goto error;
+	  }
+      }
+      break;
+
     case T_DISTANCE_OP_EUCLIDEAN:
       {
 	DB_VALUE *args[2] = { peek_left, peek_right };
 	int err = vector_l2_distance (arithptr->value, args, 2);
+	if (err != NO_ERROR)
+	  {
+	    goto error;
+	  }
+      }
+      break;
+
+    case T_DISTANCE_OP_MANHATTAN:
+      {
+	DB_VALUE *args[2] = { peek_left, peek_right };
+	int err = vector_l1_distance (arithptr->value, args, 2);
+	if (err != NO_ERROR)
+	  {
+	    goto error;
+	  }
+      }
+      break;
+
+    case T_DISTANCE_OP_NEG_INNER_PROD:
+      {
+	DB_VALUE *args[2] = { peek_left, peek_right };
+	int err = vector_negative_inner_product (arithptr->value, args, 2);
 	if (err != NO_ERROR)
 	  {
 	    goto error;
