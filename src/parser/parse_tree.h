@@ -851,6 +851,8 @@ struct json_t;
 					 (n)->node_type == PT_DROP_SYNONYM ||	\
 					 (n)->node_type == PT_RENAME_SYNONYM)
 
+#define PT_NODE_IS_COPY(n)		(PT_ASSERT_NOT_NULL ((n)), (n)->node_type == PT_COPY)
+
 /* Check node_type of PT_SPEC */
 #define PT_SPEC_IS_ONLY(n)		(PT_SPEC_ASSERT ((n)), (n)->info.spec.only_all == PT_ONLY)
 #define PT_SPEC_IS_ALL(n)		(PT_SPEC_ASSERT ((n)), (n)->info.spec.only_all == PT_ALL)
@@ -1046,6 +1048,8 @@ enum pt_node_type
   PT_DROP_SYNONYM = CUBRID_STMT_DROP_SYNONYM,
   PT_RENAME_SYNONYM = CUBRID_STMT_RENAME_SYNONYM,
 
+  PT_COPY = CUBRID_STMT_COPY,
+
   PT_DIFFERENCE = CUBRID_MAX_STMT_TYPE,	/* these enumerations must be distinct from statements */
   PT_INTERSECTION,		/* difference intersection and union are reported as CUBRID_STMT_SELECT. */
   PT_UNION,
@@ -1101,6 +1105,7 @@ enum pt_node_type
   PT_DBLINK_TABLE,
   PT_DBLINK_TABLE_DML,
   PT_SP_BODY,
+  PT_COPY,
   PT_NODE_NUMBER,		/* This is the number of node types */
   PT_LAST_NODE_NUMBER = PT_NODE_NUMBER
 };

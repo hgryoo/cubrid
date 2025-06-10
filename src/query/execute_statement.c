@@ -16325,6 +16325,10 @@ do_replicate_statement (PARSER_CONTEXT * parser, PT_NODE * statement)
       repl_stmt.statement_type = CUBRID_STMT_UPDATE;
       break;
 
+    case PT_COPY:
+      repl_stmt.statement_type = CUBRID_STMT_COPY;
+      break;
+
     case PT_DROP_VARIABLE:	/* DROP VARIABLE statements are not replicated intentionally. */
     default:
       return NO_ERROR;

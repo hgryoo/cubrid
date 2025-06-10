@@ -1186,6 +1186,7 @@ static int g_plcsql_text_pos;
 %token CONSTRAINTS
 %token CONTINUE
 %token CONVERT
+%token COPY
 %token CORRESPONDING
 %token COUNT
 %token CREATE
@@ -10953,6 +10954,17 @@ file_path_name
 			PARSER_SAVE_ERR_CONTEXT ($$, @$.buffer_pos)
 
 		DBG_PRINT}}
+        | STDIN
+		{{ DBG_TRACE_GRAMMAR(STDIN);
+
+			PT_NODE *node = parser_new_node (this_parser, PT_FILE_PATH);
+			if (node)
+                          {
+			    node->info.file_path.string = "stdin";
+                          }
+			$$ = node;
+			PARSER_SAVE_ERR_CONTEXT ($$, @$.buffer_pos)
+		DBG_PRINT}}
 	;
 
 opt_class_attr_def_list
@@ -14783,6 +14795,38 @@ values_expr_item
 			$$ = node;
 		DBG_PRINT}}
 	;
+
+copy_stmt
+	: COPY                  /* $1 */
+          only_class_name       /* $2 */
+          FROM                  /* $3 */
+          copy_from_clause      /* $4 */
+		{{ DBG_TRACE_GRAMMAR(copy_stmt, : COPY);
+			PT_NODE *node;
+                        node = parser_new_node (this_parser, PT_COPY);
+                        // TODO
+		DBG_PRINT}}
+	;
+
+copy_from_clause
+        : file_path_name
+        | STDIN
+		{{ DBG_TRACE_GRAMMAR(STDIN);
+
+			PT_NODE *node = parser_new_node (this_parser, PT_FILE_PATH);
+			if (node)
+                          {
+			    node->info.file_path.string = "stdin";
+                          }
+			$$ = node;
+			PARSER_SAVE_ERR_CONTEXT ($$, @$.buffer_pos)
+		DBG_PRINT}}
+        ;
+
+copy_opt_with_clause
+        : /* empty */
+        | WITH
+        ;
 
 select_stmt
 	:
