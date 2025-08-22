@@ -158,6 +158,7 @@ struct heap_scancache
     MVCC_SNAPSHOT *mvcc_snapshot;	/* mvcc snapshot */
     HEAP_SCANCACHE_NODE_LIST *partition_list;	/* list holding the heap file information for partition nodes involved
 						 * in the scan */
+    int max_seen_rec_len;  /* track largest record length seen in this scan */
 
     void start_area ();
     void end_area ();

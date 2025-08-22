@@ -25401,13 +25401,21 @@ heap_scan_get_visible_version (THREAD_ENTRY * thread_p, const OID * oid, OID * c
 			  *recdes = *peeked_recdes;
 			  return scan;
 			}
-		      else if (ispeeking == COPY && recdes != NULL && recdes->data != NULL
-			       && recdes->area_size >= peeked_recdes->length)
+		      else if (ispeeking == COPY && recdes != NULL)
 			{
-			  /* COPY fast-path: buffer is already large enough. */
+			  /* COPY fast-path: ensure buffer using scan cache area. */
+			  if (!scan_cache->is_recdes_assigned_to_area (*recdes)
+			      || recdes->area_size < peeked_recdes->length)
+			    {
+			      scan_cache->assign_recdes_to_area (*recdes, (size_t) peeked_recdes->length);
+			    }
 			  memcpy (recdes->data, peeked_recdes->data, peeked_recdes->length);
 			  recdes->length = peeked_recdes->length;
 			  recdes->type = peeked_recdes->type;
+			  if (peeked_recdes->length > scan_cache->max_seen_rec_len)
+			    {
+			      scan_cache->max_seen_rec_len = peeked_recdes->length;
+			    }
 			  return scan;
 			}
 		    }
@@ -25421,13 +25429,21 @@ heap_scan_get_visible_version (THREAD_ENTRY * thread_p, const OID * oid, OID * c
 			  *recdes = *peeked_recdes;
 			  return scan;
 			}
-		      else if (ispeeking == COPY && recdes != NULL
-			       && recdes->data != NULL && recdes->area_size >= peeked_recdes->length)
+		      else if (ispeeking == COPY && recdes != NULL)
 			{
-			  /* COPY fast-path: buffer is already large enough. */
+			  /* COPY fast-path: ensure buffer using scan cache area. */
+			  if (!scan_cache->is_recdes_assigned_to_area (*recdes)
+			      || recdes->area_size < peeked_recdes->length)
+			    {
+			      scan_cache->assign_recdes_to_area (*recdes, (size_t) peeked_recdes->length);
+			    }
 			  memcpy (recdes->data, peeked_recdes->data, peeked_recdes->length);
 			  recdes->length = peeked_recdes->length;
 			  recdes->type = peeked_recdes->type;
+			  if (peeked_recdes->length > scan_cache->max_seen_rec_len)
+			    {
+			      scan_cache->max_seen_rec_len = peeked_recdes->length;
+			    }
 			  return scan;
 			}
 		    }
@@ -25493,8 +25509,10 @@ heap_get_visible_version_internal (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * c
 
   if (context->scan_cache && context->ispeeking == COPY && context->recdes_p != NULL)
     {
-      /* Allocate an area to hold the object. Assume that the object will fit in two pages for not better estimates. */
-      if (heap_scan_cache_allocate_area (thread_p, context->scan_cache, DB_PAGESIZE * 2) != NO_ERROR)
+      /* Pre-reserve area using previous max length when available. */
+      if (heap_scan_cache_allocate_area (thread_p, context->scan_cache,
+					 (context->scan_cache->max_seen_rec_len > DB_PAGESIZE * 2
+					  ? context->scan_cache->max_seen_rec_len : DB_PAGESIZE * 2)) != NO_ERROR)
 	{
 	  return S_ERROR;
 	}
@@ -25570,6 +25588,11 @@ heap_get_visible_version_internal (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * c
   if (context->recdes_p != NULL)
     {
       scan = heap_get_record_data_when_all_ready (thread_p, context);
+      if (scan == S_SUCCESS && context->scan_cache != NULL && context->recdes_p != NULL)
+	{
+	  if (context->recdes_p->length > context->scan_cache->max_seen_rec_len)
+	    context->scan_cache->max_seen_rec_len = context->recdes_p->length;
+	}
     }
 
   /* Fall through to exit. */
@@ -26099,6 +26122,7 @@ void
 heap_scancache::start_area ()
 {
   m_area = NULL;    // start as null; it will be allocated when it is first needed
+  max_seen_rec_len = 0;
 }
 
 void
