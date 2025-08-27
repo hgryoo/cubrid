@@ -25343,6 +25343,11 @@ SCAN_CODE
 heap_scan_get_visible_version (THREAD_ENTRY * thread_p, const OID * oid, OID * class_oid, RECDES * recdes,
 			       RECDES * peeked_recdes, HEAP_SCANCACHE * scan_cache, int ispeeking, int old_chn)
 {
+#ifndef LIKELY
+#define LIKELY(x)   __builtin_expect(!!(x), 1)
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
+
   SCAN_CODE scan = S_SUCCESS;
   HEAP_GET_CONTEXT context;
 
@@ -25360,12 +25365,11 @@ heap_scan_get_visible_version (THREAD_ENTRY * thread_p, const OID * oid, OID * c
    * or the mvcc_snapshot does not satisfy, then carry out the necessary steps through 
    * the heap_get_visible_version_internal() function.
    */
-  if (peeked_recdes->type == REC_HOME && ispeeking == PEEK)
+  if (LIKELY (peeked_recdes->type == REC_HOME))
     {
       MVCC_REC_HEADER mvcc_header = MVCC_REC_HEADER_INITIALIZER;
 
       assert (scan_cache != NULL);
-      assert (recdes != NULL);
       assert (peeked_recdes != NULL);
 
       if (or_mvcc_get_header (peeked_recdes, &mvcc_header) != NO_ERROR)
@@ -25373,6 +25377,12 @@ heap_scan_get_visible_version (THREAD_ENTRY * thread_p, const OID * oid, OID * c
 	  /* Unexpected. */
 	  assert (false);
 	  return S_ERROR;
+	}
+
+      /* CHN up-to-date early exit using only the header in peeked_recdes. */
+      if (old_chn != NULL_CHN && MVCC_IS_CHN_UPTODATE (&mvcc_header, old_chn))
+	{
+	  return S_SUCCESS_CHN_UPTODATE;
 	}
 
       if (class_oid != NULL)
@@ -25384,24 +25394,63 @@ heap_scan_get_visible_version (THREAD_ENTRY * thread_p, const OID * oid, OID * c
 		{
 		  if (MVCC_IS_HEADER_ALL_VISIBLE (&mvcc_header))
 		    {
-		      *recdes = *peeked_recdes;
-		      return scan;
+		      if (ispeeking == PEEK)
+			{
+			  assert (recdes != NULL);
+			  *recdes = *peeked_recdes;
+			  return scan;
+			}
+		      else if (ispeeking == COPY && recdes != NULL && recdes->data != NULL
+			       && recdes->area_size >= peeked_recdes->length)
+			{
+			  /* COPY fast-path: buffer is already large enough. */
+			  memcpy (recdes->data, peeked_recdes->data, peeked_recdes->length);
+			  recdes->length = peeked_recdes->length;
+			  recdes->type = peeked_recdes->type;
+			  return scan;
+			}
 		    }
 
 		  if (scan_cache->mvcc_snapshot->snapshot_fnc (thread_p, &mvcc_header, scan_cache->mvcc_snapshot) ==
 		      SNAPSHOT_SATISFIED)
 		    {
-		      *recdes = *peeked_recdes;
-		      return scan;
+		      if (ispeeking == PEEK)
+			{
+			  assert (recdes != NULL);
+			  *recdes = *peeked_recdes;
+			  return scan;
+			}
+		      else if (ispeeking == COPY && recdes != NULL
+			       && recdes->data != NULL && recdes->area_size >= peeked_recdes->length)
+			{
+			  /* COPY fast-path: buffer is already large enough. */
+			  memcpy (recdes->data, peeked_recdes->data, peeked_recdes->length);
+			  recdes->length = peeked_recdes->length;
+			  recdes->type = peeked_recdes->type;
+			  return scan;
+			}
 		    }
 		}
 	    }
 	  else
 	    {
 	      /* mvcc_disabled_class */
-	      *recdes = *peeked_recdes;
-	      return scan;
+	      if (ispeeking == PEEK)
+		{
+		  assert (recdes != NULL);
+		  *recdes = *peeked_recdes;
+		  return scan;
+		}
+	      else if (ispeeking == COPY && recdes != NULL
+		       && recdes->data != NULL && recdes->area_size >= peeked_recdes->length)
+		{
+		  memcpy (recdes->data, peeked_recdes->data, peeked_recdes->length);
+		  recdes->length = peeked_recdes->length;
+		  recdes->type = peeked_recdes->type;
+		  return scan;
+		}
 	    }
+
 	}
       /* fall through.. */
     }
@@ -25426,6 +25475,7 @@ heap_scan_get_visible_version (THREAD_ENTRY * thread_p, const OID * oid, OID * c
 SCAN_CODE
 heap_get_visible_version_internal (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * context, bool is_heap_scan)
 {
+
   SCAN_CODE scan;
 
   MVCC_SNAPSHOT *mvcc_snapshot = NULL;
@@ -25479,6 +25529,13 @@ heap_get_visible_version_internal (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * c
 	}
     }
 
+  /* CHN check first: if up-to-date, avoid further work (log/heap access). */
+  if (context->old_chn != NULL_CHN && MVCC_IS_CHN_UPTODATE (&mvcc_header, context->old_chn))
+    {
+      scan = S_SUCCESS_CHN_UPTODATE;
+      goto exit;
+    }
+
   if (mvcc_snapshot != NULL)
     {
       MVCC_SATISFIES_SNAPSHOT_RESULT snapshot_res;
@@ -25487,9 +25544,18 @@ heap_get_visible_version_internal (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * c
       if (snapshot_res == TOO_NEW_FOR_SNAPSHOT)
 	{
 	  /* current version is not visible, check previous versions from log and skip record get from heap */
-	  scan =
-	    heap_get_visible_version_from_log (thread_p, context->recdes_p, &MVCC_GET_PREV_VERSION_LSA (&mvcc_header),
-					       context->scan_cache, context->old_chn);
+	  if (LSA_ISNULL (&MVCC_GET_PREV_VERSION_LSA (&mvcc_header)))
+	    {
+	      /* No previous version recorded; nothing to fetch. */
+	      scan = S_SNAPSHOT_NOT_SATISFIED;
+	    }
+	  else
+	    {
+	      scan =
+		heap_get_visible_version_from_log (thread_p, context->recdes_p,
+						   &MVCC_GET_PREV_VERSION_LSA (&mvcc_header),
+						   context->scan_cache, context->old_chn);
+	    }
 	  goto exit;
 	}
       else if (snapshot_res == TOO_OLD_FOR_SNAPSHOT)
@@ -25498,14 +25564,6 @@ heap_get_visible_version_internal (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * c
 	  goto exit;
 	}
       /* else...fall through to heap get */
-    }
-
-  if (MVCC_IS_CHN_UPTODATE (&mvcc_header, context->old_chn))
-    {
-      /* Object version didn't change and CHN is up-to-date. Don't get record data and return
-       * S_SUCCESS_CHN_UPTODATE instead. */
-      scan = S_SUCCESS_CHN_UPTODATE;
-      goto exit;
     }
 
   if (context->recdes_p != NULL)
