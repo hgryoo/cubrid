@@ -168,6 +168,13 @@ enum mvcc_satisfies_snapshot_result
 typedef enum mvcc_satisfies_snapshot_result MVCC_SATISFIES_SNAPSHOT_RESULT;
 typedef struct mvcc_snapshot MVCC_SNAPSHOT;
 
+/* Devirtualized snapshot kind (small enum to avoid function pointer call in hot path). */
+typedef enum
+{
+  MVCC_SNAPSHOT_KIND_DEFAULT = 0,       /* full visibility check */
+  MVCC_SNAPSHOT_KIND_NOT_DELETED_ONLY = 1 /* fast path used by some heap scans */
+} MVCC_SNAPSHOT_KIND;
+
 typedef MVCC_SATISFIES_SNAPSHOT_RESULT (*MVCC_SNAPSHOT_FUNC) (THREAD_ENTRY * thread_p, MVCC_REC_HEADER * rec_header,
 							      MVCC_SNAPSHOT * snapshot);
 struct mvcc_snapshot
@@ -177,6 +184,7 @@ struct mvcc_snapshot
 
   mvcc_active_tran m_active_mvccs;
 
+  MVCC_SNAPSHOT_KIND kind;
   MVCC_SNAPSHOT_FUNC snapshot_fnc;	/* the snapshot function */
 
   bool valid;			/* true, if the snapshot is valid */
@@ -275,5 +283,8 @@ extern MVCC_SATISFIES_DELETE_RESULT mvcc_satisfies_delete (THREAD_ENTRY * thread
 extern MVCC_SATISFIES_SNAPSHOT_RESULT mvcc_satisfies_dirty (THREAD_ENTRY * thread_p, MVCC_REC_HEADER * rec_header,
 							    MVCC_SNAPSHOT * snapshot);
 extern bool mvcc_is_mvcc_disabled_class (const OID * class_oid);
+
+extern MVCC_SATISFIES_SNAPSHOT_RESULT mvcc_snapshot_check_inline (THREAD_ENTRY * thread_p, MVCC_REC_HEADER * rec_header,
+							       MVCC_SNAPSHOT * snapshot);
 
 #endif /* _MVCC_H_ */

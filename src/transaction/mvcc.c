@@ -79,6 +79,24 @@ static INLINE bool mvcc_is_id_in_snapshot (THREAD_ENTRY * thread_p, MVCCID mvcc_
 
 static INLINE bool mvcc_is_active_id (THREAD_ENTRY * thread_p, MVCCID mvccid) __attribute__ ((ALWAYS_INLINE));
 
+/* Inline snapshot check wrapper to avoid indirect calls on hot path. */
+extern MVCC_SATISFIES_SNAPSHOT_RESULT
+mvcc_snapshot_check_inline (THREAD_ENTRY * thread_p, MVCC_REC_HEADER * rec_header, MVCC_SNAPSHOT * snapshot)
+{
+  if (snapshot == NULL)
+    {
+      return SNAPSHOT_SATISFIED;
+    }
+  switch (snapshot->kind)
+    {
+    case MVCC_SNAPSHOT_KIND_NOT_DELETED_ONLY:
+      return mvcc_is_not_deleted_for_snapshot (thread_p, rec_header, snapshot);
+    case MVCC_SNAPSHOT_KIND_DEFAULT:
+    default:
+      return mvcc_satisfies_snapshot (thread_p, rec_header, snapshot);
+    }
+}
+
 /*
  * mvcc_is_id_in_snapshot () - check whether mvcc id is in snapshot -
  *                             is mvcc id active from snapshot point of view?
@@ -659,6 +677,7 @@ mvcc_snapshot::mvcc_snapshot ()
   , highest_completed_mvccid (MVCCID_NULL)
   , m_active_mvccs ()
   , snapshot_fnc (NULL)
+  , kind (MVCC_SNAPSHOT_KIND_DEFAULT)
   , valid (false)
 {
 }
@@ -667,6 +686,7 @@ void
 mvcc_snapshot::reset ()
 {
   snapshot_fnc = NULL;
+  kind = MVCC_SNAPSHOT_KIND_DEFAULT;
   lowest_active_mvccid = MVCCID_NULL;
   highest_completed_mvccid = MVCCID_NULL;
 
@@ -685,6 +705,7 @@ mvcc_snapshot::copy_to (mvcc_snapshot & dest) const
   dest.highest_completed_mvccid = highest_completed_mvccid;
   dest.snapshot_fnc = snapshot_fnc;
   dest.valid = valid;
+  dest.kind = kind;
 }
 
 mvcc_info::mvcc_info ()

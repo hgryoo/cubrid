@@ -9263,6 +9263,7 @@ heap_is_object_not_null (THREAD_ENTRY * thread_p, OID * class_oid, const OID * o
   /* Make a copy of snapshot. We need all MVCC information, but we also want to change the visibility function. */
   mvcc_snapshot_ptr->copy_to (copy_mvcc_snapshot);
   copy_mvcc_snapshot.snapshot_fnc = mvcc_is_not_deleted_for_snapshot;
+  copy_mvcc_snapshot.kind = MVCC_SNAPSHOT_KIND_NOT_DELETED_ONLY;
   scan_cache.mvcc_snapshot = &copy_mvcc_snapshot;
 
   /* Check only if the last version of the object is not deleted, see mvcc_is_not_deleted_for_snapshot return values */
@@ -25250,7 +25251,7 @@ heap_get_visible_version_from_log (THREAD_ENTRY * thread_p, RECDES * recdes, LOG
 	  er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_GENERIC_ERROR, 0);
 	  return S_ERROR;
 	}
-      snapshot_res = scan_cache->mvcc_snapshot->snapshot_fnc (thread_p, &mvcc_header, scan_cache->mvcc_snapshot);
+      snapshot_res = mvcc_snapshot_check_inline (thread_p, &mvcc_header, scan_cache->mvcc_snapshot);
       if (snapshot_res == SNAPSHOT_SATISFIED)
 	{
 	  /* Visible. Get record if CHN was changed. */
@@ -25411,8 +25412,8 @@ heap_scan_get_visible_version (THREAD_ENTRY * thread_p, const OID * oid, OID * c
 			}
 		    }
 
-		  if (scan_cache->mvcc_snapshot->snapshot_fnc (thread_p, &mvcc_header, scan_cache->mvcc_snapshot) ==
-		      SNAPSHOT_SATISFIED)
+		  if (mvcc_snapshot_check_inline (thread_p, &mvcc_header, scan_cache->mvcc_snapshot)
+		      == SNAPSHOT_SATISFIED)
 		    {
 		      if (ispeeking == PEEK)
 			{
@@ -25540,7 +25541,7 @@ heap_get_visible_version_internal (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * c
     {
       MVCC_SATISFIES_SNAPSHOT_RESULT snapshot_res;
 
-      snapshot_res = mvcc_snapshot->snapshot_fnc (thread_p, &mvcc_header, mvcc_snapshot);
+      snapshot_res = mvcc_snapshot_check_inline (thread_p, &mvcc_header, mvcc_snapshot);
       if (snapshot_res == TOO_NEW_FOR_SNAPSHOT)
 	{
 	  /* current version is not visible, check previous versions from log and skip record get from heap */
