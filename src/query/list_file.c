@@ -1836,12 +1836,6 @@ qfile_generate_tuple_into_list (THREAD_ENTRY * thread_p, QFILE_LIST_ID * list_id
       return ER_FAILED;
     }
 
-  if (cur_page_p != list_id_p->last_pgptr)
-    {
-      list_id_p->last_pgptr = cur_page_p;
-      list_id_p->is_last_pg_dirty = false;
-    }
-
   page_p = (char *) cur_page_p + list_id_p->last_offset;
   if (qfile_save_tuple (tuple_descr_p, tuple_type, page_p, &tuple_length) != NO_ERROR)
     {
@@ -1852,12 +1846,7 @@ qfile_generate_tuple_into_list (THREAD_ENTRY * thread_p, QFILE_LIST_ID * list_id
 
   qfile_add_tuple_to_list_id (list_id_p, page_p, tuple_length, tuple_length);
 
-  if (!list_id_p->is_last_pg_dirty)
-    {
-      qfile_set_dirty_page (thread_p, cur_page_p, DONT_FREE, list_id_p->tfile_vfid);
-      list_id_p->is_last_pg_dirty = true;
-    }
-
+  qfile_set_dirty_page (thread_p, cur_page_p, DONT_FREE, list_id_p->tfile_vfid);
   return NO_ERROR;
 }
 
