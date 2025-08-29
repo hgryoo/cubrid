@@ -432,6 +432,7 @@ struct qfile_list_id
   VPID first_vpid;		/* first real page identifier */
   VPID last_vpid;		/* last real page identifier */
   PAGE_PTR last_pgptr;		/* last page pointer */
+  bool is_last_pg_dirty;		/* last page is dirty */
   int last_offset;		/* mark current end of last page */
   int lasttpl_len;		/* length of the last tuple file identifier NOTE: A tuple can be larger than one page
 				 * therefore, this field must be int instead of a short value */
