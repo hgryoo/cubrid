@@ -66,4 +66,15 @@ string_to_vector_distance_metric (const char *name)
   return METRIC_UNKNOWN;
 }
 
+const char *
+vector_distance_metric_to_string (enum DB_VECTOR_DISTANCE_METRIC metric)
+{
+  for (int i = 0; metric_table[i].name != NULL; ++i)
+    {
+      if (metric_table[i].metric == metric)
+	return metric_table[i].name;
+    }
+  return "";
+}
+
 #endif // _VECOTR_DISTANCE_ENUM_H_

@@ -33,9 +33,13 @@
 #include "storage_common.h"
 #include "dbtype_def.h"
 #include "thread_compat.hpp"
+#include "hnsw_api.hpp"
 
-BTID *xhnsw_add_index (THREAD_ENTRY *thread_p, BTID *btid, int dimension, int hnsw_M, int hnsw_efConstruction,
-		       int metric);
+/* high-level api */
+void hnsw_initialize ();
+void hnsw_finalize ();
+
+BTID *xhnsw_add_index (THREAD_ENTRY *thread_p, const hnsw_build_params &params);
 int xhnsw_delete_index (THREAD_ENTRY *thread_p, BTID *btid);
 BTID *xhnsw_load_index (THREAD_ENTRY *thread_p, BTID *btid, OID *oid, int n_classes, int n_attrs, int *attr_ids,
 			HFID *hfids, int dimension, int m, int ef_construction, int metric);
@@ -43,8 +47,8 @@ BTID *xhnsw_load_index_batch (THREAD_ENTRY *thread_p, BTID *btid, OID *oid, int 
 			      HFID *hfids, int dimension, int m, int ef_construction, int metric);
 int hnsw_print_index_info (BTID *btid);
 
-int hnsw_search_element (int hnsw_id, DB_VALUE *key_dbvalue, int k, OID *rec_oids, float *distances);
-int hnsw_add_element (BTID *btid, OID *oid, float *vector, int n_vectors);
+int xhnsw_search_element (BTID *btid, DB_VALUE *key_dbvalue, int k, OID *rec_oids, float *distances);
+int xhnsw_add_element (BTID *btid, OID *oid, float *vector, int n_vectors);
 void dump_all_hnsw_indices_to_files ();
 void init_hnsw_index_path ();
 
