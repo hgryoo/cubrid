@@ -181,6 +181,8 @@ hnsw_usearch_ng::prepare_to_add (int n_vectors, const OID *oid, const float *vec
 int
 hnsw_usearch_ng::add (int n_vectors, const OID *oid, const float *vector)
 {
+  #pragma omp parallel
+  #pragma omp for
   for (int i = 0; i < n_vectors; ++i)
     {
       m_algo->add (oid[i], vector + i * m_build_params.dimension, m_build_params.ef_construction);
