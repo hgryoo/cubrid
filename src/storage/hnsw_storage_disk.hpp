@@ -24,7 +24,7 @@
 #include <unordered_map>
 #include <cstring>
 
-#include "hnsw_storage.hpp"          // storage<memory_id_traits>
+#include "hnsw_storage.hpp"
 #include "thread_compat.hpp"
 
 namespace cubhnsw

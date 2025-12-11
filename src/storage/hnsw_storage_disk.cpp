@@ -142,8 +142,8 @@ namespace cubhnsw
   disk_storage::add_node (const OID &key, const float *vector, const level_t &level)
   {
     // insert vector first
-    slot_id_t vec_slot = add_vector (key, vector);
 #if 0
+    slot_id_t vec_slot = add_vector (key, vector);
     if (vec_slot.pageid == -1)
       {
 	assert (false);
@@ -152,7 +152,7 @@ namespace cubhnsw
 #endif
 
     // insert node
-    std::size_t bytes = this->node_bytes_ (level);
+    std::size_t bytes = this->node_bytes_ (level, get_dimension(), get_connectivity());
     page_handle page_ptr = get_page_to_insert (m_vfid, m_last_node_vpid, bytes);
 
     RECDES recdes;
@@ -167,8 +167,8 @@ namespace cubhnsw
 
     node_t<disk_traits_t> node { reinterpret_cast<byte_t *> (rec_buf) };
     node.set_key (key);
-    node.set_vec_slot (vec_slot);
     node.set_level (level);
+    node.set_vector (vector, get_dimension());
 
     PGSLOTID slot_id;
 
@@ -258,6 +258,7 @@ namespace cubhnsw
   disk_storage::get_vector_by_slot_id (const slot_id_t &slot, const lock_mode &mode)
   {
     // get node by slot id
+#if 0
     pinned_t node_blk = get_node_by_slot_id (slot, lock_mode::shared);
     node_t<disk_traits_t> node = node_t<disk_traits_t> (node_blk.get().data);
     slot_id_t vec_slot = node.get_vec_slot();
@@ -284,6 +285,8 @@ namespace cubhnsw
     }
 
 					    );
+#endif
+    return get_node_by_slot_id (slot, lock_mode::shared);
   }
 
   // promote lockmode from shared to exclusive
