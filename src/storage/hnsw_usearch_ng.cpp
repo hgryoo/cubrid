@@ -99,9 +99,6 @@ class hnsw_usearch_ng final:public hnsw_index
 				 float *distances) override;
     virtual int dump (FILE *fp) override;
 
-    virtual int save (const std::string &path) override;
-    virtual int load (const std::string &path) override;
-
     THREAD_ENTRY *m_thread_p;
     VPID m_root_vpid;
 
@@ -206,16 +203,19 @@ hnsw_usearch_ng::prepare_to_add (int n_vectors, const OID *oid,
 int
 hnsw_usearch_ng::add (int n_vectors, const OID *oid, const float *vector)
 {
+  #pragma omp parallel
+  #pragma omp for
   for (int i = 0; i < n_vectors; ++i)
     {
+      const int idx = i * m_build_params.dimension;
       if (m_build_params.metric == DB_VECTOR_DISTANCE_METRIC::METRIC_COSINE
-	  && db_vector_is_all_zeros (vector + i * m_build_params.dimension,
+	  && db_vector_is_all_zeros (vector + idx,
 				     m_build_params.dimension))
 	{
 	  er_log_debug (ARG_FILE_LINE, "Vector is all zeros, skipping search");
 	  continue;
 	}
-      m_algo->add (oid[i], vector + i * m_build_params.dimension,
+      m_algo->add (oid[i], vector + idx,
 		   m_build_params.ef_construction);
     }
   return NO_ERROR;
@@ -272,18 +272,6 @@ hnsw_usearch_ng::filtered_search (const float *query, const int k,
 
 int
 hnsw_usearch_ng::dump (FILE *fp)
-{
-  return ER_FAILED;
-}
-
-int
-hnsw_usearch_ng::save (const std::string &path)
-{
-  return ER_FAILED;
-}
-
-int
-hnsw_usearch_ng::load (const std::string &path)
 {
   return ER_FAILED;
 }

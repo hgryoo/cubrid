@@ -177,11 +177,20 @@ class hnsw_index
     // SCAN_PRED from query_evaluator.h
     virtual int filtered_search (const float *query, const int k, const SCAN_PRED &filter, OID *rec_oids,
 				 float *distances)=0;
-    virtual int dump (FILE *fp)=0;
+    virtual int dump (FILE *fp)
+    {
+      return NO_ERROR;
+    };
 
     // serialize
-    virtual int save (const std::string &path)=0;
-    virtual int load (const std::string &path)=0;
+    virtual int save (const std::string &path)
+    {
+      return NO_ERROR;
+    };
+    virtual int load (const std::string &path)
+    {
+      return NO_ERROR;
+    };
 
   protected:
     hnsw_index (hnsw_index_backend &backend, const BTID &btid, const std::string &name,
