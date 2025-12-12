@@ -52,9 +52,13 @@ namespace cubhnsw
 
   inline float cubvec_cosine_distance (const float *vec1, const float *vec2, size_t dim)
   {
-    float ip = faiss::fvec_inner_product (vec1, vec2, dim);
-    float norm1 = faiss::fvec_norm_L2sqr (vec1, dim);
-    float norm2 = faiss::fvec_norm_L2sqr (vec2, dim);
+#if 0
+    // dot(vec1, vec2)
+    const float ip = faiss::fvec_inner_product (vec1, vec2, dim);
+
+    // squared norms
+    const float norm1 = faiss::fvec_norm_L2sqr (vec1, dim);
+    const float norm2 = faiss::fvec_norm_L2sqr (vec2, dim);
 
     // Handle zero vectors to avoid division by zero
     if (norm1 == 0.0f || norm2 == 0.0f)
@@ -72,12 +76,38 @@ namespace cubhnsw
     float distance = 1.0f - similarity;
     assert (distance >= 0.0f && distance <= 2.0f);
     return distance;
+#endif
+
+    float ab {}, a2 {}, b2 {};
+#pragma omp simd reduction(+ : ab, a2, b2)
+    for (std::size_t i = 0; i != dim; ++i)
+      {
+	float ai = vec1[i];
+	float bi = vec2[i];
+	ab += ai * bi;
+	a2 += ai * ai;
+	b2 += bi * bi;
+      }
+
+    float result_if_zero[2][2];
+    result_if_zero[0][0] = 1.0f - ab / (std::sqrt (a2) * std::sqrt (b2));
+    result_if_zero[0][1] = result_if_zero[1][0] = 1.0f;
+    result_if_zero[1][1] = 0.0f;
+    return result_if_zero[a2 == 0.0f][b2 == 0.0f];
   }
 
   inline float cubvec_l2_distance (const float *vec1, const float *vec2, size_t dim)
   {
-    float l2 = faiss::fvec_L2sqr (vec1, vec2, dim);
-    return std::sqrt (l2);
+    float ab_deltas_sq {};
+
+    #pragma omp simd reduction(+ : ab_deltas_sq)
+    for (std::size_t i = 0; i != dim; ++i)
+      {
+	float ai = vec1[i];
+	float bi = vec2[i];
+	ab_deltas_sq += (ai - bi) * (ai - bi);
+      }
+    return ab_deltas_sq;
   }
 
   using distance_t = float;
