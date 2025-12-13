@@ -473,6 +473,7 @@ set(STORAGE_SOURCES
   )
 set(STORAGE_HEADERS
   ${STORAGE_DIR}/hnsw_storage.hpp
+  ${STORAGE_DIR}/hnsw_storage_mem.hpp
   ${STORAGE_DIR}/hnsw_algo.hpp
   ${STORAGE_DIR}/hnsw_api.hpp
   ${STORAGE_DIR}/btree_unique.hpp

@@ -30,7 +30,7 @@
 
 #include "hnsw_algo.hpp"
 
-// #include "hnsw_storage_mem.hpp"
+#include "hnsw_storage_mem.hpp"
 #include "hnsw_storage_disk.hpp"
 
 #include "btree_load.h"
@@ -72,10 +72,9 @@ class hnsw_usearch_ng final:public hnsw_index
 {
   public:
     // TODO: factory pattern
-    using traits = cubhnsw::disk_traits_t;
-
+    using traits = cubhnsw::memory_traits_t;
     using algo_type = cubhnsw::algo < traits >;
-    using storage_type = cubhnsw::disk_storage;
+    using storage_type = cubhnsw::memory_storage;
 
     hnsw_usearch_ng (hnsw_index_backend &backend, const BTID &btid,
 		     const std::string &name,
@@ -144,9 +143,7 @@ hnsw_usearch_ng_backend::create_index (THREAD_ENTRY *thread_p,
     }
 
   char rec_buf[IO_MAX_PAGE_SIZE + INT_ALIGNMENT];
-  RECDES rec
-  {
-    DB_PAGESIZE, 0, REC_HOME, PTR_ALIGN (rec_buf, INT_ALIGNMENT)};
+  RECDES rec {DB_PAGESIZE, 0, REC_HOME, PTR_ALIGN (rec_buf, INT_ALIGNMENT)};
 
   hnsw_index *index =
 	  new hnsw_usearch_ng (*this, *btid, name, build_params, page_ptr, rec);
@@ -172,7 +169,7 @@ hnsw_usearch_ng::hnsw_usearch_ng (hnsw_index_backend &backend, const BTID &btid,
   };
   this->m_thread_p = thread_get_thread_entry_info ();
 
-  m_storage = std::make_unique < cubhnsw::disk_storage > (btid, build_params);
+  m_storage = std::make_unique < storage_type > (btid, build_params);
   m_storage->set_thread_entry (thread_get_thread_entry_info ());
 
   std::size_t root_size;

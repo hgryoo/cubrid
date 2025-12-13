@@ -370,12 +370,12 @@ namespace cubhnsw
     if (!top.reserve (top_limit))
       {
 	assert (false);
-	return {ER_FAILED, OID_INITIALIZER};
+	return {ER_FAILED, 0};
       }
     if (!next.reserve (expansion))
       {
 	assert (false);
-	return {ER_FAILED, OID_INITIALIZER};
+	return {ER_FAILED, 0};
       }
 
     level_t curr_max_level, new_target_level;
