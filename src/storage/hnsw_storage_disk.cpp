@@ -76,7 +76,17 @@ namespace cubhnsw
       }
     else
       {
+	//auto it = m_pinned_pages.find(last_vpid);
+	//if (it == m_pinned_pages.end())
+	//{
 	page_ptr = pgbuf_fix (m_thread_p, &last_vpid, OLD_PAGE, PGBUF_LATCH_WRITE, PGBUF_UNCONDITIONAL_LATCH);
+	//assert (page_ptr != nullptr);
+	//m_pinned_pages[last_vpid] = page_ptr;
+	//}
+	//else
+	//{
+	//page_ptr = it->second;
+	// }
 	if (spage_get_free_space (m_thread_p, page_ptr) < static_cast<int> (bytes))
 	  {
 	    // not enough
@@ -90,33 +100,6 @@ namespace cubhnsw
     {
       pgbuf_unfix (thread_p, p);
     });
-  }
-
-  disk_storage::slot_id_t
-  disk_storage::add_vector (const OID &key, const float *vector)
-  {
-    std::size_t bytes = this->get_dimension () * sizeof (float);
-
-    if (m_vec_pool_vfid.fileid == 0)
-      {
-	assert (false);
-	return slot_id_t { -1, -1, -1 };
-      }
-
-    auto page_handle = get_page_to_insert (m_vec_pool_vfid, m_last_vec_vpid, bytes);
-    assert (page_handle.get() != nullptr);
-
-    RECDES recdes = { IO_MAX_PAGE_SIZE, (int) bytes, REC_HOME, (char *) vector };
-    PGSLOTID slot_id;
-
-    int error_code = spage_insert (m_thread_p, page_handle.get(), &recdes, &slot_id);
-    if (error_code != SP_SUCCESS)
-      {
-	assert (false);
-	return slot_id_t { -1, -1, -1 };
-      }
-
-    return slot_id_t { m_last_vec_vpid.pageid, slot_id, m_last_vec_vpid.volid };
   }
 
   PAGE_PTR
@@ -143,16 +126,6 @@ namespace cubhnsw
   disk_storage::slot_id_t
   disk_storage::add_node (const OID &key, const float *vector, const level_t &level)
   {
-    // insert vector first
-#if 0
-    slot_id_t vec_slot = add_vector (key, vector);
-    if (vec_slot.pageid == -1)
-      {
-	assert (false);
-	return slot_id_t { -1, -1, -1 };
-      }
-#endif
-
     // insert node
     std::size_t bytes = this->node_bytes_ (level, get_dimension(), get_connectivity());
     auto page_ptr = get_page_to_insert (m_vfid, m_last_node_vpid, bytes);
@@ -219,8 +192,30 @@ namespace cubhnsw
 	pgbuf_mode = PGBUF_LATCH_WRITE;
       }
 
+    PAGE_PTR node_page_ptr = nullptr;
+    if (mode == lock_mode::exclusive)
+      {
+	// do not register to m_pinned_pages.
+	node_page_ptr = pgbuf_fix (m_thread_p, &vpid, OLD_PAGE, pgbuf_mode, PGBUF_UNCONDITIONAL_LATCH);
+      }
+    else
+      {
+	auto it = m_pinned_pages.find (vpid);
+	if (it == m_pinned_pages.end())
+	  {
+	    node_page_ptr = pgbuf_fix (m_thread_p, &vpid, OLD_PAGE, pgbuf_mode, PGBUF_UNCONDITIONAL_LATCH);
+	    assert (node_page_ptr != nullptr);
+	    m_pinned_pages[vpid] = node_page_ptr;
+	  }
+	else
+	  {
+	    node_page_ptr = it->second;
+	  }
+      }
+#if 0
     PAGE_PTR node_page_ptr = pgbuf_fix (m_thread_p, &vpid, OLD_PAGE, pgbuf_mode, PGBUF_UNCONDITIONAL_LATCH);
     assert (node_page_ptr != nullptr);
+#endif
 
     SPAGE_SLOT *slotp = spage_get_slot (node_page_ptr, id.slotid);
     assert (slotp != nullptr);
@@ -233,34 +228,6 @@ namespace cubhnsw
   disk_storage::get_vector_by_slot_id (const slot_id_t &slot, const lock_mode &mode)
   {
     // get node by slot id
-#if 0
-    pinned_t node_blk = get_node_by_slot_id (slot, lock_mode::shared);
-    node_t<disk_traits_t> node = node_t<disk_traits_t> (node_blk.get().data);
-    slot_id_t vec_slot = node.get_vec_slot();
-
-    // =====================================================================
-
-    VPID vpid = { vec_slot.pageid, vec_slot.volid };
-
-    // updating vectors is not allowed
-    assert (mode == lock_mode::shared);
-
-    PAGE_PTR vec_page_ptr = pgbuf_fix (m_thread_p, &vpid, OLD_PAGE, PGBUF_LATCH_READ, PGBUF_UNCONDITIONAL_LATCH);
-    assert (vec_page_ptr != nullptr);
-
-    SPAGE_SLOT *slotp = spage_get_slot (vec_page_ptr, vec_slot.slotid);
-    assert (slotp != nullptr);
-
-    return make_pinned_block<disk_traits_t> (vec_slot, (std::byte *) vec_page_ptr + slotp->offset_to_record,
-	   slotp->record_length, mode,
-	   [this, vec_page_ptr] (auto& blk) noexcept
-    {
-      assert (blk.mode == lock_mode::shared);
-      pgbuf_unfix (m_thread_p, reinterpret_cast<PAGE_PTR> (vec_page_ptr));
-    }
-
-					    );
-#endif
     return get_node_by_slot_id (slot, lock_mode::shared);
   }
 

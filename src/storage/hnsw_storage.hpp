@@ -144,6 +144,8 @@ namespace cubhnsw
       // promote lockmode from shared to exclusive
       virtual void promote_root (pinned_t &root) = 0;
 
+      virtual void end_resource_cleanup () noexcept = 0;
+
       virtual void set_thread_entry (cubthread::entry *thread_p)
       {
 	m_thread_p = thread_p;
