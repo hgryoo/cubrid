@@ -68,10 +68,6 @@ namespace cubhnsw
   using pinned_block_t =
 	  scoped_holder<pinned_block_data<Traits>, Cleanup>;
 
-  template <typename Traits>
-  using pinned_block_if_t =
-	  pinned_block_t<Traits, std::function<void (pinned_block_data<Traits> &)>>;
-
   template <typename Traits, typename Cleanup>
   inline auto make_pinned_block (
 	  typename Traits::slot_id_t id,
@@ -79,20 +75,42 @@ namespace cubhnsw
 	  std::size_t size,
 	  lock_mode mode,
 	  Cleanup &&cleanup)
-  -> pinned_block_if_t<Traits>
+  -> pinned_block_t<Traits, std::decay_t<Cleanup>>
   {
     using data_t = pinned_block_data<Traits>;
-    using fn_t   = std::function<void (data_t &)>;
 
     data_t res { id, data, size, mode };
-    fn_t fn (std::forward<Cleanup> (cleanup));
 
-    return pinned_block_if_t<Traits> (std::move (res), std::move (fn));
+    return pinned_block_t<Traits, std::decay_t<Cleanup>> (std::move (res), std::forward<Cleanup> (cleanup));
   }
 
-  // =====================================================================
-  // algo's graph structs
-  // =====================================================================
+  template <typename Traits>
+  struct pinned_block_iview
+  {
+    pinned_block_data<Traits> data;
+
+    virtual ~pinned_block_iview() = default;
+
+    pinned_block_data<Traits> &get () noexcept
+    {
+      return data;
+    }
+
+    const pinned_block_data<Traits> &get () const noexcept
+    {
+      return data;
+    }
+
+    std::byte *data_ptr () noexcept
+    {
+      return data.data;
+    }
+
+    const std::byte *data_ptr () const noexcept
+    {
+      return data.data;
+    }
+  };
 
   // =====================================================================
   // storage
@@ -104,7 +122,7 @@ namespace cubhnsw
       using traits      = Traits;
       using slot_id_t  = typename traits::slot_id_t;
 
-      using pinned_t = pinned_block_t<Traits, std::function<void (pinned_block_data<Traits>&)>>;
+      using pinned_t = std::unique_ptr<pinned_block_iview<Traits>>;
 
       storage (const BTID &giid, const hnsw_build_params &build_params)
 	: m_giid (giid), m_build_params (build_params)
@@ -165,12 +183,12 @@ namespace cubhnsw
 
       inline std::size_t node_bytes_ (level_t level, std::size_t dim, std::size_t neighbors_count) const noexcept
       {
-	return node_head_bytes_(dim, neighbors_count) + node_neighbors_bytes_ (level);
+	return node_head_bytes_ (dim, neighbors_count) + node_neighbors_bytes_ (level);
       }
 
-      inline std::size_t node_head_bytes_(std::size_t dim, std::size_t neighbors_count) const noexcept
+      inline std::size_t node_head_bytes_ (std::size_t dim, std::size_t neighbors_count) const noexcept
       {
-	return node_t<Traits>::get_size(dim, neighbors_count);
+	return node_t<Traits>::get_size (dim, neighbors_count);
       }
 
     protected:

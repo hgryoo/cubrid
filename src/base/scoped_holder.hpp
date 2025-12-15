@@ -27,8 +27,11 @@
 
 struct scoped_noop
 {
-  template <typename P>
-  void operator() (P &) const noexcept {}
+  template <typename T>
+  void operator() (T &) const noexcept
+  {
+    // no-op
+  }
 };
 
 template <typename Data, typename Cleanup>
@@ -63,29 +66,57 @@ class scoped_holder
 
     scoped_holder (data_t data, Cleanup &&cleanup)
       : m_data (std::move (data))
-      , m_guard (cleanup_state_t {std::addressof (m_data), cleanup_t (std::forward<Cleanup> (cleanup))})
+      , m_cleanup (std::move (cleanup))
+      , m_active (true)
     {
     }
 
-    ~scoped_holder() = default;
+    template <typename Cleanup2,
+	      typename = std::enable_if_t<std::is_constructible_v<cleanup_t, Cleanup2&&>>>
+					  scoped_holder (data_t data, Cleanup2 &&cleanup) noexcept (std::is_nothrow_move_constructible_v<data_t>
+					      &&std::is_nothrow_constructible_v<cleanup_t, Cleanup2&&>)
+					    : m_data (std::move (data))
+      , m_cleanup (std::forward<Cleanup2> (cleanup))
+      , m_active (true)
+    {
+    }
+
+    ~scoped_holder () noexcept
+    {
+      if (m_active)
+	{
+	  m_cleanup (m_data);
+	}
+    }
 
     // non-copyable
     scoped_holder (const scoped_holder &) = delete;
     scoped_holder &operator= (const scoped_holder &) = delete;
 
     // move-constructible
-    scoped_holder (scoped_holder &&other) noexcept (
-	    std::is_nothrow_move_constructible_v<data_t> &&std::is_nothrow_move_constructible_v<cleanup_t>)
+    scoped_holder (scoped_holder &&other) noexcept (std::is_nothrow_move_constructible_v<data_t>
+	&&std::is_nothrow_move_constructible_v<cleanup_t>)
       : m_data (std::move (other.m_data))
-      , m_guard (
-		cleanup_state_t {std::addressof (m_data), std::move (other.m_guard.functor ().cleanup)})
+      , m_cleanup (std::move (other.m_cleanup))
+      , m_active (other.m_active)
     {
-      other.m_guard.functor ().data = nullptr;
-      other.m_guard.release();
+      other.m_active = false;
     }
 
     // remove move-assignment
-    scoped_holder &operator= (scoped_holder &&) = delete;
+    scoped_holder &operator= (scoped_holder &&other) noexcept (std::is_nothrow_move_assignable_v<data_t>
+	&&std::is_nothrow_move_assignable_v<cleanup_t>)
+    {
+      if (this != &other)
+	{
+	  reset ();
+	  m_data = std::move (other.m_data);
+	  m_cleanup = std::move (other.m_cleanup);
+	  m_active = other.m_active;
+	  other.m_active = false;
+	}
+      return *this;
+    }
 
     data_t &get() noexcept
     {
@@ -117,6 +148,20 @@ class scoped_holder
       return m_data;
     }
 
+    void release () noexcept
+    {
+      m_active = false;
+    }
+
+    void reset () noexcept
+    {
+      if (m_active)
+	{
+	  m_cleanup (m_data);
+	  m_active = false;
+	}
+    }
+
     explicit operator data_t &() noexcept
     {
       return m_data;
@@ -127,15 +172,11 @@ class scoped_holder
       return m_data;
     }
 
-    void release() noexcept
-    {
-      m_guard.functor ().data = nullptr;
-      m_guard.release();
-    }
-
   private:
+
     data_t m_data;
-    guard_t m_guard;
+    cleanup_t m_cleanup;
+    bool m_active;
 };
 
 #if 0
@@ -146,7 +187,7 @@ auto make_scoped_holder (Data data, Cleanup &&cleanup)
 -> scoped_holder<Data, std::decay_t<Cleanup>>
 {
   return scoped_holder<Data, std::decay_t<Cleanup>> (std::move (data),
-	 std::forward<Cleanup> (cleanup));
+      std::forward<Cleanup> (cleanup));
 }
 #endif
 

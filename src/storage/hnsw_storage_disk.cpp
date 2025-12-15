@@ -63,34 +63,8 @@ namespace cubhnsw
     root_size = root.get_size();
   }
 
-  disk_storage::slot_id_t
-  disk_storage::add_vector (const OID &key, const float *vector)
-  {
-    std::size_t bytes = this->get_dimension () * sizeof (float);
 
-    if (m_vec_pool_vfid.fileid == 0)
-      {
-	assert (false);
-	return slot_id_t { -1, -1, -1 };
-      }
-
-    page_handle page_ptr = get_page_to_insert (m_vec_pool_vfid, m_last_vec_vpid, bytes);
-    assert (page_ptr.get() != nullptr);
-
-    RECDES recdes = { IO_MAX_PAGE_SIZE, (int) bytes, REC_HOME, (char *) vector };
-    PGSLOTID slot_id;
-
-    int error_code = spage_insert (m_thread_p, page_ptr.get(), &recdes, &slot_id);
-    if (error_code != SP_SUCCESS)
-      {
-	assert (false);
-	return slot_id_t { -1, -1, -1 };
-      }
-
-    return slot_id_t { m_last_vec_vpid.pageid, slot_id, m_last_vec_vpid.volid };
-  }
-
-  disk_storage::page_handle
+  auto
   disk_storage::get_page_to_insert (VFID &vfid, VPID &last_vpid, std::size_t bytes)
   {
     PAGE_PTR page_ptr = nullptr;
@@ -111,10 +85,38 @@ namespace cubhnsw
 	  }
       }
 
-    return page_handle (page_ptr, [this] (PAGE_PTR page_ptr) noexcept
+    return
+	    make_page_handle (page_ptr, [thread_p = m_thread_p] (PAGE_PTR p) noexcept
     {
-      pgbuf_set_dirty (m_thread_p, page_ptr, FREE);
+      pgbuf_unfix (thread_p, p);
     });
+  }
+
+  disk_storage::slot_id_t
+  disk_storage::add_vector (const OID &key, const float *vector)
+  {
+    std::size_t bytes = this->get_dimension () * sizeof (float);
+
+    if (m_vec_pool_vfid.fileid == 0)
+      {
+	assert (false);
+	return slot_id_t { -1, -1, -1 };
+      }
+
+    auto page_handle = get_page_to_insert (m_vec_pool_vfid, m_last_vec_vpid, bytes);
+    assert (page_handle.get() != nullptr);
+
+    RECDES recdes = { IO_MAX_PAGE_SIZE, (int) bytes, REC_HOME, (char *) vector };
+    PGSLOTID slot_id;
+
+    int error_code = spage_insert (m_thread_p, page_handle.get(), &recdes, &slot_id);
+    if (error_code != SP_SUCCESS)
+      {
+	assert (false);
+	return slot_id_t { -1, -1, -1 };
+      }
+
+    return slot_id_t { m_last_vec_vpid.pageid, slot_id, m_last_vec_vpid.volid };
   }
 
   PAGE_PTR
@@ -153,7 +155,7 @@ namespace cubhnsw
 
     // insert node
     std::size_t bytes = this->node_bytes_ (level, get_dimension(), get_connectivity());
-    page_handle page_ptr = get_page_to_insert (m_vfid, m_last_node_vpid, bytes);
+    auto page_ptr = get_page_to_insert (m_vfid, m_last_node_vpid, bytes);
 
     RECDES recdes;
     char rec_buf[IO_MAX_PAGE_SIZE];
@@ -202,21 +204,8 @@ namespace cubhnsw
 
     OID oid = { root_vpid.pageid, 1, root_vpid.volid };
 
-    return make_pinned_block<disk_traits_t> (oid, (std::byte *) root_page_ptr + slotp->offset_to_record,
-	   slotp->record_length, mode,
-	   [this, root_page_ptr] (auto& blk) noexcept
-    {
-      if (blk.mode == lock_mode::exclusive)
-	{
-	  pgbuf_set_dirty (m_thread_p, reinterpret_cast<PAGE_PTR> (root_page_ptr), FREE);
-	}
-      else
-	{
-	  pgbuf_unfix (m_thread_p, reinterpret_cast<PAGE_PTR> (root_page_ptr));
-	}
-    }
-
-					    );
+    return make_disk_block_view<disk_traits_t> (oid, root_page_ptr, (std::byte *) root_page_ptr + slotp->offset_to_record,
+	   slotp->record_length, mode, m_thread_p);
   }
 
   disk_storage::pinned_t
@@ -236,22 +225,8 @@ namespace cubhnsw
     SPAGE_SLOT *slotp = spage_get_slot (node_page_ptr, id.slotid);
     assert (slotp != nullptr);
 
-    return make_pinned_block<disk_traits_t> (id, (std::byte *) node_page_ptr + slotp->offset_to_record,
-	   slotp->record_length, mode,
-	   [this, node_page_ptr] (auto& blk) noexcept
-    {
-      if (blk.mode == lock_mode::exclusive)
-	{
-	  pgbuf_set_dirty (m_thread_p, reinterpret_cast<PAGE_PTR> (node_page_ptr), FREE);
-	}
-      else
-	{
-	  pgbuf_unfix (m_thread_p, reinterpret_cast<PAGE_PTR> (node_page_ptr));
-	}
-    }
-
-					    );
-
+    return make_disk_block_view<disk_traits_t> (id, node_page_ptr, (std::byte *) node_page_ptr + slotp->offset_to_record,
+	   slotp->record_length, mode, m_thread_p);
   }
 
   disk_storage::pinned_t
