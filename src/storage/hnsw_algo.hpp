@@ -467,6 +467,8 @@ namespace cubhnsw
 	m_storage->set_empty (false);
       }
 
+    m_storage->end_resource_cleanup();
+
     return result;
   }
 
@@ -531,6 +533,9 @@ namespace cubhnsw
 	pinned_t node_blk = m_storage->get_node_by_slot_id (result.results[i].slot, lock_mode::shared);
 	result.oids.push_back (node_type (node_blk->data_ptr ()).get_key());
       }
+
+    m_storage->end_resource_cleanup();
+
     return result;
   }
 

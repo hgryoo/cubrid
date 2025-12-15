@@ -210,7 +210,7 @@ namespace cubhnsw
       PAGE_PTR alloc_new_page (VFID &vfid, VPID &vpid);
       auto get_page_to_insert (VFID &vfid, VPID &last_vpid, std::size_t bytes);
 
-      std::unordered_map<VPID, PAGE_PTR, vpid_hash, vpid_equal> m_pinned_pages;
+      std::unordered_map<uint64_t, PAGE_PTR> m_pinned_pages;
 
     private:
       VFID m_vfid;

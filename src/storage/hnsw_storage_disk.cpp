@@ -200,12 +200,13 @@ namespace cubhnsw
       }
     else
       {
-	auto it = m_pinned_pages.find (vpid);
+	uint64_t key = ((uint64_t)vpid.volid << 32) | vpid.pageid;
+	auto it = m_pinned_pages.find (key);
 	if (it == m_pinned_pages.end())
 	  {
 	    node_page_ptr = pgbuf_fix (m_thread_p, &vpid, OLD_PAGE, pgbuf_mode, PGBUF_UNCONDITIONAL_LATCH);
 	    assert (node_page_ptr != nullptr);
-	    m_pinned_pages[vpid] = node_page_ptr;
+	    m_pinned_pages[key] = node_page_ptr;
 	  }
 	else
 	  {
