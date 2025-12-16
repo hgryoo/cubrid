@@ -448,6 +448,7 @@ struct pgbuf_holder
   int fix_count;		/* the count of fix by the holder */
   PGBUF_BCB *bufptr;		/* pointer to BCB */
   PGBUF_HOLDER *thrd_link;	/* the next BCB holder entry in the BCB holder list of thread */
+  PGBUF_HOLDER **pprev_link;
   PGBUF_HOLDER *next_holder;	/* free BCB holder list of thread */
   PGBUF_HOLDER_STAT perf_stat;
 #if !defined(NDEBUG)
@@ -5579,6 +5580,11 @@ pgbuf_allocate_thrd_holder_entry (THREAD_ENTRY * thread_p)
 
   /* connect the BCB holder entry at the head of thread's holder list */
   holder->thrd_link = thrd_holder_info->thrd_hold_list;
+  if (holder->thrd_link != NULL)
+    {
+      holder->thrd_link->pprev_link = &holder->thrd_link;
+    }
+  holder->pprev_link = &thrd_holder_info->thrd_hold_list;
   thrd_holder_info->thrd_hold_list = holder;
   thrd_holder_info->num_hold_cnt += 1;
 
@@ -5715,6 +5721,20 @@ pgbuf_remove_thrd_holder (THREAD_ENTRY * thread_p, PGBUF_HOLDER * holder)
   thrd_holder_info->num_free_cnt += 1;
 
   /* remove the BCB holder entry from thread's holder list */
+
+  /* O(1) unlink using pprev_link */
+  assert (holder->pprev_link != NULL);
+
+  *holder->pprev_link = holder->thrd_link;
+  if (holder->thrd_link != NULL)
+    {
+      holder->thrd_link->pprev_link = holder->pprev_link;
+    }
+
+  holder->thrd_link = NULL;
+  holder->pprev_link = NULL;
+
+#if 0
   if (thrd_holder_info->thrd_hold_list == NULL)
     {
       /* This situation must not be occurred. */
@@ -5732,6 +5752,7 @@ pgbuf_remove_thrd_holder (THREAD_ENTRY * thread_p, PGBUF_HOLDER * holder)
       found = false;
       prev = thrd_holder_info->thrd_hold_list;
 
+      int i = 0;
       while (prev->thrd_link != NULL)
 	{
 	  assert (prev->next_holder == NULL);
@@ -5743,6 +5764,12 @@ pgbuf_remove_thrd_holder (THREAD_ENTRY * thread_p, PGBUF_HOLDER * holder)
 	      break;
 	    }
 	  prev = prev->thrd_link;
+	  i++;
+	}
+
+      if (i > 10)
+	{
+	  fprintf (stderr, "pgbuf_remove_thrd_holder: %d\n", i);
 	}
 
       if (found == false)
@@ -5753,6 +5780,7 @@ pgbuf_remove_thrd_holder (THREAD_ENTRY * thread_p, PGBUF_HOLDER * holder)
 	  goto exit_on_error;
 	}
     }
+#endif
 
   thrd_holder_info->num_hold_cnt -= 1;
 

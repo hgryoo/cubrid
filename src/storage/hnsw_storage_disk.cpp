@@ -168,16 +168,17 @@ namespace cubhnsw
 	pgbuf_mode = PGBUF_LATCH_WRITE;
       }
 
-    PAGE_PTR root_page_ptr = pgbuf_fix (m_thread_p, &root_vpid, OLD_PAGE, pgbuf_mode, PGBUF_UNCONDITIONAL_LATCH);
-    assert (root_page_ptr != nullptr);
+    m_root_page_ptr = pgbuf_fix (m_thread_p, &root_vpid, OLD_PAGE, pgbuf_mode, PGBUF_UNCONDITIONAL_LATCH);
+    assert (m_root_page_ptr != nullptr);
 
     // TODO: hardcoded slot id 1
-    SPAGE_SLOT *slotp = spage_get_slot (root_page_ptr, 1);
+    SPAGE_SLOT *slotp = spage_get_slot (m_root_page_ptr, 1);
     assert (slotp != nullptr);
 
     OID oid = { root_vpid.pageid, 1, root_vpid.volid };
 
-    return make_disk_block_view<disk_traits_t> (oid, root_page_ptr, (std::byte *) root_page_ptr + slotp->offset_to_record,
+    return make_disk_block_view<disk_traits_t> ({-1, -1, -1}, m_root_page_ptr,
+	   (std::byte *) m_root_page_ptr + slotp->offset_to_record,
 	   slotp->record_length, mode, m_thread_p);
   }
 
@@ -193,15 +194,23 @@ namespace cubhnsw
       }
 
     PAGE_PTR node_page_ptr = nullptr;
+
+    uint64_t key = ((uint64_t)vpid.volid << 32) | vpid.pageid;
+    auto it = m_pinned_pages.find (key);
+
     if (mode == lock_mode::exclusive)
       {
 	// do not register to m_pinned_pages.
+	if (it != m_pinned_pages.end())
+	  {
+	    pgbuf_unfix (m_thread_p, it->second);
+	    m_pinned_pages.erase (key);
+	  }
+
 	node_page_ptr = pgbuf_fix (m_thread_p, &vpid, OLD_PAGE, pgbuf_mode, PGBUF_UNCONDITIONAL_LATCH);
       }
     else
       {
-	uint64_t key = ((uint64_t)vpid.volid << 32) | vpid.pageid;
-	auto it = m_pinned_pages.find (key);
 	if (it == m_pinned_pages.end())
 	  {
 	    node_page_ptr = pgbuf_fix (m_thread_p, &vpid, OLD_PAGE, pgbuf_mode, PGBUF_UNCONDITIONAL_LATCH);

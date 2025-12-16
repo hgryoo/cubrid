@@ -100,7 +100,10 @@ namespace cubhnsw
 	  }
 	else
 	  {
-	    // pgbuf_unfix (m_thread_p, m_page);
+	    if (this->data.id.pageid == -1)
+	      {
+		pgbuf_unfix (m_thread_p, m_page);
+	      }
 	  }
       }
 
@@ -222,5 +225,7 @@ namespace cubhnsw
       VPID m_last_vec_vpid;
 
       bool m_is_empty = true;
+
+      PAGE_PTR m_root_page_ptr;
   };
 }
