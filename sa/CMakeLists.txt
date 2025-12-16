@@ -753,6 +753,7 @@ target_include_directories(cubridsa
   )
 
 target_link_libraries(cubridsa PRIVATE usearch::usearch)
+target_link_libraries(cubridsa PRIVATE unordered_dense::unordered_dense)
 
 target_link_libraries(cubridsa
   PRIVATE

@@ -32,6 +32,7 @@
 #include "hnsw_storage.hpp" // storage_t
 
 #include "faiss/utils/distances.h" // faiss
+#include <ankerl/unordered_dense.h>
 
 #define HNSW_ALGO_DEBUG 0
 #define HNSW_ALGO_PRINT(fmt, ...) do { if (HNSW_ALGO_DEBUG) { fprintf (stdout, fmt, ##__VA_ARGS__); fflush (stdout); } } while (0)
@@ -168,13 +169,13 @@ namespace cubhnsw
   template <typename T>
   struct visit_set_helper
   {
-    using type = std::unordered_set<T>;
+    using type = ankerl::unordered_dense::set<T>;
   };
 
   template <>
   struct visit_set_helper<OID>
   {
-    using type = std::unordered_set<OID, oid_hash, oid_equal>;
+    using type = ankerl::unordered_dense::set<uint64_t>;
   };
 
   template <typename Traits>
@@ -539,6 +540,24 @@ namespace cubhnsw
     return result;
   }
 
+  static inline uint64_t
+  get_oid_hash (const OID &oid)
+  {
+    return (static_cast<uint64_t> (static_cast<uint32_t> (oid.pageid)) << 32) |
+	   (static_cast<uint64_t> (static_cast<uint16_t> (oid.slotid)) << 16) |
+	   static_cast<uint64_t> (static_cast<uint16_t> (oid.volid));
+  }
+
+  static inline OID
+  get_oid_from_hash (const uint64_t &hash)
+  {
+    OID oid;
+    oid.pageid = static_cast<int32_t> (static_cast<uint32_t> (hash >> 32));
+    oid.slotid = static_cast<int16_t> ((hash >> 16) & 0xFFFF);
+    oid.volid = static_cast<int16_t> (hash & 0xFFFF);
+    return oid;
+  }
+
   template <typename Traits>
   int
   algo<Traits>::seek_on_layer_ (const float *query, const slot_id_t &start_slot, const level_t level,
@@ -554,7 +573,7 @@ namespace cubhnsw
 
     next.insert_reserved (candidate_t<Traits> (-radius, start_slot));
     top.insert_reserved (candidate_t<Traits> (radius, start_slot));
-    visits.insert (start_slot);
+    visits.insert (get_oid_hash (start_slot));
 
     while (!next.empty ())
       {
@@ -573,14 +592,14 @@ namespace cubhnsw
 	  {
 	    slot_id_t successor_slot = candidate_neighbors.at (i);
 
-	    bool already_visited = (visits.find (successor_slot) != visits.end());
+	    bool already_visited = (visits.find (get_oid_hash (successor_slot)) != visits.end());
 	    if (already_visited)
 	      {
 		continue;
 	      }
 	    else
 	      {
-		visits.insert (successor_slot);
+		visits.insert (get_oid_hash (successor_slot));
 	      }
 
 	    distance_t sucessor_dist = compute_distance_from_query_ (query, successor_slot);

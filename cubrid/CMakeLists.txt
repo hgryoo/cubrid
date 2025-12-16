@@ -668,6 +668,7 @@ endif(WIN32)
 target_include_directories(cubrid PRIVATE ${JAVA_INC} ${EP_INCLUDES} ${FLEX_INCLUDE_DIRS})
 
 target_link_libraries(cubrid PRIVATE usearch::usearch)
+target_link_libraries(cubrid PRIVATE unordered_dense::unordered_dense)
 
 if(UNIX)
   target_link_libraries(cubrid LINK_PRIVATE -Wl,-whole-archive ${EP_LIBS} -Wl,-no-whole-archive)
