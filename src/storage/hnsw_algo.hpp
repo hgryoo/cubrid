@@ -375,12 +375,12 @@ namespace cubhnsw
     if (!top.reserve (top_limit))
       {
 	assert (false);
-	return {ER_FAILED, OID_INITIALIZER};
+	return {ER_FAILED, slot_id_t {}};
       }
     if (!next.reserve (expansion))
       {
 	assert (false);
-	return {ER_FAILED, OID_INITIALIZER};
+	return {ER_FAILED, slot_id_t {}};
       }
 
     level_t curr_max_level, new_target_level;
@@ -541,11 +541,17 @@ namespace cubhnsw
   }
 
   static inline uint64_t
-  get_oid_hash (const OID &oid)
+  get_hash (const OID &oid)
   {
     return (static_cast<uint64_t> (static_cast<uint32_t> (oid.pageid)) << 32) |
 	   (static_cast<uint64_t> (static_cast<uint16_t> (oid.slotid)) << 16) |
 	   static_cast<uint64_t> (static_cast<uint16_t> (oid.volid));
+  }
+
+  static inline uint64_t
+  get_hash (const uint64_t &t)
+  {
+    return t;
   }
 
   static inline OID
@@ -573,7 +579,7 @@ namespace cubhnsw
 
     next.insert_reserved (candidate_t<Traits> (-radius, start_slot));
     top.insert_reserved (candidate_t<Traits> (radius, start_slot));
-    visits.insert (get_oid_hash (start_slot));
+    visits.insert (get_hash (start_slot));
 
     while (!next.empty ())
       {
@@ -592,14 +598,14 @@ namespace cubhnsw
 	  {
 	    slot_id_t successor_slot = candidate_neighbors.at (i);
 
-	    bool already_visited = (visits.find (get_oid_hash (successor_slot)) != visits.end());
+	    bool already_visited = (visits.find (get_hash (successor_slot)) != visits.end());
 	    if (already_visited)
 	      {
 		continue;
 	      }
 	    else
 	      {
-		visits.insert (get_oid_hash (successor_slot));
+		visits.insert (get_hash (successor_slot));
 	      }
 
 	    distance_t sucessor_dist = compute_distance_from_query_ (query, successor_slot);

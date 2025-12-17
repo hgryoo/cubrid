@@ -80,40 +80,6 @@ namespace cubhnsw
       }
   };
 
-  template <typename Traits>
-  class pinned_block_disk_view final
-    : public pinned_block_iview<Traits>
-  {
-    public:
-      pinned_block_disk_view (pinned_block_data<Traits> d,
-			      cubthread::entry *thread_p,
-			      PAGE_PTR page)
-	: m_thread_p (thread_p)
-	, m_page (page)
-      {
-	this->data = d;
-      }
-
-      ~pinned_block_disk_view() override
-      {
-	if (this->data.mode == lock_mode::exclusive)
-	  {
-	    pgbuf_set_dirty (m_thread_p, m_page, FREE);
-	  }
-	else
-	  {
-	    if (this->data.id.pageid == -1)
-	      {
-		pgbuf_unfix (m_thread_p, m_page);
-	      }
-	  }
-      }
-
-    private:
-      cubthread::entry *m_thread_p;
-      PAGE_PTR m_page;
-  };
-
   struct vpid_hash
   {
     std::size_t operator() (const VPID &v) const noexcept
@@ -154,29 +120,6 @@ namespace cubhnsw
 	return page_handle_t<std::decay_t<Cleanup>> (
 		       page,
 		       std::forward<Cleanup> (cleanup));
-      }
-
-      template <typename Traits>
-      static inline std::unique_ptr<pinned_block_iview<Traits>>
-	  make_disk_block_view (const typename Traits::slot_id_t &id,
-				PAGE_PTR page_ptr,
-				std::byte *record_ptr,
-				std::size_t record_size,
-				lock_mode mode,
-				cubthread::entry *thread_p)
-      {
-	pinned_block_data<Traits> data
-	{
-	  id,
-	  record_ptr,
-	  record_size,
-	  mode
-	};
-
-	return std::make_unique<pinned_block_disk_view<Traits>> (
-		       data,
-		       thread_p,
-		       page_ptr);
       }
 
       disk_storage (const BTID &giid, const hnsw_build_params &params);
