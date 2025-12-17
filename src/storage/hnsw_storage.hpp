@@ -153,7 +153,9 @@ namespace cubhnsw
   {
     public:
       pinned_block_memory_view (pinned_block_data<Traits> d)
-      {}
+      {
+	this->data = d;
+      }
   };
 
   template <typename Traits>

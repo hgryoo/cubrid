@@ -77,7 +77,6 @@ namespace cubhnsw
 	  }
 	m_block_table.clear();
 	m_last_node_entry = nullptr;
-	m_last_vec_entry = nullptr;
       }
 
       // The root is not initialized yet
@@ -96,9 +95,12 @@ namespace cubhnsw
 	root_size = root.get_size();
       }
 
+      std::mutex g_mutex;
       virtual slot_id_t add_node (const OID &key, const float *vector, const level_t &level) override
       {
 	// insert vector first
+	std::lock_guard<std::mutex> lock (g_mutex);
+
 	std::size_t bytes = this->node_bytes_ (level, get_dimension(), get_connectivity());
 	block_slot_t *node_slot = get_block_ptr_to_insert (m_last_node_entry, bytes);
 
@@ -183,11 +185,7 @@ namespace cubhnsw
 
       virtual void end_resource_cleanup () noexcept override
       {
-	for (auto &[slot_id, slot] : m_block_table)
-	  {
-	    delete slot;
-	  }
-	m_block_table.clear();
+	// do nothing
       }
 
     private:
@@ -197,7 +195,6 @@ namespace cubhnsw
       std::unordered_map<slot_id_t, block_slot_t *> m_block_table {};
 
       block_entry_t *m_last_node_entry {nullptr};
-      block_entry_t *m_last_vec_entry {nullptr};
       std::mutex m_block_pool_mutex {};
 
       bool m_is_empty = true;
