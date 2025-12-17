@@ -50,7 +50,7 @@ namespace cubhnsw
   struct storage_traits<storage_kind::memory>
   {
     static constexpr storage_kind kind = storage_kind::memory;
-    using block_group_id_t = std::forward_list<block_entry_t *>;
+    using block_group_id_t = std::vector<block_entry_t *>;
     using block_id_t = block_entry_t;
     using slot_id_t = uint64_t; // memory offset of the block
   };
@@ -70,14 +70,16 @@ namespace cubhnsw
 	: base (giid, params)
       {
 	m_root_vpid = VPID { giid.root_pageid, giid.vfid.volid };
+	m_block_pool.reserve (10000);
+	m_block_table_vec.reserve (10000);
       }
       virtual ~memory_storage()
       {
-	for (auto &[slot_id, slot] : m_block_table)
-	  {
-	    delete slot;
-	  }
-	m_block_table.clear();
+	//for (auto &[slot_id, slot] : m_block_table)
+	//{
+	//delete slot;
+	//}
+	//m_block_table.clear();
 	m_last_node_entry = nullptr;
       }
 
@@ -138,13 +140,16 @@ namespace cubhnsw
 
       virtual pinned_t get_node_by_slot_id (const slot_id_t &slot_id, const lock_mode &mode) override
       {
-	auto it = m_block_table.find (slot_id);
-	if (it == m_block_table.end())
-	  {
-	    assert (false);
-	  }
-	return make_memory_block_view<memory_traits_t> (slot_id, (std::byte *) it->second->entry->block + it->second->offset,
-	       it->second->size, mode);
+	// const auto& it = m_block_table.find (slot_id);
+	const auto &it = m_block_table_vec.at (slot_id);
+#if !defined (NDEBUG)
+	//if (it == m_block_table.end())
+	// {
+	//  assert (false);
+	// }
+#endif
+	return make_memory_block_view<memory_traits_t> (slot_id, (std::byte *) it->entry->block + it->offset,
+	       it->size, mode);
       }
 
       virtual pinned_t get_vector_by_slot_id (const slot_id_t &slot_id, const lock_mode &mode) override
@@ -169,7 +174,7 @@ namespace cubhnsw
 	    entry->num_elements = 0;
 	    entry->remaining_size = IO_MAX_PAGE_SIZE;
 	    memset (entry->block, 0, IO_MAX_PAGE_SIZE);
-	    m_block_pool.push_front (entry);
+	    m_block_pool.push_back (entry);
 	  }
 
 	std::size_t offset = (std::size_t) IO_MAX_PAGE_SIZE - entry->remaining_size;
@@ -178,7 +183,9 @@ namespace cubhnsw
 
 	slot_id_t slot_id = m_slot_id.fetch_add (1, std::memory_order_relaxed);
 	block_slot_t *slot = new block_slot_t { slot_id, entry, offset, size };
-	m_block_table.emplace (slot_id, slot);
+	// m_block_table.emplace (slot_id, slot);
+
+	m_block_table_vec.push_back (slot);
 	return slot;
       }
 
@@ -191,6 +198,7 @@ namespace cubhnsw
       VPID m_root_vpid;
 
       block_group_id_t m_block_pool {};
+      std::vector<block_slot_t *> m_block_table_vec {};
       ankerl::unordered_dense::map<slot_id_t, block_slot_t *> m_block_table {};
 
       block_entry_t *m_last_node_entry {nullptr};
