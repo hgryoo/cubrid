@@ -30,7 +30,7 @@
 
 #include "hnsw_algo.hpp"
 
-// #include "hnsw_storage_mem.hpp"
+#include "hnsw_storage_mem.hpp"
 #include "hnsw_storage_disk.hpp"
 
 #include "btree_load.h"
@@ -72,10 +72,10 @@ class hnsw_usearch_ng final:public hnsw_index
 {
   public:
     // TODO: factory pattern
-    using traits = cubhnsw::disk_traits_t;
+    using traits = cubhnsw::memory_traits_t;
 
     using algo_type = cubhnsw::algo < traits >;
-    using storage_type = cubhnsw::disk_storage;
+    using storage_type = cubhnsw::memory_storage;
 
     hnsw_usearch_ng (hnsw_index_backend &backend, const BTID &btid,
 		     const std::string &name,
@@ -175,7 +175,7 @@ hnsw_usearch_ng::hnsw_usearch_ng (hnsw_index_backend &backend, const BTID &btid,
   };
   this->m_thread_p = thread_get_thread_entry_info ();
 
-  m_storage = std::make_unique < cubhnsw::disk_storage > (btid, build_params);
+  m_storage = std::make_unique < storage_type > (btid, build_params);
   m_storage->set_thread_entry (thread_get_thread_entry_info ());
 
   std::size_t root_size;
