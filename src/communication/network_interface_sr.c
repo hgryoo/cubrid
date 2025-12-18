@@ -6384,7 +6384,7 @@ exit:
       g_deferred_resource_cleanup = nullptr;
     }
 
-  if (tran_deferred)
+  if (IS_QUERY_EXECUTE_WITH_COMMIT (query_flag) && tran_deferred)
     {
       stran_server_auto_commit_or_abort (thread_p, rid, p_net_Deferred_end_queries, n_query_ids,
 					 tran_abort, has_updated, &end_query_allowed, &tran_state, &should_conn_reset);
@@ -6824,6 +6824,7 @@ cleanup:
   if (g_deferred_resource_cleanup != nullptr)
     {
       g_deferred_resource_cleanup ();
+      g_deferred_resource_cleanup = nullptr;
     }
 #endif
 
