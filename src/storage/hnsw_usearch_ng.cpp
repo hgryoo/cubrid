@@ -72,10 +72,10 @@ class hnsw_usearch_ng final:public hnsw_index
 {
   public:
     // TODO: factory pattern
-    using traits = cubhnsw::memory_traits_t;
+    using traits = cubhnsw::disk_traits_t;
 
     using algo_type = cubhnsw::algo < traits >;
-    using storage_type = cubhnsw::memory_storage;
+    using storage_type = cubhnsw::disk_storage;
 
     hnsw_usearch_ng (hnsw_index_backend &backend, const BTID &btid,
 		     const std::string &name,
