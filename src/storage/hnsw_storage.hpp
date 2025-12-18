@@ -135,10 +135,10 @@ namespace cubhnsw
 	  }
 	else
 	  {
-	    // if (this->data.id.pageid == -1)
-	    {
-	      pgbuf_unfix (m_thread_p, m_page);
-	    }
+	    if (this->data.id.pageid == -1)
+	      {
+		pgbuf_unfix (m_thread_p, m_page);
+	      }
 	  }
       }
 

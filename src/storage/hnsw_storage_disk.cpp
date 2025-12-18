@@ -76,12 +76,13 @@ namespace cubhnsw
       }
     else
       {
-	//auto it = m_pinned_pages.find(last_vpid);
+	//uint64_t key = ((uint64_t)last_vpid.volid << 32) | last_vpid.pageid;
+	//auto it = m_pinned_pages.find(key);
 	//if (it == m_pinned_pages.end())
 	//{
 	page_ptr = pgbuf_fix (m_thread_p, &last_vpid, OLD_PAGE, PGBUF_LATCH_WRITE, PGBUF_UNCONDITIONAL_LATCH);
 	//assert (page_ptr != nullptr);
-	//m_pinned_pages[last_vpid] = page_ptr;
+	//m_pinned_pages[key] = page_ptr;
 	//}
 	//else
 	//{
