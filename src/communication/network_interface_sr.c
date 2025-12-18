@@ -5884,6 +5884,12 @@ stran_can_end_after_query_execution (THREAD_ENTRY * thread_p, int query_flag, QF
   return NO_ERROR;
 }
 
+bool has_prefix(std::string_view sql, std::string_view prefix)
+{
+    return sql.size() >= prefix.size() &&
+           std::memcmp(sql.data(), prefix.data(), prefix.size()) == 0;
+}
+
 /*
  * sqmgr_execute_query - Process a SERVER_QM_EXECUTE request
  *
@@ -6305,10 +6311,10 @@ null_list:
   /* result cache created time */
   OR_PACK_CACHE_TIME (ptr, &srv_cache_time);
 
-  if (list_id != NULL)
-    {
-      tran_deferred = true;
-    }
+  {
+  const std::string prefix = "select";
+  tran_deferred = has_prefix(info.sql_user_text, prefix);
+  }
 
   if (IS_QUERY_EXECUTE_WITH_COMMIT (query_flag))
     {
