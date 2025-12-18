@@ -117,29 +117,46 @@
 /* This file is only included in the server.  So set the on_server flag on */
 unsigned int db_on_server = 1;
 
-STATIC_INLINE TRAN_STATE stran_server_commit_internal (THREAD_ENTRY * thread_p, unsigned int rid, bool retain_lock,
-						       bool * should_conn_reset) __attribute__ ((ALWAYS_INLINE));
-STATIC_INLINE TRAN_STATE stran_server_abort_internal (THREAD_ENTRY * thread_p, unsigned int rid, bool retain_lock,
-						      bool * should_conn_reset) __attribute__ ((ALWAYS_INLINE));
-STATIC_INLINE void stran_server_auto_commit_or_abort (THREAD_ENTRY * thread_p, unsigned int rid,
-						      QUERY_ID * p_end_queries, int n_query_ids, bool need_abort,
-						      bool has_updated, bool * end_query_allowed,
-						      TRAN_STATE * tran_state, bool * should_conn_reset)
-  __attribute__ ((ALWAYS_INLINE));
-STATIC_INLINE int stran_can_end_after_query_execution (THREAD_ENTRY * thread_p, int query_flag, QFILE_LIST_ID * list_id,
-						       bool * can_end_transaction) __attribute__ ((ALWAYS_INLINE));
+#if defined (SERVER_MODE)
+std::function < void () >
+  g_deferred_resource_cleanup = nullptr;
+#endif
 
-static bool need_to_abort_tran (THREAD_ENTRY * thread_p, int *errid);
-static int server_capabilities (void);
-static int check_client_capabilities (THREAD_ENTRY * thread_p, int client_cap, int rel_compare,
-				      REL_COMPATIBILITY * compatibility, const char *client_host);
-static void sbtree_find_unique_internal (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
-static int er_log_slow_query (THREAD_ENTRY * thread_p, EXECUTION_INFO * info, int time,
-			      UINT64 * diff_stats, char *queryinfo_string);
-static void event_log_slow_query (THREAD_ENTRY * thread_p, EXECUTION_INFO * info, int time, UINT64 * diff_stats);
-static void event_log_many_ioreads (THREAD_ENTRY * thread_p, EXECUTION_INFO * info, int time, UINT64 * diff_stats);
-static void event_log_extend_pages (THREAD_ENTRY * thread_p, EXECUTION_INFO * info);
-static void set_tdes_query_exec_info (int tran_index, char *sql_user_text);
+STATIC_INLINE TRAN_STATE
+stran_server_commit_internal (THREAD_ENTRY * thread_p, unsigned int rid, bool retain_lock,
+			      bool * should_conn_reset) __attribute__ ((ALWAYS_INLINE));
+STATIC_INLINE TRAN_STATE
+stran_server_abort_internal (THREAD_ENTRY * thread_p, unsigned int rid, bool retain_lock,
+			     bool * should_conn_reset) __attribute__ ((ALWAYS_INLINE));
+STATIC_INLINE void
+stran_server_auto_commit_or_abort (THREAD_ENTRY * thread_p, unsigned int rid,
+				   QUERY_ID * p_end_queries, int n_query_ids, bool need_abort,
+				   bool has_updated, bool * end_query_allowed,
+				   TRAN_STATE * tran_state, bool * should_conn_reset) __attribute__ ((ALWAYS_INLINE));
+STATIC_INLINE int
+stran_can_end_after_query_execution (THREAD_ENTRY * thread_p, int query_flag, QFILE_LIST_ID * list_id,
+				     bool * can_end_transaction) __attribute__ ((ALWAYS_INLINE));
+
+static bool
+need_to_abort_tran (THREAD_ENTRY * thread_p, int *errid);
+static int
+server_capabilities (void);
+static int
+check_client_capabilities (THREAD_ENTRY * thread_p, int client_cap, int rel_compare,
+			   REL_COMPATIBILITY * compatibility, const char *client_host);
+static void
+sbtree_find_unique_internal (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
+static int
+er_log_slow_query (THREAD_ENTRY * thread_p, EXECUTION_INFO * info, int time,
+		   UINT64 * diff_stats, char *queryinfo_string);
+static void
+event_log_slow_query (THREAD_ENTRY * thread_p, EXECUTION_INFO * info, int time, UINT64 * diff_stats);
+static void
+event_log_many_ioreads (THREAD_ENTRY * thread_p, EXECUTION_INFO * info, int time, UINT64 * diff_stats);
+static void
+event_log_extend_pages (THREAD_ENTRY * thread_p, EXECUTION_INFO * info);
+static void
+set_tdes_query_exec_info (int tran_index, char *sql_user_text);
 
 /*
  * stran_server_commit_internal - commit transaction on server.
@@ -153,18 +170,22 @@ static void set_tdes_query_exec_info (int tran_index, char *sql_user_text);
  *
  * NOTE: This function must be called at transaction commit.
  */
-STATIC_INLINE TRAN_STATE
+STATIC_INLINE
+  TRAN_STATE
 stran_server_commit_internal (THREAD_ENTRY * thread_p, unsigned int rid, bool retain_lock, bool * should_conn_reset)
 {
-  bool has_updated;
-  TRAN_STATE state;
+  bool
+    has_updated;
+  TRAN_STATE
+    state;
 
   assert (should_conn_reset != NULL);
   has_updated = logtb_has_updated (thread_p);
 
   state = xtran_server_commit (thread_p, retain_lock);
 
-  PL_SESSION *session = cubpl::get_session ();
+  PL_SESSION *
+    session = cubpl::get_session ();
   if (!session || session->is_sp_running () == false)
     {
       net_cleanup_server_queues (rid);
@@ -192,17 +213,21 @@ stran_server_commit_internal (THREAD_ENTRY * thread_p, unsigned int rid, bool re
  *
  * NOTE: This function must be called at transaction abort.
  */
-STATIC_INLINE TRAN_STATE
+STATIC_INLINE
+  TRAN_STATE
 stran_server_abort_internal (THREAD_ENTRY * thread_p, unsigned int rid, bool * should_conn_reset)
 {
-  TRAN_STATE state;
-  bool has_updated;
+  TRAN_STATE
+    state;
+  bool
+    has_updated;
 
   has_updated = logtb_has_updated (thread_p);
 
   state = xtran_server_abort (thread_p);
 
-  PL_SESSION *session = cubpl::get_session ();
+  PL_SESSION *
+    session = cubpl::get_session ();
   if (!session || session->is_sp_running () == false)
     {
       net_cleanup_server_queues (rid);
@@ -242,7 +267,10 @@ stran_server_auto_commit_or_abort (THREAD_ENTRY * thread_p, unsigned int rid, QU
 				   int n_query_ids, bool need_abort, bool has_updated, bool * end_query_allowed,
 				   TRAN_STATE * tran_state, bool * should_conn_reset)
 {
-  int error_code, all_error_code, i;
+  int
+    error_code,
+    all_error_code,
+    i;
 
   assert (tran_state != NULL && should_conn_reset != NULL && end_query_allowed != NULL);
 
@@ -320,11 +348,14 @@ stran_server_auto_commit_or_abort (THREAD_ENTRY * thread_p, unsigned int rid, QU
  *   thread_p(in): thread entry
  *   errid(out): the latest error code
  */
-static bool
+static
+  bool
 need_to_abort_tran (THREAD_ENTRY * thread_p, int *errid)
 {
-  LOG_TDES *tdes;
-  bool flag_abort = false;
+  LOG_TDES *
+    tdes;
+  bool
+    flag_abort = false;
 
   assert (thread_p != NULL);
 
@@ -368,16 +399,24 @@ need_to_abort_tran (THREAD_ENTRY * thread_p, int *errid)
 TRAN_STATE
 return_error_to_client (THREAD_ENTRY * thread_p, unsigned int rid)
 {
-  LOG_TDES *tdes;
-  int errid;
-  bool flag_abort = false;
-  char *area;
+  LOG_TDES *
+    tdes;
+  int
+    errid;
+  bool
+    flag_abort = false;
+  char *
+    area;
   OR_ALIGNED_BUF (1024) a_buffer;
-  char *buffer;
-  int length = 1024;
-  TRAN_STATE tran_state = TRAN_UNACTIVE_UNKNOWN;
+  char *
+    buffer;
+  int
+    length = 1024;
+  TRAN_STATE
+    tran_state = TRAN_UNACTIVE_UNKNOWN;
 
-  CSS_CONN_ENTRY *conn;
+  CSS_CONN_ENTRY *
+    conn;
 
   assert (thread_p != NULL);
 
@@ -437,7 +476,8 @@ return_error_to_client (THREAD_ENTRY * thread_p, unsigned int rid)
 static int
 server_capabilities (void)
 {
-  int capabilities = 0;
+  int
+    capabilities = 0;
 
   capabilities |= NET_CAP_INTERRUPT_ENABLED;
   if (db_Disable_modifications > 0)
@@ -472,7 +512,8 @@ static int
 check_client_capabilities (THREAD_ENTRY * thread_p, int client_cap, int rel_compare, REL_COMPATIBILITY * compatibility,
 			   const char *client_host)
 {
-  int server_cap;
+  int
+    server_cap;
 
   assert (compatibility != NULL);
 
@@ -530,8 +571,11 @@ void
 server_ping (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int client_val, server_val;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    client_val,
+    server_val;
 
   er_log_debug (ARG_FILE_LINE, "The server_ping() is called.");
 
@@ -561,14 +605,27 @@ int
 server_ping_with_handshake (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (REL_MAX_RELEASE_LENGTH + (OR_INT_SIZE * 3) + CUB_MAXHOSTNAMELEN) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int reply_size = OR_ALIGNED_BUF_SIZE (a_reply);
-  char *ptr, *client_release, *client_host;
-  const char *server_release;
-  int client_capabilities, client_bit_platform, status = CSS_NO_ERRORS;
-  int client_type;
-  int strlen1, strlen2;
-  REL_COMPATIBILITY compat;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    reply_size = OR_ALIGNED_BUF_SIZE (a_reply);
+  char *
+  ptr, *
+  client_release, *
+    client_host;
+  const char *
+    server_release;
+  int
+    client_capabilities,
+    client_bit_platform,
+    status = CSS_NO_ERRORS;
+  int
+    client_type;
+  int
+    strlen1,
+    strlen2;
+  REL_COMPATIBILITY
+    compat;
 
   server_release = rel_release_string ();
 
@@ -667,23 +724,39 @@ server_ping_with_handshake (THREAD_ENTRY * thread_p, unsigned int rid, char *req
 void
 slocator_fetch (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  OID oid;
-  int chn;
-  LOCK lock;
-  OID class_oid;
-  int class_chn;
-  int prefetch;
-  LC_COPYAREA *copy_area;
-  char *ptr;
-  int success;
+  OID
+    oid;
+  int
+    chn;
+  LOCK
+    lock;
+  OID
+    class_oid;
+  int
+    class_chn;
+  int
+    prefetch;
+  LC_COPYAREA *
+    copy_area;
+  char *
+    ptr;
+  int
+    success;
   OR_ALIGNED_BUF (NET_COPY_AREA_SENDRECV_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *desc_ptr = NULL;
-  int desc_size;
-  char *content_ptr;
-  int content_size;
-  int num_objs = 0;
-  int fetch_version_type;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    desc_ptr = NULL;
+  int
+    desc_size;
+  char *
+    content_ptr;
+  int
+    content_size;
+  int
+    num_objs = 0;
+  int
+    fetch_version_type;
 
   ptr = or_unpack_oid (request, &oid);
   ptr = or_unpack_int (ptr, &chn);
@@ -752,20 +825,34 @@ slocator_fetch (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int re
 void
 slocator_get_class (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  OID class_oid, oid;
-  int class_chn;
-  LOCK lock;
-  int prefetching;
-  LC_COPYAREA *copy_area;
-  int success;
-  char *ptr;
+  OID
+    class_oid,
+    oid;
+  int
+    class_chn;
+  LOCK
+    lock;
+  int
+    prefetching;
+  LC_COPYAREA *
+    copy_area;
+  int
+    success;
+  char *
+    ptr;
   OR_ALIGNED_BUF (NET_COPY_AREA_SENDRECV_SIZE + OR_OID_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *desc_ptr = NULL;
-  int desc_size;
-  char *content_ptr;
-  int content_size;
-  int num_objs = 0;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    desc_ptr = NULL;
+  int
+    desc_size;
+  char *
+    content_ptr;
+  int
+    content_size;
+  int
+    num_objs = 0;
 
   ptr = or_unpack_oid (request, &class_oid);
   ptr = or_unpack_int (ptr, &class_chn);
@@ -831,25 +918,47 @@ slocator_get_class (THREAD_ENTRY * thread_p, unsigned int rid, char *request, in
 void
 slocator_fetch_all (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  HFID hfid;
-  LOCK lock;
-  OID class_oid, last_oid;
-  int nobjects, nfetched;
-  LC_COPYAREA *copy_area;
-  int success;
-  char *ptr;
-  int fetch_version_type;
+  HFID
+    hfid;
+  LOCK
+    lock;
+  OID
+    class_oid,
+    last_oid;
+  int
+    nobjects,
+    nfetched;
+  LC_COPYAREA *
+    copy_area;
+  int
+    success;
+  char *
+    ptr;
+  int
+    fetch_version_type;
   OR_ALIGNED_BUF (NET_COPY_AREA_SENDRECV_SIZE + (OR_INT_SIZE * 5) + OR_OID_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *desc_ptr = NULL;
-  int desc_size;
-  char *content_ptr;
-  int content_size;
-  int num_objs = 0;
-  int nparallel_process, nparallel_process_idx, request_pages;
-  NET_ENDIAN server_endian = get_endian_type ();
-  int client_endian;
-  int encode_endian = 1;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    desc_ptr = NULL;
+  int
+    desc_size;
+  char *
+    content_ptr;
+  int
+    content_size;
+  int
+    num_objs = 0;
+  int
+    nparallel_process,
+    nparallel_process_idx,
+    request_pages;
+  NET_ENDIAN
+    server_endian = get_endian_type ();
+  int
+    client_endian;
+  int
+    encode_endian = 1;
 
   ptr = or_unpack_hfid (request, &hfid);
   ptr = or_unpack_lock (ptr, &lock);
@@ -953,20 +1062,37 @@ slocator_fetch_all (THREAD_ENTRY * thread_p, unsigned int rid, char *request, in
 void
 slocator_does_exist (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  OID oid, class_oid;
-  int chn, class_chn, prefetch, doesexist;
-  int need_fetching;
-  LOCK lock;
-  int fetch_version_type;
-  LC_COPYAREA *copy_area;
-  char *ptr;
+  OID
+    oid,
+    class_oid;
+  int
+    chn,
+    class_chn,
+    prefetch,
+    doesexist;
+  int
+    need_fetching;
+  LOCK
+    lock;
+  int
+    fetch_version_type;
+  LC_COPYAREA *
+    copy_area;
+  char *
+    ptr;
   OR_ALIGNED_BUF (NET_COPY_AREA_SENDRECV_SIZE + OR_INT_SIZE + OR_OID_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *desc_ptr = NULL;
-  int desc_size;
-  char *content_ptr;
-  int content_size;
-  int num_objs = 0;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    desc_ptr = NULL;
+  int
+    desc_size;
+  char *
+    content_ptr;
+  int
+    content_size;
+  int
+    num_objs = 0;
 
   ptr = or_unpack_oid (request, &oid);
   ptr = or_unpack_int (ptr, &chn);
@@ -1037,16 +1163,25 @@ slocator_does_exist (THREAD_ENTRY * thread_p, unsigned int rid, char *request, i
 void
 slocator_notify_isolation_incons (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  LC_COPYAREA *copy_area;
-  char *ptr;
-  int success;
+  LC_COPYAREA *
+    copy_area;
+  char *
+    ptr;
+  int
+    success;
   OR_ALIGNED_BUF (NET_COPY_AREA_SENDRECV_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *desc_ptr = NULL;
-  int desc_size;
-  char *content_ptr;
-  int content_size;
-  int num_objs = 0;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    desc_ptr = NULL;
+  int
+    desc_size;
+  char *
+    content_ptr;
+  int
+    content_size;
+  int
+    num_objs = 0;
 
   copy_area = NULL;
   success = xlocator_notify_isolation_incons (thread_p, &copy_area);
@@ -1105,22 +1240,38 @@ slocator_notify_isolation_incons (THREAD_ENTRY * thread_p, unsigned int rid, cha
 void
 slocator_repl_force (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int size;
-  int success;
-  LC_COPYAREA *copy_area = NULL, *reply_copy_area = NULL;
-  char *ptr;
-  int csserror;
+  int
+    size;
+  int
+    success;
+  LC_COPYAREA *
+    copy_area = NULL, *reply_copy_area = NULL;
+  char *
+    ptr;
+  int
+    csserror;
   OR_ALIGNED_BUF (NET_COPY_AREA_SENDRECV_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int content_size;
-  char *content_ptr = NULL, *new_content_ptr = NULL;
-  char *reply_content_ptr = NULL;
-  int num_objs;
-  char *packed_desc = NULL;
-  int packed_desc_size;
-  LC_COPYAREA_MANYOBJS *mobjs, *reply_mobjs;
-  char *desc_ptr = NULL;
-  int desc_size;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    content_size;
+  char *
+    content_ptr = NULL, *new_content_ptr = NULL;
+  char *
+    reply_content_ptr = NULL;
+  int
+    num_objs;
+  char *
+    packed_desc = NULL;
+  int
+    packed_desc_size;
+  LC_COPYAREA_MANYOBJS *
+  mobjs, *
+    reply_mobjs;
+  char *
+    desc_ptr = NULL;
+  int
+    desc_size;
 
   ptr = or_unpack_int (request, &num_objs);
   ptr = or_unpack_int (ptr, &packed_desc_size);
@@ -1230,22 +1381,38 @@ end:
 void
 slocator_force (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int received_size;
-  int success;
-  LC_COPYAREA *copy_area = NULL;
-  char *ptr;
-  int csserror;
+  int
+    received_size;
+  int
+    success;
+  LC_COPYAREA *
+    copy_area = NULL;
+  char *
+    ptr;
+  int
+    csserror;
   OR_ALIGNED_BUF (OR_INT_SIZE * 3) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int content_size;
-  char *content_ptr = NULL, *new_content_ptr = NULL;
-  int num_objs;
-  char *packed_desc = NULL;
-  int packed_desc_size;
-  int multi_update_flags;
-  LC_COPYAREA_MANYOBJS *mobjs;
-  int i, num_ignore_error_list;
-  int ignore_error_list[-ER_LAST_ERROR];
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    content_size;
+  char *
+    content_ptr = NULL, *new_content_ptr = NULL;
+  int
+    num_objs;
+  char *
+    packed_desc = NULL;
+  int
+    packed_desc_size;
+  int
+    multi_update_flags;
+  LC_COPYAREA_MANYOBJS *
+    mobjs;
+  int
+    i,
+    num_ignore_error_list;
+  int
+    ignore_error_list[-ER_LAST_ERROR];
 
   ptr = or_unpack_int (request, &num_objs);
   ptr = or_unpack_int (ptr, &multi_update_flags);
@@ -1351,21 +1518,35 @@ end:
 void
 slocator_fetch_lockset (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success;
-  LC_COPYAREA *copy_area;
-  LC_LOCKSET *lockset;
+  int
+    success;
+  LC_COPYAREA *
+    copy_area;
+  LC_LOCKSET *
+    lockset;
   OR_ALIGNED_BUF (NET_SENDRECV_BUFFSIZE + NET_COPY_AREA_SENDRECV_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *desc_ptr;
-  int desc_size;
-  char *content_ptr;
-  int content_size;
-  char *ptr;
-  bool first_call;
-  int num_objs;
-  char *packed = NULL;
-  int packed_size;
-  int send_size;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    desc_ptr;
+  int
+    desc_size;
+  char *
+    content_ptr;
+  int
+    content_size;
+  char *
+    ptr;
+  bool
+    first_call;
+  int
+    num_objs;
+  char *
+    packed = NULL;
+  int
+    packed_size;
+  int
+    send_size;
 
   ptr = or_unpack_int (request, &packed_size);
 
@@ -1479,27 +1660,47 @@ slocator_fetch_lockset (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 void
 slocator_fetch_all_reference_lockset (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  OID oid;
-  int chn;
-  LOCK lock;
-  OID class_oid;
-  int class_chn;
-  int prune_level;
-  int quit_on_errors;
-  int success;
-  LC_COPYAREA *copy_area;
-  LC_LOCKSET *lockset;
+  OID
+    oid;
+  int
+    chn;
+  LOCK
+    lock;
+  OID
+    class_oid;
+  int
+    class_chn;
+  int
+    prune_level;
+  int
+    quit_on_errors;
+  int
+    success;
+  LC_COPYAREA *
+    copy_area;
+  LC_LOCKSET *
+    lockset;
   OR_ALIGNED_BUF (NET_SENDRECV_BUFFSIZE + NET_COPY_AREA_SENDRECV_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *desc_ptr = NULL;
-  int desc_size;
-  char *content_ptr;
-  int content_size;
-  char *ptr;
-  int num_objs = 0;
-  char *packed = NULL;
-  int packed_size;
-  int send_size = 0;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    desc_ptr = NULL;
+  int
+    desc_size;
+  char *
+    content_ptr;
+  int
+    content_size;
+  char *
+    ptr;
+  int
+    num_objs = 0;
+  char *
+    packed = NULL;
+  int
+    packed_size;
+  int
+    send_size = 0;
 
   ptr = or_unpack_oid (request, &oid);
   ptr = or_unpack_int (ptr, &chn);
@@ -1595,13 +1796,19 @@ slocator_fetch_all_reference_lockset (THREAD_ENTRY * thread_p, unsigned int rid,
 void
 slocator_find_class_oid (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  LC_FIND_CLASSNAME found;
-  char *classname;
-  OID class_oid;
-  LOCK lock;
-  char *ptr;
+  LC_FIND_CLASSNAME
+    found;
+  char *
+    classname;
+  OID
+    class_oid;
+  LOCK
+    lock;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_OID_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_string_nocopy (request, &classname);
   ptr = or_unpack_oid (ptr, &class_oid);
@@ -1633,16 +1840,25 @@ slocator_find_class_oid (THREAD_ENTRY * thread_p, unsigned int rid, char *reques
 void
 slocator_reserve_classnames (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  LC_FIND_CLASSNAME reserved = LC_CLASSNAME_ERROR;
-  int num_classes;
-  char **classnames;
-  OID *class_oids;
-  char *ptr;
-  int i;
-  int malloc_size;
-  char *malloc_area;
+  LC_FIND_CLASSNAME
+    reserved = LC_CLASSNAME_ERROR;
+  int
+    num_classes;
+  char **
+    classnames;
+  OID *
+    class_oids;
+  char *
+    ptr;
+  int
+    i;
+  int
+    malloc_size;
+  char *
+    malloc_area;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_int (request, &num_classes);
 
@@ -1688,11 +1904,15 @@ slocator_reserve_classnames (THREAD_ENTRY * thread_p, unsigned int rid, char *re
 void
 slocator_get_reserved_class_name_oid (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *classname;
-  OID class_oid = OID_INITIALIZER;
+  char *
+    classname;
+  OID
+    class_oid = OID_INITIALIZER;
   OR_ALIGNED_BUF (OR_OID_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int error = NO_ERROR;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    error = NO_ERROR;
 
   (void) or_unpack_string_nocopy (request, &classname);
 
@@ -1724,10 +1944,13 @@ slocator_get_reserved_class_name_oid (THREAD_ENTRY * thread_p, unsigned int rid,
 void
 slocator_delete_class_name (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *classname;
-  LC_FIND_CLASSNAME deleted;
+  char *
+    classname;
+  LC_FIND_CLASSNAME
+    deleted;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_string_nocopy (request, &classname);
 
@@ -1755,12 +1978,18 @@ slocator_delete_class_name (THREAD_ENTRY * thread_p, unsigned int rid, char *req
 void
 slocator_rename_class_name (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *oldname, *newname;
-  OID class_oid;
-  LC_FIND_CLASSNAME renamed;
-  char *ptr;
+  char *
+  oldname, *
+    newname;
+  OID
+    class_oid;
+  LC_FIND_CLASSNAME
+    renamed;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_string_nocopy (request, &oldname);
   ptr = or_unpack_string_nocopy (ptr, &newname);
@@ -1790,14 +2019,22 @@ slocator_rename_class_name (THREAD_ENTRY * thread_p, unsigned int rid, char *req
 void
 slocator_assign_oid (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  HFID hfid;
-  int expected_length;
-  OID class_oid, perm_oid;
-  char *classname;
-  int success;
-  char *ptr;
+  HFID
+    hfid;
+  int
+    expected_length;
+  OID
+    class_oid,
+    perm_oid;
+  char *
+    classname;
+  int
+    success;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_OID_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_hfid (request, &hfid);
   ptr = or_unpack_int (ptr, &expected_length);
@@ -1830,13 +2067,19 @@ slocator_assign_oid (THREAD_ENTRY * thread_p, unsigned int rid, char *request, i
 void
 sqst_server_get_statistics (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  OID classoid;
-  unsigned int timestamp;
-  char *ptr;
-  char *buffer;
-  int buffer_length;
+  OID
+    classoid;
+  unsigned int
+    timestamp;
+  char *
+    ptr;
+  char *
+    buffer;
+  int
+    buffer_length;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_oid (request, &classoid);
   ptr = or_unpack_int (ptr, (int *) &timestamp);
@@ -1873,9 +2116,11 @@ sqst_server_get_statistics (THREAD_ENTRY * thread_p, unsigned int rid, char *req
 void
 slog_checkpoint (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int error = NO_ERROR;
+  int
+    error = NO_ERROR;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   log_wakeup_checkpoint_daemon ();
 
@@ -1899,9 +2144,11 @@ slog_checkpoint (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int r
 void
 slogtb_has_updated (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int has_updated;
+  int
+    has_updated;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   has_updated = logtb_has_updated (thread_p);
 
@@ -1923,7 +2170,8 @@ slogtb_has_updated (THREAD_ENTRY * thread_p, unsigned int rid, char *request, in
 void
 slogtb_set_interrupt (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int set;
+  int
+    set;
 
   (void) or_unpack_int (request, &set);
   xlogtb_set_interrupt (thread_p, set);
@@ -1947,9 +2195,11 @@ slogtb_set_interrupt (THREAD_ENTRY * thread_p, unsigned int rid, char *request, 
 void
 slogtb_set_suppress_repl_on_transaction (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int set;
+  int
+    set;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &set);
   xlogtb_set_suppress_repl_on_transaction (thread_p, set);
@@ -1973,9 +2223,11 @@ slogtb_set_suppress_repl_on_transaction (THREAD_ENTRY * thread_p, unsigned int r
 void
 slogtb_reset_wait_msecs (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int wait_msecs;
+  int
+    wait_msecs;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &wait_msecs);
 
@@ -1999,10 +2251,14 @@ slogtb_reset_wait_msecs (THREAD_ENTRY * thread_p, unsigned int rid, char *reques
 void
 slogtb_reset_isolation (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int isolation, error_code;
+  int
+    isolation,
+    error_code;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_int (request, &isolation);
 
@@ -2031,12 +2287,17 @@ slogtb_reset_isolation (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 void
 slogpb_dump_stat (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int file_size;
-  char *buffer;
-  int buffer_size;
-  int send_size;
+  int
+    file_size;
+  char *
+    buffer;
+  int
+    buffer_size;
+  int
+    send_size;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &buffer_size);
 
@@ -2110,13 +2371,19 @@ slogpb_dump_stat (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int 
 void
 slog_find_lob_locator (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *locator;
-  ES_URI real_locator;
-  int real_loc_size;
-  LOB_LOCATOR_STATE state;
+  char *
+    locator;
+  ES_URI
+    real_locator;
+  int
+    real_loc_size;
+  LOB_LOCATOR_STATE
+    state;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   (void) or_unpack_string_nocopy (request, &locator);
 
@@ -2143,12 +2410,18 @@ slog_find_lob_locator (THREAD_ENTRY * thread_p, unsigned int rid, char *request,
 void
 slog_add_lob_locator (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *locator;
-  LOB_LOCATOR_STATE state;
-  int tmp_int, error;
+  char *
+    locator;
+  LOB_LOCATOR_STATE
+    state;
+  int
+    tmp_int,
+    error;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_string_nocopy (request, &locator);
   ptr = or_unpack_int (ptr, &tmp_int);
@@ -2178,12 +2451,19 @@ slog_add_lob_locator (THREAD_ENTRY * thread_p, unsigned int rid, char *request, 
 void
 slog_change_state_of_locator (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *locator, *new_locator;
-  LOB_LOCATOR_STATE state;
-  int tmp_int, error;
+  char *
+  locator, *
+    new_locator;
+  LOB_LOCATOR_STATE
+    state;
+  int
+    tmp_int,
+    error;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_string_nocopy (request, &locator);
   ptr = or_unpack_string_nocopy (ptr, &new_locator);
@@ -2214,11 +2494,15 @@ slog_change_state_of_locator (THREAD_ENTRY * thread_p, unsigned int rid, char *r
 void
 slog_drop_lob_locator (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *locator;
-  int error;
+  char *
+    locator;
+  int
+    error;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_string_nocopy (request, &locator);
 
@@ -2235,20 +2519,32 @@ slog_drop_lob_locator (THREAD_ENTRY * thread_p, unsigned int rid, char *request,
 void
 slog_supplement_statement (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success = NO_ERROR;
+  int
+    success = NO_ERROR;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr, *start_ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+  ptr, *
+    start_ptr;
 
-  int ddl_type;
-  int obj_type;
-  OID classoid;
-  OID oid;
-  char *stmt_text;
+  int
+    ddl_type;
+  int
+    obj_type;
+  OID
+    classoid;
+  OID
+    oid;
+  char *
+    stmt_text;
 
-  char *supplemental_data;
-  int data_len;
-  LOG_TDES *tdes;
+  char *
+    supplemental_data;
+  int
+    data_len;
+  LOG_TDES *
+    tdes;
 
   /* CAS and Server are able to have different parameter value, when broker restarted with changed parameter value */
   if (prm_get_integer_value (PRM_ID_SUPPLEMENTAL_LOG) == 1)
@@ -2317,9 +2613,11 @@ end:
 void
 sacl_reload (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int error;
+  int
+    error;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   error = xacl_reload (thread_p);
   if (error != NO_ERROR)
@@ -2345,12 +2643,17 @@ sacl_reload (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqle
 void
 sacl_dump (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int file_size;
-  char *buffer;
-  int buffer_size;
-  int send_size;
+  int
+    file_size;
+  char *
+    buffer;
+  int
+    buffer_size;
+  int
+    send_size;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &buffer_size);
 
@@ -2423,14 +2726,21 @@ sacl_dump (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 void
 slock_dump (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int file_size;
-  char *buffer;
-  int buffer_size;
-  int is_contention;
-  int send_size;
-  char *ptr;
+  int
+    file_size;
+  char *
+    buffer;
+  int
+    buffer_size;
+  int
+    is_contention;
+  int
+    send_size;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_int (request, &buffer_size);
   ptr = or_unpack_int (ptr, &is_contention);
@@ -2505,13 +2815,19 @@ slock_dump (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen
 void
 shf_create (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int error;
-  HFID hfid;
-  char *ptr;
-  OID class_oid;
+  int
+    error;
+  HFID
+    hfid;
+  char *
+    ptr;
+  OID
+    class_oid;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_HFID_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int reuse_oid = 0;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    reuse_oid = 0;
 
   ptr = or_unpack_hfid (request, &hfid);
   ptr = or_unpack_oid (ptr, &class_oid);
@@ -2543,10 +2859,13 @@ void
 shf_destroy (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
 #if defined(ENABLE_UNUSED_FUNCTION)
-  int error;
-  HFID hfid;
+  int
+    error;
+  HFID
+    hfid;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_hfid (request, &hfid);
 
@@ -2575,13 +2894,19 @@ shf_destroy (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqle
 void
 shf_destroy_when_new (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int error;
-  HFID hfid;
-  OID class_oid;
-  int force;
+  int
+    error;
+  HFID
+    hfid;
+  OID
+    class_oid;
+  int
+    force;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_hfid (request, &hfid);
   ptr = or_unpack_oid (ptr, &class_oid);
@@ -2611,11 +2936,15 @@ shf_destroy_when_new (THREAD_ENTRY * thread_p, unsigned int rid, char *request, 
 void
 shf_heap_reclaim_addresses (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int error;
-  HFID hfid;
+  int
+    error;
+  HFID
+    hfid;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr = NULL;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr = NULL;
 
   if (boot_can_compact (thread_p) == false)
     {
@@ -2657,8 +2986,10 @@ void
 shf_get_maxslotted_reclength (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int maxslotted_reclength;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    maxslotted_reclength;
 
   (void) xheap_get_maxslotted_reclength (maxslotted_reclength);
 
@@ -2682,11 +3013,15 @@ shf_get_maxslotted_reclength (THREAD_ENTRY * thread_p, unsigned int rid, char *r
 void
 sfile_apply_tde_to_class_files (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int error;
-  char *ptr;
-  OID class_oid;
+  int
+    error;
+  char *
+    ptr;
+  OID
+    class_oid;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_oid (request, &class_oid);
 
@@ -2703,10 +3038,15 @@ sfile_apply_tde_to_class_files (THREAD_ENTRY * thread_p, unsigned int rid, char 
 void
 stde_get_data_keys (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int area_size = -1;
-  char *reply, *area, *ptr;
+  int
+    area_size = -1;
+  char *
+  reply, *
+  area, *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  int err = NO_ERROR;
+  int
+    err = NO_ERROR;
 
   reply = OR_ALIGNED_BUF_START (a_reply);
 
@@ -2759,9 +3099,11 @@ stde_get_data_keys (THREAD_ENTRY * thread_p, unsigned int rid, char *request, in
 void
 stde_is_loaded (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *ptr;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_pack_int (reply, tde_is_loaded ());
   css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
@@ -2781,12 +3123,19 @@ stde_is_loaded (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int re
 void
 stde_get_mk_file_path (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char mk_path[PATH_MAX] = { 0, };
-  int pathlen = 0;
-  int area_size = -1;
-  char *reply, *area, *ptr;
+  char
+  mk_path[PATH_MAX] = { 0, };
+  int
+    pathlen = 0;
+  int
+    area_size = -1;
+  char *
+  reply, *
+  area, *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  int err = NO_ERROR;
+  int
+    err = NO_ERROR;
 
   reply = OR_ALIGNED_BUF_START (a_reply);
 
@@ -2829,12 +3178,18 @@ stde_get_mk_file_path (THREAD_ENTRY * thread_p, unsigned int rid, char *request,
 void
 stde_get_mk_info (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int error;
-  char *ptr;
-  int mk_index;
-  time_t created_time, set_time;
+  int
+    error;
+  char *
+    ptr;
+  int
+    mk_index;
+  time_t
+    created_time,
+    set_time;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE + OR_BIGINT_SIZE + OR_BIGINT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   error = xtde_get_mk_info (thread_p, &mk_index, &created_time, &set_time);
   if (error != NO_ERROR)
@@ -2863,11 +3218,15 @@ stde_get_mk_info (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int 
 void
 stde_change_mk_on_server (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int error;
-  char *ptr;
-  int mk_index;
+  int
+    error;
+  char *
+    ptr;
+  int
+    mk_index;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_int (request, &mk_index);
 
@@ -2896,15 +3255,24 @@ stde_change_mk_on_server (THREAD_ENTRY * thread_p, unsigned int rid, char *reque
 void
 stran_server_commit (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  TRAN_STATE state;
-  int xretain_lock;
-  bool retain_lock, should_conn_reset = false;
+  TRAN_STATE
+    state;
+  int
+    xretain_lock;
+  bool
+    retain_lock,
+    should_conn_reset = false;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  int row_count = DB_ROW_COUNT_NOT_SET;
-  int n_query_ids = 0, i = 0;
-  QUERY_ID query_id;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  int
+    row_count = DB_ROW_COUNT_NOT_SET;
+  int
+    n_query_ids = 0, i = 0;
+  QUERY_ID
+    query_id;
 
   ptr = or_unpack_int (request, &xretain_lock);
   ptr = or_unpack_int (ptr, &row_count);
@@ -2947,11 +3315,15 @@ stran_server_commit (THREAD_ENTRY * thread_p, unsigned int rid, char *request, i
 void
 stran_server_abort (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  TRAN_STATE state;
-  bool should_conn_reset = false, has_updated;
+  TRAN_STATE
+    state;
+  bool
+    should_conn_reset = false, has_updated;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   has_updated = logtb_has_updated (thread_p);
 
@@ -2976,9 +3348,11 @@ stran_server_abort (THREAD_ENTRY * thread_p, unsigned int rid, char *request, in
 void
 stran_server_has_updated (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int has_updated;
+  int
+    has_updated;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   has_updated = xtran_server_has_updated (thread_p);
 
@@ -3000,11 +3374,15 @@ stran_server_has_updated (THREAD_ENTRY * thread_p, unsigned int rid, char *reque
 void
 stran_server_start_topop (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success;
-  LOG_LSA topop_lsa;
+  int
+    success;
+  LOG_LSA
+    topop_lsa;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_LOG_LSA_ALIGNED_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   success = (xtran_server_start_topop (thread_p, &topop_lsa) == NO_ERROR) ? NO_ERROR : ER_FAILED;
   if (success != NO_ERROR)
@@ -3031,13 +3409,19 @@ stran_server_start_topop (THREAD_ENTRY * thread_p, unsigned int rid, char *reque
 void
 stran_server_end_topop (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  TRAN_STATE state;
-  LOG_LSA topop_lsa;
-  int xresult;
-  LOG_RESULT_TOPOP result;
+  TRAN_STATE
+    state;
+  LOG_LSA
+    topop_lsa;
+  int
+    xresult;
+  LOG_RESULT_TOPOP
+    result;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_LOG_LSA_ALIGNED_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   (void) or_unpack_int (request, &xresult);
   result = (LOG_RESULT_TOPOP) xresult;
@@ -3063,12 +3447,17 @@ stran_server_end_topop (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 void
 stran_server_savepoint (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success;
-  char *savept_name;
-  LOG_LSA topop_lsa;
+  int
+    success;
+  char *
+    savept_name;
+  LOG_LSA
+    topop_lsa;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_LOG_LSA_ALIGNED_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_string_nocopy (request, &savept_name);
 
@@ -3097,12 +3486,17 @@ stran_server_savepoint (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 void
 stran_server_partial_abort (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  TRAN_STATE state;
-  char *savept_name;
-  LOG_LSA savept_lsa;
+  TRAN_STATE
+    state;
+  char *
+    savept_name;
+  LOG_LSA
+    savept_lsa;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_LOG_LSA_ALIGNED_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_string_nocopy (request, &savept_name);
 
@@ -3132,9 +3526,11 @@ stran_server_partial_abort (THREAD_ENTRY * thread_p, unsigned int rid, char *req
 void
 stran_server_is_active_and_has_updated (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int isactive_has_updated;
+  int
+    isactive_has_updated;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   isactive_has_updated = xtran_server_is_active_and_has_updated (thread_p);
 
@@ -3156,9 +3552,11 @@ stran_server_is_active_and_has_updated (THREAD_ENTRY * thread_p, unsigned int ri
 void
 stran_wait_server_active_trans (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int status;
+  int
+    status;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   status = xtran_wait_server_active_trans (thread_p);
 
@@ -3180,10 +3578,13 @@ stran_wait_server_active_trans (THREAD_ENTRY * thread_p, unsigned int rid, char 
 void
 stran_is_blocked (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int tran_index;
-  bool blocked;
+  int
+    tran_index;
+  bool
+    blocked;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &tran_index);
 
@@ -3207,12 +3608,17 @@ stran_is_blocked (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int 
 void
 stran_server_set_global_tran_info (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success;
-  int gtrid;
-  void *info;
-  int size;
+  int
+    success;
+  int
+    gtrid;
+  void *
+    info;
+  int
+    size;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &gtrid);
 
@@ -3252,12 +3658,17 @@ stran_server_set_global_tran_info (THREAD_ENTRY * thread_p, unsigned int rid, ch
 void
 stran_server_get_global_tran_info (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success;
-  int gtrid;
-  void *buffer;
-  int size;
+  int
+    success;
+  int
+    gtrid;
+  void *
+    buffer;
+  int
+    size;
   OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply), *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply), *ptr;
 
   ptr = or_unpack_int (request, &gtrid);
   ptr = or_unpack_int (ptr, &size);
@@ -3297,9 +3708,11 @@ stran_server_get_global_tran_info (THREAD_ENTRY * thread_p, unsigned int rid, ch
 void
 stran_server_2pc_start (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int gtrid = NULL_TRANID;
+  int
+    gtrid = NULL_TRANID;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   gtrid = xtran_server_2pc_start (thread_p);
   if (gtrid < 0)
@@ -3325,9 +3738,11 @@ stran_server_2pc_start (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 void
 stran_server_2pc_prepare (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  TRAN_STATE state = TRAN_UNACTIVE_UNKNOWN;
+  TRAN_STATE
+    state = TRAN_UNACTIVE_UNKNOWN;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   state = xtran_server_2pc_prepare (thread_p);
   if (state != TRAN_UNACTIVE_2PC_PREPARE && state != TRAN_UNACTIVE_COMMITTED)
@@ -3354,9 +3769,16 @@ stran_server_2pc_prepare (THREAD_ENTRY * thread_p, unsigned int rid, char *reque
 void
 stran_server_2pc_recovery_prepared (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int count, *gtrids, size, i;
-  int reply_size;
-  char *reply, *ptr;
+  int
+  count, *
+    gtrids,
+    size,
+    i;
+  int
+    reply_size;
+  char *
+  reply, *
+    ptr;
 
   (void) or_unpack_int (request, &size);
 
@@ -3407,10 +3829,13 @@ stran_server_2pc_recovery_prepared (THREAD_ENTRY * thread_p, unsigned int rid, c
 void
 stran_server_2pc_attach_global_tran (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int gtrid;
-  int tran_index;
+  int
+    gtrid;
+  int
+    tran_index;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &gtrid);
 
@@ -3438,10 +3863,13 @@ stran_server_2pc_attach_global_tran (THREAD_ENTRY * thread_p, unsigned int rid, 
 void
 stran_server_2pc_prepare_global_tran (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  TRAN_STATE state;
-  int gtrid;
+  TRAN_STATE
+    state;
+  int
+    gtrid;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &gtrid);
 
@@ -3471,10 +3899,14 @@ void
 stran_lock_rep_read (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  int lock_rr_tran;
-  int success;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  int
+    lock_rr_tran;
+  int
+    success;
 
   ptr = request;
   ptr = or_unpack_int (ptr, &lock_rr_tran);
@@ -3521,15 +3953,31 @@ sboot_initialize_server (THREAD_ENTRY * thread_p, unsigned int rid, char *reques
 void
 sboot_register_client (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int xint;
-  BOOT_CLIENT_CREDENTIAL client_credential;
-  BOOT_SERVER_CREDENTIAL server_credential;
-  int tran_index, client_lock_wait;
-  TRAN_ISOLATION client_isolation;
-  TRAN_STATE tran_state;
-  int area_size, strlen1, strlen2, strlen3, strlen4;
-  char *reply, *area, *ptr;
-  packing_unpacker unpacker;
+  int
+    xint;
+  BOOT_CLIENT_CREDENTIAL
+    client_credential;
+  BOOT_SERVER_CREDENTIAL
+    server_credential;
+  int
+    tran_index,
+    client_lock_wait;
+  TRAN_ISOLATION
+    client_isolation;
+  TRAN_STATE
+    tran_state;
+  int
+    area_size,
+    strlen1,
+    strlen2,
+    strlen3,
+    strlen4;
+  char *
+  reply, *
+  area, *
+    ptr;
+  packing_unpacker
+    unpacker;
 
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
 
@@ -3614,12 +4062,17 @@ sboot_register_client (THREAD_ENTRY * thread_p, unsigned int rid, char *request,
 void
 sboot_notify_unregister_client (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  CSS_CONN_ENTRY *conn;
-  int tran_index;
-  int success = NO_ERROR;
-  int r;
+  CSS_CONN_ENTRY *
+    conn;
+  int
+    tran_index;
+  int
+    success = NO_ERROR;
+  int
+    r;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &tran_index);
 
@@ -3667,20 +4120,33 @@ sboot_notify_unregister_client (THREAD_ENTRY * thread_p, unsigned int rid, char 
 void
 sboot_backup (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success;
+  int
+    success;
   OR_ALIGNED_BUF (OR_INT_SIZE * 3) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  char *backup_path;
-  FILEIO_BACKUP_LEVEL backup_level;
-  int delete_unneeded_logarchives;
-  char *backup_verbose_file;
-  int num_threads;
-  FILEIO_ZIP_METHOD zip_method;
-  FILEIO_ZIP_LEVEL zip_level;
-  int skip_activelog;
-  int sleep_msecs;
-  int separate_keys;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  char *
+    backup_path;
+  FILEIO_BACKUP_LEVEL
+    backup_level;
+  int
+    delete_unneeded_logarchives;
+  char *
+    backup_verbose_file;
+  int
+    num_threads;
+  FILEIO_ZIP_METHOD
+    zip_method;
+  FILEIO_ZIP_LEVEL
+    zip_level;
+  int
+    skip_activelog;
+  int
+    sleep_msecs;
+  int
+    separate_keys;
 
   ptr = or_unpack_string_nocopy (request, &backup_path);
   ptr = or_unpack_int (ptr, (int *) &backup_level);
@@ -3728,12 +4194,18 @@ void
 sboot_add_volume_extension (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  DBDEF_VOL_EXT_INFO ext_info;
-  int tmp;
-  VOLID volid;
-  char *unpack_char;		/* to suppress warning */
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  DBDEF_VOL_EXT_INFO
+    ext_info;
+  int
+    tmp;
+  VOLID
+    volid;
+  char *
+    unpack_char;		/* to suppress warning */
 
   ptr = or_unpack_string_nocopy (request, &unpack_char);
   ext_info.path = unpack_char;
@@ -3773,14 +4245,21 @@ sboot_add_volume_extension (THREAD_ENTRY * thread_p, unsigned int rid, char *req
 void
 sboot_check_db_consistency (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success;
+  int
+    success;
   OR_ALIGNED_BUF (OR_INT_SIZE * 3) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  int check_flag;
-  int num = 0, i;
-  OID *oids = NULL;
-  BTID index_btid;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  int
+    check_flag;
+  int
+    num = 0, i;
+  OID *
+    oids = NULL;
+  BTID
+    index_btid;
 
   if (request == NULL)
     {
@@ -3837,9 +4316,11 @@ function_exit:
 void
 sboot_find_number_permanent_volumes (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int nvols;
+  int
+    nvols;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   nvols = xboot_find_number_permanent_volumes (thread_p);
 
@@ -3861,9 +4342,11 @@ sboot_find_number_permanent_volumes (THREAD_ENTRY * thread_p, unsigned int rid, 
 void
 sboot_find_number_temp_volumes (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int nvols;
+  int
+    nvols;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   nvols = xboot_find_number_temp_volumes (thread_p);
 
@@ -3885,9 +4368,11 @@ sboot_find_number_temp_volumes (THREAD_ENTRY * thread_p, unsigned int rid, char 
 void
 sboot_find_last_permanent (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  VOLID volid;
+  VOLID
+    volid;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   volid = xboot_find_last_permanent (thread_p);
 
@@ -3909,9 +4394,11 @@ sboot_find_last_permanent (THREAD_ENTRY * thread_p, unsigned int rid, char *requ
 void
 sboot_find_last_temp (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int nvols;
+  int
+    nvols;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   nvols = xboot_find_last_temp (thread_p);
 
@@ -3925,12 +4412,19 @@ sboot_find_last_temp (THREAD_ENTRY * thread_p, unsigned int rid, char *request, 
 void
 sboot_change_ha_mode (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int req_state, force, timeout;
-  HA_SERVER_STATE state;
-  DB_INFO *db;
-  char *ptr;
+  int
+    req_state,
+    force,
+    timeout;
+  HA_SERVER_STATE
+    state;
+  DB_INFO *
+    db;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_int (request, &req_state);
   state = (HA_SERVER_STATE) req_state;
@@ -3967,11 +4461,16 @@ sboot_change_ha_mode (THREAD_ENTRY * thread_p, unsigned int rid, char *request, 
 void
 sboot_notify_ha_log_applier_state (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int i, status;
-  HA_LOG_APPLIER_STATE state;
-  char *ptr;
+  int
+    i,
+    status;
+  HA_LOG_APPLIER_STATE
+    state;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_int (request, &i);
   state = (HA_LOG_APPLIER_STATE) i;
@@ -4007,12 +4506,18 @@ sboot_notify_ha_log_applier_state (THREAD_ENTRY * thread_p, unsigned int rid, ch
 void
 sqst_update_statistics (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int error, with_fullscan;
-  OID classoid;
-  char *ptr;
+  int
+    error,
+    with_fullscan;
+  OID
+    classoid;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  CLASS_ATTR_NDV class_attr_ndv = CLASS_ATTR_NDV_INITIALIZER;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  CLASS_ATTR_NDV
+    class_attr_ndv = CLASS_ATTR_NDV_INITIALIZER;
 
   ptr = or_unpack_int (request, &class_attr_ndv.attr_cnt);
 
@@ -4061,16 +4566,25 @@ sqst_update_statistics (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 void
 sbtree_add_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  BTID btid;
-  BTID *return_btid = NULL;
-  TP_DOMAIN *key_type;
-  OID class_oid;
-  int attr_id, unique_pk;
-  char *ptr;
-  int deduplicate_key_pos = -1;
+  BTID
+    btid;
+  BTID *
+    return_btid = NULL;
+  TP_DOMAIN *
+    key_type;
+  OID
+    class_oid;
+  int
+    attr_id,
+    unique_pk;
+  char *
+    ptr;
+  int
+    deduplicate_key_pos = -1;
 
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_BTID_ALIGNED_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_btid (request, &btid);
   ptr = or_unpack_domain (ptr, &key_type, 0);
@@ -4108,28 +4622,53 @@ sbtree_add_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int 
 void
 sbtree_load_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  BTID btid;
-  BTID *return_btid = NULL;
-  OID *class_oids = NULL;
-  HFID *hfids = NULL;
-  int unique_pk, not_null_flag;
-  OID fk_refcls_oid;
-  BTID fk_refcls_pk_btid;
-  char *bt_name, *fk_name;
-  int n_classes, n_attrs, *attr_ids = NULL;
-  int *attr_prefix_lengths = NULL;
-  TP_DOMAIN *key_type;
-  char *ptr;
+  BTID
+    btid;
+  BTID *
+    return_btid = NULL;
+  OID *
+    class_oids = NULL;
+  HFID *
+    hfids = NULL;
+  int
+    unique_pk,
+    not_null_flag;
+  OID
+    fk_refcls_oid;
+  BTID
+    fk_refcls_pk_btid;
+  char *
+  bt_name, *
+    fk_name;
+  int
+    n_classes,
+  n_attrs, *
+    attr_ids = NULL;
+  int *
+    attr_prefix_lengths = NULL;
+  TP_DOMAIN *
+    key_type;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE * 2 + OR_BTID_ALIGNED_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *pred_stream = NULL;
-  int pred_stream_size = 0, size = 0;
-  int func_col_id = -1, expr_stream_size = 0, func_attr_index_start = -1;
-  int index_info_type;
-  char *expr_stream = NULL;
-  int csserror;
-  int index_status = 0;
-  int ib_thread_count = 0;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    pred_stream = NULL;
+  int
+    pred_stream_size = 0, size = 0;
+  int
+    func_col_id = -1, expr_stream_size = 0, func_attr_index_start = -1;
+  int
+    index_info_type;
+  char *
+    expr_stream = NULL;
+  int
+    csserror;
+  int
+    index_status = 0;
+  int
+    ib_thread_count = 0;
 
   ptr = or_unpack_btid (request, &btid);
   ptr = or_unpack_string_nocopy (ptr, &bt_name);
@@ -4240,7 +4779,8 @@ sbtree_load_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int
 
 end:
 
-  int err;
+  int
+    err;
 
   if (return_btid == NULL)
     {
@@ -4256,8 +4796,10 @@ end:
   if (index_status == OR_ONLINE_INDEX_BUILDING_IN_PROGRESS)
     {
       // it may not be really necessary. it just help things don't go worse that client keep caching ex-lock.
-      int tran_index = LOG_FIND_THREAD_TRAN_INDEX (thread_p);
-      LOCK cls_lock = lock_get_object_lock (&class_oids[0], oid_Root_class_oid);
+      int
+	tran_index = LOG_FIND_THREAD_TRAN_INDEX (thread_p);
+      LOCK
+	cls_lock = lock_get_object_lock (&class_oids[0], oid_Root_class_oid);
 
       // in case of shutdown, index loader might be interrupted and got error
       // otherwise, it should restore SCH_M_LOCK
@@ -4317,10 +4859,13 @@ end:
 void
 sbtree_delete_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  BTID btid;
-  int success;
+  BTID
+    btid;
+  int
+    success;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_btid (request, &btid);
 
@@ -4348,13 +4893,19 @@ sbtree_delete_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, i
 void
 slocator_remove_class_from_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  OID oid;
-  BTID btid;
-  HFID hfid;
-  int success;
-  char *ptr;
+  OID
+    oid;
+  BTID
+    btid;
+  HFID
+    hfid;
+  int
+    success;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_oid (request, &oid);
   ptr = or_unpack_btid (ptr, &btid);
@@ -4390,14 +4941,21 @@ sbtree_find_unique (THREAD_ENTRY * thread_p, unsigned int rid, char *request, in
 static void
 sbtree_find_unique_internal (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  BTID btid;
-  OID class_oid;
-  OID oid;
-  DB_VALUE key;
-  char *ptr;
-  int success;
+  BTID
+    btid;
+  OID
+    class_oid;
+  OID
+    oid;
+  DB_VALUE
+    key;
+  char *
+    ptr;
+  int
+    success;
   OR_ALIGNED_BUF (OR_OID_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = request;
   ptr = or_unpack_value (ptr, &key);
@@ -4433,16 +4991,28 @@ sbtree_find_unique_internal (THREAD_ENTRY * thread_p, unsigned int rid, char *re
 void
 sbtree_find_multi_uniques (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  OID class_oid;
+  OID
+    class_oid;
   OR_ALIGNED_BUF (2 * OR_INT_SIZE) a_reply;
-  char *ptr = NULL, *area = NULL;
-  BTID *btids = NULL;
-  DB_VALUE *keys = NULL;
-  OID *oids = NULL;
-  int count, needs_pruning, i, found = 0, area_size = 0;
-  SCAN_OPERATION_TYPE op_type;
-  int error = NO_ERROR;
-  BTREE_SEARCH result = BTREE_KEY_FOUND;
+  char *
+    ptr = NULL, *area = NULL;
+  BTID *
+    btids = NULL;
+  DB_VALUE *
+    keys = NULL;
+  OID *
+    oids = NULL;
+  int
+    count,
+    needs_pruning,
+    i,
+    found = 0, area_size = 0;
+  SCAN_OPERATION_TYPE
+    op_type;
+  int
+    error = NO_ERROR;
+  BTREE_SEARCH
+    result = BTREE_KEY_FOUND;
 
   ptr = or_unpack_oid (request, &class_oid);
   ptr = or_unpack_int (ptr, &needs_pruning);
@@ -4562,9 +5132,11 @@ cleanup:
 void
 sbtree_class_test_unique (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success;
+  int
+    success;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   success = xbtree_class_test_unique (thread_p, request, reqlen);
 
@@ -4580,13 +5152,22 @@ sbtree_class_test_unique (THREAD_ENTRY * thread_p, unsigned int rid, char *reque
 void
 shnsw_add_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  BTID btid;
-  int dimension, hnsw_M, hnsw_efConstruction, metric_type, attr_id;
-  OID class_oid;
-  char *ptr;
+  BTID
+    btid;
+  int
+    dimension,
+    hnsw_M,
+    hnsw_efConstruction,
+    metric_type,
+    attr_id;
+  OID
+    class_oid;
+  char *
+    ptr;
 
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_BTID_ALIGNED_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_btid (request, &btid);
   ptr = or_unpack_oid (ptr, &class_oid);
@@ -4596,14 +5177,16 @@ shnsw_add_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int r
   ptr = or_unpack_int (ptr, &hnsw_efConstruction);
   ptr = or_unpack_int (ptr, &metric_type);
 
-  hnsw_build_params params;
+  hnsw_build_params
+    params;
 
   params.dimension = dimension;
   params.m = hnsw_M;
   params.ef_construction = hnsw_efConstruction;
   params.metric = (DB_VECTOR_DISTANCE_METRIC) metric_type;
 
-  int error = xhnsw_add_index (thread_p, &class_oid, attr_id, params, btid);
+  int
+    error = xhnsw_add_index (thread_p, &class_oid, attr_id, params, btid);
   if (error != NO_ERROR)
     {
       (void) return_error_to_client (thread_p, rid);
@@ -4617,10 +5200,13 @@ shnsw_add_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int r
 void
 shnsw_delete_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  BTID btid;
-  int success;
+  BTID
+    btid;
+  int
+    success;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_btid (request, &btid);
 
@@ -4637,16 +5223,30 @@ shnsw_delete_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, in
 void
 shnsw_load_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int error = NO_ERROR;
-  BTID btid;
-  BTID *return_btid = NULL;
-  int dimension, hnsw_M, hnsw_efConstruction, metric_type;
-  OID *class_oids = NULL;
-  HFID *hfids = NULL;
-  int n_classes, n_attrs, *attr_ids = NULL;
+  int
+    error = NO_ERROR;
+  BTID
+    btid;
+  BTID *
+    return_btid = NULL;
+  int
+    dimension,
+    hnsw_M,
+    hnsw_efConstruction,
+    metric_type;
+  OID *
+    class_oids = NULL;
+  HFID *
+    hfids = NULL;
+  int
+    n_classes,
+  n_attrs, *
+    attr_ids = NULL;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_BTID_ALIGNED_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_btid (request, &btid);
   ptr = or_unpack_int (ptr, &n_classes);
@@ -4675,7 +5275,8 @@ shnsw_load_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int 
       return;
     }
 
-  hnsw_build_params params;
+  hnsw_build_params
+    params;
 
   params.dimension = dimension;
   params.m = hnsw_M;
@@ -4717,11 +5318,15 @@ shnsw_load_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int 
 void
 sdk_totalpgs (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  DKNPAGES npages;
-  VOLID volid;
-  int int_volid;
+  DKNPAGES
+    npages;
+  VOLID
+    volid;
+  int
+    int_volid;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &int_volid);
   volid = (VOLID) int_volid;
@@ -4750,11 +5355,15 @@ sdk_totalpgs (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reql
 void
 sdk_freepgs (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  DKNPAGES npages;
-  VOLID volid;
-  int int_volid;
+  DKNPAGES
+    npages;
+  VOLID
+    volid;
+  int
+    int_volid;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &int_volid);
   volid = (VOLID) int_volid;
@@ -4783,12 +5392,18 @@ sdk_freepgs (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqle
 void
 sdk_remarks (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int int_volid;
-  char *remark;
+  int
+    int_volid;
+  char *
+    remark;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int area_length, strlen;
-  char *area;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    area_length,
+    strlen;
+  char *
+    area;
 
   (void) or_unpack_int (request, &int_volid);
 
@@ -4844,12 +5459,18 @@ void
 sdk_vlabel (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (PATH_MAX) a_vol_fullname;
-  char *vol_fullname = OR_ALIGNED_BUF_START (a_vol_fullname);
-  int int_volid;
+  char *
+    vol_fullname = OR_ALIGNED_BUF_START (a_vol_fullname);
+  int
+    int_volid;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int area_length, strlen;
-  char *area;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    area_length,
+    strlen;
+  char *
+    area;
 
   (void) or_unpack_int (request, &int_volid);
 
@@ -4897,14 +5518,23 @@ sdk_vlabel (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen
 void
 sqfile_get_list_file_page (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  QUERY_ID query_id;
-  int volid, pageid;
-  char *ptr;
+  QUERY_ID
+    query_id;
+  int
+    volid,
+    pageid;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char page_buf[IO_MAX_PAGE_SIZE + MAX_ALIGNMENT], *aligned_page_buf;
-  int page_size;
-  int error = NO_ERROR;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char
+  page_buf[IO_MAX_PAGE_SIZE + MAX_ALIGNMENT], *
+    aligned_page_buf;
+  int
+    page_size;
+  int
+    error = NO_ERROR;
 
   aligned_page_buf = PTR_ALIGN (page_buf, MAX_ALIGNMENT);
 
@@ -4964,19 +5594,32 @@ empty_page:
 void
 sqmgr_prepare_query (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  XASL_ID xasl_id;
-  char *ptr = NULL;
-  char *reply = NULL, *reply_buffer = NULL;
-  int csserror, reply_buffer_size = 0, get_xasl_header = 0;
-  int xasl_cache_pinned = 0, recompile_xasl_cache_pinned = 0;
-  int recompile_xasl = 0;
-  XASL_NODE_HEADER xasl_header;
+  XASL_ID
+    xasl_id;
+  char *
+    ptr = NULL;
+  char *
+    reply = NULL, *reply_buffer = NULL;
+  int
+    csserror,
+    reply_buffer_size = 0, get_xasl_header = 0;
+  int
+    xasl_cache_pinned = 0, recompile_xasl_cache_pinned = 0;
+  int
+    recompile_xasl = 0;
+  XASL_NODE_HEADER
+    xasl_header;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE + OR_XASL_ID_SIZE) a_reply;
-  int error = NO_ERROR;
-  COMPILE_CONTEXT context = { NULL, NULL, 0, NULL, NULL, 0, false, false, false, SHA1_HASH_INITIALIZER };
-  XASL_STREAM stream = { NULL, NULL, NULL, 0 };
-  bool was_recompile_xasl = false;
-  bool force_recompile = false;
+  int
+    error = NO_ERROR;
+  COMPILE_CONTEXT
+  context = { NULL, NULL, 0, NULL, NULL, 0, false, false, false, SHA1_HASH_INITIALIZER };
+  XASL_STREAM
+  stream = { NULL, NULL, NULL, 0 };
+  bool
+    was_recompile_xasl = false;
+  bool
+    force_recompile = false;
 
   reply = OR_ALIGNED_BUF_START (a_reply);
 
@@ -5115,15 +5758,27 @@ STATIC_INLINE int
 stran_can_end_after_query_execution (THREAD_ENTRY * thread_p, int query_flag, QFILE_LIST_ID * list_id,
 				     bool * can_end_transaction)
 {
-  QFILE_LIST_SCAN_ID scan_id;
-  QFILE_TUPLE_RECORD tuple_record = { NULL, 0 };
-  SCAN_CODE qp_scan;
-  OR_BUF buf;
-  TP_DOMAIN **domains;
-  const PR_TYPE *pr_type;
-  int i, flag, compressed_size = 0, decompressed_size = 0, diff_size, val_length;
-  char *tuple_p;
-  bool found_compressible_string_domain, exceed_a_page;
+  QFILE_LIST_SCAN_ID
+    scan_id;
+  QFILE_TUPLE_RECORD
+  tuple_record = { NULL, 0 };
+  SCAN_CODE
+    qp_scan;
+  OR_BUF
+    buf;
+  TP_DOMAIN **
+    domains;
+  const PR_TYPE *
+    pr_type;
+  int
+    i,
+    flag,
+    compressed_size = 0, decompressed_size = 0, diff_size, val_length;
+  char *
+    tuple_p;
+  bool
+    found_compressible_string_domain,
+    exceed_a_page;
 
   assert (list_id != NULL && list_id->type_list.domp != NULL && can_end_transaction != NULL);
 
@@ -5247,45 +5902,89 @@ stran_can_end_after_query_execution (THREAD_ENTRY * thread_p, int query_flag, QF
 void
 sqmgr_execute_query (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  XASL_ID xasl_id;
-  QFILE_LIST_ID *list_id;
-  int csserror, dbval_cnt, data_size, replydata_size, page_size;
-  QUERY_ID query_id = NULL_QUERY_ID;
-  char *ptr, *data = NULL, *reply, *replydata = NULL;
-  PAGE_PTR page_ptr;
-  char page_buf[IO_MAX_PAGE_SIZE + MAX_ALIGNMENT], *aligned_page_buf;
-  QUERY_FLAG query_flag;
+  XASL_ID
+    xasl_id;
+  QFILE_LIST_ID *
+    list_id;
+  int
+    csserror,
+    dbval_cnt,
+    data_size,
+    replydata_size,
+    page_size;
+  QUERY_ID
+    query_id = NULL_QUERY_ID;
+  char *
+  ptr, *
+    data = NULL, *reply, *replydata = NULL;
+  PAGE_PTR
+    page_ptr;
+  char
+  page_buf[IO_MAX_PAGE_SIZE + MAX_ALIGNMENT], *
+    aligned_page_buf;
+  QUERY_FLAG
+    query_flag;
   OR_ALIGNED_BUF (OR_INT_SIZE * 7 + OR_PTR_ALIGNED_SIZE + OR_CACHE_TIME_SIZE) a_reply;
-  CACHE_TIME clt_cache_time;
-  CACHE_TIME srv_cache_time;
-  int query_timeout;
-  XASL_CACHE_ENTRY *xasl_cache_entry_p = NULL;
-  char data_buf[EXECUTE_QUERY_MAX_ARGUMENT_DATA_SIZE + MAX_ALIGNMENT], *aligned_data_buf = NULL;
-  bool has_updated;
+  CACHE_TIME
+    clt_cache_time;
+  CACHE_TIME
+    srv_cache_time;
+  int
+    query_timeout;
+  XASL_CACHE_ENTRY *
+    xasl_cache_entry_p = NULL;
+  char
+  data_buf[EXECUTE_QUERY_MAX_ARGUMENT_DATA_SIZE + MAX_ALIGNMENT], *
+    aligned_data_buf = NULL;
+  bool
+    has_updated;
 
-  int response_time = 0;
+  int
+    response_time = 0;
 
-  TSC_TICKS start_tick, end_tick;
-  TSCTIMEVAL tv_diff;
+  TSC_TICKS
+    start_tick,
+    end_tick;
+  TSCTIMEVAL
+    tv_diff;
 
-  int queryinfo_string_length = 0;
-  char queryinfo_string[QUERY_INFO_BUF_SIZE];
+  int
+    queryinfo_string_length = 0;
+  char
+    queryinfo_string[QUERY_INFO_BUF_SIZE];
 
-  UINT64 *base_stats = NULL;
-  UINT64 *current_stats = NULL;
-  UINT64 *diff_stats = NULL;
-  char *sql_id = NULL;
-  int error_code = NO_ERROR, all_error_code = NO_ERROR;
-  int trace_slow_msec, trace_ioreads;
-  bool tran_abort = false, has_xasl_entry = false;
+  UINT64 *
+    base_stats = NULL;
+  UINT64 *
+    current_stats = NULL;
+  UINT64 *
+    diff_stats = NULL;
+  char *
+    sql_id = NULL;
+  int
+    error_code = NO_ERROR, all_error_code = NO_ERROR;
+  int
+    trace_slow_msec,
+    trace_ioreads;
+  bool
+    tran_abort = false, has_xasl_entry = false;
 
-  EXECUTION_INFO info = { NULL, NULL, NULL };
-  QUERY_ID net_Deferred_end_queries[NET_DEFER_END_QUERIES_MAX], *p_net_Deferred_end_queries = net_Deferred_end_queries;
-  int n_query_ids = 0, i = 0;
-  bool end_query_allowed, should_conn_reset;
-  LOG_TDES *tdes;
-  TRAN_STATE tran_state;
-  bool is_tran_auto_commit;
+  EXECUTION_INFO
+  info = { NULL, NULL, NULL };
+  QUERY_ID
+  net_Deferred_end_queries[NET_DEFER_END_QUERIES_MAX], *
+    p_net_Deferred_end_queries = net_Deferred_end_queries;
+  int
+    n_query_ids = 0, i = 0;
+  bool
+    end_query_allowed,
+    should_conn_reset;
+  LOG_TDES *
+    tdes;
+  TRAN_STATE
+    tran_state;
+  bool
+    is_tran_auto_commit;
 
   trace_slow_msec = prm_get_integer_value (PRM_ID_SQL_TRACE_SLOW_MSECS);
   trace_ioreads = prm_get_integer_value (PRM_ID_SQL_TRACE_IOREADS);
@@ -5473,7 +6172,8 @@ null_list:
 		}
 	      else
 		{
-		  int offset = QFILE_GET_LAST_TUPLE_OFFSET (page_ptr);
+		  int
+		    offset = QFILE_GET_LAST_TUPLE_OFFSET (page_ptr);
 
 		  page_size = (offset + QFILE_GET_TUPLE_LENGTH (page_ptr + offset));
 		}
@@ -5661,6 +6361,12 @@ null_list:
     }
 
 exit:
+  if (g_deferred_resource_cleanup != nullptr)
+    {
+      g_deferred_resource_cleanup ();
+      g_deferred_resource_cleanup = nullptr;
+    }
+
   if (p_net_Deferred_end_queries != net_Deferred_end_queries)
     {
       free_and_init (p_net_Deferred_end_queries);
@@ -5692,11 +6398,16 @@ static int
 er_log_slow_query (THREAD_ENTRY * thread_p, EXECUTION_INFO * info, int time, UINT64 * diff_stats,
 		   char *queryinfo_string)
 {
-  char stat_buf[STATDUMP_BUF_SIZE];
-  char *sql_id;
-  int queryinfo_string_length;
-  const char *line = "--------------------------------------------------------------------------------";
-  const char *title = "Operation";
+  char
+    stat_buf[STATDUMP_BUF_SIZE];
+  char *
+    sql_id;
+  int
+    queryinfo_string_length;
+  const char *
+    line = "--------------------------------------------------------------------------------";
+  const char *
+    title = "Operation";
 
   if (prm_get_bool_value (PRM_ID_SQL_TRACE_EXECUTION_PLAN) == true)
     {
@@ -5750,10 +6461,14 @@ er_log_slow_query (THREAD_ENTRY * thread_p, EXECUTION_INFO * info, int time, UIN
 static void
 event_log_slow_query (THREAD_ENTRY * thread_p, EXECUTION_INFO * info, int time, UINT64 * diff_stats)
 {
-  FILE *log_fp;
-  int indent = 2;
-  LOG_TDES *tdes;
-  int tran_index;
+  FILE *
+    log_fp;
+  int
+    indent = 2;
+  LOG_TDES *
+    tdes;
+  int
+    tran_index;
 
   tran_index = LOG_FIND_THREAD_TRAN_INDEX (thread_p);
   tdes = LOG_FIND_TDES (tran_index);
@@ -5797,10 +6512,14 @@ event_log_slow_query (THREAD_ENTRY * thread_p, EXECUTION_INFO * info, int time, 
 static void
 event_log_many_ioreads (THREAD_ENTRY * thread_p, EXECUTION_INFO * info, int time, UINT64 * diff_stats)
 {
-  FILE *log_fp;
-  int indent = 2;
-  LOG_TDES *tdes;
-  int tran_index;
+  FILE *
+    log_fp;
+  int
+    indent = 2;
+  LOG_TDES *
+    tdes;
+  int
+    tran_index;
 
   tran_index = LOG_FIND_THREAD_TRAN_INDEX (thread_p);
   tdes = LOG_FIND_TDES (tran_index);
@@ -5838,10 +6557,14 @@ event_log_many_ioreads (THREAD_ENTRY * thread_p, EXECUTION_INFO * info, int time
 static void
 event_log_extend_pages (THREAD_ENTRY * thread_p, EXECUTION_INFO * info)
 {
-  FILE *log_fp;
-  int indent = 2;
-  LOG_TDES *tdes;
-  int tran_index;
+  FILE *
+    log_fp;
+  int
+    indent = 2;
+  LOG_TDES *
+    tdes;
+  int
+    tran_index;
 
   tran_index = LOG_FIND_THREAD_TRAN_INDEX (thread_p);
   tdes = LOG_FIND_TDES (tran_index);
@@ -5879,22 +6602,43 @@ event_log_extend_pages (THREAD_ENTRY * thread_p, EXECUTION_INFO * info)
 void
 sqmgr_prepare_and_execute_query (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int var_count, var_datasize, var_actual_datasize;
-  QUERY_ID query_id;
-  QFILE_LIST_ID *q_result;
-  int csserror, listid_length;
-  char *xasl_stream;
-  int xasl_stream_size;
-  char *ptr, *var_data, *list_data;
+  int
+    var_count,
+    var_datasize,
+    var_actual_datasize;
+  QUERY_ID
+    query_id;
+  QFILE_LIST_ID *
+    q_result;
+  int
+    csserror,
+    listid_length;
+  char *
+    xasl_stream;
+  int
+    xasl_stream_size;
+  char *
+  ptr, *
+  var_data, *
+    list_data;
   OR_ALIGNED_BUF (OR_INT_SIZE * 4 + OR_PTR_ALIGNED_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  PAGE_PTR page_ptr;
-  int page_size;
-  int dummy_plan_size = 0;
-  char page_buf[IO_MAX_PAGE_SIZE + MAX_ALIGNMENT], *aligned_page_buf;
-  QUERY_FLAG flag;
-  int query_timeout;
-  bool is_tran_auto_commit;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  PAGE_PTR
+    page_ptr;
+  int
+    page_size;
+  int
+    dummy_plan_size = 0;
+  char
+  page_buf[IO_MAX_PAGE_SIZE + MAX_ALIGNMENT], *
+    aligned_page_buf;
+  QUERY_FLAG
+    flag;
+  int
+    query_timeout;
+  bool
+    is_tran_auto_commit;
 
   aligned_page_buf = PTR_ALIGN (page_buf, MAX_ALIGNMENT);
 
@@ -5984,7 +6728,8 @@ sqmgr_prepare_and_execute_query (THREAD_ENTRY * thread_p, unsigned int rid, char
 	    }
 	  else
 	    {
-	      int offset = QFILE_GET_LAST_TUPLE_OFFSET (page_ptr);
+	      int
+		offset = QFILE_GET_LAST_TUPLE_OFFSET (page_ptr);
 
 	      page_size = (offset + QFILE_GET_TUPLE_LENGTH (page_ptr + offset));
 	    }
@@ -6087,12 +6832,17 @@ cleanup:
 void
 sqmgr_end_query (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  QUERY_ID query_id;
-  int error_code = NO_ERROR;
-  int all_error_code = NO_ERROR;
-  int n_query_ids = 0, i = 0;
+  QUERY_ID
+    query_id;
+  int
+    error_code = NO_ERROR;
+  int
+    all_error_code = NO_ERROR;
+  int
+    n_query_ids = 0, i = 0;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   request = or_unpack_int (request, &n_query_ids);
   for (i = 0; i < n_query_ids; i++)
@@ -6133,8 +6883,10 @@ sqmgr_end_query (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int r
 void
 sqmgr_drop_all_query_plans (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int status;
-  char *reply;
+  int
+    status;
+  char *
+    reply;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
 
   reply = OR_ALIGNED_BUF_START (a_reply);
@@ -6169,8 +6921,11 @@ sqmgr_drop_all_query_plans (THREAD_ENTRY * thread_p, unsigned int rid, char *req
 void
 sqmgr_drop_query_plans_by_sha1 (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int status;
-  char *reply, *sha1;
+  int
+    status;
+  char *
+  reply, *
+    sha1;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
 
   reply = OR_ALIGNED_BUF_START (a_reply);
@@ -6205,12 +6960,17 @@ sqmgr_drop_query_plans_by_sha1 (THREAD_ENTRY * thread_p, unsigned int rid, char 
 void
 sqmgr_dump_query_plans (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int file_size;
-  char *buffer;
-  int buffer_size;
-  int send_size;
+  int
+    file_size;
+  char *
+    buffer;
+  int
+    buffer_size;
+  int
+    send_size;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &buffer_size);
 
@@ -6285,12 +7045,17 @@ sqmgr_dump_query_plans (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 void
 sqmgr_dump_query_cache (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int file_size;
-  char *buffer;
-  int buffer_size;
-  int send_size;
+  int
+    file_size;
+  char *
+    buffer;
+  int
+    buffer_size;
+  int
+    send_size;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &buffer_size);
 
@@ -6364,9 +7129,11 @@ sqp_get_sys_timestamp (THREAD_ENTRY * thread_p, unsigned int rid, char *request_
 {
 #if defined(ENABLE_UNUSED_FUNCTION)
   OR_ALIGNED_BUF (OR_UTIME_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
-  DB_VALUE sys_timestamp;
+  DB_VALUE
+    sys_timestamp;
 
   db_sys_timestamp (&sys_timestamp);
   (void) or_pack_utime (reply, *(DB_TIMESTAMP *) db_get_timestamp (&sys_timestamp));
@@ -6388,15 +7155,23 @@ sqp_get_sys_timestamp (THREAD_ENTRY * thread_p, unsigned int rid, char *request_
 void
 sserial_get_current_value (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int error_status = NO_ERROR;
-  DB_VALUE cur_val;
-  OID oid;
-  int cached_num;
-  int buffer_length;
-  char *buffer;
+  int
+    error_status = NO_ERROR;
+  DB_VALUE
+    cur_val;
+  OID
+    oid;
+  int
+    cached_num;
+  int
+    buffer_length;
+  char *
+    buffer;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *p;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    p;
 
   p = or_unpack_oid (request, &oid);
   p = or_unpack_int (p, &cached_num);
@@ -6456,14 +7231,24 @@ sserial_get_current_value (THREAD_ENTRY * thread_p, unsigned int rid, char *requ
 void
 sserial_get_next_value (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  DB_VALUE next_val;
-  OID oid;
-  char *buffer;
-  int cached_num, num_alloc, is_auto_increment;
-  int buffer_length, errid;
+  DB_VALUE
+    next_val;
+  OID
+    oid;
+  char *
+    buffer;
+  int
+    cached_num,
+    num_alloc,
+    is_auto_increment;
+  int
+    buffer_length,
+    errid;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *p;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    p;
 
   p = or_unpack_oid (request, &oid);
   p = or_unpack_int (p, &cached_num);
@@ -6527,9 +7312,11 @@ sserial_get_next_value (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 void
 sserial_decache (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  OID oid;
+  OID
+    oid;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_oid (request, &oid);
   xserial_decache (thread_p, &oid);
@@ -6552,9 +7339,11 @@ sserial_decache (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int r
 void
 ssynonym_remove_xasl_by_oid (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  OID oid;
+  OID
+    oid;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_oid (request, &oid);
   xsynonym_remove_xasl_by_oid (thread_p, &oid);
@@ -6578,7 +7367,8 @@ void
 smnt_server_start_stats (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   perfmon_start_watch (thread_p);
 
@@ -6601,7 +7391,8 @@ void
 smnt_server_stop_stats (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   perfmon_stop_watch (thread_p);
   /* dummy reply message */
@@ -6623,9 +7414,12 @@ smnt_server_stop_stats (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 void
 smnt_server_copy_stats (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *reply = NULL;
-  int nr_statistic_values;
-  UINT64 *stats = NULL;
+  char *
+    reply = NULL;
+  int
+    nr_statistic_values;
+  UINT64 *
+    stats = NULL;
 
   nr_statistic_values = perfmon_get_number_of_statistic_values ();
   stats = perfmon_allocate_values ();
@@ -6667,9 +7461,12 @@ smnt_server_copy_stats (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 void
 smnt_server_copy_global_stats (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *reply = NULL;
-  int nr_statistic_values;
-  UINT64 *stats = NULL;
+  char *
+    reply = NULL;
+  int
+    nr_statistic_values;
+  UINT64 *
+    stats = NULL;
 
   nr_statistic_values = perfmon_get_number_of_statistic_values ();
   stats = perfmon_allocate_values ();
@@ -6710,12 +7507,17 @@ smnt_server_copy_global_stats (THREAD_ENTRY * thread_p, unsigned int rid, char *
 void
 sct_check_rep_dir (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  OID classoid;
-  OID rep_dir;
-  int success;
+  OID
+    classoid;
+  OID
+    rep_dir;
+  int
+    success;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_OID_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_oid (request, &classoid);
   OID_SET_NULL (&rep_dir);	/* init */
@@ -6764,9 +7566,12 @@ xs_receive_data_from_client (THREAD_ENTRY * thread_p, char **area, int *datasize
 int
 xs_receive_data_from_client_with_timeout (THREAD_ENTRY * thread_p, char **area, int *datasize, int timeout)
 {
-  unsigned int rid;
-  int rc = 0;
-  bool continue_checking = true;
+  unsigned int
+    rid;
+  int
+    rc = 0;
+  bool
+    continue_checking = true;
 
   if (*area)
     {
@@ -6810,8 +7615,10 @@ xs_receive_data_from_client_with_timeout (THREAD_ENTRY * thread_p, char **area, 
 void
 slocator_assign_oid_batch (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success;
-  LC_OIDSET *oidset = NULL;
+  int
+    success;
+  LC_OIDSET *
+    oidset = NULL;
 
   /* skip over the word at the front reserved for the return code */
   oidset = locator_unpack_oid_set_to_new (thread_p, request + OR_INT_SIZE);
@@ -6861,31 +7668,56 @@ slocator_assign_oid_batch (THREAD_ENTRY * thread_p, unsigned int rid, char *requ
 void
 slocator_find_lockhint_class_oids (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int num_classes;
-  char **many_classnames;
-  LOCK *many_locks = NULL;
-  int *many_need_subclasses = NULL;
-  OID *guessed_class_oids = NULL;
-  int *guessed_class_chns = NULL;
-  LC_PREFETCH_FLAGS *many_flags = NULL;
-  int quit_on_errors, lock_rr_tran;
-  LC_FIND_CLASSNAME allfind = LC_CLASSNAME_ERROR;
-  LC_LOCKHINT *found_lockhint;
-  LC_COPYAREA *copy_area;
-  char *desc_ptr = NULL;
-  int desc_size;
-  char *content_ptr;
-  int content_size;
-  char *ptr;
-  int num_objs = 0;
-  char *packed = NULL;
-  int packed_size;
-  int send_size = 0;
-  int i;
-  int malloc_size;
-  char *malloc_area;
+  int
+    num_classes;
+  char **
+    many_classnames;
+  LOCK *
+    many_locks = NULL;
+  int *
+    many_need_subclasses = NULL;
+  OID *
+    guessed_class_oids = NULL;
+  int *
+    guessed_class_chns = NULL;
+  LC_PREFETCH_FLAGS *
+    many_flags = NULL;
+  int
+    quit_on_errors,
+    lock_rr_tran;
+  LC_FIND_CLASSNAME
+    allfind = LC_CLASSNAME_ERROR;
+  LC_LOCKHINT *
+    found_lockhint;
+  LC_COPYAREA *
+    copy_area;
+  char *
+    desc_ptr = NULL;
+  int
+    desc_size;
+  char *
+    content_ptr;
+  int
+    content_size;
+  char *
+    ptr;
+  int
+    num_objs = 0;
+  char *
+    packed = NULL;
+  int
+    packed_size;
+  int
+    send_size = 0;
+  int
+    i;
+  int
+    malloc_size;
+  char *
+    malloc_area;
   OR_ALIGNED_BUF (NET_SENDRECV_BUFFSIZE + NET_COPY_AREA_SENDRECV_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   found_lockhint = NULL;
   copy_area = NULL;
@@ -7017,21 +7849,35 @@ slocator_find_lockhint_class_oids (THREAD_ENTRY * thread_p, unsigned int rid, ch
 void
 slocator_fetch_lockhint_classes (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success;
-  LC_COPYAREA *copy_area;
-  LC_LOCKHINT *lockhint;
+  int
+    success;
+  LC_COPYAREA *
+    copy_area;
+  LC_LOCKHINT *
+    lockhint;
   OR_ALIGNED_BUF (NET_SENDRECV_BUFFSIZE + NET_COPY_AREA_SENDRECV_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *desc_ptr;
-  int desc_size;
-  char *content_ptr;
-  int content_size;
-  char *ptr;
-  bool first_call;
-  int num_objs;
-  char *packed = NULL;
-  int packed_size;
-  int send_size;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    desc_ptr;
+  int
+    desc_size;
+  char *
+    content_ptr;
+  int
+    content_size;
+  char *
+    ptr;
+  bool
+    first_call;
+  int
+    num_objs;
+  char *
+    packed = NULL;
+  int
+    packed_size;
+  int
+    send_size;
 
   ptr = or_unpack_int (request, &packed_size);
 
@@ -7142,14 +7988,21 @@ slocator_fetch_lockhint_classes (THREAD_ENTRY * thread_p, unsigned int rid, char
 void
 sthread_kill_tran_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success;
-  int kill_tran_index;
-  int kill_pid;
-  char *kill_user;
-  char *kill_host;
-  char *ptr;
+  int
+    success;
+  int
+    kill_tran_index;
+  int
+    kill_pid;
+  char *
+    kill_user;
+  char *
+    kill_host;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_int (request, &kill_tran_index);
   ptr = or_unpack_string_nocopy (ptr, &kill_user);
@@ -7181,15 +8034,24 @@ sthread_kill_tran_index (THREAD_ENTRY * thread_p, unsigned int rid, char *reques
 void
 sthread_kill_or_interrupt_tran (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success = NO_ERROR;
-  char *ptr;
+  int
+    success = NO_ERROR;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int i = 0;
-  int *tran_index_list;
-  int num_tran_index, interrupt_only;
-  int num_killed_tran = 0;
-  int is_dba_group_member = 0;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    i = 0;
+  int *
+    tran_index_list;
+  int
+    num_tran_index,
+    interrupt_only;
+  int
+    num_killed_tran = 0;
+  int
+    is_dba_group_member = 0;
 
   ptr = or_unpack_int (request, &is_dba_group_member);
   ptr = or_unpack_int (ptr, &num_tran_index);
@@ -7240,12 +8102,17 @@ sthread_kill_or_interrupt_tran (THREAD_ENTRY * thread_p, unsigned int rid, char 
 void
 sthread_dump_cs_stat (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int file_size;
-  char *buffer;
-  int buffer_size;
-  int send_size;
+  int
+    file_size;
+  char *
+    buffer;
+  int
+    buffer_size;
+  int
+    send_size;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &buffer_size);
 
@@ -7318,12 +8185,18 @@ sthread_dump_cs_stat (THREAD_ENTRY * thread_p, unsigned int rid, char *request, 
 void
 slogtb_get_pack_tran_table (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *buffer, *ptr;
-  int size;
+  char *
+  buffer, *
+    ptr;
+  int
+    size;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int error;
-  int include_query_exec_info;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    error;
+  int
+    include_query_exec_info;
 
   (void) or_unpack_int (request, &include_query_exec_info);
 
@@ -7357,12 +8230,17 @@ slogtb_get_pack_tran_table (THREAD_ENTRY * thread_p, unsigned int rid, char *req
 void
 slogtb_dump_trantable (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int file_size;
-  char *buffer;
-  int buffer_size;
-  int send_size;
+  int
+    file_size;
+  char *
+    buffer;
+  int
+    buffer_size;
+  int
+    send_size;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &buffer_size);
 
@@ -7433,11 +8311,18 @@ int
 xcallback_console_print (THREAD_ENTRY * thread_p, char *print_str)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE * 3) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  unsigned int rid, rc;
-  int data_len, print_len;
-  char *ptr;
-  char *databuf;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  unsigned int
+    rid,
+    rc;
+  int
+    data_len,
+    print_len;
+  char *
+    ptr;
+  char *
+    databuf;
 
   rid = css_get_comm_request_id (thread_p);
   data_len = or_packed_string_length (print_str, &print_len);
@@ -7490,11 +8375,20 @@ xio_send_user_prompt_to_client (THREAD_ENTRY * thread_p, FILEIO_REMOTE_PROMPT_TY
 				int reprompt_value)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE * 3) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int prompt_length, strlen1, strlen2, strlen3;
-  unsigned int rid, rc;
-  char *ptr;
-  char *databuf;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    prompt_length,
+    strlen1,
+    strlen2,
+    strlen3;
+  unsigned int
+    rid,
+    rc;
+  char *
+    ptr;
+  char *
+    databuf;
 
   rid = css_get_comm_request_id (thread_p);
   /* need to know length of prompt string we are sending */
@@ -7546,9 +8440,13 @@ int
 xlog_send_log_pages_to_client (THREAD_ENTRY * thread_p, char *logpg_area, int area_size, LOGWR_MODE mode)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  unsigned int rid, rc;
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  unsigned int
+    rid,
+    rc;
+  char *
+    ptr;
 
   rid = css_get_comm_request_id (thread_p);
 
@@ -7582,13 +8480,20 @@ xlog_send_log_pages_to_client (THREAD_ENTRY * thread_p, char *logpg_area, int ar
 int
 xlog_get_page_request_with_reply (THREAD_ENTRY * thread_p, LOG_PAGEID * fpageid_ptr, LOGWR_MODE * mode_ptr, int timeout)
 {
-  char *reply = NULL;
-  int reply_size;
-  LOG_PAGEID first_pageid;
-  int mode;
-  char *ptr;
-  int error;
-  int remote_error;
+  char *
+    reply = NULL;
+  int
+    reply_size;
+  LOG_PAGEID
+    first_pageid;
+  int
+    mode;
+  char *
+    ptr;
+  int
+    error;
+  int
+    remote_error;
 
   /* Obtain success message from the client, without blocking the server. */
   error = xs_receive_data_from_client_with_timeout (thread_p, &reply, &reply_size, timeout);
@@ -7630,11 +8535,18 @@ xlog_get_page_request_with_reply (THREAD_ENTRY * thread_p, LOG_PAGEID * fpageid_
 void
 shf_get_class_num_objs_and_pages (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  HFID hfid;
-  int success, approximation, nobjs, npages;
+  HFID
+    hfid;
+  int
+    success,
+    approximation,
+    nobjs,
+    npages;
   OR_ALIGNED_BUF (OR_INT_SIZE * 3) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_hfid (request, &hfid);
   ptr = or_unpack_int (ptr, &approximation);
@@ -7668,11 +8580,15 @@ shf_get_class_num_objs_and_pages (THREAD_ENTRY * thread_p, unsigned int rid, cha
 void
 sbtree_get_statistics (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  BTREE_STATS stat_info;
-  int success;
+  BTREE_STATS
+    stat_info;
+  int
+    success;
   OR_ALIGNED_BUF (OR_INT_SIZE * 5) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_btid (request, &stat_info.btid);
   assert_release (!BTID_IS_NULL (&stat_info.btid));
@@ -7708,14 +8624,21 @@ sbtree_get_statistics (THREAD_ENTRY * thread_p, unsigned int rid, char *request,
 void
 sbtree_get_key_type (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  BTID btid;
-  int error;
+  BTID
+    btid;
+  int
+    error;
   OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *reply_data = NULL;
-  char *ptr;
-  int reply_data_size;
-  TP_DOMAIN *key_type = NULL;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply_data = NULL;
+  char *
+    ptr;
+  int
+    reply_data_size;
+  TP_DOMAIN *
+    key_type = NULL;
 
   /* Unpack BTID */
   ptr = or_unpack_btid (request, &btid);
@@ -7777,15 +8700,24 @@ sbtree_get_key_type (THREAD_ENTRY * thread_p, unsigned int rid, char *request, i
 void
 sqp_get_server_info (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success = NO_ERROR;
+  int
+    success = NO_ERROR;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr, *buffer = NULL;
-  int buffer_length;
-  int server_info_bits;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+  ptr, *
+    buffer = NULL;
+  int
+    buffer_length;
+  int
+    server_info_bits;
 
-  DB_VALUE dt_dbval, ts_dbval;	/* SI_SYS_DATETIME */
-  DB_VALUE lt_dbval;		/* SI_LOCAL_TRANSACTION_ID */
+  DB_VALUE
+    dt_dbval,
+    ts_dbval;			/* SI_SYS_DATETIME */
+  DB_VALUE
+    lt_dbval;			/* SI_LOCAL_TRANSACTION_ID */
 
   ptr = or_unpack_int (request, &server_info_bits);
 
@@ -7871,8 +8803,10 @@ void
 sprm_server_change_parameters (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  SYSPRM_ASSIGN_VALUE *assignments = NULL;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  SYSPRM_ASSIGN_VALUE *
+    assignments = NULL;
 
   (void) sysprm_unpack_assign_values (request, &assignments);
 
@@ -7898,11 +8832,15 @@ sprm_server_change_parameters (THREAD_ENTRY * thread_p, unsigned int rid, char *
 void
 sprm_server_get_force_parameters (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  SYSPRM_ASSIGN_VALUE *change_values;
+  SYSPRM_ASSIGN_VALUE *
+    change_values;
   OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int area_size;
-  char *area = NULL, *ptr = NULL;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    area_size;
+  char *
+    area = NULL, *ptr = NULL;
 
   change_values = xsysprm_get_force_server_parameters ();
   if (change_values == NULL)
@@ -7944,12 +8882,17 @@ sprm_server_get_force_parameters (THREAD_ENTRY * thread_p, unsigned int rid, cha
 void
 sprm_server_obtain_parameters (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  SYSPRM_ERR rc = PRM_ERR_NO_ERROR;
+  SYSPRM_ERR
+    rc = PRM_ERR_NO_ERROR;
   OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr = NULL, *reply_data = NULL;
-  int reply_data_size;
-  SYSPRM_ASSIGN_VALUE *prm_values = NULL;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr = NULL, *reply_data = NULL;
+  int
+    reply_data_size;
+  SYSPRM_ASSIGN_VALUE *
+    prm_values = NULL;
 
   (void) sysprm_unpack_assign_values (request, &prm_values);
   xsysprm_obtain_server_parameters (prm_values);
@@ -7991,14 +8934,25 @@ sprm_server_obtain_parameters (THREAD_ENTRY * thread_p, unsigned int rid, char *
 void
 sprm_server_dump_parameters (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int file_size;
-  char *buffer;
-  int buffer_size;
-  int in_flags, if_cond, out_flags, of_cond, old_style;
-  int send_size;
-  char *ptr;
+  int
+    file_size;
+  char *
+    buffer;
+  int
+    buffer_size;
+  int
+    in_flags,
+    if_cond,
+    out_flags,
+    of_cond,
+    old_style;
+  int
+    send_size;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_int (request, &buffer_size);
   ptr = or_unpack_int (ptr, &in_flags);
@@ -8079,13 +9033,19 @@ sprm_server_dump_parameters (THREAD_ENTRY * thread_p, unsigned int rid, char *re
 void
 shf_has_instance (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  HFID hfid;
-  OID class_oid;
-  int r;
+  HFID
+    hfid;
+  OID
+    class_oid;
+  int
+    r;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  int has_visible_instance;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  int
+    has_visible_instance;
 
   ptr = or_unpack_hfid (request, &hfid);
   ptr = or_unpack_oid (ptr, &class_oid);
@@ -8118,10 +9078,15 @@ void
 stran_get_local_transaction_id (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  DB_VALUE val;
-  int success, trid;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  DB_VALUE
+    val;
+  int
+    success,
+    trid;
 
   success = (xtran_get_local_transaction_id (thread_p, &val) == NO_ERROR) ? NO_ERROR : ER_FAILED;
   trid = db_get_int (&val);
@@ -8143,7 +9108,8 @@ void
 spl_get_server_port (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_pack_int (reply, pl_server_port_from_info ());
   css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
@@ -8163,12 +9129,17 @@ spl_get_server_port (THREAD_ENTRY * thread_p, unsigned int rid, char *request, i
 void
 srepl_set_info (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success = NO_ERROR;
+  int
+    success = NO_ERROR;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  REPL_INFO repl_info = { NULL, 0, false };
-  REPL_INFO_SBR repl_schema = { 0, NULL, NULL, NULL, NULL };
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  REPL_INFO
+  repl_info = { NULL, 0, false };
+  REPL_INFO_SBR
+  repl_schema = { 0, NULL, NULL, NULL, NULL };
 
   if (!LOG_CHECK_LOG_APPLIER (thread_p) && log_does_allow_replication () == true)
     {
@@ -8216,8 +9187,10 @@ void
 srepl_log_get_append_lsa (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_LOG_LSA_ALIGNED_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  LOG_LSA *lsa;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  LOG_LSA *
+    lsa;
 
   lsa = xrepl_log_get_append_lsa ();
 
@@ -8241,16 +9214,26 @@ srepl_log_get_append_lsa (THREAD_ENTRY * thread_p, unsigned int rid, char *reque
 void
 slocator_check_fk_validity (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  OID class_oid;
-  HFID hfid;
-  OID pk_cls_oid;
-  BTID pk_btid;
-  int n_attrs, *attr_ids = NULL;
-  TP_DOMAIN *key_type;
-  char *fk_name = NULL;
-  char *ptr;
+  OID
+    class_oid;
+  HFID
+    hfid;
+  OID
+    pk_cls_oid;
+  BTID
+    pk_btid;
+  int
+  n_attrs, *
+    attr_ids = NULL;
+  TP_DOMAIN *
+    key_type;
+  char *
+    fk_name = NULL;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_oid (request, &class_oid);
   ptr = or_unpack_hfid (ptr, &hfid);
@@ -8305,11 +9288,18 @@ void
 slogwr_get_log_pages (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  LOG_PAGEID first_pageid;
-  LOGWR_MODE mode;
-  int m, error, remote_error;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  LOG_PAGEID
+    first_pageid;
+  LOGWR_MODE
+    mode;
+  int
+    m,
+    error,
+    remote_error;
 
   ptr = or_unpack_int64 (request, &first_pageid);
   ptr = or_unpack_int (ptr, &m);
@@ -8352,16 +9342,30 @@ slogwr_get_log_pages (THREAD_ENTRY * thread_p, unsigned int rid, char *request, 
 void
 sboot_compact_db (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success, n_classes, reply_size, i;
-  char *reply = NULL;
-  OID *class_oids = NULL;
-  int *ids_repr = NULL;
-  char *ptr = NULL;
-  int space_to_process = 0, instance_lock_timeout = 0, delete_old_repr = 0;
-  int class_lock_timeout = 0;
-  OID last_processed_class_oid, last_processed_oid;
-  int *total_objects = NULL, *failed_objects = NULL;
-  int *modified_objects = NULL, *big_objects = NULL;
+  int
+    success,
+    n_classes,
+    reply_size,
+    i;
+  char *
+    reply = NULL;
+  OID *
+    class_oids = NULL;
+  int *
+    ids_repr = NULL;
+  char *
+    ptr = NULL;
+  int
+    space_to_process = 0, instance_lock_timeout = 0, delete_old_repr = 0;
+  int
+    class_lock_timeout = 0;
+  OID
+    last_processed_class_oid,
+    last_processed_oid;
+  int *
+    total_objects = NULL, *failed_objects = NULL;
+  int *
+    modified_objects = NULL, *big_objects = NULL;
 
   ptr = or_unpack_int (request, &n_classes);
   if (ptr == NULL)
@@ -8537,10 +9541,14 @@ void
 sboot_heap_compact (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  int success;
-  OID class_oid;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  int
+    success;
+  OID
+    class_oid;
 
   ptr = or_unpack_oid (request, &class_oid);
   if (ptr == NULL)
@@ -8578,8 +9586,10 @@ void
 sboot_compact_start (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int success;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    success;
 
   success = xboot_compact_start (thread_p);
   if (success != NO_ERROR)
@@ -8607,8 +9617,10 @@ void
 sboot_compact_stop (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int success;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    success;
 
   success = xboot_compact_stop (thread_p);
   if (success != NO_ERROR)
@@ -8635,11 +9647,15 @@ sboot_compact_stop (THREAD_ENTRY * thread_p, unsigned int rid, char *request, in
 void
 ses_posix_create_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char new_path[PATH_MAX];
-  int path_size = 0, ret;
+  char
+    new_path[PATH_MAX];
+  int
+    path_size = 0, ret;
   OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ret = xes_posix_create_file (new_path);
   if (ret != NO_ERROR)
@@ -8671,15 +9687,25 @@ ses_posix_create_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request,
 void
 ses_posix_write_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *path;
-  void *buf = NULL;
-  off_t offset;
-  size_t count;
-  INT64 ret, tmp_int64;
-  int csserror, buf_size;
+  char *
+    path;
+  void *
+    buf = NULL;
+  off_t
+    offset;
+  size_t
+    count;
+  INT64
+    ret,
+    tmp_int64;
+  int
+    csserror,
+    buf_size;
   OR_ALIGNED_BUF (OR_INT64_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_string_nocopy (request, &path);
   ptr = or_unpack_int64 (ptr, &tmp_int64);
@@ -8724,14 +9750,22 @@ ses_posix_write_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request, 
 void
 ses_posix_read_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *path;
-  void *buf;
-  off_t offset;
-  size_t count;
-  INT64 ret, tmp_int64;
+  char *
+    path;
+  void *
+    buf;
+  off_t
+    offset;
+  size_t
+    count;
+  INT64
+    ret,
+    tmp_int64;
   OR_ALIGNED_BUF (OR_INT64_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_string_nocopy (request, &path);
   ptr = or_unpack_int64 (ptr, &tmp_int64);
@@ -8773,11 +9807,15 @@ ses_posix_read_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request, i
 void
 ses_posix_delete_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *path;
-  int ret;
+  char *
+    path;
+  int
+    ret;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_string_nocopy (request, &path);
 
@@ -8805,11 +9843,17 @@ ses_posix_delete_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request,
 void
 ses_posix_copy_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *src_path, *metaname, new_path[PATH_MAX];
-  int path_size = 0, ret;
+  char *
+  src_path, *
+    metaname,
+    new_path[PATH_MAX];
+  int
+    path_size = 0, ret;
   OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_string_nocopy (request, &src_path);
   ptr = or_unpack_string_nocopy (ptr, &metaname);
@@ -8844,11 +9888,17 @@ ses_posix_copy_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request, i
 void
 ses_posix_rename_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *src_path, *metaname, new_path[PATH_MAX];
-  int path_size = 0, ret;
+  char *
+  src_path, *
+    metaname,
+    new_path[PATH_MAX];
+  int
+    path_size = 0, ret;
   OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_string_nocopy (request, &src_path);
   ptr = or_unpack_string_nocopy (ptr, &metaname);
@@ -8883,11 +9933,15 @@ ses_posix_rename_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request,
 void
 ses_posix_get_file_size (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *path;
-  off_t file_size;
+  char *
+    path;
+  off_t
+    file_size;
   OR_ALIGNED_BUF (OR_INT64_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
 
   ptr = or_unpack_string_nocopy (request, &path);
 
@@ -8916,11 +9970,16 @@ void
 slocator_upgrade_instances_domain (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  OID class_oid;
-  int attr_id;
-  int success;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  OID
+    class_oid;
+  int
+    attr_id;
+  int
+    success;
 
   ptr = request;
   ptr = or_unpack_oid (ptr, &class_oid);
@@ -8952,16 +10011,25 @@ slocator_upgrade_instances_domain (THREAD_ENTRY * thread_p, unsigned int rid, ch
 void
 ssession_find_or_create_session (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  SESSION_ID id = DB_EMPTY_SESSION;
-  int row_count = -1, area_size;
+  SESSION_ID
+    id = DB_EMPTY_SESSION;
+  int
+    row_count = -1, area_size;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr = NULL, *area = NULL;
-  char *db_user = NULL, *host = NULL, *program_name = NULL;
-  char db_user_upper[DB_MAX_USER_LENGTH] = { '\0' };
-  char server_session_key[SERVER_SESSION_KEY_SIZE];
-  SESSION_PARAM *session_params = NULL;
-  int error = NO_ERROR, update_parameter_values = 0;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr = NULL, *area = NULL;
+  char *
+    db_user = NULL, *host = NULL, *program_name = NULL;
+  char
+  db_user_upper[DB_MAX_USER_LENGTH] = { '\0' };
+  char
+    server_session_key[SERVER_SESSION_KEY_SIZE];
+  SESSION_PARAM *
+    session_params = NULL;
+  int
+    error = NO_ERROR, update_parameter_values = 0;
 
   ptr = or_unpack_int (request, (int *) &id);
   ptr = or_unpack_stream (ptr, server_session_key, SERVER_SESSION_KEY_SIZE);
@@ -9081,12 +10149,17 @@ ssession_find_or_create_session (THREAD_ENTRY * thread_p, unsigned int rid, char
 void
 ssession_end_session (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int err = NO_ERROR;
-  int is_keep_session;
-  SESSION_ID id;
+  int
+    err = NO_ERROR;
+  int
+    is_keep_session;
+  SESSION_ID
+    id;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr = NULL;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr = NULL;
 
   ptr = or_unpack_int (request, (int *) &id);
   ptr = or_unpack_int (ptr, &is_keep_session);
@@ -9111,11 +10184,15 @@ ssession_end_session (THREAD_ENTRY * thread_p, unsigned int rid, char *request, 
 void
 ssession_set_row_count (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int err = NO_ERROR;
-  int row_count = 0;
+  int
+    err = NO_ERROR;
+  int
+    row_count = 0;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr = NULL;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr = NULL;
 
   (void) or_unpack_int (request, &row_count);
 
@@ -9140,11 +10217,15 @@ ssession_set_row_count (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 void
 ssession_get_row_count (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int err = NO_ERROR;
-  int row_count = 0;
+  int
+    err = NO_ERROR;
+  int
+    row_count = 0;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr = NULL;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr = NULL;
 
   err = xsession_get_row_count (thread_p, &row_count);
   if (err != NO_ERROR)
@@ -9167,14 +10248,21 @@ ssession_get_row_count (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 void
 ssession_get_last_insert_id (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int err = NO_ERROR;
-  DB_VALUE lid;
+  int
+    err = NO_ERROR;
+  DB_VALUE
+    lid;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *data_reply = NULL;
-  int data_size = 0;
-  char *ptr = NULL;
-  int update_last_insert_id;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    data_reply = NULL;
+  int
+    data_size = 0;
+  char *
+    ptr = NULL;
+  int
+    update_last_insert_id;
 
   (void) or_unpack_int (request, &update_last_insert_id);
 
@@ -9222,10 +10310,13 @@ end:
 void
 ssession_reset_cur_insert_id (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int err = NO_ERROR;
+  int
+    err = NO_ERROR;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr = NULL;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr = NULL;
 
   err = xsession_reset_cur_insert_id (thread_p);
   if (err != NO_ERROR)
@@ -9249,13 +10340,19 @@ void
 ssession_create_prepared_statement (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   /* request data */
-  char *name = NULL, *alias_print = NULL;
-  char *reply = NULL, *ptr = NULL;
-  char *data_request = NULL;
+  char *
+    name = NULL, *alias_print = NULL;
+  char *
+    reply = NULL, *ptr = NULL;
+  char *
+    data_request = NULL;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  int data_size = 0, err = 0;
-  char *info = NULL;
-  SHA1Hash alias_sha1 = SHA1_HASH_INITIALIZER;
+  int
+    data_size = 0, err = 0;
+  char *
+    info = NULL;
+  SHA1Hash
+    alias_sha1 = SHA1_HASH_INITIALIZER;
 
   reply = OR_ALIGNED_BUF_START (a_reply);
 
@@ -9348,15 +10445,23 @@ error:
 void
 ssession_get_prepared_statement (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *name = NULL, *stmt_info = NULL;
-  int info_len = 0;
-  char *reply = NULL, *ptr = NULL, *data_reply = NULL;
-  int err = NO_ERROR, reply_size = 0;
-  XASL_ID xasl_id;
+  char *
+    name = NULL, *stmt_info = NULL;
+  int
+    info_len = 0;
+  char *
+    reply = NULL, *ptr = NULL, *data_reply = NULL;
+  int
+    err = NO_ERROR, reply_size = 0;
+  XASL_ID
+    xasl_id;
   /* return code + data length */
   OR_ALIGNED_BUF (OR_INT_SIZE * 2 + OR_XASL_ID_SIZE) a_reply;
-  int get_xasl_header = 0;
-  XASL_NODE_HEADER xasl_header, *xasl_header_p = NULL;
+  int
+    get_xasl_header = 0;
+  XASL_NODE_HEADER
+  xasl_header, *
+    xasl_header_p = NULL;
 
   /* unpack prepared statement name */
   ptr = or_unpack_string (request, &name);
@@ -9450,10 +10555,13 @@ cleanup:
 void
 ssession_delete_prepared_statement (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int err = NO_ERROR;
+  int
+    err = NO_ERROR;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *name = NULL;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    name = NULL;
 
   or_unpack_string_nocopy (request, &name);
   if (name == NULL)
@@ -9485,10 +10593,13 @@ ssession_delete_prepared_statement (THREAD_ENTRY * thread_p, unsigned int rid, c
 void
 slogin_user (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int err = NO_ERROR;
+  int
+    err = NO_ERROR;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *username = NULL;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    username = NULL;
 
   or_unpack_string_nocopy (request, &username);
   if (username == NULL)
@@ -9521,10 +10632,13 @@ slogin_user (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqle
 void
 ssession_set_session_variables (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int count = 0, err = NO_ERROR, data_size = 0, i = 0;
+  int
+    count = 0, err = NO_ERROR, data_size = 0, i = 0;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = NULL, *ptr = NULL, *data_request = NULL;
-  DB_VALUE *values = NULL;
+  char *
+    reply = NULL, *ptr = NULL, *data_request = NULL;
+  DB_VALUE *
+    values = NULL;
 
   /* Unpack count of variables from request */
   ptr = or_unpack_int (request, &count);
@@ -9599,11 +10713,16 @@ cleanup:
 void
 ssession_get_session_variable (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int err = NO_ERROR;
+  int
+    err = NO_ERROR;
   OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_reply;
-  char *reply = NULL, *ptr = NULL, *data_reply = NULL;
-  DB_VALUE result, name;
-  int size = 0;
+  char *
+    reply = NULL, *ptr = NULL, *data_reply = NULL;
+  DB_VALUE
+    result,
+    name;
+  int
+    size = 0;
 
   db_make_null (&result);
   db_make_null (&name);
@@ -9658,9 +10777,11 @@ ssession_get_session_variable (THREAD_ENTRY * thread_p, unsigned int rid, char *
 void
 svacuum (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int err = NO_ERROR;
+  int
+    err = NO_ERROR;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = NULL;
+  char *
+    reply = NULL;
 
   reply = OR_ALIGNED_BUF_START (a_reply);
 
@@ -9693,12 +10814,17 @@ svacuum (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 void
 svacuum_dump (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int file_size;
-  char *buffer;
-  int buffer_size;
-  int send_size;
+  int
+    file_size;
+  char *
+    buffer;
+  int
+    buffer_size;
+  int
+    send_size;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_int (request, &buffer_size);
 
@@ -9771,8 +10897,10 @@ void
 slogtb_get_mvcc_snapshot (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = NULL;
-  int err;
+  char *
+    reply = NULL;
+  int
+    err;
 
   err = xlogtb_get_mvcc_snapshot (thread_p);
 
@@ -9799,10 +10927,13 @@ slogtb_get_mvcc_snapshot (THREAD_ENTRY * thread_p, unsigned int rid, char *reque
 void
 ssession_drop_session_variables (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int count = 0, err = NO_ERROR, data_size = 0, i = 0;
+  int
+    count = 0, err = NO_ERROR, data_size = 0, i = 0;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = NULL, *ptr = NULL, *data_request = NULL;
-  DB_VALUE *values = NULL;
+  char *
+    reply = NULL, *ptr = NULL, *data_request = NULL;
+  DB_VALUE *
+    values = NULL;
 
   /* Unpack count of variables from request */
   ptr = or_unpack_int (request, &count);
@@ -9874,22 +11005,31 @@ cleanup:
 void
 sboot_get_locales_info (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int err = NO_ERROR;
+  int
+    err = NO_ERROR;
   OR_ALIGNED_BUF (2 * OR_INT_SIZE) a_reply;
-  char *reply = NULL, *ptr = NULL, *data_reply = NULL;
-  int size = 0, i;
-  int len_str;
-  const int collation_cnt = lang_collation_count ();
-  const int lang_cnt = lang_locales_count (false);
-  const int locales_cnt = lang_locales_count (true);
-  int found_coll = 0;
+  char *
+    reply = NULL, *ptr = NULL, *data_reply = NULL;
+  int
+    size = 0, i;
+  int
+    len_str;
+  const int
+    collation_cnt = lang_collation_count ();
+  const int
+    lang_cnt = lang_locales_count (false);
+  const int
+    locales_cnt = lang_locales_count (true);
+  int
+    found_coll = 0;
 
   reply = OR_ALIGNED_BUF_START (a_reply);
 
   /* compute size of packed information */
   for (i = 0; i < LANG_MAX_COLLATIONS; i++)
     {
-      LANG_COLLATION *lc = lang_get_collation (i);
+      LANG_COLLATION *
+	lc = lang_get_collation (i);
 
       assert (lc != NULL);
       if (i != 0 && lc->coll.coll_id == LANG_COLL_DEFAULT)
@@ -9908,7 +11048,8 @@ sboot_get_locales_info (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 
   for (i = 0; i < lang_cnt; i++)
     {
-      const LANG_LOCALE_DATA *lld = lang_get_first_locale_for_lang (i);
+      const LANG_LOCALE_DATA *
+	lld = lang_get_first_locale_for_lang (i);
 
       assert (lld != NULL);
 
@@ -9935,7 +11076,8 @@ sboot_get_locales_info (THREAD_ENTRY * thread_p, unsigned int rid, char *request
       /* pack collation information : */
       for (i = 0; i < LANG_MAX_COLLATIONS; i++)
 	{
-	  LANG_COLLATION *lc = lang_get_collation (i);
+	  LANG_COLLATION *
+	    lc = lang_get_collation (i);
 
 	  assert (lc != NULL);
 
@@ -9961,7 +11103,8 @@ sboot_get_locales_info (THREAD_ENTRY * thread_p, unsigned int rid, char *request
       /* pack locale information : */
       for (i = 0; i < lang_cnt; i++)
 	{
-	  const LANG_LOCALE_DATA *lld = lang_get_first_locale_for_lang (i);
+	  const LANG_LOCALE_DATA *
+	    lld = lang_get_first_locale_for_lang (i);
 
 	  assert (lld != NULL);
 
@@ -10010,12 +11153,17 @@ sboot_get_locales_info (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 void
 sboot_get_timezone_checksum (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int err = NO_ERROR;
+  int
+    err = NO_ERROR;
   OR_ALIGNED_BUF (2 * OR_INT_SIZE) a_reply;
-  char *reply = NULL, *ptr = NULL, *data_reply = NULL;
-  int size = 0;
-  int len_str;
-  const TZ_DATA *tzd;
+  char *
+    reply = NULL, *ptr = NULL, *data_reply = NULL;
+  int
+    size = 0;
+  int
+    len_str;
+  const TZ_DATA *
+    tzd;
 
   tzd = tz_get_data ();
 
@@ -10060,13 +11208,19 @@ sboot_get_timezone_checksum (THREAD_ENTRY * thread_p, unsigned int rid, char *re
 void
 schksum_insert_repl_log_and_demote_table_lock (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int success = NO_ERROR;
+  int
+    success = NO_ERROR;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  OID class_oid;
-  REPL_INFO repl_info = { NULL, 0, false };
-  REPL_INFO_SBR repl_stmt = { 0, NULL, NULL, NULL, NULL };
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  OID
+    class_oid;
+  REPL_INFO
+  repl_info = { NULL, 0, false };
+  REPL_INFO_SBR
+  repl_stmt = { 0, NULL, NULL, NULL, NULL };
 
   ptr = or_unpack_oid (request, &class_oid);
   ptr = or_unpack_int (ptr, &repl_info.repl_info_type);
@@ -10111,10 +11265,13 @@ schksum_insert_repl_log_and_demote_table_lock (THREAD_ENTRY * thread_p, unsigned
 void
 slogtb_does_active_user_exist (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *user_name;
-  bool existed;
+  char *
+    user_name;
+  bool
+    existed;
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   (void) or_unpack_string_nocopy (request, &user_name);
   existed = xlogtb_does_active_user_exist (thread_p, user_name);
@@ -10138,13 +11295,20 @@ void
 slocator_redistribute_partition_data (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  OID *oid_list;
-  int nr_oids;
-  int success = NO_ERROR;
-  int i;
-  OID class_oid;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  OID *
+    oid_list;
+  int
+    nr_oids;
+  int
+    success = NO_ERROR;
+  int
+    i;
+  OID
+    class_oid;
 
   ptr = request;
   ptr = or_unpack_oid (ptr, &class_oid);
@@ -10201,23 +11365,35 @@ end:
 void
 netsr_spacedb (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  SPACEDB_ALL all[SPACEDB_ALL_COUNT];
-  SPACEDB_ONEVOL *vols = NULL;
-  SPACEDB_FILES files[SPACEDB_FILE_COUNT];
+  SPACEDB_ALL
+    all[SPACEDB_ALL_COUNT];
+  SPACEDB_ONEVOL *
+    vols = NULL;
+  SPACEDB_FILES
+    files[SPACEDB_FILE_COUNT];
 
-  int get_vols = 0;
-  int get_files = 0;
-  SPACEDB_ONEVOL **volsp = NULL;
-  SPACEDB_FILES *filesp = NULL;
+  int
+    get_vols = 0;
+  int
+    get_files = 0;
+  SPACEDB_ONEVOL **
+    volsp = NULL;
+  SPACEDB_FILES *
+    filesp = NULL;
 
   OR_ALIGNED_BUF (2 * OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *data_reply = NULL;
-  int data_reply_length = 0;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    data_reply = NULL;
+  int
+    data_reply_length = 0;
 
-  char *ptr;
+  char *
+    ptr;
 
-  int error_code = NO_ERROR;
+  int
+    error_code = NO_ERROR;
 
   /* do we need space information on all volumes? */
   ptr = or_unpack_int (request, &get_vols);
@@ -10282,12 +11458,18 @@ netsr_spacedb (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int req
 void
 slocator_demote_class_lock (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int error;
-  OID class_oid;
-  LOCK lock, ex_lock;
-  char *ptr;
+  int
+    error;
+  OID
+    class_oid;
+  LOCK
+    lock,
+    ex_lock;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   ptr = or_unpack_oid (request, &class_oid);
   ptr = or_unpack_lock (ptr, &lock);
@@ -10307,7 +11489,8 @@ slocator_demote_class_lock (THREAD_ENTRY * thread_p, unsigned int rid, char *req
 void
 sloaddb_init (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  packing_unpacker unpacker (request, (size_t) reqlen);
+  packing_unpacker
+  unpacker (request, (size_t) reqlen);
 
   /* *INDENT-OFF* */
   cubload::load_args args;
@@ -10315,16 +11498,20 @@ sloaddb_init (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reql
 
   args.unpack (unpacker);
 
-  load_session *session = new load_session (args);
+  load_session *
+    session = new load_session (args);
 
-  int error_code = session_set_load_session (thread_p, session);
+  int
+    error_code = session_set_load_session (thread_p, session);
   if (error_code != NO_ERROR)
     {
-      delete session;
+      delete
+	session;
     }
 
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   or_pack_int (reply, error_code);
   css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
@@ -10333,8 +11520,10 @@ sloaddb_init (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reql
 void
 sloaddb_install_class (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  packing_unpacker unpacker (request, (size_t) reqlen);
-  bool is_ignored = false;
+  packing_unpacker
+  unpacker (request, (size_t) reqlen);
+  bool
+    is_ignored = false;
 
   /* *INDENT-OFF* */
   cubload::batch batch;
@@ -10342,8 +11531,10 @@ sloaddb_install_class (THREAD_ENTRY * thread_p, unsigned int rid, char *request,
 
   batch.unpack (unpacker);
 
-  load_session *session = NULL;
-  int error_code = session_get_load_session (thread_p, session);
+  load_session *
+    session = NULL;
+  int
+    error_code = session_get_load_session (thread_p, session);
   std::string cls_name;
   if (error_code == NO_ERROR)
     {
@@ -10363,9 +11554,12 @@ sloaddb_install_class (THREAD_ENTRY * thread_p, unsigned int rid, char *request,
 
   // Error code and is_ignored.
   OR_ALIGNED_BUF (3 * OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  int buf_sz = (int) cls_name.length ();
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  int
+    buf_sz = (int) cls_name.length ();
   ptr = or_pack_int (reply, buf_sz);
   ptr = or_pack_int (ptr, error_code);
   ptr = or_pack_int (ptr, (is_ignored ? 1 : 0));
@@ -10377,7 +11571,8 @@ sloaddb_install_class (THREAD_ENTRY * thread_p, unsigned int rid, char *request,
 void
 sloaddb_load_batch (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  packing_unpacker unpacker (request, (size_t) reqlen);
+  packing_unpacker
+  unpacker (request, (size_t) reqlen);
 
   /* *INDENT-OFF* */
   cubload::batch *batch = NULL;
@@ -10386,10 +11581,13 @@ sloaddb_load_batch (THREAD_ENTRY * thread_p, unsigned int rid, char *request, in
   cubmem::extensible_block eb;
   /* *INDENT-ON* */
 
-  char *reply_data = NULL;
-  int reply_data_size = 0;
+  char *
+    reply_data = NULL;
+  int
+    reply_data_size = 0;
 
-  bool use_temp_batch = false;
+  bool
+    use_temp_batch = false;
   unpacker.unpack_bool (use_temp_batch);
   if (!use_temp_batch)
     {
@@ -10397,11 +11595,14 @@ sloaddb_load_batch (THREAD_ENTRY * thread_p, unsigned int rid, char *request, in
       batch->unpack (unpacker);
     }
 
-  bool is_batch_accepted = false;
-  load_session *session = NULL;
+  bool
+    is_batch_accepted = false;
+  load_session *
+    session = NULL;
 
   session_get_load_session (thread_p, session);
-  int error_code = session_get_load_session (thread_p, session);
+  int
+    error_code = session_get_load_session (thread_p, session);
   if (error_code == NO_ERROR)
     {
       assert (session != NULL);
@@ -10424,9 +11625,11 @@ sloaddb_load_batch (THREAD_ENTRY * thread_p, unsigned int rid, char *request, in
     }
 
   OR_ALIGNED_BUF (OR_INT_SIZE * 3) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
-  char *ptr = or_pack_int (reply, reply_data_size);
+  char *
+    ptr = or_pack_int (reply, reply_data_size);
   ptr = or_pack_int (ptr, error_code);
   or_pack_int (ptr, (is_batch_accepted ? 1 : 0));
 
@@ -10438,18 +11641,24 @@ sloaddb_load_batch (THREAD_ENTRY * thread_p, unsigned int rid, char *request, in
 void
 sloaddb_fetch_status (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  packing_packer packer;
+  packing_packer
+    packer;
   cubmem::extensible_block eb;
 
-  char *buffer = NULL;
-  int buffer_size = 0;
+  char *
+    buffer = NULL;
+  int
+    buffer_size = 0;
 
-  load_session *session = NULL;
-  int error_code = session_get_load_session (thread_p, session);
+  load_session *
+    session = NULL;
+  int
+    error_code = session_get_load_session (thread_p, session);
   if (error_code == NO_ERROR)
     {
       assert (session != NULL);
-      load_status status;
+      load_status
+	status;
       session->fetch_status (status, false);
       packer.set_buffer_and_pack_all (eb, status);
 
@@ -10467,7 +11676,8 @@ sloaddb_fetch_status (THREAD_ENTRY * thread_p, unsigned int rid, char *request, 
     }
 
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   or_pack_int (reply, buffer_size);
   css_send_reply_and_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply), buffer,
@@ -10477,14 +11687,17 @@ sloaddb_fetch_status (THREAD_ENTRY * thread_p, unsigned int rid, char *request, 
 void
 sloaddb_destroy (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  load_session *session = NULL;
-  int error_code = session_get_load_session (thread_p, session);
+  load_session *
+    session = NULL;
+  int
+    error_code = session_get_load_session (thread_p, session);
   if (error_code == NO_ERROR)
     {
       assert (session != NULL);
 
       session->wait_for_completion ();
-      delete session;
+      delete
+	session;
       session_set_load_session (thread_p, NULL);
     }
 
@@ -10494,7 +11707,8 @@ sloaddb_destroy (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int r
     }
 
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
 
   or_pack_int (reply, error_code);
   css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
@@ -10503,8 +11717,10 @@ sloaddb_destroy (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int r
 void
 sloaddb_interrupt (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  load_session *session = NULL;
-  int error_code = session_get_load_session (thread_p, session);
+  load_session *
+    session = NULL;
+  int
+    error_code = session_get_load_session (thread_p, session);
   if (error_code == NO_ERROR)
     {
       assert (session != NULL);
@@ -10520,14 +11736,22 @@ sloaddb_interrupt (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int
 void
 sloaddb_update_stats (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *buffer = NULL, *ptr = NULL;
-  int buffer_size = 0;
-  int oid_cnt = 0;
+  char *
+    buffer = NULL, *ptr = NULL;
+  int
+    buffer_size = 0;
+  int
+    oid_cnt = 0;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  load_session *session = NULL;
-  int error_code = session_get_load_session (thread_p, session);
-  std::vector < const cubload::class_entry * >class_entries;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  load_session *
+    session = NULL;
+  int
+    error_code = session_get_load_session (thread_p, session);
+  std::vector < const
+  cubload::class_entry * >
+    class_entries;
 
   if (error_code != NO_ERROR)
     {
@@ -10567,13 +11791,15 @@ for (const cubload::class_entry * class_entry:class_entries)
     {
       if (!class_entry->is_ignored ())
 	{
-	  OID *class_oid = const_cast < OID * >(&class_entry->get_class_oid ());
+	  OID *
+	    class_oid = const_cast < OID * >(&class_entry->get_class_oid ());
 	  ptr = or_pack_oid (ptr, class_oid);
 	}
     }
 
 end:
-  char *ptr2 = or_pack_int (reply, buffer_size);
+  char *
+    ptr2 = or_pack_int (reply, buffer_size);
   ptr2 = or_pack_int (ptr2, error_code);
   css_send_reply_and_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply), buffer,
 				     buffer_size);
@@ -10590,7 +11816,8 @@ ssession_stop_attached_threads (THREAD_ENTRY * thread_p, void *session)
   session_stop_attached_threads (thread_p, session);
 }
 
-static bool
+static
+  bool
 cdc_check_client_connection ()
 {
   if (css_check_conn (&cdc_Gl.conn) == NO_ERROR)
@@ -10607,10 +11834,13 @@ cdc_check_client_connection ()
 void
 spl_call (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int error_code = NO_ERROR;
-  packing_unpacker unpacker (request, (size_t) reqlen);
+  int
+    error_code = NO_ERROR;
+  packing_unpacker
+  unpacker (request, (size_t) reqlen);
 
-  DB_VALUE ret_value;
+  DB_VALUE
+    ret_value;
   db_make_null (&ret_value);
 
   /* 1) unpack arguments */
@@ -10628,7 +11858,8 @@ spl_call (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
       error_code = executor.execute (ret_value);
     }
 
-  packing_packer packer;
+  packing_packer
+    packer;
   cubmem::extensible_block eb;
   if (error_code == NO_ERROR)
     {
@@ -10655,12 +11886,16 @@ spl_call (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
       (void) return_error_to_client (thread_p, rid);
     }
 
-  char *reply_data = eb.get_ptr ();
-  int reply_data_size = (int) packer.get_current_size ();
+  char *
+    reply_data = eb.get_ptr ();
+  int
+    reply_data_size = (int) packer.get_current_size ();
 
   OR_ALIGNED_BUF (OR_INT_SIZE * 3) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr = or_pack_int (reply, (int) END_CALLBACK);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr = or_pack_int (reply, (int) END_CALLBACK);
   ptr = or_pack_int (ptr, reply_data_size);
   ptr = or_pack_int (ptr, error_code);
 
@@ -10689,19 +11924,23 @@ spl_call (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 void
 smethod_invoke_fold_constants (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  packing_unpacker unpacker (request, (size_t) reqlen);
+  packing_unpacker
+  unpacker (request, (size_t) reqlen);
 
   /* 1) unpack arguments */
-  method_sig_list sig_list;
+  method_sig_list
+    sig_list;
   std::vector < DB_VALUE > args;
   unpacker.unpack_all (sig_list, args);
 
   std::vector < std::reference_wrapper < DB_VALUE >> ref_args (args.begin (), args.end ());
 
   /* 2) invoke method */
-  DB_VALUE ret_value;
+  DB_VALUE
+    ret_value;
   db_make_null (&ret_value);
-  int error_code = xmethod_invoke_fold_constants (thread_p, sig_list, ref_args, ret_value);
+  int
+    error_code = xmethod_invoke_fold_constants (thread_p, sig_list, ref_args, ret_value);
 
   cubmethod::runtime_context * rctx = cubmethod::get_rctx (thread_p);
   cubmethod::method_invoke_group * top_on_stack = NULL;
@@ -10718,13 +11957,15 @@ smethod_invoke_fold_constants (THREAD_ENTRY * thread_p, unsigned int rid, char *
       assert (false);		// oops
     }
 
-  packing_packer packer;
+  packing_packer
+    packer;
   cubmem::extensible_block eb;
   if (error_code == NO_ERROR)
     {
       /* 3) make out arguments */
 
-      method_sig_node *sig = sig_list.method_sig;
+      method_sig_node *
+	sig = sig_list.method_sig;
       // *INDENT-OFF*
       DB_VALUE dummy_null;
       db_make_null (&dummy_null);
@@ -10737,7 +11978,8 @@ smethod_invoke_fold_constants (THREAD_ENTRY * thread_p, unsigned int rid, char *
 	      continue;
 	    }
 
-	  int pos = sig->method_arg_pos[i];
+	  int
+	    pos = sig->method_arg_pos[i];
 	  out_args[pos] = std::ref (args[pos]);
 	}
 
@@ -10780,12 +12022,16 @@ smethod_invoke_fold_constants (THREAD_ENTRY * thread_p, unsigned int rid, char *
       (void) return_error_to_client (thread_p, rid);
     }
 
-  char *reply_data = eb.get_ptr ();
-  int reply_data_size = (int) packer.get_current_size ();
+  char *
+    reply_data = eb.get_ptr ();
+  int
+    reply_data_size = (int) packer.get_current_size ();
 
   OR_ALIGNED_BUF (OR_INT_SIZE * 3) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr = or_pack_int (reply, (int) END_CALLBACK);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr = or_pack_int (reply, (int) END_CALLBACK);
   ptr = or_pack_int (ptr, reply_data_size);
   ptr = or_pack_int (ptr, error_code);
 
@@ -10814,14 +12060,25 @@ void
 scdc_start_session (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  int error_code;
-  int max_log_item, extraction_timeout, all_in_cond, num_extraction_user, num_extraction_class;
-  uint64_t *extraction_classoids = NULL;
-  char **extraction_user = NULL;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  int
+    error_code;
+  int
+    max_log_item,
+    extraction_timeout,
+    all_in_cond,
+    num_extraction_user,
+    num_extraction_class;
+  uint64_t *
+    extraction_classoids = NULL;
+  char **
+    extraction_user = NULL;
 
-  char *dummy_user = NULL;
+  char *
+    dummy_user = NULL;
 
   if (prm_get_integer_value (PRM_ID_SUPPLEMENTAL_LOG) == 0)
     {
@@ -10955,11 +12212,16 @@ void
 scdc_find_lsa (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_LOG_LSA_ALIGNED_SIZE + OR_INT64_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  LOG_LSA start_lsa;
-  time_t input_time;
-  int error_code;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  LOG_LSA
+    start_lsa;
+  time_t
+    input_time;
+  int
+    error_code;
 
   ptr = or_unpack_int64 (request, &input_time);
   //if scdc_find_lsa() is called more than once, it should pause running cdc_loginfo_producer_execute() thread 
@@ -11011,17 +12273,26 @@ void
 scdc_get_loginfo_metadata (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE * 3 + OR_LOG_LSA_ALIGNED_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr;
-  LOG_LSA start_lsa;
-  LOG_LSA next_lsa;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr;
+  LOG_LSA
+    start_lsa;
+  LOG_LSA
+    next_lsa;
 
-  int total_length;
-  char *log_info_list;
-  int error_code = NO_ERROR;
-  int num_log_info;
+  int
+    total_length;
+  char *
+    log_info_list;
+  int
+    error_code = NO_ERROR;
+  int
+    num_log_info;
 
-  int rc;
+  int
+    rc;
 
   or_unpack_log_lsa (request, &start_lsa);
 
@@ -11112,8 +12383,10 @@ void
 scdc_end_session (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int error_code;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    error_code;
 
   error_code = cdc_cleanup ();
 
@@ -11132,25 +12405,38 @@ void
 sflashback_get_summary (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *area = NULL;
-  int area_size = 0;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    area = NULL;
+  int
+    area_size = 0;
 
-  int error_code = NO_ERROR;
-  char *ptr;
-  char *start_ptr;
+  int
+    error_code = NO_ERROR;
+  char *
+    ptr;
+  char *
+    start_ptr;
 
-  char *num_ptr;		//pointer in which 'number of summary' is located
-  int tmp_num = 0;
+  char *
+    num_ptr;			//pointer in which 'number of summary' is located
+  int
+    tmp_num = 0;
 
-  LC_FIND_CLASSNAME status;
+  LC_FIND_CLASSNAME
+    status;
 
-  FLASHBACK_SUMMARY_CONTEXT context = { LSA_INITIALIZER, LSA_INITIALIZER, NULL, 0, 0, };
+  FLASHBACK_SUMMARY_CONTEXT
+  context = { LSA_INITIALIZER, LSA_INITIALIZER, NULL, 0, 0, };
 
-  time_t start_time = 0;
-  time_t end_time = 0;
+  time_t
+    start_time = 0;
+  time_t
+    end_time = 0;
 
-  char *classname = NULL;
+  char *
+    classname = NULL;
 
   error_code = flashback_initialize (thread_p);
   if (error_code != NO_ERROR)
@@ -11162,7 +12448,8 @@ sflashback_get_summary (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 
   for (int i = 0; i < context.num_class; i++)
     {
-      OID classoid = OID_INITIALIZER;
+      OID
+	classoid = OID_INITIALIZER;
 
       ptr = or_unpack_string_nocopy (ptr, &classname);
 
@@ -11301,17 +12588,25 @@ void
 sflashback_get_loginfo (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *area = NULL;
-  int area_size = 0;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    area = NULL;
+  int
+    area_size = 0;
 
-  int error_code = NO_ERROR;
-  char *ptr;
-  char *start_ptr;
+  int
+    error_code = NO_ERROR;
+  char *
+    ptr;
+  char *
+    start_ptr;
 
-  int threshold_to_remove_archive = 0;
+  int
+    threshold_to_remove_archive = 0;
 
-  FLASHBACK_LOGINFO_CONTEXT context = { -1, NULL, LSA_INITIALIZER, LSA_INITIALIZER, 0, 0, false, 0, OID_INITIALIZER, };
+  FLASHBACK_LOGINFO_CONTEXT
+  context = { -1, NULL, LSA_INITIALIZER, LSA_INITIALIZER, 0, 0, false, 0, OID_INITIALIZER, };
 
   /* request : trid | user | num_class | table oid list | start_lsa | end_lsa | num_item | forward/backward */
 
@@ -11321,7 +12616,8 @@ sflashback_get_loginfo (THREAD_ENTRY * thread_p, unsigned int rid, char *request
 
   for (int i = 0; i < context.num_class; i++)
     {
-      OID classoid;
+      OID
+	classoid;
       ptr = or_unpack_oid (ptr, &classoid);
       context.classoid_set.emplace (classoid);
     }
@@ -11422,10 +12718,13 @@ css_send_error:
 void
 splcsql_transfer_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int error = ER_FAILED;
-  PLCSQL_COMPILE_REQUEST compile_request;
+  int
+    error = ER_FAILED;
+  PLCSQL_COMPILE_REQUEST
+    compile_request;
 
-  packing_unpacker unpacker (request, (size_t) reqlen);
+  packing_unpacker
+  unpacker (request, (size_t) reqlen);
   unpacker.unpack_all (compile_request);
 
   cubmem::extensible_block ext_blk;
@@ -11433,8 +12732,10 @@ splcsql_transfer_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request,
   error = compile_handler.compile (compile_request, ext_blk);
 
   OR_ALIGNED_BUF (3 * OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  char *ptr = or_pack_int (reply, (int) END_CALLBACK);
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  char *
+    ptr = or_pack_int (reply, (int) END_CALLBACK);
   ptr = or_pack_int (ptr, ext_blk.get_size ());
   ptr = or_pack_int (ptr, error);
 
@@ -11454,13 +12755,18 @@ splcsql_transfer_file (THREAD_ENTRY * thread_p, unsigned int rid, char *request,
 void
 smmon_get_server_info (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *buffer_a = NULL, *buffer, *ptr;
-  int size = 0;
+  char *
+    buffer_a = NULL, *buffer, *ptr;
+  int
+    size = 0;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int error = NO_ERROR;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    error = NO_ERROR;
 #if !defined(WINDOWS)
-  MMON_SERVER_INFO server_info;
+  MMON_SERVER_INFO
+    server_info;
 
   if (mmon_is_memory_monitor_enabled ())
     {
@@ -11563,10 +12869,13 @@ end:
 void
 smmon_disable_force (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *ptr;
+  char *
+    ptr;
   OR_ALIGNED_BUF (OR_INT_SIZE + OR_INT_SIZE) a_reply;
-  char *reply = OR_ALIGNED_BUF_START (a_reply);
-  int error = NO_ERROR;
+  char *
+    reply = OR_ALIGNED_BUF_START (a_reply);
+  int
+    error = NO_ERROR;
 #if !defined(WINDOWS)
   mmon_disabled = true;
 
@@ -11594,9 +12903,12 @@ smmon_disable_force (THREAD_ENTRY * thread_p, unsigned int rid, char *request, i
 void
 stdes_set_query_start_info (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  char *sql_user_text = NULL;
-  int tran_index = -1;
-  LOG_TDES *tdes_p;
+  char *
+    sql_user_text = NULL;
+  int
+    tran_index = -1;
+  LOG_TDES *
+    tdes_p;
 
   or_unpack_string_nocopy (request, &sql_user_text);
   tran_index = LOG_FIND_THREAD_TRAN_INDEX (thread_p);
@@ -11631,8 +12943,10 @@ stdes_set_query_start_info (THREAD_ENTRY * thread_p, unsigned int rid, char *req
 void
 stdes_reset_query_start_info (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen)
 {
-  int tran_index = -1;
-  LOG_TDES *tdes_p;
+  int
+    tran_index = -1;
+  LOG_TDES *
+    tdes_p;
 
   tran_index = LOG_FIND_THREAD_TRAN_INDEX (thread_p);
 

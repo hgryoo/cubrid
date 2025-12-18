@@ -32,6 +32,7 @@
 #include "hnsw_storage.hpp" // storage_t
 
 #include "faiss/utils/distances.h" // faiss
+#include "network_interface_sr.h"
 #include <ankerl/unordered_dense.h>
 
 #define HNSW_ALGO_DEBUG 0
@@ -527,7 +528,12 @@ namespace cubhnsw
 	result.oids.push_back (node_type (node_blk->data_ptr ()).get_key());
       }
 
-    m_storage->end_resource_cleanup();
+#if defined (SERVER_MODE)
+    g_deferred_resource_cleanup = [this] ()
+    {
+      m_storage->end_resource_cleanup();
+    };
+#endif
 
     return result;
   }
