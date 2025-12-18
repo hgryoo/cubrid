@@ -5985,6 +5985,8 @@ sqmgr_execute_query (THREAD_ENTRY * thread_p, unsigned int rid, char *request, i
     tran_state;
   bool
     is_tran_auto_commit;
+  bool
+    tran_deferred = false;
 
   trace_slow_msec = prm_get_integer_value (PRM_ID_SQL_TRACE_SLOW_MSECS);
   trace_ioreads = prm_get_integer_value (PRM_ID_SQL_TRACE_IOREADS);
@@ -6303,6 +6305,11 @@ null_list:
   /* result cache created time */
   OR_PACK_CACHE_TIME (ptr, &srv_cache_time);
 
+  if (list_id != NULL)
+    {
+      tran_deferred = true;
+    }
+
   if (IS_QUERY_EXECUTE_WITH_COMMIT (query_flag))
     {
       /* Try to end transaction and pack the result. */
@@ -6323,8 +6330,18 @@ null_list:
 	    }
 	}
 
-      stran_server_auto_commit_or_abort (thread_p, rid, p_net_Deferred_end_queries, n_query_ids,
-					 tran_abort, has_updated, &end_query_allowed, &tran_state, &should_conn_reset);
+      if (!tran_deferred)
+	{
+	  stran_server_auto_commit_or_abort (thread_p, rid, p_net_Deferred_end_queries, n_query_ids,
+					     tran_abort, has_updated, &end_query_allowed, &tran_state,
+					     &should_conn_reset);
+	}
+      else
+	{
+	  tran_state = TRAN_UNACTIVE_COMMITTED;
+	  should_conn_reset = false;
+	}
+
       /* pack end query result */
       if (end_query_allowed == true)
 	{
@@ -6365,6 +6382,12 @@ exit:
     {
       g_deferred_resource_cleanup ();
       g_deferred_resource_cleanup = nullptr;
+    }
+
+  if (tran_deferred)
+    {
+      stran_server_auto_commit_or_abort (thread_p, rid, p_net_Deferred_end_queries, n_query_ids,
+					 tran_abort, has_updated, &end_query_allowed, &tran_state, &should_conn_reset);
     }
 
   if (p_net_Deferred_end_queries != net_Deferred_end_queries)
@@ -6796,6 +6819,14 @@ sqmgr_prepare_and_execute_query (THREAD_ENTRY * thread_p, unsigned int rid, char
 				       listid_length, aligned_page_buf, page_size, NULL, dummy_plan_size);
 
 cleanup:
+
+#if defined (SERVER_MODE)
+  if (g_deferred_resource_cleanup != nullptr)
+    {
+      g_deferred_resource_cleanup ();
+    }
+#endif
+
   if (xasl_stream)
     {
       free_and_init (xasl_stream);	/* allocated at css_receive_data_from_client() */
