@@ -6387,7 +6387,7 @@ exit:
   if (g_deferred_resource_cleanup != nullptr)
     {
       g_deferred_resource_cleanup ();
-      g_deferred_resource_cleanup = nullptr;
+      // g_deferred_resource_cleanup = nullptr;
     }
 
   if (IS_QUERY_EXECUTE_WITH_COMMIT (query_flag) && tran_deferred)
