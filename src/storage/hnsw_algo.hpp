@@ -94,7 +94,7 @@ namespace cubhnsw
 #pragma omp simd reduction(+ : sum)
   for (std::size_t i = 0; i < dim; ++i)
     {
-      float d = vec1[i] - vec2[i];
+      const float d = vec1[i] - vec2[i];
       sum += d * d;
     }
 
