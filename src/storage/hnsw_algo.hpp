@@ -89,8 +89,17 @@ namespace cubhnsw
   inline float
   cubvec_l2_distance (const float *vec1, const float *vec2, size_t dim)
   {
-    float l2 = faiss::fvec_L2sqr (vec1, vec2, dim);
-    return std::sqrt (l2);
+  float sum = 0.0f;
+
+#pragma omp simd reduction(+ : sum)
+  for (std::size_t i = 0; i < dim; ++i)
+    {
+      float d = vec1[i] - vec2[i];
+      sum += d * d;
+    }
+
+    // do not sqrt for performance
+    return sum;
   }
 
   using distance_t = float;
