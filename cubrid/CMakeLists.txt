@@ -465,6 +465,7 @@ set(STORAGE_SOURCES
   ${STORAGE_DIR}/system_catalog.c
   ${STORAGE_DIR}/tde.c
   # ${STORAGE_DIR}/hnsw_usearch.cpp
+  ${STORAGE_DIR}/vector_distance_omp_simd.cpp
   ${STORAGE_DIR}/hnsw_usearch_ng.cpp
   ${STORAGE_DIR}/hnsw.cpp
   ${STORAGE_DIR}/hnsw_api.cpp
@@ -483,12 +484,12 @@ set(STORAGE_HEADERS
 
 if(USE_SIMD_NATIVE)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    set_source_files_properties(${STORAGE_DIR}/hnsw_usearch_ng.cpp
-        PROPERTIES COMPILE_FLAGS "-march=native -O3 -ftree-vectorize -mprefer-vector-width=512 -fno-trapping-math -funroll-loops -fno-signed-zeros"
+    set_source_files_properties(${STORAGE_DIR}/vector_distance_omp_simd.cpp
+        PROPERTIES COMPILE_FLAGS "-march=native -O3 -ftree-vectorize -mprefer-vector-width=512 -ffast-math -fno-trapping-math -funroll-loops -fassociative-math -fno-signed-zeros"
     )
   elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    set_source_files_properties(${STORAGE_DIR}/hnsw_usearch_ng.cpp
-        PROPERTIES COMPILE_FLAGS "-march=native -O3 -fvectorize -mprefer-vector-width=512 -fno-trapping-math -funroll-loops -fno-signed-zeros"
+    set_source_files_properties(${STORAGE_DIR}/vector_distance_omp_simd.cpp
+        PROPERTIES COMPILE_FLAGS "-march=native -O3 -fvectorize -mprefer-vector-width=512 -ffast-math -fno-trapping-math -funroll-loops -fassociative-math -fno-signed-zeros"
     )
   endif()
 endif()
