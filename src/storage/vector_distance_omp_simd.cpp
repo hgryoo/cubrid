@@ -7,35 +7,44 @@ namespace cubhnsw
 {
 
   distance_t
-  cubvec_cosine_distance (const float *vec1, const float *vec2, std::size_t dim)
+  cubvec_cosine_distance (const float *vec1, const float *vec2,
+			  std::size_t dim)
   {
-    float dot = 0.0f;
-    float norm1_sq = 0.0f;
-    float norm2_sq = 0.0f;
+    float dot = 0.f;
+    #pragma omp simd reduction(+ : dot)
+    for (size_t i = 0; i < dim; ++i)
+      {
+	dot += vec1[i] * vec2[i];
+      }
+    return 1.0f - dot;
+  }
 
-    #pragma omp simd reduction(+ : dot, norm1_sq, norm2_sq)
+  bool
+  cubvec_cosine_normalize (float *vec, std::size_t dim)
+  {
+    float norm_sq = 0.0f;
+
+    #pragma omp simd reduction(+ : norm_sq)
     for (std::size_t i = 0; i < dim; ++i)
       {
-	const float a = vec1[i];
-	const float b = vec2[i];
-	dot      += a * b;
-	norm1_sq += a * a;
-	norm2_sq += b * b;
+	norm_sq += vec[i] * vec[i];
       }
 
-    if (norm1_sq == 0.0f && norm2_sq == 0.0f)
+    constexpr float eps = 1e-12f;
+    if (norm_sq < eps)
       {
-	return 0.0f;
+	return false;		// zero vector
       }
-    if (norm1_sq == 0.0f || norm2_sq == 0.0f)
+
+    float inv_norm = 1.0f / std::sqrt (norm_sq);
+
+    #pragma omp simd
+    for (std::size_t i = 0; i < dim; ++i)
       {
-	return 1.0f;
+	vec[i] *= inv_norm;
       }
 
-    const float inv_norm =
-	    1.0f / (std::sqrt (norm1_sq) * std::sqrt (norm2_sq));
-
-    return 1.0f - dot * inv_norm;
+    return true;		// unit vector
   }
 
   distance_t
@@ -51,12 +60,11 @@ namespace cubhnsw
     return sum;
   }
 
-  const std::array<distance_fn_t,
-	static_cast<std::size_t> (vector_distance_metric_t::MAX)>
+  const std::array < distance_fn_t,
+	static_cast < std::size_t > (vector_distance_metric_t::MAX) >
 	metric_table =
   {
-    cubvec_cosine_distance,
-    cubvec_l2_distance
+    cubvec_cosine_distance, cubvec_l2_distance
   };
 
-} // namespace cubhnsw
+}				// namespace cubhnsw

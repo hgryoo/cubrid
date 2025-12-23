@@ -211,8 +211,8 @@ hnsw_usearch_ng::add (int n_vectors, const OID *oid, const float *vector)
   for (int i = 0; i < n_vectors; ++i)
     {
       if (m_build_params.metric == DB_VECTOR_DISTANCE_METRIC::METRIC_COSINE
-	  && db_vector_is_all_zeros (vector + i * m_build_params.dimension,
-				     m_build_params.dimension))
+	  && !cubhnsw::cubvec_cosine_normalize (const_cast<float *> (vector + i * m_build_params.dimension),
+	      m_build_params.dimension))
 	{
 	  er_log_debug (ARG_FILE_LINE, "Vector is all zeros, skipping search");
 	  continue;
@@ -228,7 +228,7 @@ hnsw_usearch_ng::search (const float *query, const int k, const int ef_search,
 			 OID *rec_oids, float *distances)
 {
   if (m_build_params.metric == DB_VECTOR_DISTANCE_METRIC::METRIC_COSINE
-      && db_vector_is_all_zeros (query, m_build_params.dimension))
+      && !cubhnsw::cubvec_cosine_normalize (const_cast<float *> (query), m_build_params.dimension))
     {
       er_log_debug (ARG_FILE_LINE, "Vector is all zeros, skipping search");
       return NO_ERROR;

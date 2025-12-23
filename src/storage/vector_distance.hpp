@@ -26,4 +26,7 @@ namespace cubhnsw
 	 static_cast<std::size_t> (vector_distance_metric_t::MAX)>
 	 metric_table;
 
+  bool
+  cubvec_cosine_normalize (float *vec, std::size_t dim);
+
 } // namespace cubhnsw
