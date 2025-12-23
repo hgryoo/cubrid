@@ -16,6 +16,16 @@ namespace cubhnsw
       {
 	dot += vec1[i] * vec2[i];
       }
+
+    if (dot > 1.0f)
+      {
+	dot = 1.0f;
+      }
+    if (dot < -1.0f)
+      {
+	dot = -1.0f;
+      }
+
     return 1.0f - dot;
   }
 
