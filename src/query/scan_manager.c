@@ -6479,7 +6479,7 @@ scan_next_vector_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 
       if (OID_ISNULL (&visid->oidp[visid->curr_oidno]))
 	{
-          continue;
+          return S_END;
 	}
 
       // validate the oid
