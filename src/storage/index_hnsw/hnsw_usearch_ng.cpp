@@ -243,6 +243,13 @@ hnsw_usearch_ng::search (const float *query, const int k, const int ef_search,
 	  fprintf (stdout, "%f ", query[i]);
 	}
       fprintf (stdout, "\n");
+
+      for (int i = 0; i < k; ++i)
+	{
+	  rec_oids[i] = OID_INITIALIZER;
+	  distances[i] = 0;
+	}
+
       return NO_ERROR;
     }
 

@@ -6477,6 +6477,11 @@ scan_next_vector_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 	  return S_END;
 	}
 
+      if (OID_ISNULL (&visid->oidp[visid->curr_oidno]))
+	{
+          continue;
+	}
+
       // validate the oid
       if (HEAP_ISVALID_OID (thread_p, &visid->oidp[visid->curr_oidno]) == DISK_INVALID)
 	{
