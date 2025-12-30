@@ -55,22 +55,17 @@ namespace cubhnsw
 			  const float *__restrict vec2,
 			  std::size_t dim)
   {
-    float dot = 0.0f;
-
-    #pragma omp simd reduction(+ : dot)
-    for (std::size_t i = 0; i < dim; ++i)
-      {
-	dot += vec1[i] * vec2[i];
-      }
-
-    // Numerical safety (optional but recommended with fast-math/SIMD)
-    dot = std::min (1.0f, std::max (-1.0f, dot));
-
-    // HNSW expects "smaller is better"
-    // cosine similarity maximize <=> minimize (-dot)
-    return -dot;
+    std::int32_t ab{}, a2{}, b2{};
+        for (std::size_t i = 0; i != dim; i++) {
+      ab += vec1[i] * vec2[i];
+      a2 += vec1[i] * vec1[i];
+      b2 += vec2[i] * vec2[i];
+    }
+    float a2f = std::sqrt(a2);
+    float b2f = std::sqrt(b2);
+    return (ab != 0) ? (1.f - ab / (a2f * b2f)) : 0;
   }
-
+  
   inline float
   cubvec_l2_distance (const float *vec1, const float *vec2, size_t dim)
   {
