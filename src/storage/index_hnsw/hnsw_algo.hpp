@@ -55,15 +55,12 @@ namespace cubhnsw
 			  const float *__restrict vec2,
 			  std::size_t dim)
   {
-    float ab = 0.0f, a2 = 0.0f, b2 = 0.0f;
-        for (std::size_t i = 0; i != dim; i++) {
-      ab += vec1[i] * vec2[i];
-      a2 += vec1[i] * vec1[i];
-      b2 += vec2[i] * vec2[i];
-    }
-    float a2f = std::sqrt(a2);
-    float b2f = std::sqrt(b2);
-    return (ab != 0) ? (1.f - ab / (a2f * b2f)) : 0;
+    float ab = 0.0f;
+    for (std::size_t i = 0; i != dim; ++i)
+      {
+	ab += float(vec1[i]) * float(vec2[i]);
+      }
+    return 1.0f - ab;
   }
 
   inline float
