@@ -55,14 +55,13 @@ namespace cubhnsw
 			  const float *__restrict vec2,
 			  std::size_t dim)
   {
-#if 0
-    float ab = 0.0f;
+    float dot = 0.0f;
     for (std::size_t i = 0; i != dim; ++i)
       {
-	ab += float(vec1[i]) * float(vec2[i]);
+	dot += vec1[i] * vec2[i];
       } 
-    return 1.0f - ab;
-#endif
+    return 1.0f - dot;
+#if 0
         float ab{}, a2{}, b2{};
         for (std::size_t i = 0; i != dim; ++i) {
             float ai = static_cast<float>(vec1[i]);
@@ -75,6 +74,7 @@ namespace cubhnsw
         result_if_zero[0][1] = result_if_zero[1][0] = 1;
         result_if_zero[1][1] = 0;
         return result_if_zero[a2 == 0][b2 == 0];
+#endif
   }
 
   inline float
@@ -87,16 +87,14 @@ namespace cubhnsw
   inline bool
   cubvec_cosine_normalize (float *__restrict vec, std::size_t dim)
   {
-#if 0
     float norm_sq = 0.0f;
 
-    #pragma omp simd reduction(+ : norm_sq)
     for (std::size_t i = 0; i < dim; ++i)
       {
 	norm_sq += vec[i] * vec[i];
       }
 
-    constexpr float eps = 1e-12f;
+    constexpr float eps = std::numeric_limits<float>::epsilon();
     if (norm_sq < eps)
       {
 	// zero / near-zero vector is invalid for cosine/IP
@@ -105,12 +103,10 @@ namespace cubhnsw
 
     const float inv_norm = 1.0f / std::sqrt (norm_sq);
 
-    #pragma omp simd
     for (std::size_t i = 0; i < dim; ++i)
       {
 	vec[i] *= inv_norm;
       }
-#endif
 
     return true;  // unit vector
   }
