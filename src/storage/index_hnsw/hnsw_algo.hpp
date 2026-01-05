@@ -101,11 +101,12 @@ namespace cubhnsw
 	return false;
       }
 
-    const float inv_norm = 1.0f / std::sqrt (norm_sq);
+    // const float inv_norm = 1.0f / std::sqrt (norm_sq);
+    const float norm = std::sqrt(norm_sq);
 
     for (std::size_t i = 0; i < dim; ++i)
       {
-	vec[i] *= inv_norm;
+	vec[i] /= norm;
       }
 
     return true;  // unit vector
