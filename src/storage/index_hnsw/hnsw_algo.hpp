@@ -65,8 +65,8 @@ namespace cubhnsw
 #endif
         float ab{}, a2{}, b2{};
         for (std::size_t i = 0; i != dim; ++i) {
-            float ai = static_cast<float>(a[i]);
-            float bi = static_cast<float>(b[i]);
+            float ai = static_cast<float>(vec[i]);
+            float bi = static_cast<float>(vec[i]);
             ab += ai * bi, a2 += ai * ai, b2 += bi * bi;
         }
 
