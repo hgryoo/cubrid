@@ -55,12 +55,26 @@ namespace cubhnsw
 			  const float *__restrict vec2,
 			  std::size_t dim)
   {
+#if 0
     float ab = 0.0f;
     for (std::size_t i = 0; i != dim; ++i)
       {
 	ab += float(vec1[i]) * float(vec2[i]);
       } 
     return 1.0f - ab;
+#endif
+        float ab{}, a2{}, b2{};
+        for (std::size_t i = 0; i != dim; ++i) {
+            float ai = static_cast<float>(a[i]);
+            float bi = static_cast<float>(b[i]);
+            ab += ai * bi, a2 += ai * ai, b2 += bi * bi;
+        }
+
+        float result_if_zero[2][2];
+        result_if_zero[0][0] = 1 - ab / (std::sqrt(a2) * std::sqrt(b2));
+        result_if_zero[0][1] = result_if_zero[1][0] = 1;
+        result_if_zero[1][1] = 0;
+        return result_if_zero[a2 == 0][b2 == 0];
   }
 
   inline float
@@ -97,6 +111,7 @@ namespace cubhnsw
 	vec[i] *= inv_norm;
       }
 #endif
+
     return true;  // unit vector
   }
 
