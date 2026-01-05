@@ -59,7 +59,7 @@ namespace cubhnsw
     for (std::size_t i = 0; i != dim; ++i)
       {
 	ab += float(vec1[i]) * float(vec2[i]);
-      }
+      } 
     return 1.0f - ab;
   }
 
@@ -73,6 +73,7 @@ namespace cubhnsw
   inline bool
   cubvec_cosine_normalize (float *__restrict vec, std::size_t dim)
   {
+#if 0
     float norm_sq = 0.0f;
 
     #pragma omp simd reduction(+ : norm_sq)
@@ -95,7 +96,7 @@ namespace cubhnsw
       {
 	vec[i] *= inv_norm;
       }
-
+#endif
     return true;  // unit vector
   }
 
