@@ -19,8 +19,11 @@ set @a = (select vec from random_xs_20_angular_train limit 1); \
 select /*+ recompile no_parallel_heap_scan */ id, vec <c> @a from random_xs_20_angular_train order by vec <c> @a limit 5; "
 
 # loaddb test
+wget http://ann-benchmarks.com/nytimes-256-angular.hdf5
 cubrid loaddb -h nytimes-256-angular.hdf5 -C -u dba demodb
-cubrid loaddb -s nytimes_256_angular_schema -d nytimes_256_angular_object -C -u dba demodb -v
+echo "CREATE VECTOR INDEX vidx_nytimes_train ON nytimes_256_angular_train (vec COSINE) WITH (M = 16, ef_construction = 200);" >> nytimes_256_angular_schema
+
+cubrid loaddb -s nytimes_256_angular_schema -d nytimes_256_angular_object -C -u dba demodb -v --no-statistics --no-user-specified-name
 
 cubrid loaddb -s random_xs_20_angular_schema -d random_xs_20_angular_object -C -u dba demodb -v
 
