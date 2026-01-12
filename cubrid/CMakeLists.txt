@@ -487,11 +487,11 @@ set(STORAGE_HEADERS
 if(USE_SIMD_NATIVE)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     set_source_files_properties(${INDEX_HNSW_DIR}/vector_distance_omp_simd.cpp
-        PROPERTIES COMPILE_FLAGS "-march=native -O3 -ftree-vectorize -mprefer-vector-width=512 -ffast-math -fno-trapping-math -funroll-loops -fassociative-math -fno-signed-zeros"
+        PROPERTIES COMPILE_FLAGS "-march=native -O3 -ftree-vectorize -mprefer-vector-width=512 -fno-trapping-math -funroll-loops -fno-signed-zeros"
     )
   elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set_source_files_properties(${INDEX_HNSW_DIR}/vector_distance_omp_simd.cpp
-        PROPERTIES COMPILE_FLAGS "-march=native -O3 -fvectorize -mprefer-vector-width=512 -ffast-math -fno-trapping-math -funroll-loops -fassociative-math -fno-signed-zeros"
+        PROPERTIES COMPILE_FLAGS "-march=native -O3 -fvectorize -mprefer-vector-width=512 -fno-trapping-math -funroll-loops -fno-signed-zeros"
     )
   endif()
 endif()
