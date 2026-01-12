@@ -33,7 +33,7 @@
 
 #include "faiss/utils/distances.h" // faiss
 
-#define HNSW_ALGO_DEBUG 0
+#define HNSW_ALGO_DEBUG 1
 #define HNSW_ALGO_PRINT(fmt, ...) do { if (HNSW_ALGO_DEBUG) { fprintf (stdout, fmt, ##__VA_ARGS__); fflush (stdout); } } while (0)
 
 namespace cubhnsw
@@ -59,21 +59,22 @@ namespace cubhnsw
     for (std::size_t i = 0; i != dim; ++i)
       {
 	dot += vec1[i] * vec2[i];
-      } 
+      }
     return 1.0f - dot;
 #if 0
-        float ab{}, a2{}, b2{};
-        for (std::size_t i = 0; i != dim; ++i) {
-            float ai = static_cast<float>(vec1[i]);
-            float bi = static_cast<float>(vec2[i]);
-            ab += ai * bi, a2 += ai * ai, b2 += bi * bi;
-        }
+    float ab {}, a2 {}, b2 {};
+    for (std::size_t i = 0; i != dim; ++i)
+      {
+	float ai = static_cast<float> (vec1[i]);
+	float bi = static_cast<float> (vec2[i]);
+	ab += ai * bi, a2 += ai * ai, b2 += bi * bi;
+      }
 
-        float result_if_zero[2][2];
-        result_if_zero[0][0] = 1 - ab / (std::sqrt(a2) * std::sqrt(b2));
-        result_if_zero[0][1] = result_if_zero[1][0] = 1;
-        result_if_zero[1][1] = 0;
-        return result_if_zero[a2 == 0][b2 == 0];
+    float result_if_zero[2][2];
+    result_if_zero[0][0] = 1 - ab / (std::sqrt (a2) * std::sqrt (b2));
+    result_if_zero[0][1] = result_if_zero[1][0] = 1;
+    result_if_zero[1][1] = 0;
+    return result_if_zero[a2 == 0][b2 == 0];
 #endif
   }
 
@@ -102,7 +103,7 @@ namespace cubhnsw
       }
 
     // const float inv_norm = 1.0f / std::sqrt (norm_sq);
-    const float norm = std::sqrt(norm_sq);
+    const float norm = std::sqrt (norm_sq);
 
     for (std::size_t i = 0; i < dim; ++i)
       {
@@ -600,6 +601,7 @@ namespace cubhnsw
 	      {
 		visits.insert (successor_slot);
 	      }
+	    HNSW_ALGO_PRINT ("[seek_on_layer_] radius: %f\n", radius);
 
 	    distance_t sucessor_dist = compute_distance_from_query_ (query, successor_slot);
 	    if (top.size () < expansion_limit || sucessor_dist < radius)
@@ -608,9 +610,10 @@ namespace cubhnsw
 		top.insert (candidate_t<Traits> (sucessor_dist, successor_slot), expansion_limit);
 		radius = top.top ().distance;
 
-		HNSW_ALGO_PRINT ("[search_to_insert] radius: %f\n", radius);
-		HNSW_ALGO_PRINT ("[search_to_insert] sucessor_dist: %f\n", sucessor_dist);
-		HNSW_ALGO_PRINT ("[search_to_insert] top.size(), expansion_limit: %zu, %zu\n", top.size(), expansion_limit);
+		HNSW_ALGO_PRINT ("[seek_on_layer_] radius: %f\n", radius);
+		HNSW_ALGO_PRINT ("[seek_on_layer_] sucessor_dist: %f\n", sucessor_dist);
+		HNSW_ALGO_PRINT ("[seek_on_layer_] sucessor_slot: %s\n", dump_oid (successor_slot).c_str ());
+		HNSW_ALGO_PRINT ("[seek_on_layer_] top.size(), expansion_limit: %zu, %zu\n", top.size(), expansion_limit);
 	      }
 	  }
       }
@@ -679,6 +682,7 @@ namespace cubhnsw
 				     candidates_view_t<Traits> &new_neighbors,
 				     level_t level)
   {
+    std::size_t layer_connectivity = level == 0 ? m_connectivity * 2 : m_connectivity;
     for (auto n : new_neighbors)
       {
 	slot_id_t close_slot = n.slot;
@@ -693,7 +697,8 @@ namespace cubhnsw
 	  // TODO: exclusive??
 	  pinned_t close_node_blk = m_storage->get_node_by_slot_id (close_slot, lock_mode::exclusive);
 	  close_header = get_neighbors (close_node_blk, level);
-	  if (close_header.size () < m_connectivity)
+
+	  if (close_header.size () < layer_connectivity)
 	    {
 	      close_header.push_back (new_slot);
 	      continue;
@@ -717,7 +722,7 @@ namespace cubhnsw
 	// remove all neighbors from close_header
 	close_header.clear();
 	candidates_view_t<Traits> top_view;
-	(void) refine_ (m_connectivity, top_for_refine, top_view);
+	(void) refine_ (layer_connectivity, top_for_refine, top_view);
 	for (std::size_t i = 0; i != top_view.size (); i++)
 	  {
 	    close_header.push_back (top_view[i].slot);
