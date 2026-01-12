@@ -362,7 +362,7 @@ namespace cubhnsw
     m_inverse_log_connectivity = 1.0 / std::log (static_cast<double> (build_params.m));
 
     // pre-reserve top_for_refine
-    m_context.m_top_for_refine.reserve (m_connectivity + 1);
+    m_context.m_top_for_refine.reserve (m_connectivity * 2 + 1);
   }
 
   template <typename Traits>
