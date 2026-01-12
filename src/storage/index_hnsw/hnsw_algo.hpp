@@ -33,7 +33,7 @@
 
 #include "faiss/utils/distances.h" // faiss
 
-#define HNSW_ALGO_DEBUG 1
+#define HNSW_ALGO_DEBUG 0
 #define HNSW_ALGO_PRINT(fmt, ...) do { if (HNSW_ALGO_DEBUG) { fprintf (stdout, fmt, ##__VA_ARGS__); fflush (stdout); } } while (0)
 
 namespace cubhnsw
