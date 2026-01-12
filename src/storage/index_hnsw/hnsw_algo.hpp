@@ -379,7 +379,7 @@ namespace cubhnsw
 
     // TODO: now, connectivity_base is not considered.
     // std::size_t connecitvity_max = m_connectivity;
-    std::size_t top_limit = std::max (m_connectivity + 1, expansion);
+    std::size_t top_limit = std::max (m_connectivity * 2 + 1, expansion);
     if (!top.reserve (top_limit))
       {
 	assert (false);
