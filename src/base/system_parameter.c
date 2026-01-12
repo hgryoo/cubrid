@@ -4470,7 +4470,7 @@ SYSPRM_PARAM prm_Def[] = {
    PRM_CLEAR_DYNAMIC_FLAG,
    {false, {.i = 8}},
    {false, {.i = 8}},
-   {false, {.i = 64}}, {false, {.i = 2}},
+   {false, {.i = 64}}, {false, {.i = 1}},
    (char *) NULL,
    (DUP_PRM_FUNC) NULL,
    (DUP_PRM_FUNC) NULL},
@@ -5157,7 +5157,7 @@ SYSPRM_PARAM prm_Def[] = {
    {false, {.i = PRM_VECTOR_INDEX_EF_SEARCH}},
    {false, {.i = prm_vector_index_ef_search_upper}},
    {false, {.i = prm_vector_index_ef_search_lower}},
-      (char *) NULL,
+   (char *) NULL,
    (DUP_PRM_FUNC) NULL,
    (DUP_PRM_FUNC) NULL},
 };
