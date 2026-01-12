@@ -466,6 +466,7 @@ set(STORAGE_SOURCES
   ${STORAGE_DIR}/tde.c
 
   # ${STORAGE_DIR}/hnsw_usearch.cpp
+  ${INDEX_HNSW_DIR}/vector_distance_omp_simd.cpp
   ${INDEX_HNSW_DIR}/hnsw_usearch_ng.cpp
   ${INDEX_HNSW_DIR}/hnsw.cpp
   ${INDEX_HNSW_DIR}/hnsw_api.cpp
@@ -483,6 +484,7 @@ set(STORAGE_HEADERS
   ${INDEX_HNSW_DIR}/hnsw_api.hpp
 )
 
+<<<<<<< HEAD
 #if(USE_SIMD_NATIVE)
 #  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 #    set_source_files_properties(${INDEX_HNSW_DIR}/hnsw_usearch_ng.cpp
@@ -494,6 +496,19 @@ set(STORAGE_HEADERS
 #    )
 #  endif()
 #endif()
+=======
+if(USE_SIMD_NATIVE)
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set_source_files_properties(${INDEX_HNSW_DIR}/vector_distance_omp_simd.cpp
+        PROPERTIES COMPILE_FLAGS "-march=native -O3 -ftree-vectorize -mprefer-vector-width=512 -ffast-math -fno-trapping-math -funroll-loops -fassociative-math -fno-signed-zeros"
+    )
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set_source_files_properties(${INDEX_HNSW_DIR}/vector_distance_omp_simd.cpp
+        PROPERTIES COMPILE_FLAGS "-march=native -O3 -fvectorize -mprefer-vector-width=512 -ffast-math -fno-trapping-math -funroll-loops -fassociative-math -fno-signed-zeros"
+    )
+  endif()
+endif()
+>>>>>>> hgryoo/CUBVEC-148
 
 set(SESSION_SOURCES
   ${SESSION_DIR}/session.c
