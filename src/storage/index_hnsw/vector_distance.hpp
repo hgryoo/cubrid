@@ -29,33 +29,6 @@ namespace cubhnsw
 
 
   // normalize
-  inline bool
-  cubvec_cosine_normalize (float *__restrict vec, std::size_t dim)
-  {
-    float norm_sq = 0.0f;
-
-    #pragma omp simd reduction(+ : norm_sq)
-    for (std::size_t i = 0; i < dim; ++i)
-      {
-	norm_sq += vec[i] * vec[i];
-      }
-
-    constexpr float eps = 1e-12f;
-    if (norm_sq < eps)
-      {
-	// zero / near-zero vector is invalid for cosine/IP
-	return false;
-      }
-
-    const float inv_norm = 1.0f / std::sqrt (norm_sq);
-
-    #pragma omp simd
-    for (std::size_t i = 0; i < dim; ++i)
-      {
-	vec[i] *= inv_norm;
-      }
-
-    return true;  // unit vector
-  }
+  bool cubvec_cosine_normalize (float *__restrict vec, std::size_t dim);
 
 } // namespace cubhnsw
