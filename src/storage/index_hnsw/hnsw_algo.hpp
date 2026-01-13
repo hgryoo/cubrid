@@ -367,7 +367,7 @@ namespace cubhnsw
       pinned_t new_node_blk = m_storage->get_node_by_slot_id (new_slot, lock_mode::exclusive);
       while (true)
 	{
-	  (void) seek_on_layer_ (vector, closest_slot, level, top_limit);
+	  (void) seek_on_layer_ (vector, closest_slot, level, m_expansion);
 
 	  candidates_view_t<Traits> closest_view;
 	  {
