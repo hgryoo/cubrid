@@ -112,6 +112,10 @@ class hnsw_usearch_ng final:public hnsw_index
 #if defined (SERVER_MODE)
     cubthread::entry_workpool *m_worker_pool;
     size_t m_worker_pool_size;
+
+    std::mutex m_active_tasks_mutex {};
+    std::condition_variable m_all_tasks_done_cv {};
+    int m_active_tasks;
 #endif
 };
 
@@ -212,6 +216,7 @@ hnsw_usearch_ng::init (cubthread::entry *thread_p, PAGE_PTR page_ptr, RECDES &re
   m_worker_pool_size = std::thread::hardware_concurrency ();
   m_worker_pool = cubthread::get_manager ()->create_worker_pool (
 			  m_worker_pool_size, m_worker_pool_size, "hnsw insertion worker pool", NULL, 1, false);
+  m_active_tasks = 0;
 #endif
   return NO_ERROR;
 }
@@ -235,8 +240,14 @@ int
 hnsw_usearch_ng::add (cubthread::entry *thread_p, int n_vectors, const OID *oid, const float *vector)
 {
 
-  // Push insert each vector insertion task to worker pool
+#if defined (SERVER_MODE)
+  {
+    std::lock_guard<std::mutex> lock (m_active_tasks_mutex);
+    m_active_tasks = 0;
+  }
+#endif
 
+  // Push insert each vector insertion task to worker pool
   for (int i = 0; i < n_vectors; ++i)
     {
 #if defined (SERVER_MODE)
@@ -254,6 +265,13 @@ hnsw_usearch_ng::add (cubthread::entry *thread_p, int n_vectors, const OID *oid,
       m_algo->add (thread_p, oid[i], vector + i * m_build_params.dimension);
 #endif
     }
+
+#if defined (SERVER_MODE)
+  // join on all tasks done
+  std::unique_lock<std::mutex> lock (m_active_tasks_mutex);
+  m_all_tasks_done_cv.wait (lock, [this] { return m_active_tasks == 0; });
+#endif
+
   return NO_ERROR;
 }
 
@@ -261,6 +279,13 @@ int
 hnsw_usearch_ng::add_vector (cubthread::entry &thread_ref, const OID oid, const float *vector, const int tran_index)
 {
   thread_ref.tran_index = tran_index;
+
+#if defined (SERVER_MODE)
+  {
+    std::lock_guard<std::mutex> lock (m_active_tasks_mutex);
+    ++m_active_tasks;
+  }
+#endif
 
   if (m_build_params.metric == DB_VECTOR_DISTANCE_METRIC::METRIC_COSINE
       && db_vector_is_all_zeros (vector, m_build_params.dimension))
@@ -270,6 +295,18 @@ hnsw_usearch_ng::add_vector (cubthread::entry &thread_ref, const OID oid, const 
     }
 
   m_algo->add (&thread_ref, oid, vector);
+
+#if defined (SERVER_MODE)
+  {
+    std::lock_guard<std::mutex> lock (m_active_tasks_mutex);
+    --m_active_tasks;
+    if (m_active_tasks == 0)
+      {
+	m_all_tasks_done_cv.notify_all ();
+      }
+  }
+#endif
+
   return NO_ERROR;
 }
 

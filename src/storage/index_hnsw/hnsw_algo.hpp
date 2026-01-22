@@ -319,7 +319,7 @@ namespace cubhnsw
     context.m_thread_p = thread_p;
     context.clear_candidates();
 
-    std::size_t connectivity_max = m_connectivity * 2 + 1;
+    std::size_t connectivity_max = m_connectivity * 2;
 
     // pre-reserve top_for_refine
     context.m_top_for_refine.reserve (connectivity_max);
@@ -329,7 +329,7 @@ namespace cubhnsw
 
     // TODO: now, connectivity_base is not considered.
     // std::size_t connecitvity_max = m_connectivity;
-    std::size_t top_limit = std::max (connectivity_max, m_expansion);
+    std::size_t top_limit = std::max (connectivity_max + 1, m_expansion);
     if (!top.reserve (top_limit) || !next.reserve (top_limit))
       {
 	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, top_limit * sizeof (candidate_t<Traits>));

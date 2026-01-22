@@ -57,33 +57,6 @@ namespace cubhnsw
     root_size = root.get_size();
   }
 
-  disk_storage::slot_id_t
-  disk_storage::add_vector (cubthread::entry *thread_p, const OID &key, const float *vector)
-  {
-    std::size_t bytes = this->get_dimension () * sizeof (float);
-
-    if (m_vec_pool_vfid.fileid == 0)
-      {
-	assert (false);
-	return slot_id_t { -1, -1, -1 };
-      }
-
-    page_handle page_ptr = get_page_to_insert (thread_p, m_vec_pool_vfid, m_last_vec_vpid, bytes);
-    assert (page_ptr.get() != nullptr);
-
-    RECDES recdes = { IO_MAX_PAGE_SIZE, (int) bytes, REC_HOME, (char *) vector };
-    PGSLOTID slot_id;
-
-    int error_code = spage_insert (thread_p, page_ptr.get(), &recdes, &slot_id);
-    if (error_code != SP_SUCCESS)
-      {
-	assert (false);
-	return slot_id_t { -1, -1, -1 };
-      }
-
-    return slot_id_t { m_last_vec_vpid.pageid, slot_id, m_last_vec_vpid.volid };
-  }
-
   disk_storage::page_handle
   disk_storage::get_page_to_insert (cubthread::entry *thread_p, VFID &vfid, VPID &last_vpid, std::size_t bytes)
   {
@@ -267,47 +240,5 @@ namespace cubhnsw
     pgbuf_set_dirty (thread_p, page, DONT_FREE);
 
     return NO_ERROR;
-  }
-
-  int
-  disk_storage::create_continous_file (THREAD_ENTRY *thread_p, VFID &vfid, VPID &vpid)
-  {
-    int error_code = NO_ERROR;
-    FILE_DESCRIPTORS des;
-
-    memset (&des, 0, sizeof (des));
-
-    error_code = file_create_with_npages (thread_p, FILE_BTREE, 1, &des, (VFID *) &vfid);
-    if (error_code != NO_ERROR)
-      {
-	return error_code;
-      }
-
-    log_sysop_start (thread_p);
-    error_code = file_alloc_sticky_first_page (thread_p, &vfid, initialize_new_page, NULL, &vpid, NULL);
-    if (error_code != NO_ERROR)
-      {
-	ASSERT_ERROR ();
-	log_sysop_abort (thread_p);
-	return error_code;
-      }
-    log_sysop_commit (thread_p);
-
-#if 0  // TODO: I think we don't need TDE for vector index files
-    error_code = heap_get_class_tde_algorithm (thread_p, &btid->topclass_oid, &tde_algo);
-    if (error_code != NO_ERROR)
-      {
-	VFID_SET_NULL (&btid->ovfid);
-	return error_code;
-      }
-    error_code = file_apply_tde_algorithm (thread_p, &btid->ovfid, tde_algo);
-    if (error_code != NO_ERROR)
-      {
-	VFID_SET_NULL (&btid->ovfid);
-	return error_code;
-      }
-#endif
-
-    return error_code;
   }
 }
