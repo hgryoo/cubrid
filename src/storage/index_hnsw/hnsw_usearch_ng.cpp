@@ -214,8 +214,15 @@ hnsw_usearch_ng::init (cubthread::entry *thread_p, PAGE_PTR page_ptr, RECDES &re
 
 #if defined (SERVER_MODE)
   m_worker_pool_size = std::thread::hardware_concurrency ();
-  m_worker_pool = cubthread::get_manager ()->create_worker_pool (
-			  m_worker_pool_size, m_worker_pool_size, "hnsw insertion worker pool", NULL, 1, false);
+  if (m_worker_pool_size > 1)
+    {
+      m_worker_pool = cubthread::get_manager ()->create_worker_pool (
+			      m_worker_pool_size, m_worker_pool_size, "hnsw insertion worker pool", NULL, 1, false);
+    }
+  else
+    {
+      m_worker_pool = NULL;
+    }
   m_active_tasks = 0;
 #endif
   return NO_ERROR;
@@ -241,20 +248,37 @@ hnsw_usearch_ng::add (cubthread::entry *thread_p, int n_vectors, const OID *oid,
 {
 
 #if defined (SERVER_MODE)
-  {
-    std::lock_guard<std::mutex> lock (m_active_tasks_mutex);
-    m_active_tasks = 0;
-  }
+  if (m_worker_pool != NULL)
+    {
+      std::lock_guard<std::mutex> lock (m_active_tasks_mutex);
+      m_active_tasks = 0;
+    }
 #endif
 
   // Push insert each vector insertion task to worker pool
   for (int i = 0; i < n_vectors; ++i)
     {
 #if defined (SERVER_MODE)
-      auto exec_f = std::bind (&hnsw_usearch_ng::add_vector, std::ref (*this), std::placeholders::_1, oid[i],
-			       vector + i * m_build_params.dimension, thread_p->tran_index);
-      cubthread::entry_callable_task *task = new cubthread::entry_callable_task (exec_f);
-      cubthread::get_manager()->push_task (m_worker_pool, task);
+      if (m_worker_pool != NULL)
+	{
+	  auto exec_f = std::bind (&hnsw_usearch_ng::add_vector, std::ref (*this), std::placeholders::_1, oid[i],
+				   vector + i * m_build_params.dimension, thread_p->tran_index);
+	  cubthread::entry_callable_task *task = new cubthread::entry_callable_task (exec_f);
+	  cubthread::get_manager()->push_task (m_worker_pool, task);
+	}
+      else
+	{
+	  for (int i = 0; i < n_vectors; ++i)
+	    {
+	      if (m_build_params.metric == DB_VECTOR_DISTANCE_METRIC::METRIC_COSINE
+		  && db_vector_is_all_zeros (vector + i * m_build_params.dimension, m_build_params.dimension))
+		{
+		  er_log_debug (ARG_FILE_LINE, "Vector is all zeros, skipping add");
+		  continue;
+		}
+	      m_algo->add (thread_p, oid[i], vector + i * m_build_params.dimension);
+	    }
+	}
 #else
       if (m_build_params.metric == DB_VECTOR_DISTANCE_METRIC::METRIC_COSINE
 	  && db_vector_is_all_zeros (vector + i * m_build_params.dimension, m_build_params.dimension))
@@ -268,8 +292,11 @@ hnsw_usearch_ng::add (cubthread::entry *thread_p, int n_vectors, const OID *oid,
 
 #if defined (SERVER_MODE)
   // join on all tasks done
-  std::unique_lock<std::mutex> lock (m_active_tasks_mutex);
-  m_all_tasks_done_cv.wait (lock, [this] { return m_active_tasks == 0; });
+  if (m_worker_pool != NULL)
+    {
+      std::unique_lock<std::mutex> lock (m_active_tasks_mutex);
+      m_all_tasks_done_cv.wait (lock, [this] { return m_active_tasks == 0; });
+    }
 #endif
 
   return NO_ERROR;
