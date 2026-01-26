@@ -33,7 +33,7 @@ namespace cubhnsw
   {
     m_vfid = giid.vfid;
     m_root_vpid = VPID { giid.root_pageid, giid.vfid.volid };
-    m_last_node_vpid = m_root_vpid;
+    VPID_SET_NULL (&m_last_node_vpid);
   }
 
   disk_storage::~disk_storage ()
@@ -45,7 +45,7 @@ namespace cubhnsw
   bool
   disk_storage::is_empty ()
   {
-    return m_is_empty;
+    return m_is_empty.load();
   }
 
   // not yet
@@ -57,31 +57,56 @@ namespace cubhnsw
     root_size = root.get_size();
   }
 
-  disk_storage::page_handle
+  disk_storage::insert_page_t
   disk_storage::get_page_to_insert (cubthread::entry *thread_p, VFID &vfid, VPID &last_vpid, std::size_t bytes)
   {
     PAGE_PTR page_ptr = nullptr;
 
-    if (VPID_ISNULL (&last_vpid))
+    PAGE_PTR raw = nullptr;
+    VPID used_vpid;
+
+    VPID vpid_snapshot;
+    {
+      vpid_snapshot = last_vpid;
+    }
+
+    if (VPID_ISNULL (&vpid_snapshot))
       {
-	// alloc a new page in case of root page
-	page_ptr = alloc_new_page (thread_p, vfid, last_vpid);
+	// alloc_new_page should update last_vpid under the same mutex (either here or inside)
+	raw = alloc_new_page (thread_p, vfid, last_vpid);
+	// page_ptr is already fixed/latched as alloc_new_page defines
+	used_vpid = last_vpid;
       }
     else
       {
-	page_ptr = pgbuf_fix (thread_p, &last_vpid, OLD_PAGE, PGBUF_LATCH_WRITE, PGBUF_UNCONDITIONAL_LATCH);
-	if (spage_get_free_space (thread_p, page_ptr) < static_cast<int> (bytes))
+	raw = pgbuf_fix (thread_p, &vpid_snapshot,
+			 OLD_PAGE,
+			 PGBUF_LATCH_READ,
+			 PGBUF_UNCONDITIONAL_LATCH);
+	if (spage_get_free_space (thread_p, raw) < (int)bytes)
 	  {
-	    // not enough
-	    pgbuf_unfix (thread_p, page_ptr);
-	    page_ptr = alloc_new_page (thread_p, vfid, last_vpid);
+	    pgbuf_unfix (thread_p, raw);
+	    raw = alloc_new_page (thread_p, vfid, last_vpid);
+	    used_vpid = last_vpid;
+	  }
+	else
+	  {
+	    pgbuf_unfix (thread_p, raw);
+	    raw = pgbuf_fix (thread_p, &vpid_snapshot,
+			     OLD_PAGE,
+			     PGBUF_LATCH_WRITE,
+			     PGBUF_UNCONDITIONAL_LATCH);
+	    used_vpid = vpid_snapshot;
 	  }
       }
 
-    return page_handle (page_ptr, [this, thread_p] (PAGE_PTR page_ptr) noexcept
+    return insert_page_t
     {
-      pgbuf_set_dirty (thread_p, page_ptr, FREE);
-    });
+      used_vpid,
+      PAGE_PTR_WITH_DELETER (
+	      reinterpret_cast<PAGE_PTR> (raw),
+      page_deleter{ thread_p })
+    };
   }
 
   PAGE_PTR
@@ -110,7 +135,10 @@ namespace cubhnsw
   {
     // insert node
     std::size_t bytes = this->node_bytes_ (level, get_dimension(), get_connectivity());
-    page_handle page_ptr = get_page_to_insert (thread_p, m_vfid, m_last_node_vpid, bytes);
+
+    bool is_new_allocated = false;
+    std::unique_lock<std::mutex> lk (m_insert_mutex);
+    insert_page_t insert_page = get_page_to_insert (thread_p, m_vfid, m_last_node_vpid, bytes);
 
     RECDES recdes;
     char rec_buf[IO_MAX_PAGE_SIZE];
@@ -129,14 +157,14 @@ namespace cubhnsw
 
     PGSLOTID slot_id;
 
-    int error_code = spage_insert (thread_p, page_ptr.get(), &recdes, &slot_id);
+    int error_code = spage_insert (thread_p, insert_page.page.get(), &recdes, &slot_id);
     if (error_code != SP_SUCCESS)
       {
 	ASSERT_ERROR ();
 	return slot_id_t { -1, -1, -1 };
       }
 
-    return { m_last_node_vpid.pageid, slot_id, m_last_node_vpid.volid };
+    return { insert_page.vpid.pageid, slot_id, insert_page.vpid.volid };
   }
 
   disk_storage::pinned_t
@@ -229,7 +257,7 @@ namespace cubhnsw
   void
   disk_storage::set_empty (bool is_empty) noexcept
   {
-    m_is_empty = is_empty;
+    m_is_empty.store (is_empty);
   }
 
   int

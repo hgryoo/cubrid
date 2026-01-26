@@ -23,6 +23,8 @@
 #include <vector>
 #include <unordered_map>
 #include <cstring>
+#include <shared_mutex>
+#include <atomic>
 
 #include "hnsw_storage.hpp"
 #include "thread_compat.hpp"
@@ -73,8 +75,6 @@ namespace cubhnsw
       using block_id_t = disk_traits_t::block_id_t;
       using slot_id_t = disk_traits_t::slot_id_t;
 
-      using page_handle = scoped_holder<PAGE_PTR, std::function<void (PAGE_PTR)>>;
-
       disk_storage (const BTID &giid, const hnsw_build_params &params);
       virtual ~disk_storage();
 
@@ -99,11 +99,32 @@ namespace cubhnsw
 
     protected:
 
+      struct page_deleter
+      {
+	cubthread::entry *thread_p;
+
+	void operator() (PAGE_PTR p) const noexcept
+	{
+	  if (p != nullptr)
+	    {
+	      pgbuf_set_dirty (thread_p, p, FREE);
+	    }
+	}
+      };
+
+      using PAGE_TYPE = std::remove_pointer<PAGE_PTR>::type;
+      using PAGE_PTR_WITH_DELETER = std::unique_ptr<PAGE_TYPE, page_deleter>;
+      struct insert_page_t
+      {
+	VPID vpid;
+	PAGE_PTR_WITH_DELETER page;
+      };
+
       // page alloc helpers
       static int initialize_new_page (THREAD_ENTRY *thread_p, PAGE_PTR page, void *args);
 
       PAGE_PTR alloc_new_page (cubthread::entry *thread_p, VFID &vfid, VPID &vpid);
-      page_handle get_page_to_insert (cubthread::entry *thread_p, VFID &vfid, VPID &last_vpid, std::size_t bytes);
+      insert_page_t get_page_to_insert (cubthread::entry *thread_p, VFID &vfid, VPID &last_vpid, std::size_t bytes);
 
     private:
       VFID m_vfid;
@@ -111,6 +132,8 @@ namespace cubhnsw
       VPID m_root_vpid;
       VPID m_last_node_vpid;
 
-      bool m_is_empty = true;
+      std::mutex m_insert_mutex;
+
+      std::atomic<bool> m_is_empty = true;
   };
 }

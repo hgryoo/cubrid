@@ -178,22 +178,6 @@ namespace cubhnsw
       using neighbors_ref_type = neighbors_ref_t<traits>;
 
       using pinned_t = pinned_block_t<Traits, std::function<void (pinned_block_data<Traits>&)>>;
-      struct context_t
-      {
-	top_candidates_t<Traits> m_top_candidates;
-	top_candidates_t<Traits> m_top_for_refine;
-	next_candidates_t<Traits> m_next_candidates;
-	visited_set_t<Traits> m_visits;
-	std::default_random_engine m_level_generator;
-
-	void clear_candidates ()
-	{
-	  m_top_candidates.clear ();
-	  m_top_for_refine.clear ();
-	  m_next_candidates.clear();
-	  m_visits.clear();
-	}
-      };
 
       algo (const hnsw_build_params &build_params);
 
@@ -222,7 +206,7 @@ namespace cubhnsw
       // refining links
       void form_links_to_closest_ (algo_context_t<Traits> &context, const pinned_t &new_slot, const level_t level,
 				   candidates_view_t<Traits> &out);
-      int form_reverse_links_ (algo_context_t<Traits> &context, const pinned_t &new_slot, const float *value,
+      int form_reverse_links_ (algo_context_t<Traits> &context, const slot_id_t new_slot, const float *value,
 			       candidates_view_t<Traits> &new_neighbors,
 			       level_t level);
       void refine_ (cubthread::entry *thread_p, std::size_t needed, top_candidates_t<Traits> &top,
@@ -340,7 +324,7 @@ namespace cubhnsw
     level_t curr_max_level, new_target_level;
     slot_id_t entry_slot, new_slot;
 
-    pinned_t root_block = m_storage->get_root (context.m_thread_p, lock_mode::exclusive);
+    pinned_t root_block = m_storage->get_root (context.m_thread_p, lock_mode::shared);
     root_type root_node = root_type (root_block->data);
     {
       curr_max_level = root_node.get_level(); // get max_level from root page
@@ -359,6 +343,7 @@ namespace cubhnsw
 	      abort ();
 	    }
 	}
+
       //
       new_slot = m_storage->add_node (context.m_thread_p, key, vector, new_target_level);
       //
@@ -366,13 +351,13 @@ namespace cubhnsw
       if (m_storage->is_empty())
 	{
 	  {
-	    //pinned_t cleanup {std::move (root_block)};
+	    pinned_t cleanup {std::move (root_block)};
 	  }
 
-	  //pinned_t promoted_root = m_storage->get_root (lock_mode::exclusive);
-	  //root_type promoted_root_node = root_type (promoted_root.data());
-	  root_node.set_entry (new_slot);
-	  root_node.set_level (new_target_level);
+	  pinned_t promoted_root = m_storage->get_root (context.m_thread_p, lock_mode::exclusive);
+	  root_type promoted_root_node = root_type (promoted_root->data);
+	  promoted_root_node.set_entry (new_slot);
+	  promoted_root_node.set_level (new_target_level);
 	  m_storage->set_empty (false);
 	  return result;
 	}
@@ -393,20 +378,20 @@ namespace cubhnsw
 
       level_t level = (std::min) (new_target_level, curr_max_level);
 
-      pinned_t new_node_blk = m_storage->get_node_by_slot_id (context.m_thread_p, new_slot, lock_mode::exclusive);
       while (true)
 	{
 	  (void) seek_on_layer_ (context, vector, closest_slot, level, top_limit);
 
 	  candidates_view_t<Traits> closest_view;
 	  {
+	    pinned_t new_node_blk = m_storage->get_node_by_slot_id (context.m_thread_p, new_slot, lock_mode::exclusive);
 	    neighbors_ref_type neighbors = get_neighbors (new_node_blk, level);
 	    neighbors.clear();
 
 	    form_links_to_closest_ (context, new_node_blk, level, closest_view);
 	    closest_slot = closest_view[0].slot;
 	  }
-	  form_reverse_links_ (context, new_node_blk, vector, closest_view, level);
+	  form_reverse_links_ (context, new_slot, vector, closest_view, level);
 	  if (level == 0)
 	    {
 	      break;
@@ -422,11 +407,13 @@ namespace cubhnsw
 			 (int)curr_max_level);
 	// TODO: latch promotion is required
 	{
-	  m_storage->promote_root (root_block);
+	  pinned_t cleanup {std::move (root_block)};
 	}
-	root_node.set_entry (new_slot);
-	root_node.set_level (new_target_level);
-	m_storage->set_empty (false);
+
+	pinned_t promoted_root = m_storage->get_root (context.m_thread_p, lock_mode::exclusive);
+	root_type promoted_root_node = root_type (promoted_root->data);
+	promoted_root_node.set_entry (new_slot);
+	promoted_root_node.set_level (new_target_level);
       }
 
     return result;
@@ -622,7 +609,7 @@ namespace cubhnsw
 
   template <typename Traits>
   int
-  algo<Traits>::form_reverse_links_ (algo_context_t<Traits> &context, const pinned_t &new_node_blk, const float *value,
+  algo<Traits>::form_reverse_links_ (algo_context_t<Traits> &context, const slot_id_t new_slot, const float *value,
 				     candidates_view_t<Traits> &new_neighbors, level_t level)
   {
     cubthread::entry *thread_p = context.m_thread_p;
@@ -631,23 +618,20 @@ namespace cubhnsw
     for (auto n : new_neighbors)
       {
 	slot_id_t close_slot = n.slot;
-	slot_id_t new_slot = new_node_blk->id;
 	if (close_slot == new_slot)
 	  {
 	    continue;
 	  }
 
 	neighbors_ref_type close_header;
-	{
-	  // TODO: exclusive??
-	  pinned_t close_node_blk = m_storage->get_node_by_slot_id (thread_p, close_slot, lock_mode::exclusive);
-	  close_header = get_neighbors (close_node_blk, level);
-	  if (close_header.size () < layer_connectivity)
-	    {
-	      close_header.push_back (new_slot);
-	      continue;
-	    }
-	}
+	pinned_t close_node_blk = m_storage->get_node_by_slot_id (thread_p, close_slot, lock_mode::exclusive);
+	// TODO: exclusive??
+	close_header = get_neighbors (close_node_blk, level);
+	if (close_header.size () < layer_connectivity)
+	  {
+	    close_header.push_back (new_slot);
+	    continue;
+	  }
 
 	top_candidates_t<Traits> &top_for_refine = context.m_top_for_refine;
 	top_for_refine.clear ();
