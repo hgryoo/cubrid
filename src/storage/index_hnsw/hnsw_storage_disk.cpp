@@ -184,9 +184,15 @@ namespace cubhnsw
   disk_storage::get_root (cubthread::entry *thread_p, lock_mode mode)
   {
     VPID root_vpid = m_root_vpid;
+    PGBUF_LATCH_MODE pgbuf_mode;
 
-    PGBUF_LATCH_MODE pgbuf_mode = PGBUF_LATCH_READ;
-    if (mode == lock_mode::exclusive)
+    // Do not use lock_mode::exclusive_conditional for root page
+    assert (mode == lock_mode::shared || mode == lock_mode::exclusive);
+    if (mode == lock_mode::shared)
+      {
+	pgbuf_mode = PGBUF_LATCH_READ;
+      }
+    else
       {
 	pgbuf_mode = PGBUF_LATCH_WRITE;
       }
@@ -279,7 +285,7 @@ namespace cubhnsw
   void
   disk_storage::set_empty (bool is_empty) noexcept
   {
-    m_is_empty = is_empty;
+    m_is_empty.store (is_empty);
   }
 
   int

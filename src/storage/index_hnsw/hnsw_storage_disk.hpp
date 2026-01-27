@@ -24,6 +24,9 @@
 #include <unordered_map>
 #include <cstring>
 
+#include <mutex>
+#include <atomic>
+
 #include "hnsw_storage.hpp"
 #include "thread_compat.hpp"
 
@@ -72,8 +75,6 @@ namespace cubhnsw
       using block_group_id_t = disk_traits_t::block_group_id_t;
       using block_id_t = disk_traits_t::block_id_t;
       using slot_id_t = disk_traits_t::slot_id_t;
-
-      using page_handle = scoped_holder<PAGE_PTR, std::function<void (PAGE_PTR)>>;
 
       disk_storage (const BTID &giid, const hnsw_build_params &params);
       virtual ~disk_storage();
@@ -125,7 +126,7 @@ namespace cubhnsw
 
       int create_continous_file (THREAD_ENTRY *thread_p, VFID &vfid, VPID &vpid);
       PAGE_PTR alloc_new_page (cubthread::entry *thread_p, VFID &vfid, VPID &vpid);
-      page_handle get_page_to_insert (cubthread::entry *thread_p, VFID &vfid, VPID &last_vpid, std::size_t bytes);
+      insert_page_t get_page_to_insert (cubthread::entry *thread_p, std::size_t bytes);
 
     private:
       VFID m_vfid;
@@ -133,8 +134,7 @@ namespace cubhnsw
       VPID m_root_vpid;
       VPID m_last_node_vpid;
 
-      VFID m_vec_pool_vfid;
-      VPID m_last_vec_vpid;
+      std::mutex m_insert_mutex;
 
       std::atomic<bool> m_is_empty = true;
   };
