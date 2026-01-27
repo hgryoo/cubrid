@@ -52,7 +52,7 @@ namespace cubhnsw
     none,       // for debugging
     shared,     // multiple readers (search)
     exclusive,   // single writer (insert/update)
-    exclusive_conditional // single writer (insert/update) with conditional latch
+    exclusive_conditional, // single writer (insert/update) with conditional latch
   };
 
   template <typename Traits>
