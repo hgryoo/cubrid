@@ -206,7 +206,7 @@ namespace cubhnsw
       // refining links
       void form_links_to_closest_ (algo_context_t<Traits> &context, const pinned_t &new_slot, const level_t level,
 				   candidates_view_t<Traits> &out);
-      int form_reverse_links_ (algo_context_t<Traits> &context, const pinned_t &new_slot, const float *value,
+      int form_reverse_links_ (algo_context_t<Traits> &context, const slot_id_t &new_slot, const float *value,
 			       candidates_view_t<Traits> &new_neighbors,
 			       level_t level);
       void refine_ (cubthread::entry *thread_p, std::size_t needed, top_candidates_t<Traits> &top,
@@ -324,7 +324,7 @@ namespace cubhnsw
     level_t curr_max_level, new_target_level;
     slot_id_t entry_slot, new_slot;
 
-    pinned_t root_block = m_storage->get_root (context.m_thread_p, lock_mode::exclusive);
+    pinned_t root_block = m_storage->get_root (context.m_thread_p, lock_mode::shared);
     root_type root_node = root_type (root_block->data);
     {
       curr_max_level = root_node.get_level(); // get max_level from root page
@@ -350,14 +350,18 @@ namespace cubhnsw
       if (m_storage->is_empty())
 	{
 	  {
-	    //pinned_t cleanup {std::move (root_block)};
+	    pinned_t cleanup {std::move (root_block)};
 	  }
 
-	  //pinned_t promoted_root = m_storage->get_root (lock_mode::exclusive);
-	  //root_type promoted_root_node = root_type (promoted_root.data());
-	  root_node.set_entry (new_slot);
-	  root_node.set_level (new_target_level);
-	  m_storage->set_empty (false);
+	  // FIXME: this is a temporary solution to handle the case when concurrent insertions.
+	  if (m_storage->is_empty())
+	    {
+	      m_storage->set_empty (false);
+	      pinned_t promoted_root = m_storage->get_root (lock_mode::exclusive);
+	      root_type promoted_root_node = root_type (promoted_root.data());
+	      promoted_root_node.set_entry (new_slot);
+	      promoted_root_node.set_level (new_target_level);
+	    }
 	  return result;
 	}
     }
@@ -406,11 +410,12 @@ namespace cubhnsw
 			 (int)curr_max_level);
 	// TODO: latch promotion is required
 	{
-	  m_storage->promote_root (root_block);
+	  pinned_t cleanup {std::move (root_block)};
 	}
-	root_node.set_entry (new_slot);
-	root_node.set_level (new_target_level);
-	m_storage->set_empty (false);
+	pinned_t promoted_root = m_storage->get_root (lock_mode::exclusive);
+	root_type promoted_root_node = root_type (promoted_root.data());
+	promoted_root_node.set_entry (new_slot);
+	promoted_root_node.set_level (new_target_level);
       }
 
     return result;
@@ -606,7 +611,7 @@ namespace cubhnsw
 
   template <typename Traits>
   int
-  algo<Traits>::form_reverse_links_ (algo_context_t<Traits> &context, const pinned_t &new_node_blk, const float *value,
+  algo<Traits>::form_reverse_links_ (algo_context_t<Traits> &context, const slot_id_t &new_slot, const float *value,
 				     candidates_view_t<Traits> &new_neighbors, level_t level)
   {
     cubthread::entry *thread_p = context.m_thread_p;
