@@ -33,7 +33,7 @@ namespace cubhnsw
   {
     m_vfid = giid.vfid;
     m_root_vpid = VPID { giid.root_pageid, giid.vfid.volid };
-    m_last_node_vpid = m_root_vpid;
+    VPID_SET_NULL (&m_last_node_vpid);
   }
 
   disk_storage::~disk_storage ()
@@ -45,7 +45,7 @@ namespace cubhnsw
   bool
   disk_storage::is_empty ()
   {
-    return m_is_empty;
+    return m_is_empty.load();
   }
 
   // not yet
@@ -57,58 +57,71 @@ namespace cubhnsw
     root_size = root.get_size();
   }
 
-  disk_storage::slot_id_t
-  disk_storage::add_vector (cubthread::entry *thread_p, const OID &key, const float *vector)
+  disk_storage::insert_page_t
+  disk_storage::get_page_to_insert (cubthread::entry *thread_p, std::size_t bytes)
   {
-    std::size_t bytes = this->get_dimension () * sizeof (float);
-
-    if (m_vec_pool_vfid.fileid == 0)
+    PAGE_PTR page_ptr;
+    VPID candidate_vpid;
+    while (true)
       {
-	assert (false);
-	return slot_id_t { -1, -1, -1 };
-      }
+	{
+	  std::lock_guard<std::mutex> g (m_insert_mutex);
+	  candidate_vpid = m_last_node_vpid;
+	}
 
-    page_handle page_ptr = get_page_to_insert (thread_p, m_vec_pool_vfid, m_last_vec_vpid, bytes);
-    assert (page_ptr.get() != nullptr);
-
-    RECDES recdes = { IO_MAX_PAGE_SIZE, (int) bytes, REC_HOME, (char *) vector };
-    PGSLOTID slot_id;
-
-    int error_code = spage_insert (thread_p, page_ptr.get(), &recdes, &slot_id);
-    if (error_code != SP_SUCCESS)
-      {
-	assert (false);
-	return slot_id_t { -1, -1, -1 };
-      }
-
-    return slot_id_t { m_last_vec_vpid.pageid, slot_id, m_last_vec_vpid.volid };
-  }
-
-  disk_storage::page_handle
-  disk_storage::get_page_to_insert (cubthread::entry *thread_p, VFID &vfid, VPID &last_vpid, std::size_t bytes)
-  {
-    PAGE_PTR page_ptr = nullptr;
-
-    if (VPID_ISNULL (&last_vpid))
-      {
-	// alloc a new page in case of root page
-	page_ptr = alloc_new_page (thread_p, vfid, last_vpid);
-      }
-    else
-      {
-	page_ptr = pgbuf_fix (thread_p, &last_vpid, OLD_PAGE, PGBUF_LATCH_WRITE, PGBUF_UNCONDITIONAL_LATCH);
-	if (spage_get_free_space (thread_p, page_ptr) < static_cast<int> (bytes))
+	if (VPID_ISNULL (&candidate_vpid))
 	  {
-	    // not enough
+	    std::lock_guard<std::mutex> g (m_insert_mutex);
+	    if (!VPID_EQ (&m_last_node_vpid, &candidate_vpid))
+	      {
+		continue;
+	      }
+
+	    page_ptr = alloc_new_page (thread_p, m_vfid, m_last_node_vpid);
+	    candidate_vpid = m_last_node_vpid;
+	    break;
+	  }
+
+	page_ptr = pgbuf_fix (thread_p, &candidate_vpid,
+			      OLD_PAGE,
+			      PGBUF_LATCH_READ,
+			      PGBUF_UNCONDITIONAL_LATCH);
+	if (spage_get_free_space (thread_p, page_ptr) > (int)bytes)
+	  {
 	    pgbuf_unfix (thread_p, page_ptr);
-	    page_ptr = alloc_new_page (thread_p, vfid, last_vpid);
+
+	    page_ptr = pgbuf_fix (thread_p, &candidate_vpid,
+				  OLD_PAGE,
+				  PGBUF_LATCH_WRITE,
+				  PGBUF_UNCONDITIONAL_LATCH);
+	    if (spage_get_free_space (thread_p, page_ptr) > (int)bytes)
+	      {
+		break;
+	      }
+	    pgbuf_unfix (thread_p, page_ptr);
+	  }
+	else
+	  {
+	    pgbuf_unfix (thread_p, page_ptr);
+
+	    std::lock_guard<std::mutex> g (m_insert_mutex);
+	    if (!VPID_EQ (&m_last_node_vpid, &candidate_vpid))
+	      {
+		continue;
+	      }
+
+	    page_ptr = alloc_new_page (thread_p, m_vfid, m_last_node_vpid);
+	    break;
 	  }
       }
 
-    return page_handle (page_ptr, [this, thread_p] (PAGE_PTR page_ptr) noexcept
+    return insert_page_t
     {
-      pgbuf_set_dirty (thread_p, page_ptr, FREE);
-    });
+      candidate_vpid,
+      PAGE_PTR_WITH_DELETER (
+	      reinterpret_cast<PAGE_PTR> (page_ptr),
+      page_deleter{ thread_p })
+    };
   }
 
   PAGE_PTR
@@ -137,7 +150,8 @@ namespace cubhnsw
   {
     // insert node
     std::size_t bytes = this->node_bytes_ (level, get_dimension(), get_connectivity());
-    page_handle page_ptr = get_page_to_insert (thread_p, m_vfid, m_last_node_vpid, bytes);
+
+    insert_page_t insert_page = get_page_to_insert (thread_p, bytes);
 
     RECDES recdes;
     char rec_buf[IO_MAX_PAGE_SIZE];
@@ -156,14 +170,14 @@ namespace cubhnsw
 
     PGSLOTID slot_id;
 
-    int error_code = spage_insert (thread_p, page_ptr.get(), &recdes, &slot_id);
+    int error_code = spage_insert (thread_p, insert_page.page.get(), &recdes, &slot_id);
     if (error_code != SP_SUCCESS)
       {
 	ASSERT_ERROR ();
 	return slot_id_t { -1, -1, -1 };
       }
 
-    return { m_last_node_vpid.pageid, slot_id, m_last_node_vpid.volid };
+    return { insert_page.vpid.pageid, slot_id, insert_page.vpid.volid };
   }
 
   disk_storage::pinned_t
@@ -209,13 +223,22 @@ namespace cubhnsw
     VPID vpid = { id.pageid, id.volid };
 
     PGBUF_LATCH_MODE pgbuf_mode = PGBUF_LATCH_READ;
-    if (mode == lock_mode::exclusive)
+    PGBUF_LATCH_CONDITION pgbuf_condition = PGBUF_UNCONDITIONAL_LATCH;
+    if (mode == lock_mode::exclusive || mode == lock_mode::exclusive_conditional)
       {
 	pgbuf_mode = PGBUF_LATCH_WRITE;
       }
+    if (mode == lock_mode::exclusive_conditional)
+      {
+	pgbuf_condition = PGBUF_CONDITIONAL_LATCH;
+      }
 
-    PAGE_PTR node_page_ptr = pgbuf_fix (thread_p, &vpid, OLD_PAGE, pgbuf_mode, PGBUF_UNCONDITIONAL_LATCH);
-    assert (node_page_ptr != nullptr);
+    PAGE_PTR node_page_ptr = pgbuf_fix (thread_p, &vpid, OLD_PAGE, pgbuf_mode, pgbuf_condition);
+    if (node_page_ptr == nullptr)
+      {
+	assert (mode == lock_mode::exclusive_conditional);
+	return make_pinned_block<disk_traits_t> (id, nullptr, 0, mode, [] (auto& blk) noexcept {});
+      }
 
     SPAGE_SLOT *slotp = spage_get_slot (node_page_ptr, id.slotid);
     assert (slotp != nullptr);
@@ -224,7 +247,7 @@ namespace cubhnsw
 	   slotp->record_length, mode,
 	   [this, node_page_ptr, thread_p] (auto& blk) noexcept
     {
-      if (blk.mode == lock_mode::exclusive)
+      if (blk.mode == lock_mode::exclusive || blk.mode == lock_mode::exclusive_conditional)
 	{
 	  pgbuf_set_dirty (thread_p, reinterpret_cast<PAGE_PTR> (node_page_ptr), FREE);
 	}

@@ -99,7 +99,26 @@ namespace cubhnsw
 
     protected:
 
-      slot_id_t add_vector (cubthread::entry *thread_p, const OID &key, const float *vector);
+      struct page_deleter
+      {
+	cubthread::entry *thread_p;
+
+	void operator() (PAGE_PTR p) const noexcept
+	{
+	  if (p != nullptr)
+	    {
+	      pgbuf_set_dirty (thread_p, p, FREE);
+	    }
+	}
+      };
+
+      using PAGE_TYPE = std::remove_pointer<PAGE_PTR>::type;
+      using PAGE_PTR_WITH_DELETER = std::unique_ptr<PAGE_TYPE, page_deleter>;
+      struct insert_page_t
+      {
+	VPID vpid;
+	PAGE_PTR_WITH_DELETER page;
+      };
 
       // page alloc helpers
       static int initialize_new_page (THREAD_ENTRY *thread_p, PAGE_PTR page, void *args);
@@ -117,6 +136,6 @@ namespace cubhnsw
       VFID m_vec_pool_vfid;
       VPID m_last_vec_vpid;
 
-      bool m_is_empty = true;
+      std::atomic<bool> m_is_empty = true;
   };
 }
