@@ -124,7 +124,7 @@ namespace cubhnsw
       static int initialize_new_page (THREAD_ENTRY *thread_p, PAGE_PTR page, void *args);
 
       PAGE_PTR alloc_new_page (cubthread::entry *thread_p, VFID &vfid, VPID &vpid);
-      insert_page_t get_page_to_insert (cubthread::entry *thread_p, VFID &vfid, VPID &last_vpid, std::size_t bytes);
+      insert_page_t get_page_to_insert (cubthread::entry *thread_p, std::size_t bytes);
 
     private:
       VFID m_vfid;

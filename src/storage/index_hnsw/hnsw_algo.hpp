@@ -224,21 +224,48 @@ namespace cubhnsw
       inline distance_t compute_distance_from_query_ (cubthread::entry *thread_p, const float *query,
 	  const slot_id_t &slot) const
       {
-	pinned_t vec_blk = m_storage->get_vector_by_slot_id (thread_p, slot, lock_mode::shared);
-	node_type node = node_type (vec_blk->data);
-	return compute_distance_ (query, node.get_vector());
+	alignas (64) std::vector<float> local_vec;
+	local_vec.reserve (m_dimension);
+
+	{
+	  pinned_t vec_blk = m_storage->get_vector_by_slot_id (thread_p, slot, lock_mode::shared);
+	  node_type node = node_type (vec_blk->data);
+	  const float *src = node.get_vector ();
+	  local_vec.assign (src, src + m_dimension);
+	}
+
+	return compute_distance_ (query, local_vec.data ());
       }
 
       inline distance_t compute_distance_between (cubthread::entry *thread_p, const slot_id_t &a, const slot_id_t &b) const
       {
-	auto get_vec = [&] (const slot_id_t &slot) -> const float *
-	{
-	  pinned_t vec_blk = m_storage->get_vector_by_slot_id (thread_p, slot, lock_mode::shared);
-	  node_type node = node_type (vec_blk->data);
-	  return node.get_vector();
-	};
+	alignas (64) std::vector<float> vec_a;
+	alignas (64) std::vector<float> vec_b;
 
-	return compute_distance_ (get_vec (a), get_vec (b));
+	vec_a.reserve (m_dimension);
+	vec_b.reserve (m_dimension);
+
+	{
+	  pinned_t blk_a =
+		  m_storage->get_vector_by_slot_id (thread_p, a, lock_mode::shared);
+
+	  node_type node_a (blk_a->data);
+	  const float *src_a = node_a.get_vector ();
+
+	  vec_a.assign (src_a, src_a + m_dimension);
+	}
+
+	{
+	  pinned_t blk_b =
+		  m_storage->get_vector_by_slot_id (thread_p, b, lock_mode::shared);
+
+	  node_type node_b (blk_b->data);
+	  const float *src_b = node_b.get_vector ();
+
+	  vec_b.assign (src_b, src_b + m_dimension);
+	}
+
+	return compute_distance_ (vec_a.data(), vec_b.data());
       }
 
       inline neighbors_ref_type get_neighbors (const pinned_t &node_blk, const level_t level)
@@ -263,6 +290,9 @@ namespace cubhnsw
 
       // precomputed
       double m_inverse_log_connectivity;
+
+      // stats
+      std::atomic <int> m_added;
   };
 
   // =====================================================================
@@ -291,6 +321,8 @@ namespace cubhnsw
 
     // precompute inverse log connectivity
     m_inverse_log_connectivity = 1.0 / std::log (static_cast<double> (build_params.m));
+
+    m_added.store (0);
   }
 
   template <typename Traits>
@@ -354,12 +386,17 @@ namespace cubhnsw
 	    pinned_t cleanup {std::move (root_block)};
 	  }
 
-	  pinned_t promoted_root = m_storage->get_root (context.m_thread_p, lock_mode::exclusive);
-	  root_type promoted_root_node = root_type (promoted_root->data);
-	  promoted_root_node.set_entry (new_slot);
-	  promoted_root_node.set_level (new_target_level);
-	  m_storage->set_empty (false);
-	  return result;
+	  if (m_storage->is_empty())
+	    {
+	      m_storage->set_empty (false);
+	      pinned_t promoted_root = m_storage->get_root (context.m_thread_p, lock_mode::exclusive);
+	      root_type promoted_root_node = root_type (promoted_root->data);
+	      promoted_root_node.set_entry (new_slot);
+	      promoted_root_node.set_level (new_target_level);
+
+	      m_added++;
+	      return result;
+	    }
 	}
     }
 
@@ -414,6 +451,12 @@ namespace cubhnsw
 	root_type promoted_root_node = root_type (promoted_root->data);
 	promoted_root_node.set_entry (new_slot);
 	promoted_root_node.set_level (new_target_level);
+      }
+
+    m_added++;
+    if (m_added.load () % 10000 == 0)
+      {
+	fprintf (stdout, "added: %d\n", m_added.load ());
       }
 
     return result;
@@ -615,6 +658,11 @@ namespace cubhnsw
     cubthread::entry *thread_p = context.m_thread_p;
 
     std::size_t layer_connectivity = level == 0 ? m_connectivity * 2 : m_connectivity;
+
+    // Reuse scratch buffers in context to avoid allocations.
+    top_candidates_t<Traits> &top_for_refine = context.m_top_for_refine;
+
+
     for (auto n : new_neighbors)
       {
 	slot_id_t close_slot = n.slot;
@@ -623,43 +671,89 @@ namespace cubhnsw
 	    continue;
 	  }
 
-	neighbors_ref_type close_header;
-	pinned_t close_node_blk = m_storage->get_node_by_slot_id (thread_p, close_slot, lock_mode::exclusive);
-	// TODO: exclusive??
-	close_header = get_neighbors (close_node_blk, level);
-	if (close_header.size () < layer_connectivity)
+	std::vector<slot_id_t> snapshot;
+	snapshot.reserve (layer_connectivity + 1);
+
+	bool can_append_fast_path = false;
+	{
+	  pinned_t close_node_blk = m_storage->get_node_by_slot_id (thread_p, close_slot, lock_mode::shared);
+	  neighbors_ref_type close_header = get_neighbors (close_node_blk, level);
+
+	  // Copy out current neighbor slots quickly and release latch.
+	  for (std::size_t i = 0; i < close_header.size (); ++i)
+	    {
+	      snapshot.push_back (close_header.at (i));
+	    }
+
+	  // If there is room, we can append without refine.
+	  can_append_fast_path = (close_header.size () < layer_connectivity);
+	} // shared latch released here
+
+	// -------------------------------------------------------------------
+	// Phase B: Compute the desired neighbor list off-latch (heavy work here)
+	// -------------------------------------------------------------------
+	std::vector<slot_id_t> desired;
+	desired.reserve (layer_connectivity);
+
+	if (can_append_fast_path)
 	  {
-	    close_header.push_back (new_slot);
-	    continue;
+	    // Just append new_slot to the snapshot.
+	    desired = snapshot;
+	    desired.push_back (new_slot);
 	  }
-
-	top_candidates_t<Traits> &top_for_refine = context.m_top_for_refine;
-	top_for_refine.clear ();
-
-	distance_t dist = compute_distance_from_query_ (thread_p, value, close_slot);
-
-	top_for_refine.insert_reserved (candidate_t<Traits> (dist, close_slot));
-
-	for (std::size_t i = 0; i < close_header.size (); i++)
+	else
 	  {
-	    slot_id_t successor_slot = close_header.at (i);
-	    dist = compute_distance_between (thread_p, close_slot, successor_slot);
-	    top_for_refine.insert_reserved (candidate_t<Traits> (dist, successor_slot));
-	  }
+	    // Rebuild candidate set: close_slot itself + its existing neighbors.
+	    top_for_refine.clear ();
 
-	// remove all neighbors from close_header
-	close_header.clear();
-	candidates_view_t<Traits> top_view;
-	(void) refine_ (thread_p, layer_connectivity, top_for_refine, top_view);
-	for (std::size_t i = 0; i != top_view.size (); i++)
-	  {
-	    close_header.push_back (top_view[i].slot);
+	    distance_t dist = compute_distance_from_query_ (thread_p, value, close_slot);
+	    top_for_refine.insert_reserved (candidate_t<Traits> (dist, close_slot));
+
+	    for (std::size_t i = 0; i < snapshot.size (); ++i)
+	      {
+		const slot_id_t successor_slot = snapshot[i];
+		dist = compute_distance_between (thread_p, close_slot, successor_slot);
+		top_for_refine.insert_reserved (candidate_t<Traits> (dist, successor_slot));
+	      }
+
+	    candidates_view_t<Traits> top_view;
+	    (void) refine_ (thread_p, layer_connectivity, top_for_refine, top_view);
+
+	    // refined neighbors become the new neighbor list
+	    desired.clear ();
+	    desired.reserve (top_view.size ());
+	    for (std::size_t i = 0; i < top_view.size (); ++i)
+	      {
+		desired.push_back (top_view[i].slot);
+	      }
 	  }
+	// -------------------------------------------------------------------
+	// Phase C: Apply under exclusive latch (keep this section very short)
+	// -------------------------------------------------------------------
+	{
+	  pinned_t close_node_blk = m_storage->get_node_by_slot_id (thread_p, close_slot, lock_mode::exclusive_conditional);
+	  if (close_node_blk->data == nullptr)
+	    {
+	      continue;
+	    }
+
+	  neighbors_ref_type close_header = get_neighbors (close_node_blk, level);
+
+	  // Policy: overwrite neighbor list with 'desired'.
+	  // If you prefer a conservative policy, you can detect divergence and retry.
+	  close_header.clear ();
+
+	  // Enforce capacity in case of any upstream logic errors.
+	  const std::size_t n_to_write = std::min (desired.size (), layer_connectivity);
+	  for (std::size_t i = 0; i < n_to_write; ++i)
+	    {
+	      close_header.push_back (desired[i]);
+	    }
+	} // exclusive latch released here
       }
 
     return NO_ERROR;
   }
-
   template <typename Traits>
   void
   algo<Traits>::refine_ (cubthread::entry *thread_p, std::size_t needed, top_candidates_t<Traits> &top,
@@ -667,28 +761,57 @@ namespace cubhnsw
   {
     out = {};
 
-    candidate_t<Traits> *top_data = top.data();
-    std::size_t const top_count = top.size();
+    candidate_t<Traits> *top_data = top.data ();
+    const std::size_t top_count = top.size ();
     if (top_count < needed)
       {
 	out.assign (top_data, top_data + top_count);
 	return;
       }
 
-    top.sort_ascending();
+    top.sort_ascending ();
 
+    // ---- Phase 1: snapshot vectors (latch held only for memcpy) ----
+    // vec_storage: [top_count][m_dimension]
+    std::vector<float> vec_storage;
+    vec_storage.resize (top_count * m_dimension);
+
+    // slot -> pointer into vec_storage
+    std::unordered_map<slot_id_t, const float *> vec_map;
+    vec_map.reserve (top_count * 2);
+
+    for (std::size_t i = 0; i < top_count; ++i)
+      {
+	const slot_id_t slot = top_data[i].slot;
+	float *dst = vec_storage.data () + i * m_dimension;
+
+	{
+	  pinned_t vec_blk = m_storage->get_vector_by_slot_id (thread_p, slot, lock_mode::shared);
+	  node_type node (vec_blk->data);
+	  const float *src = node.get_vector ();
+
+	  std::memcpy (dst, src, sizeof (float) * m_dimension);
+	} // ✅ latch released here
+
+	vec_map.emplace (slot, dst);
+      }
+
+    // ---- Phase 2: pure compute (no latches) ----
     std::size_t submitted_count = 1;
-    std::size_t consumed_count = 1; /// Always equal or greater than `submitted_count`.
+    std::size_t consumed_count = 1;
+
     while (submitted_count < needed && consumed_count < top_count)
       {
-	candidate_t<Traits> candidate = top_data[consumed_count];
-	bool good = true;
-	std::size_t idx = 0;
-	for (; idx < submitted_count; idx++)
-	  {
-	    candidate_t submitted = top_data[idx];
+	const candidate_t<Traits> candidate = top_data[consumed_count];
+	const float *cand_vec = vec_map[candidate.slot];
 
-	    distance_t inter_result_dist = compute_distance_between (thread_p, candidate.slot, submitted.slot);
+	bool good = true;
+	for (std::size_t idx = 0; idx < submitted_count; ++idx)
+	  {
+	    const candidate_t<Traits> submitted = top_data[idx];
+	    const float *sub_vec = vec_map[submitted.slot];
+
+	    const distance_t inter_result_dist = compute_distance_ (cand_vec, sub_vec);
 	    if (inter_result_dist < candidate.distance)
 	      {
 		good = false;
@@ -699,14 +822,64 @@ namespace cubhnsw
 	if (good)
 	  {
 	    top_data[submitted_count] = top_data[consumed_count];
-	    submitted_count++;
+	    ++submitted_count;
 	  }
-	consumed_count++;
+
+	++consumed_count;
       }
 
     top.shrink (submitted_count);
     out.assign (top_data, top_data + submitted_count);
   }
+  /*
+  template <typename Traits>
+  void
+  algo<Traits>::refine_ (cubthread::entry *thread_p, std::size_t needed, top_candidates_t<Traits> &top,
+  		 candidates_view_t<Traits> &out) const
+  {
+    out = {};
+
+    candidate_t<Traits> *top_data = top.data();
+    std::size_t const top_count = top.size();
+    if (top_count < needed)
+      {
+  out.assign (top_data, top_data + top_count);
+  return;
+      }
+
+    top.sort_ascending();
+
+    std::size_t submitted_count = 1;
+    std::size_t consumed_count = 1; /// Always equal or greater than `submitted_count`.
+    while (submitted_count < needed && consumed_count < top_count)
+      {
+  candidate_t<Traits> candidate = top_data[consumed_count];
+  bool good = true;
+  std::size_t idx = 0;
+  for (; idx < submitted_count; idx++)
+    {
+      candidate_t submitted = top_data[idx];
+
+      distance_t inter_result_dist = compute_distance_between (thread_p, candidate.slot, submitted.slot);
+      if (inter_result_dist < candidate.distance)
+        {
+  	good = false;
+  	break;
+        }
+    }
+
+  if (good)
+    {
+      top_data[submitted_count] = top_data[consumed_count];
+      submitted_count++;
+    }
+  consumed_count++;
+      }
+
+    top.shrink (submitted_count);
+    out.assign (top_data, top_data + submitted_count);
+  }
+  */
 
   template <typename Traits>
   level_t
