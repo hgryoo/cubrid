@@ -394,7 +394,7 @@ namespace cubhnsw
 	    form_links_to_closest_ (context, new_node_blk, level, closest_view);
 	    closest_slot = closest_view[0].slot;
 	  }
-	  form_reverse_links_ (context, new_node_blk, vector, closest_view, level);
+	  form_reverse_links_ (context, new_slot, vector, closest_view, level);
 	  if (level == 0)
 	    {
 	      break;
@@ -620,7 +620,6 @@ namespace cubhnsw
     for (auto n : new_neighbors)
       {
 	slot_id_t close_slot = n.slot;
-	slot_id_t new_slot = new_node_blk->id;
 	if (close_slot == new_slot)
 	  {
 	    continue;
