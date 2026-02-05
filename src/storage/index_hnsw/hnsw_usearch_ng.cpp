@@ -255,7 +255,7 @@ hnsw_usearch_ng::init_worker_pool ()
   m_build_worker_size = std::min (static_cast<std::size_t> (std::thread::hardware_concurrency ()),
 				  static_cast<std::size_t> (16));
 
-  if (m_build_worker_size > 1)
+  if (m_build_worker_size > 1 && !m_force_single_thread)
     {
       m_build_worker_pool = cubthread::get_manager ()->create_worker_pool (
 				    m_build_worker_size, m_build_worker_size, "hnsw insertion worker pool", NULL, 1, false);
