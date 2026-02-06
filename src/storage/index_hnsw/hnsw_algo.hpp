@@ -25,6 +25,7 @@
 
 #include <functional>
 #include <random>
+#include <ankerl/unordered_dense.h>
 
 #include "hnsw_api.hpp"
 #include "hnsw_utils.hpp"
@@ -89,24 +90,22 @@ namespace cubhnsw
 
   struct oid_equal
   {
-    bool operator() (const OID &a, const OID &b) const noexcept
+    inline bool operator() (const OID &a, const OID &b) const noexcept
     {
-      return a.pageid == b.pageid
-	     && a.slotid == b.slotid
-	     && a.volid == b.volid;
+      return memcmp (&a, &b, sizeof (OID)) == 0;
     }
   };
 
   template <typename T>
   struct visit_set_helper
   {
-    using type = std::unordered_set<T>;
+    using type = ankerl::unordered_dense::set<T>;
   };
 
   template <>
   struct visit_set_helper<OID>
   {
-    using type = std::unordered_set<OID, oid_hash, oid_equal>;
+    using type = ankerl::unordered_dense::set<OID, oid_hash, oid_equal>;
   };
 
   template <typename Traits>
