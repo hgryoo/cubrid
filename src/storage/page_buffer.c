@@ -449,6 +449,7 @@ struct pgbuf_holder
   PGBUF_BCB *bufptr;		/* pointer to BCB */
   PGBUF_HOLDER *thrd_link;	/* the next BCB holder entry in the BCB holder list of thread */
   PGBUF_HOLDER *next_holder;	/* free BCB holder list of thread */
+  PGBUF_HOLDER **pprev_link;
   PGBUF_HOLDER_STAT perf_stat;
 #if !defined(NDEBUG)
   char fixed_at[64 * 1024];
@@ -5579,6 +5580,11 @@ pgbuf_allocate_thrd_holder_entry (THREAD_ENTRY * thread_p)
 
   /* connect the BCB holder entry at the head of thread's holder list */
   holder->thrd_link = thrd_holder_info->thrd_hold_list;
+  if (holder->thrd_link != NULL)
+    {
+      holder->thrd_link->pprev_link = &holder->thrd_link;
+    }
+  holder->pprev_link = &thrd_holder_info->thrd_hold_list;
   thrd_holder_info->thrd_hold_list = holder;
   thrd_holder_info->num_hold_cnt += 1;
 
@@ -5689,9 +5695,11 @@ exit_on_error:
  *       given BCB, and then connect it to the free holder list of the
  *       corresponding thread.
  */
+#if 0
 STATIC_INLINE int
 pgbuf_remove_thrd_holder (THREAD_ENTRY * thread_p, PGBUF_HOLDER * holder)
 {
+
   int err = NO_ERROR;
   int thrd_index;
   PGBUF_HOLDER_ANCHOR *thrd_holder_info;
@@ -5753,6 +5761,60 @@ pgbuf_remove_thrd_holder (THREAD_ENTRY * thread_p, PGBUF_HOLDER * holder)
 	  goto exit_on_error;
 	}
     }
+
+  thrd_holder_info->num_hold_cnt -= 1;
+
+  assert (err == NO_ERROR);
+
+exit_on_error:
+
+  return err;
+}
+#endif
+
+STATIC_INLINE int
+pgbuf_remove_thrd_holder (THREAD_ENTRY * thread_p, PGBUF_HOLDER * holder)
+{
+
+  int err = NO_ERROR;
+  int thrd_index;
+  PGBUF_HOLDER_ANCHOR *thrd_holder_info;
+  PGBUF_HOLDER *prev;
+  int found;
+
+  assert (holder != NULL);
+  assert (holder->fix_count == 0);
+
+  assert (holder->watch_count == 0);
+
+  /* holder->fix_count is always set to some meaningful value when the holder entry is allocated for use. So, at this
+   * time, we do not need to initialize it. connect the BCB holder entry into free BCB holder list of given thread. */
+
+  thrd_index = thread_get_entry_index (thread_p);
+
+  thrd_holder_info = &(pgbuf_Pool.thrd_holder_info[thrd_index]);
+
+  holder->next_holder = thrd_holder_info->thrd_free_list;
+  thrd_holder_info->thrd_free_list = holder;
+  thrd_holder_info->num_free_cnt += 1;
+
+  /* remove the BCB holder entry from thread's holder list (O(1)) */
+  if (holder->pprev_link == NULL)
+    {
+      /* This situation must not be occurred. */
+      assert (false);
+      err = ER_FAILED;
+      goto exit_on_error;
+    }
+
+  *holder->pprev_link = holder->thrd_link;
+  if (holder->thrd_link != NULL)
+    {
+      holder->thrd_link->pprev_link = holder->pprev_link;
+    }
+
+  holder->thrd_link = NULL;
+  holder->pprev_link = NULL;
 
   thrd_holder_info->num_hold_cnt -= 1;
 
