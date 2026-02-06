@@ -409,11 +409,11 @@ namespace cubhnsw
 	}
     }
 
-    perfmon_add_stat (context.m_thread_p, PSTAT_HNSW_NUM_VISITED_NODE, context.iteration_cycles);
-    perfmon_add_stat (context.m_thread_p, PSTAT_HNSW_NUM_COMPUTED_DISTANCES, context.computed_distances);
-    perfmon_add_stat (context.m_thread_p, PSTAT_HNSW_NUM_COMPUTED_DISTANCES_IN_REFINES,
+    perfmon_add_stat_to_global (PSTAT_HNSW_NUM_VISITED_NODE, context.iteration_cycles);
+    perfmon_add_stat_to_global (PSTAT_HNSW_NUM_COMPUTED_DISTANCES, context.computed_distances);
+    perfmon_add_stat_to_global (PSTAT_HNSW_NUM_COMPUTED_DISTANCES_IN_REFINES,
 		      context.computed_distances_in_refines);
-    perfmon_add_stat (context.m_thread_p, PSTAT_HNSW_NUM_COMPUTED_DISTANCES_IN_REVERSE_REFINES,
+    perfmon_add_stat_to_global (PSTAT_HNSW_NUM_COMPUTED_DISTANCES_IN_REVERSE_REFINES,
 		      context.computed_distances_in_reverse_refines);
 
     if (new_target_level > curr_max_level)
