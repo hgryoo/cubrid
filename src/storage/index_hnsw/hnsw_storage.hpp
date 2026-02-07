@@ -171,4 +171,31 @@ namespace cubhnsw
       BTID m_giid; // general index identifier
       hnsw_build_params m_build_params;
   };
+
+  struct oid_hash
+  {
+    std::size_t operator() (const OID &o) const noexcept
+    {
+      std::size_t h = 0;
+      auto mix = [&h] (auto v)
+      {
+	std::size_t x = std::hash<std::decay_t<decltype (v)>> {} (v);
+	h ^= x + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+      };
+
+      mix (o.volid);
+      mix (o.pageid);
+      mix (o.slotid);
+      return h;
+    }
+  };
+
+  struct oid_equal
+  {
+    inline bool operator() (const OID &a, const OID &b) const noexcept
+    {
+      return memcmp (&a, &b, sizeof (OID)) == 0;
+    }
+  };
+
 }

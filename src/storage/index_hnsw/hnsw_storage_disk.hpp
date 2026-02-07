@@ -23,6 +23,7 @@
 #include <vector>
 #include <unordered_map>
 #include <cstring>
+#include <list>
 
 #include "hnsw_storage.hpp"
 #include "thread_compat.hpp"
@@ -59,6 +60,14 @@ namespace cubhnsw
       {
 	return root_t<ID_TRAITS>::get_size();
       }
+  };
+
+  struct vec_cache_entry
+  {
+    std::vector<std::byte> vec;
+    int refcnt;
+    int level;
+    std::list<OID>::iterator lru_it;
   };
 
   // =====================================================================
@@ -107,6 +116,17 @@ namespace cubhnsw
       int create_continous_file (THREAD_ENTRY *thread_p, VFID &vfid, VPID &vpid);
       PAGE_PTR alloc_new_page (cubthread::entry *thread_p, VFID &vfid, VPID &vpid);
       page_handle get_page_to_insert (cubthread::entry *thread_p, VFID &vfid, VPID &last_vpid, std::size_t bytes);
+
+      bool m_vec_cache_enabled = true;           // you can gate by params if needed
+      std::size_t m_vec_cache_capacity = 0;      // bytes, 0 = unlimited
+      std::size_t m_vec_cache_used = 0;
+      std::unordered_map<OID, vec_cache_entry, oid_hash, oid_equal> m_vec_cache;
+
+      std::vector<std::list<OID>> m_vec_cache_lru_by_level;
+
+      void vec_cache_touch (const OID &id) noexcept;
+      void vec_cache_evict_if_needed () noexcept;
+      pinned_t get_vector_by_slot_id_cached (cubthread::entry *thread_p, const slot_id_t &slot_id);
 
     private:
       VFID m_vfid;

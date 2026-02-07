@@ -242,7 +242,7 @@ namespace cubhnsw
   disk_storage::get_vector_by_slot_id (cubthread::entry *thread_p, const slot_id_t &slot, const lock_mode &mode)
   {
     // get node by slot id
-    return get_node_by_slot_id (thread_p, slot, lock_mode::shared);
+    return get_vector_by_slot_id_cached (thread_p, slot);
   }
 
   // promote lockmode from shared to exclusive
@@ -310,4 +310,150 @@ namespace cubhnsw
 
     return error_code;
   }
+
+  void
+  disk_storage::vec_cache_touch (const OID &id) noexcept
+  {
+    auto it = m_vec_cache.find (id);
+    if (it == m_vec_cache.end ())
+      {
+	return;
+      }
+
+    const int level = it->second.level;
+    auto &lst = m_vec_cache_lru_by_level[level];
+
+    lst.erase (it->second.lru_it);
+    lst.push_front (id);
+    it->second.lru_it = lst.begin ();
+  }
+
+  void
+  disk_storage::vec_cache_evict_if_needed () noexcept
+  {
+    if (m_vec_cache_capacity == 0)
+      {
+	return;  // unlimited
+      }
+
+    // Evict from lowest level first
+    for (std::size_t lvl = 0;
+	 lvl < m_vec_cache_lru_by_level.size () && m_vec_cache_used > m_vec_cache_capacity;
+	 ++lvl)
+      {
+	auto &lst = m_vec_cache_lru_by_level[lvl];
+	while (!lst.empty () && m_vec_cache_used > m_vec_cache_capacity)
+	  {
+	    const OID victim = lst.back ();
+	    auto it = m_vec_cache.find (victim);
+	    if (it == m_vec_cache.end ())
+	      {
+		lst.pop_back ();
+		continue;
+	      }
+	    if (it->second.refcnt > 0)
+	      {
+		break; // cannot evict active entry
+	      }
+
+	    m_vec_cache_used -= it->second.vec.size ();
+	    lst.pop_back ();
+	    m_vec_cache.erase (it);
+	  }
+      }
+  }
+
+  disk_storage::pinned_t
+  disk_storage::get_vector_by_slot_id_cached (cubthread::entry *thread_p, const slot_id_t &id)
+  {
+    const std::size_t dim = this->get_dimension ();
+    const std::size_t vbytes = dim * sizeof (float);
+
+    // lazy init of level buckets
+    if (m_vec_cache_lru_by_level.empty ())
+      {
+	const int max_level = this->get_max_level ();
+	m_vec_cache_lru_by_level.resize (max_level + 1);
+      }
+
+    // hit
+    auto it = m_vec_cache.find (id);
+    if (it != m_vec_cache.end ())
+      {
+	vec_cache_touch (id);
+	it->second.refcnt++;
+	return make_pinned_block<disk_traits_t> (
+		       id,
+		       it->second.vec.data (),
+		       (int) it->second.vec.size () * sizeof (float),
+		       lock_mode::shared,
+		       [this, id] (auto & /*blk*/) noexcept
+	{
+	  auto it2 = m_vec_cache.find (id);
+	  if (it2 != m_vec_cache.end ())
+	    {
+	      it2->second.refcnt--;
+	    }
+	});
+      }
+
+    // miss: fix node page once, extract vector pointer, copy vector only, unfix immediately
+    VPID vpid = { id.pageid, id.volid };
+    PAGE_PTR node_page_ptr = pgbuf_fix (thread_p, &vpid, OLD_PAGE, PGBUF_LATCH_READ, PGBUF_UNCONDITIONAL_LATCH);
+    assert (node_page_ptr != nullptr);
+
+    SPAGE_SLOT *slotp = spage_get_slot (node_page_ptr, id.slotid);
+    assert (slotp != nullptr);
+
+    std::byte *rec = (std::byte *) node_page_ptr + slotp->offset_to_record;
+
+    // IMPORTANT:
+    // node_t must provide a way to locate the vector within the record.
+    // If you don't have this API today, add one small accessor to node_t.
+    node_t<disk_traits_t> node { reinterpret_cast<byte_t *> (rec) };
+    const float *vec_ptr = node.get_vector (); // <-- add/confirm this API in node_t
+    const int level = node.get_level ();
+
+    if (level >= (int) m_vec_cache_lru_by_level.size ())
+      {
+	m_vec_cache_lru_by_level.resize (level + 1);
+      }
+
+    std::vector<std::byte> bytes;
+    bytes.resize (vbytes);
+    std::memcpy (bytes.data (), (const std::byte *) vec_ptr, vbytes);
+
+    pgbuf_unfix (thread_p, node_page_ptr);
+
+    vec_cache_entry e;
+    e.vec = std::move (bytes);
+    e.refcnt = 1;
+    e.level = level;
+
+    auto &lst = m_vec_cache_lru_by_level[level];
+    lst.push_front (id);
+    e.lru_it = lst.begin ();
+
+    m_vec_cache_used += vbytes;
+    m_vec_cache.emplace (id, std::move (e));
+
+    vec_cache_evict_if_needed ();
+
+    auto it3 = m_vec_cache.find (id);
+    assert (it3 != m_vec_cache.end ());
+    return make_pinned_block<disk_traits_t> (
+		   id,
+		   it3->second.vec.data (),
+		   (int) it3->second.vec.size (),
+		   lock_mode::shared,
+		   [this, id] (auto & /*blk*/) noexcept
+    {
+      auto it4 = m_vec_cache.find (id);
+      if (it4 != m_vec_cache.end ())
+	{
+	  it4->second.refcnt--;
+	}
+    });
+  }
+
 }

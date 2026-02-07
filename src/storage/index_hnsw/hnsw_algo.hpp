@@ -70,32 +70,6 @@ namespace cubhnsw
   };
 
 
-  struct oid_hash
-  {
-    std::size_t operator() (const OID &o) const noexcept
-    {
-      std::size_t h = 0;
-      auto mix = [&h] (auto v)
-      {
-	std::size_t x = std::hash<std::decay_t<decltype (v)>> {} (v);
-	h ^= x + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-      };
-
-      mix (o.volid);
-      mix (o.pageid);
-      mix (o.slotid);
-      return h;
-    }
-  };
-
-  struct oid_equal
-  {
-    inline bool operator() (const OID &a, const OID &b) const noexcept
-    {
-      return memcmp (&a, &b, sizeof (OID)) == 0;
-    }
-  };
-
   template <typename T>
   struct visit_set_helper
   {
@@ -232,8 +206,7 @@ namespace cubhnsw
 	  const slot_id_t &slot) const
       {
 	pinned_t vec_blk = m_storage->get_vector_by_slot_id (context.m_thread_p, slot, lock_mode::shared);
-	node_type node = node_type (vec_blk->data);
-	return compute_distance_ (context, query, node.get_vector());
+	return compute_distance_ (context, query, (const float *) vec_blk->data);
       }
 
       inline distance_t compute_distance_between (algo_context_t<Traits> &context, const slot_id_t &a,
@@ -242,8 +215,7 @@ namespace cubhnsw
 	auto get_vec = [&] (const slot_id_t &slot) -> const float *
 	{
 	  pinned_t vec_blk = m_storage->get_vector_by_slot_id (context.m_thread_p, slot, lock_mode::shared);
-	  node_type node = node_type (vec_blk->data);
-	  return node.get_vector();
+	  return (const float *)vec_blk->data;
 	};
 
 	return compute_distance_ (context, get_vec (a), get_vec (b));
