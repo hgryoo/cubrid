@@ -111,13 +111,14 @@ namespace cubhnsw
 	auto it = m_vector_cache.find (slot);
 	if (it != m_vector_cache.end ())
 	  {
-	    return it->second.data ();
+	    return it->second.data();
 	  }
+
 	pinned_t node_blk = m_storage->get_node_by_slot_id (context, slot, lock_mode::shared);
 	node_type node = node_type (node_blk->data);
 	const float *vec = node.get_vector ();
-	std::vector<float> &cached = m_vector_cache[slot];
-	cached.assign (vec, vec + m_dimension);
+        auto &cached = m_vector_cache[slot];
+        cached.assign(vec, vec + m_dimension);
 	return cached.data ();
       }
 
@@ -147,7 +148,7 @@ namespace cubhnsw
 
       // variables
       storage_t *m_storage {nullptr};
-      mutable vector_cache_t<Traits> m_vector_cache;  // (slot_id_t, vector) to avoid repeated page fix/unfix
+      vector_cache_t<Traits> m_vector_cache;  // (slot_id_t, vector) to avoid repeated page fix/unfix
 
       // from build_params
       vector_distance_metric_t m_metric;
