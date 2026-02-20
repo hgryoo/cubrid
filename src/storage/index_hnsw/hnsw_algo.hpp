@@ -113,13 +113,17 @@ namespace cubhnsw
 	  {
 	    return it->second.data();
 	  }
-
-	pinned_t node_blk = m_storage->get_node_by_slot_id (context, slot, lock_mode::shared);
-	node_type node = node_type (node_blk->data);
-	const float *vec = node.get_vector ();
-        auto &cached = m_vector_cache[slot];
-        cached.assign(vec, vec + m_dimension);
-	return cached.data ();
+	else
+	  {
+	    pinned_t node_blk = m_storage->get_node_by_slot_id (context, slot, lock_mode::shared);
+	    node_type node = node_type (node_blk->data);
+	    const float *vec = node.get_vector ();
+      
+            it = m_vector_cache.try_emplace(slot, std::vector<float>{}).first;
+            auto &cached = it->second;
+	    cached.assign (vec, vec + m_dimension);
+	    return cached.data ();
+	  }
       }
 
       inline distance_t compute_distance_from_query_ (algo_context_t<Traits> &context, const float *query,
@@ -148,6 +152,7 @@ namespace cubhnsw
 
       // variables
       storage_t *m_storage {nullptr};
+
       vector_cache_t<Traits> m_vector_cache;  // (slot_id_t, vector) to avoid repeated page fix/unfix
 
       // from build_params
