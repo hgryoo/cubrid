@@ -153,7 +153,7 @@ namespace cubhnsw
       // variables
       storage_t *m_storage {nullptr};
 
-      vector_cache_t<Traits> m_vector_cache;  // (slot_id_t, vector) to avoid repeated page fix/unfix
+      mutable vector_cache_t<Traits> m_vector_cache;  // (slot_id_t, vector) to avoid repeated page fix/unfix
 
       // from build_params
       vector_distance_metric_t m_metric;
