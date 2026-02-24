@@ -216,7 +216,15 @@ namespace cubhnsw
 	pgbuf_mode = PGBUF_LATCH_WRITE;
       }
 
-    PAGE_PTR node_page_ptr = pgbuf_fix (context.m_thread_p, &vpid, OLD_PAGE, pgbuf_mode, PGBUF_UNCONDITIONAL_LATCH);
+    PAGE_PTR node_page_ptr = nullptr;
+    if (mode == lock_mode::shared)
+      {
+	node_page_ptr = pgbuf_simple_fix (context.m_thread_p, &vpid, true);
+      }
+    else
+      {
+	node_page_ptr = pgbuf_fix (context.m_thread_p, &vpid, OLD_PAGE, pgbuf_mode, PGBUF_UNCONDITIONAL_LATCH);
+      }
     assert (node_page_ptr != nullptr);
 
     SPAGE_SLOT *slotp = spage_get_slot (node_page_ptr, id.slotid);
@@ -238,7 +246,8 @@ namespace cubhnsw
 	}
       else
 	{
-	  pgbuf_unfix (thread_p, reinterpret_cast<PAGE_PTR> (node_page_ptr));
+	  // pgbuf_unfix (thread_p, reinterpret_cast<PAGE_PTR> (node_page_ptr));
+	  pgbuf_simple_unfix (thread_p, reinterpret_cast<PAGE_PTR> (node_page_ptr));
 	}
     }
 
