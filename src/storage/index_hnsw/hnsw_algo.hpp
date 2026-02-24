@@ -328,7 +328,7 @@ namespace cubhnsw
     std::size_t expansion_size = std::max (k, expansion);
 
     // pre-reserve for visits
-    context.m_visits.reserve (expansion_size);
+    context.m_visits.reserve (expansion_size * 2);
 
     // pre-reserve for top and next
     if (!top.reserve (expansion_size) || !next.reserve (expansion_size))
