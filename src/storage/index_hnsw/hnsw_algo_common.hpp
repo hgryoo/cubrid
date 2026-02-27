@@ -405,8 +405,8 @@ namespace cubhnsw
     ~algo_context_t()
     {
       // fprintf (stdout, "cache utilization: %zu / %zu\n", m_page_cache.size(), m_page_visits);
-      fprintf (stdout, "page cache hit ratio: %zu / %zu, evictions: %zu, cache size: %zu\n", m_page_cache_hits, m_page_visits,
-	       m_page_cache_evictions, m_page_cache.size());
+      // fprintf (stdout, "page cache hit ratio: %zu / %zu, evictions: %zu, cache size: %zu\n", m_page_cache_hits, m_page_visits,
+      // 	       m_page_cache_evictions, m_page_cache.size());
       for (auto &[vpid, cp] : m_page_cache)
 	{
 	  pgbuf_unfix (m_thread_p, cp.page_ptr);
