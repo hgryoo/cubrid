@@ -110,6 +110,8 @@ namespace cubhnsw
       PAGE_PTR alloc_new_page (cubthread::entry *thread_p, VFID &vfid, VPID &vpid);
       page_handle get_page_to_insert (algo_context_t<traits> &context, VFID &vfid, VPID &last_vpid, std::size_t bytes);
 
+      uint16_t compute_cache_threshold (const algo_context_t<traits> &context,
+					const VPID &vpid, uint8_t local_count) const noexcept;
     private:
       VFID m_vfid;
 
@@ -120,5 +122,10 @@ namespace cubhnsw
       VPID m_last_vec_vpid;
 
       bool m_is_empty = true;
+
+      vpid_freq_ultra m_page_freq;
+      std::atomic<uint64_t> m_freq_ticks {0};
+      std::atomic<uint32_t> m_cache_tick {0};
+      static constexpr uint64_t FREQ_DECAY_PERIOD = 1 << 18;
   };
 }

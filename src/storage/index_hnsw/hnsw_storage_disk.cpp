@@ -205,6 +205,35 @@ namespace cubhnsw
 					    );
   }
 
+  uint16_t
+  disk_storage::compute_cache_threshold (const algo_context_t<traits> &context,
+					 const VPID &vpid, uint8_t local_count) const noexcept
+  {
+    uint16_t threshold = algo_context_t<traits>::CACHE_THRESHOLD;
+
+    const uint8_t freq = m_page_freq.estimate_fast (vpid);
+
+    // very hot
+    if (freq >= 32)
+      {
+	return 1;
+      }
+
+    // hot
+    if (freq >= 12)
+      {
+	return 2;
+      }
+
+    // warm
+    if (freq >= 6)
+      {
+	return 3;
+      }
+
+    return threshold;
+  }
+
   disk_storage::pinned_t
   disk_storage::get_node_by_slot_id (algo_context_t<traits> &context, const slot_id_t &id, const lock_mode &mode)
   {
@@ -216,7 +245,164 @@ namespace cubhnsw
 	pgbuf_mode = PGBUF_LATCH_WRITE;
       }
 
-    PAGE_PTR node_page_ptr = pgbuf_fix (context.m_thread_p, &vpid, OLD_PAGE, pgbuf_mode, PGBUF_UNCONDITIONAL_LATCH);
+    PAGE_PTR node_page_ptr = nullptr;
+
+    // check cache first
+    bool is_cached_page = false;
+    if (mode == lock_mode::shared)
+      {
+	context.m_page_visits++;
+
+	// sampling
+	m_page_freq.increment (vpid);
+
+	auto tick = m_freq_ticks.fetch_add (1, std::memory_order_relaxed);
+
+	if ((tick & ((1u<<18) - 1)) == 0)
+	  {
+	    m_page_freq.decay_half_global();
+	  }
+
+	uint32_t now_tick =
+		m_cache_tick.fetch_add (
+			1,
+			std::memory_order_relaxed);
+
+	auto it = context.m_page_cache.find (vpid);
+	if (it != context.m_page_cache.end())
+	  {
+	    node_page_ptr = it->second.page_ptr;
+
+	    context.m_page_cache_hits++;
+
+	    is_cached_page = true;
+
+	    it->second.last_touch = now_tick;
+
+	    if (it->second.local_score < 255)
+	      {
+		it->second.local_score++;
+	      }
+	  }
+	else
+	  {
+	    node_page_ptr = pgbuf_fix (context.m_thread_p, &vpid, OLD_PAGE, pgbuf_mode, PGBUF_UNCONDITIONAL_LATCH);
+
+	    // is it right?
+	    auto &count = context.m_page_access_count[vpid];
+	    if (count < 255)
+	      {
+		count++;
+	      }
+
+	    uint16_t threshold = compute_cache_threshold (context, vpid, (uint8_t) count);
+
+	    uint8_t freq =
+		    m_page_freq.estimate_fast (vpid);
+
+	    bool admit =
+		    (count >= threshold) &&
+		    (freq >= 4);
+
+	    cached_page *victim_entry = nullptr;
+	    VPID victim_vpid;
+	    uint32_t victim_score = 0;
+
+	    if (admit &&
+		context.m_page_cache.size()
+		>= algo_context_t<traits>::MAX_CACHE_SIZE)
+	      {
+		auto victim_it = context.m_page_cache.end();
+
+		uint32_t worst_score = 0;
+
+		for (auto it = context.m_page_cache.begin();
+		     it != context.m_page_cache.end();
+		     ++it)
+		  {
+		    const auto &e = it->second;
+
+		    uint32_t age =
+			    now_tick - e.last_touch;
+
+		    uint8_t victim_freq =
+			    m_page_freq.estimate_fast (it->first);
+
+		    uint32_t score =
+			    age
+			    - (victim_freq << 3)
+			    - (e.local_score << 2);
+
+		    if (victim_it
+			== context.m_page_cache.end()
+			|| score > worst_score)
+		      {
+			worst_score = score;
+			victim_it = it;
+		      }
+		  }
+
+		if (victim_it != context.m_page_cache.end())
+		  {
+		    victim_entry = &victim_it->second;
+		    victim_vpid  = victim_it->first;
+		    victim_score = worst_score;
+
+		    /*
+		     * Admission score (same metric)
+		     */
+
+		    uint32_t new_score =
+			    0
+			    - (freq << 3)
+			    - (count << 2);
+
+		    /*
+		     * Reject if worse than victim
+		     */
+
+		    if (new_score >= victim_score)
+		      {
+			admit = false;
+		      }
+		  }
+	      }
+
+	    if (admit)
+	      {
+		if (victim_entry != nullptr)
+		  {
+		    auto it =
+			    context.m_page_cache.find (
+				    victim_vpid);
+
+		    pgbuf_unfix (context.m_thread_p,
+				 it->second.page_ptr);
+
+		    context.m_page_cache.erase (it);
+
+		    context.m_page_cache_evictions++;
+		  }
+
+		cached_page e;
+
+		e.page_ptr   = node_page_ptr;
+		e.local_score = count;
+		e.last_touch = now_tick;
+
+		context.m_page_cache.emplace (
+			vpid,
+			e);
+
+		is_cached_page = true;
+	      }
+	  }
+      }
+    else
+      {
+	node_page_ptr = pgbuf_fix (context.m_thread_p, &vpid, OLD_PAGE, pgbuf_mode, PGBUF_UNCONDITIONAL_LATCH);
+      }
+
     assert (node_page_ptr != nullptr);
 
     SPAGE_SLOT *slotp = spage_get_slot (node_page_ptr, id.slotid);
@@ -230,7 +416,7 @@ namespace cubhnsw
     cubthread::entry *thread_p = context.m_thread_p;
     return make_pinned_block<disk_traits_t> (id, (std::byte *) node_page_ptr + slotp->offset_to_record,
 	   slotp->record_length, mode,
-	   [this, node_page_ptr, thread_p] (auto& blk) noexcept
+	   [this, node_page_ptr, thread_p, is_cached_page] (auto& blk) noexcept
     {
       if (blk.mode == lock_mode::exclusive)
 	{
@@ -238,7 +424,10 @@ namespace cubhnsw
 	}
       else
 	{
-	  pgbuf_unfix (thread_p, reinterpret_cast<PAGE_PTR> (node_page_ptr));
+	  if (!is_cached_page)
+	    {
+	      pgbuf_unfix (thread_p, reinterpret_cast<PAGE_PTR> (node_page_ptr));
+	    }
 	}
     }
 
