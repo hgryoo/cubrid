@@ -297,96 +297,76 @@ namespace cubhnsw
 
 	    uint16_t threshold = compute_cache_threshold (context, vpid, (uint8_t) count);
 
+
 	    uint8_t freq =
 		    m_page_freq.estimate_fast (vpid);
 
 	    bool admit =
 		    (count >= threshold) &&
-		    (freq >= 4);
-
-	    cached_page *victim_entry = nullptr;
-	    VPID victim_vpid;
-	    uint32_t victim_score = 0;
+		    (freq >= 4);   // NEW CONDITION
 
 	    if (admit &&
 		context.m_page_cache.size()
 		>= algo_context_t<traits>::MAX_CACHE_SIZE)
 	      {
-		auto victim_it = context.m_page_cache.end();
+		// victim freq 비교
+		auto victim_it =
+			context.m_page_cache.begin();
 
-		uint32_t worst_score = 0;
+		uint8_t victim_freq =
+			m_page_freq.estimate_fast (
+				victim_it->first);
 
-		for (auto it = context.m_page_cache.begin();
-		     it != context.m_page_cache.end();
-		     ++it)
+		if (freq + 2 <= victim_freq)
 		  {
-		    const auto &e = it->second;
-
-		    uint32_t age =
-			    now_tick - e.last_touch;
-
-		    uint8_t victim_freq =
-			    m_page_freq.estimate_fast (it->first);
-
-		    uint32_t score =
-			    age
-			    - (victim_freq << 3)
-			    - (e.local_score << 2);
-
-		    if (victim_it
-			== context.m_page_cache.end()
-			|| score > worst_score)
-		      {
-			worst_score = score;
-			victim_it = it;
-		      }
-		  }
-
-		if (victim_it != context.m_page_cache.end())
-		  {
-		    victim_entry = &victim_it->second;
-		    victim_vpid  = victim_it->first;
-		    victim_score = worst_score;
-
-		    /*
-		     * Admission score (same metric)
-		     */
-
-		    uint32_t new_score =
-			    0
-			    - (freq << 3)
-			    - (count << 2);
-
-		    /*
-		     * Reject if worse than victim
-		     */
-
-		    if (new_score >= victim_score)
-		      {
-			admit = false;
-		      }
+		    admit = false;
 		  }
 	      }
 
 	    if (admit)
 	      {
-		if (victim_entry != nullptr)
+		/*
+		 * Eviction
+		 */
+		if (context.m_page_cache.size() >= algo_context_t<traits>::MAX_CACHE_SIZE)
 		  {
-		    auto it =
-			    context.m_page_cache.find (
-				    victim_vpid);
+		    auto victim_it = context.m_page_cache.end();
 
-		    pgbuf_unfix (context.m_thread_p,
-				 it->second.page_ptr);
+		    uint32_t worst_score = 0;
 
-		    context.m_page_cache.erase (it);
+		    for (auto it = context.m_page_cache.begin();
+			 it != context.m_page_cache.end();
+			 ++it)
+		      {
+			const auto &e = it->second;
 
-		    context.m_page_cache_evictions++;
+			uint32_t age = now_tick - e.last_touch;
+
+			uint32_t score =
+				age - (e.local_score << 3); // strong locality bias
+
+			if (victim_it == context.m_page_cache.end()
+			    || score > worst_score)
+			  {
+			    worst_score = score;
+			    victim_it = it;
+			  }
+		      }
+
+		    if (victim_it != context.m_page_cache.end())
+		      {
+			pgbuf_unfix (context.m_thread_p,
+				     victim_it->second.page_ptr);
+
+			context.m_page_cache.erase (victim_it);
+
+			context.m_page_cache_evictions++;
+		      }
 		  }
 
 		cached_page e;
 
-		e.page_ptr   = node_page_ptr;
+		e.page_ptr = node_page_ptr;
 		e.local_score = count;
 		e.last_touch = now_tick;
 
