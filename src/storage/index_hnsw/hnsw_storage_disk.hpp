@@ -91,15 +91,112 @@ namespace cubhnsw
 
       virtual pinned_t get_root (algo_context_t<traits> &context, lock_mode mode) override;
       virtual pinned_t get_node_by_slot_id (algo_context_t<traits> &context, const slot_id_t &slot_id,
-					    const lock_mode &mode) override;
+					    const lock_mode &mode, const level_t &level) override;
       virtual const float *get_vector_by_slot_id (algo_context_t<traits> &context, const slot_id_t &slot_id,
-	  const lock_mode &mode) override;
+	  const lock_mode &mode, const level_t &level) override;
 
       // promote lockmode from shared to exclusive
       // TODO: not implemented
       virtual void promote_root (pinned_t &root) override;
 
     protected:
+
+      inline void
+      evict_cache_quarter (algo_context_t<traits> &context)
+      {
+	constexpr std::size_t MAX = algo_context_t<traits>::MAX_CACHE_SIZE;
+
+	const std::size_t cache_size = context.m_page_cache.size();
+
+	if (cache_size <= MAX)
+	  {
+	    return;
+	  }
+
+	const std::size_t scan_n =
+		std::max<std::size_t> (1, cache_size / 4);
+
+	const std::size_t remove_target =
+		std::max<std::size_t> (1, scan_n / 2);
+
+	/*
+	* scan 대상 수집
+	*/
+
+	struct candidate
+	{
+	  VPID vpid;
+	  level_t level;
+	};
+
+	std::vector<candidate> scan_list;
+	scan_list.reserve (scan_n);
+
+	auto it = context.m_page_cache.begin();
+
+	for (std::size_t i=0;
+	     i<scan_n && it!=context.m_page_cache.end();
+	     ++i,++it)
+	  {
+	    scan_list.push_back (
+	    {
+	      it->first,
+	      it->second.level
+	    });
+	  }
+
+	/*
+	* level 낮은 순 정렬
+	*/
+
+	std::sort (
+		scan_list.begin(),
+		scan_list.end(),
+		[] (const candidate &a,
+		    const candidate &b)
+	{
+	  return a.level < b.level;
+	});
+
+	/*
+	* 제거
+	*/
+
+	std::size_t removed = 0;
+
+	for (auto &c : scan_list)
+	  {
+	    if (removed >= remove_target)
+	      {
+		break;
+	      }
+
+	    auto it2 =
+		    context.m_page_cache.find (c.vpid);
+
+	    if (it2 == context.m_page_cache.end())
+	      {
+		continue;
+	      }
+
+	    auto &e = it2->second;
+
+	    if (e.in_use != 0)
+	      {
+		continue;
+	      }
+
+	    pgbuf_unfix (
+		    context.m_thread_p,
+		    e.page_ptr);
+
+	    context.m_page_cache.erase (it2);
+
+	    context.m_page_cache_evictions++;
+
+	    removed++;
+	  }
+      }
 
       slot_id_t add_vector (algo_context_t<traits> &context, const OID &key, const float *vector);
 

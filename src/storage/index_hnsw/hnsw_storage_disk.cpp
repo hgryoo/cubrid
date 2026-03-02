@@ -206,20 +206,341 @@ namespace cubhnsw
   }
 
   disk_storage::pinned_t
-  disk_storage::get_node_by_slot_id (algo_context_t<traits> &context, const slot_id_t &id, const lock_mode &mode)
+  disk_storage::get_node_by_slot_id (algo_context_t<traits> &context, const slot_id_t &id, const lock_mode &mode,
+				     const level_t &level)
   {
     VPID vpid = { id.pageid, id.volid };
 
-    PGBUF_LATCH_MODE pgbuf_mode = PGBUF_LATCH_READ;
-    if (mode == lock_mode::exclusive)
+    PAGE_PTR node_page_ptr = nullptr;
+    bool is_cached_page = false;
+
+    context.m_page_visits++;
+    /*
+    * Eviction helper:
+    * - scan_n = cache_size/4
+    * - remove_target = scan_n/2
+    * - within scan set: evict level 0 -> 1 -> 2 ...
+    * - within same level: evict lower fix_count first
+    * - erase is VPID -> find -> erase
+    */
+    auto evict_if_needed = [&] ()
+    {
+      const std::size_t cache_size =
+	      context.m_page_cache.size();
+
+      if (cache_size <
+	  algo_context_t<traits>::MAX_CACHE_SIZE)
+	{
+	  return;
+	}
+
+      const std::size_t scan_n =
+	      std::max<std::size_t> (1,
+				     cache_size / 4);
+
+      const std::size_t remove_target =
+	      std::min<std::size_t> (4,
+				     scan_n / 2);
+
+      struct cand
       {
-	pgbuf_mode = PGBUF_LATCH_WRITE;
+	VPID vpid;
+	level_t level;
+	uint16_t fix_count;
+	uint32_t last_touch;
+	uint32_t score;
+      };
+
+      std::vector<cand> scan_list;
+      scan_list.reserve (scan_n);
+
+      /*
+       * 최대 last_touch 찾기
+       * (= 가장 최근 접근)
+       */
+
+      uint32_t max_touch = 0;
+
+      std::size_t scanned = 0;
+
+      for (auto it = context.m_page_cache.begin();
+	   it != context.m_page_cache.end()
+	   && scanned < scan_n;
+	   ++it, ++scanned)
+	{
+	  const auto &e = it->second;
+
+	  if (e.in_use != 0)
+	    {
+	      continue;
+	    }
+
+	  if (e.last_touch > max_touch)
+	    {
+	      max_touch = e.last_touch;
+	    }
+	}
+
+      if (max_touch == 0)
+	{
+	  return;
+	}
+
+      /*
+       * candidate 생성
+       */
+
+      scanned = 0;
+
+      for (auto it = context.m_page_cache.begin();
+	   it != context.m_page_cache.end()
+	   && scanned < scan_n;
+	   ++it, ++scanned)
+	{
+	  const auto &e = it->second;
+
+	  if (e.in_use != 0)
+	    {
+	      continue;
+	    }
+
+	  uint32_t age =
+		  max_touch - e.last_touch;
+
+	  /*
+	   * eviction score
+	   */
+
+	  uint32_t score =
+		  (uint32_t)e.level * 1000000u
+		  + age
+		  - ((uint32_t)e.fix_count << 3);
+
+	  scan_list.push_back (
+		  cand
+	  {
+	    it->first,
+	    e.level,
+	    e.fix_count,
+	    e.last_touch,
+	    score});
+	}
+
+      if (scan_list.empty())
+	{
+	  return;
+	}
+
+      /*
+       * score 높은 순 정렬
+       */
+
+      std::sort (
+	      scan_list.begin(),
+	      scan_list.end(),
+	      [] (const cand &a,
+		  const cand &b)
+      {
+	return a.score > b.score;
+      });
+
+      /*
+       * eviction 수행
+       */
+
+      std::size_t removed = 0;
+
+      for (const auto &c : scan_list)
+	{
+	  if (removed >= remove_target)
+	    {
+	      break;
+	    }
+
+	  auto it2 =
+		  context.m_page_cache.find (c.vpid);
+
+	  if (it2 ==
+	      context.m_page_cache.end())
+	    {
+	      continue;
+	    }
+
+	  auto &e = it2->second;
+
+	  if (e.in_use != 0)
+	    {
+	      continue;
+	    }
+
+	  pgbuf_unfix (
+		  context.m_thread_p,
+		  e.page_ptr);
+
+	  context.m_page_cache.erase (it2);
+
+	  context.m_page_cache_evictions++;
+
+	  removed++;
+	}
+    };
+    auto it = context.m_page_cache.find (vpid);
+
+    /*
+     * ============================
+     * Cache Hit
+     * ============================
+     */
+    if (it != context.m_page_cache.end ())
+      {
+	cached_page_entry &e = it->second;
+
+	context.m_page_cache_hits++;
+	e.last_touch = context.m_page_visits;
+
+	// 이 페이지가 관측된 최소 level 갱신 (0이 우선)
+	if (level < e.level)
+	  {
+	    e.level = level;
+	  }
+
+	// local reuse counter (saturating)
+	if (e.fix_count != UINT16_MAX)
+	  {
+	    e.fix_count++;
+	  }
+
+	// in_use는 pinned_t lifetime 동안 보호
+	if (e.in_use != UINT16_MAX)
+	  {
+	    e.in_use++;
+	  }
+
+	/*
+	 * Shared request:
+	 *  - shared cache -> use
+	 *  - exclusive cache -> use
+	 */
+	if (mode == lock_mode::shared)
+	  {
+	    node_page_ptr = e.page_ptr;
+	    is_cached_page = true;
+	  }
+	else
+	  {
+	    /*
+	     * Exclusive request
+	     */
+	    if (e.is_exclusive)
+	      {
+		node_page_ptr = e.page_ptr;
+		is_cached_page = true;
+	      }
+	    else
+	      {
+		/*
+		 * Shared -> Exclusive promote
+		 */
+		context.m_page_cache_promotes++;
+
+		PAGE_PTR pg = e.page_ptr;
+
+		int rc = pgbuf_promote_read_latch (
+				 context.m_thread_p,
+				 &pg,
+				 PGBUF_PROMOTE_ONLY_READER);
+
+		if (rc == NO_ERROR)
+		  {
+		    e.page_ptr = pg;     // promote가 pg를 바꿀 수 있으니 갱신
+		    e.is_exclusive = true;
+
+		    node_page_ptr = e.page_ptr;
+		    is_cached_page = true;
+		  }
+		else
+		  {
+		    /*
+		     * promote failed
+		     * fallback: unfix and re-fix exclusive
+		     *
+		     * 주의: 기존 hit에서 in_use++ 해둔 상태이므로,
+		     * 여기서 entry 자체를 지우기 전에 in_use를 되돌릴 필요가 있다.
+		     * (엔트리를 지우므로 별도 decrement는 의미 없음)
+		     */
+		    context.m_page_cache_promote_fallbacks++;
+
+		    // 기존 shared fix 해제
+		    pgbuf_unfix (context.m_thread_p, e.page_ptr);
+
+		    // 캐시 엔트리 삭제
+		    context.m_page_cache.erase (it);
+
+		    // 캐시가 가득 찼으면 먼저 eviction
+		    evict_if_needed ();
+
+		    node_page_ptr =
+			    pgbuf_fix (context.m_thread_p,
+				       &vpid,
+				       OLD_PAGE,
+				       PGBUF_LATCH_WRITE,
+				       PGBUF_UNCONDITIONAL_LATCH);
+
+		    cached_page_entry new_e;
+		    new_e.page_ptr = node_page_ptr;
+		    new_e.is_exclusive = true;
+		    new_e.level = level;
+		    new_e.fix_count = 1;
+		    new_e.in_use = 1;
+		    new_e.last_touch = context.m_page_visits;
+
+		    context.m_page_cache.emplace (vpid, new_e);
+
+		    is_cached_page = true;
+		  }
+	      }
+	  }
+      }
+    else
+      {
+	/*
+	 * ============================
+	 * Cache Miss
+	 * ============================
+	 */
+	context.m_page_cache_misses++;
+
+	// 캐시가 가득 찼으면 먼저 eviction
+	evict_if_needed ();
+
+	PGBUF_LATCH_MODE pgbuf_mode =
+		(mode == lock_mode::exclusive)
+		? PGBUF_LATCH_WRITE
+		: PGBUF_LATCH_READ;
+
+	node_page_ptr =
+		pgbuf_fix (context.m_thread_p,
+			   &vpid,
+			   OLD_PAGE,
+			   pgbuf_mode,
+			   PGBUF_UNCONDITIONAL_LATCH);
+
+	cached_page_entry new_e;
+	new_e.page_ptr = node_page_ptr;
+	new_e.is_exclusive = (mode == lock_mode::exclusive);
+	new_e.level = level;
+	new_e.fix_count = 1;
+	new_e.in_use = 1;
+
+	context.m_page_cache.emplace (vpid, new_e);
+
+	is_cached_page = true;
       }
 
-    PAGE_PTR node_page_ptr = pgbuf_fix (context.m_thread_p, &vpid, OLD_PAGE, pgbuf_mode, PGBUF_UNCONDITIONAL_LATCH);
     assert (node_page_ptr != nullptr);
 
-    SPAGE_SLOT *slotp = spage_get_slot (node_page_ptr, id.slotid);
+    SPAGE_SLOT *slotp =
+	    spage_get_slot (node_page_ptr, id.slotid);
     assert (slotp != nullptr);
 
     if (context.m_is_perf_tracking)
@@ -228,26 +549,57 @@ namespace cubhnsw
       }
 
     cubthread::entry *thread_p = context.m_thread_p;
-    return make_pinned_block<disk_traits_t> (id, (std::byte *) node_page_ptr + slotp->offset_to_record,
-	   slotp->record_length, mode,
-	   [this, node_page_ptr, thread_p] (auto& blk) noexcept
+
+    return make_pinned_block<disk_traits_t> (
+		   id,
+		   (std::byte *) node_page_ptr + slotp->offset_to_record,
+		   slotp->record_length,
+		   mode,
+		   [this,
+		    &context,
+		    vpid,
+		    node_page_ptr,
+		    thread_p,
+		    is_cached_page] (auto &blk) noexcept
     {
+      PAGE_PTR page = reinterpret_cast<PAGE_PTR> (node_page_ptr);
+
       if (blk.mode == lock_mode::exclusive)
 	{
-	  pgbuf_set_dirty (thread_p, reinterpret_cast<PAGE_PTR> (node_page_ptr), FREE);
+	  // cached page는 FREE 금지 (dirty만)
+	  pgbuf_set_dirty (thread_p,
+			   page,
+			   is_cached_page ? DONT_FREE : FREE);
 	}
       else
 	{
-	  pgbuf_unfix (thread_p, reinterpret_cast<PAGE_PTR> (node_page_ptr));
+	  // non-cached shared는 unfix
+	  if (!is_cached_page)
+	    {
+	      pgbuf_unfix (thread_p, page);
+	    }
+	}
+
+      // cached entry 보호 해제
+      if (is_cached_page)
+	{
+	  auto it3 = context.m_page_cache.find (vpid);
+	  if (it3 != context.m_page_cache.end ())
+	    {
+	      auto &e = it3->second;
+	      if (e.in_use > 0)
+		{
+		  e.in_use--;
+		}
+	    }
 	}
     }
-
-					    );
-
+	   );
   }
 
   const float *
-  disk_storage::get_vector_by_slot_id (algo_context_t<traits> &context, const slot_id_t &slot, const lock_mode &mode)
+  disk_storage::get_vector_by_slot_id (algo_context_t<traits> &context, const slot_id_t &slot, const lock_mode &mode,
+				       const level_t &level)
   {
     auto it = m_vector_cache.find (slot);
     if (it != m_vector_cache.end ())
@@ -255,7 +607,7 @@ namespace cubhnsw
 	return it->second.data ();
       }
 
-    pinned_t node_blk = get_node_by_slot_id (context, slot, mode);
+    pinned_t node_blk = get_node_by_slot_id (context, slot, mode, level);
     node_t<disk_traits_t> node { reinterpret_cast<byte_t *> (node_blk->data) };
     const float *vec = node.get_vector ();
 

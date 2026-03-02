@@ -108,15 +108,15 @@ namespace cubhnsw
       inline distance_t compute_distance_from_query_ (algo_context_t<Traits> &context, const float *query,
 	  const slot_id_t &slot) const
       {
-	const float *vec = m_storage->get_vector_by_slot_id (context, slot, lock_mode::shared);
+	const float *vec = m_storage->get_vector_by_slot_id (context, slot, lock_mode::shared, 0);
 	return compute_distance_ (context, query, vec);
       }
 
       inline distance_t compute_distance_between (algo_context_t<Traits> &context, const slot_id_t &a,
 	  const slot_id_t &b) const
       {
-	const float *avec = m_storage->get_vector_by_slot_id (context, a, lock_mode::shared);
-	const float *bvec = m_storage->get_vector_by_slot_id (context, b, lock_mode::shared);
+	const float *avec = m_storage->get_vector_by_slot_id (context, a, lock_mode::shared, 0);
+	const float *bvec = m_storage->get_vector_by_slot_id (context, b, lock_mode::shared, 0);
 	return compute_distance_ (context, avec, bvec);
       }
 
@@ -263,7 +263,7 @@ namespace cubhnsw
 
       level_t level = (std::min) (new_target_level, curr_max_level);
 
-      pinned_t new_node_blk = m_storage->get_node_by_slot_id (context, new_slot, lock_mode::exclusive);
+      pinned_t new_node_blk = m_storage->get_node_by_slot_id (context, new_slot, lock_mode::exclusive, level);
 
       while (true)
 	{
@@ -379,7 +379,7 @@ namespace cubhnsw
     result.results.assign (top.data(), top.data() + top.size());
     for (std::size_t i = 0; i < top.size (); ++i)
       {
-	pinned_t node_blk = m_storage->get_node_by_slot_id (context, result.results[i].slot, lock_mode::shared);
+	pinned_t node_blk = m_storage->get_node_by_slot_id (context, result.results[i].slot, lock_mode::shared, 0);
 
 	result.oids.push_back (node_type (node_blk->data).get_key());
       }
@@ -415,7 +415,7 @@ namespace cubhnsw
 	next.pop ();
 
 	slot_id_t candidate_slot = candidacy.slot;
-	pinned_t candidate_node_blk = m_storage->get_node_by_slot_id (context, candidate_slot, lock_mode::shared);
+	pinned_t candidate_node_blk = m_storage->get_node_by_slot_id (context, candidate_slot, lock_mode::shared, level);
 	neighbors_ref_type candidate_neighbors = get_neighbors (candidate_node_blk, level);
 	for (std::size_t i = 0; i < candidate_neighbors.size (); ++i)
 	  {
@@ -462,7 +462,7 @@ namespace cubhnsw
 	  {
 	    changed = false;
 
-	    pinned_t closest_node_blk = m_storage->get_node_by_slot_id (context, closest_slot, lock_mode::shared);
+	    pinned_t closest_node_blk = m_storage->get_node_by_slot_id (context, closest_slot, lock_mode::shared, level);
 
 	    neighbors_ref_type neighbors = get_neighbors (closest_node_blk, level);
 	    for (std::size_t i = 0; i < neighbors.size (); ++i)
@@ -522,7 +522,7 @@ namespace cubhnsw
 	neighbors_ref_type close_header;
 
 	// TODO: exclusive??
-	pinned_t close_node_blk = m_storage->get_node_by_slot_id (context, close_slot, lock_mode::exclusive);
+	pinned_t close_node_blk = m_storage->get_node_by_slot_id (context, close_slot, lock_mode::exclusive, level);
 	{
 	  close_header = get_neighbors (close_node_blk, level);
 	  if (close_header.size () < layer_connectivity)

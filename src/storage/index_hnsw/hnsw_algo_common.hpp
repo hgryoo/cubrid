@@ -138,6 +138,38 @@ namespace cubhnsw
     std::vector<OID> oids {};
   };
 
+  struct vpid_hash
+  {
+    inline std::size_t operator() (const VPID &vpid) const noexcept
+    {
+      return (uint64_t (uint32_t (vpid.pageid)) << 32)
+	     |  uint64_t (uint16_t (vpid.volid));
+    }
+  };
+
+  struct vpid_equal
+  {
+    inline bool operator() (const VPID &a, const VPID &b) const noexcept
+    {
+      return a.pageid == b.pageid && a.volid == b.volid;
+    }
+  };
+
+  struct cached_page_entry
+  {
+    PAGE_PTR page_ptr {nullptr};
+    bool is_exclusive {false};
+
+    // eviction 정책용
+    level_t level {0};          // 이 페이지가 관측된 최소 레벨 (0이 가장 “낮음”)
+    uint16_t fix_count {0};     // local reuse counter (saturating)
+    uint16_t in_use {0};        // pinned_t가 살아있는 동안 보호
+    uint32_t last_touch{0};
+  };
+
+  using page_cache_t =
+	  ankerl::unordered_dense::map<VPID, cached_page_entry, vpid_hash, vpid_equal>;
+
   template <typename Traits>
   struct algo_context_t
   {
@@ -153,6 +185,36 @@ namespace cubhnsw
     std::size_t m_computed_distances{};
     std::size_t m_computed_distances_in_refines{};
     std::size_t m_computed_distances_in_reverse_refines{};
+
+    static constexpr std::size_t MAX_CACHE_SIZE = 128;
+    page_cache_t m_page_cache;
+
+    std::size_t m_page_visits {0};
+
+    // cache stats
+    std::size_t m_page_cache_hits {};
+    std::size_t m_page_cache_misses {};
+    std::size_t m_page_cache_promotes {};
+    std::size_t m_page_cache_promote_fallbacks {};
+    std::size_t m_page_cache_evictions {};
+
+    ~algo_context_t()
+    {
+      // print cache stats
+      printf ("page cache hits: %zu\n", m_page_cache_hits);
+      printf ("page cache misses: %zu\n", m_page_cache_misses);
+      printf ("page cache promotes: %zu\n", m_page_cache_promotes);
+      printf ("page cache promote fallbacks: %zu\n", m_page_cache_promote_fallbacks);
+      printf ("page cache evictions: %zu\n\n", m_page_cache_evictions);
+
+      for (auto &kv : m_page_cache)
+	{
+	  if (kv.second.page_ptr != nullptr)
+	    {
+	      pgbuf_unfix (m_thread_p, kv.second.page_ptr);
+	    }
+	}
+    }
 
     void clear_candidates ()
     {
