@@ -90,6 +90,12 @@ namespace cubhnsw
 
   using visited_set_t = visit_set_helper::type;
 
+  struct vector_cache_helper
+  {
+    using type = ankerl::unordered_dense::map<OID, std::vector<float>, oid_hash, oid_equal>;
+  };
+  using vector_cache_t = vector_cache_helper::type;
+
   using candidates_view_t = std::vector<candidate_t>;
 
   using candidates_allocator_t = std::allocator<candidate_t>;
