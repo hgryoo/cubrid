@@ -82,12 +82,7 @@ set(WITH_LIBTBB       "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with TBB lib
 set(WITH_HDF          "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with HDF5 library (default: EXTERNAL)")
 set(WITH_ZLIB         "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with ZLIB library (default: EXTERNAL)")
 set(WITH_HIGHFIVE     "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with HIGHFIVE library (default: EXTERNAL)")
-
-
-
 set(WITH_ANKERL       "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with ankerl::unordered_dense (default: EXTERNAL)")
-
-
 
 message(STATUS "Build with flex and bison library: ${WITH_LIBFLEXBISON}")
 message(STATUS "Build with expat library: ${WITH_LIBEXPAT}")
@@ -101,12 +96,7 @@ message(STATUS "Build with TBB library: ${WITH_LIBTBB}")
 message(STATUS "Build with HDF5 library: ${WITH_HDF}")
 message(STATUS "Build with ZLIB library: ${WITH_ZLIB}")
 message(STATUS "Build with HighFive library: ${WITH_HIGHFIVE}")
-
-
-
 message(STATUS "Build with ankerl::unordered_dense library: ${WITH_ANKERL}")
-
-
 
 macro(ADD_BY_PRODUCTS_VARIABLE prefix_dependee)
   if (CMAKE_GENERATOR MATCHES "Ninja")
@@ -668,8 +658,6 @@ if(WITH_ANKERL STREQUAL "EXTERNAL")
 
   list(APPEND EP_INCLUDES ${ANKERL_INCLUDES})
 endif()
-
-
 
 # [FIXME!] Expose variables for other CMakeLists
 set (EP_TARGETS ${EP_TARGETS} PARENT_SCOPE)
