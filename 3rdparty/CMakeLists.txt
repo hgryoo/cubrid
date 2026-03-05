@@ -35,7 +35,6 @@ set(WIN_FLEX_BISON_URL "https://github.com/CUBRID/3rdparty/raw/develop/win_flex_
 set(WITH_FAISS_URL "https://github.com/facebookresearch/faiss/archive/refs/tags/v1.8.0.tar.gz")               # Faiss
 set(WITH_OPENBLAS_URL "https://github.com/xianyi/OpenBLAS/archive/refs/tags/v0.3.24.tar.gz")                  # OpenBLAS
 set(WITH_LAPACK_URL "http://www.netlib.org/lapack/lapack-3.11.0.tar.gz")                                      # LAPACK
-set(WITH_USEARCH_URL "https://github.com/unum-cloud/usearch")                                                # usearch
 set(WITH_ANKERL_URL "https://github.com/martinus/unordered_dense.git")                                 # ankerl
 
 # URL_HASH is a hash value used to verify the integrity of a file downloaded from a specified URL.
@@ -87,7 +86,6 @@ set(WITH_HDF          "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with HDF5 li
 set(WITH_ZLIB         "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with ZLIB library (default: EXTERNAL)")
 set(WITH_HIGHFIVE     "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with HIGHFIVE library (default: EXTERNAL)")
 set(WITH_FAISS        "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with Faiss library (default: EXTERNAL)")
-set(WITH_USEARCH      "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with usearch library (default: EXTERNAL)")
 set(WITH_ANKERL       "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with ankerl::unordered_dense (default: EXTERNAL)")
 
 message(STATUS "Build with flex and bison library: ${WITH_LIBFLEXBISON}")
@@ -103,7 +101,6 @@ message(STATUS "Build with HDF5 library: ${WITH_HDF}")
 message(STATUS "Build with ZLIB library: ${WITH_ZLIB}")
 message(STATUS "Build with HighFive library: ${WITH_HIGHFIVE}")
 message(STATUS "Build with Faiss library: ${WITH_FAISS}")
-message(STATUS "Build with usearch library: ${WITH_USEARCH}")
 message(STATUS "Build with ankerl::unordered_dense library: ${WITH_ANKERL}")
 
 macro(ADD_BY_PRODUCTS_VARIABLE prefix_dependee)
@@ -649,7 +646,7 @@ if(WITH_HIGHFIVE STREQUAL "EXTERNAL")
   add_dependencies(${HIGHFIVE_TARGET} ${HDF_TARGET})
 endif()
 
-# For libfaiss and usearch
+# For libfaiss
 find_package(AVX)
 
 # libFaiss
@@ -707,18 +704,6 @@ list(APPEND EP_TARGETS ${LIBFAISS_TARGET})
 list(APPEND EP_INCLUDES ${LIBFAISS_INCLUDES})
 list(APPEND EP_LIBS ${LIBFAISS_LIBS})
 
-
-# USEARCH (header-only)
-# Set options BEFORE calling MakeAvailable
-set(USEARCH_USE_OPENMP OFF CACHE BOOL "" FORCE)
-set(USEARCH_USE_SIMSIMD OFF CACHE BOOL "" FORCE)
-set(USEARCH_USE_JEMALLOC OFF CACHE BOOL "" FORCE)
-set(USEARCH_USE_FP16LIB ON CACHE BOOL "" FORCE)
-# set(USEARCH_BUILD_LIB_C ON CACHE BOOL "" FORCE)
-# set(USEARCH_BUILD_TEST_C ON CACHE BOOL "" FORCE)
-FetchContent_Declare(usearch GIT_REPOSITORY https://github.com/unum-cloud/usearch.git GIT_TAG v2.17.8)
-FetchContent_MakeAvailable(usearch)
-
 # ankerl::unordered_dense (header-only)
 if(WITH_ANKERL STREQUAL "EXTERNAL")
   FetchContent_Declare(
@@ -768,4 +753,3 @@ expose_3rdparty_variable(RAPIDJSON)
 expose_3rdparty_variable(RE2)
 expose_3rdparty_variable(LIBTBB)
 expose_3rdparty_variable(LIBFAISS)
-expose_3rdparty_variable(USEARCH)

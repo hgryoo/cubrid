@@ -140,8 +140,8 @@ namespace cubhnsw
       std::size_t m_dimension;
       std::size_t m_connectivity;
       std::size_t m_expansion;
-
-      std::default_random_engine m_level_generator;
+      
+      std::default_random_engine m_level_generator {std::random_device{}()};
 
       std::size_t m_debug_group_start {0};
       std::size_t m_debug_cnt {0};
@@ -164,7 +164,7 @@ namespace cubhnsw
       case METRIC_COSINE:
 	m_metric = vector_distance_metric_t::COSINE;
 	break;
-      case METRIC_EUCLIDEAN:
+      case METRIC_EUCLIDEAN:1
 	m_metric = vector_distance_metric_t::EUCLIDEAN;
 	break;
       case METRIC_DOT:
