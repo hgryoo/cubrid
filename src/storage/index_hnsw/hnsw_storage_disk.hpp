@@ -96,7 +96,7 @@ namespace cubhnsw
 	  const lock_mode &mode) override;
       // neighbors cache helpers (single-thread)
       void refresh_neighbors_cache (algo_context_t<traits> &context, const slot_id_t &slot_id, level_t level) override;
-      virtual const std::vector<slot_id_t> *get_neighbors_cached_ids (
+      virtual std::vector<slot_id_t> *get_neighbors_cached_ids (
 	      algo_context_t<traits> &context,
 	      const slot_id_t &slot_id,
 	      level_t level) override;

@@ -140,7 +140,7 @@ namespace cubhnsw
       std::size_t m_dimension;
       std::size_t m_connectivity;
       std::size_t m_expansion;
-      
+
       std::default_random_engine m_level_generator {std::random_device{}()};
 
       std::size_t m_debug_group_start {0};
@@ -164,7 +164,7 @@ namespace cubhnsw
       case METRIC_COSINE:
 	m_metric = vector_distance_metric_t::COSINE;
 	break;
-      case METRIC_EUCLIDEAN:1
+      case METRIC_EUCLIDEAN:
 	m_metric = vector_distance_metric_t::EUCLIDEAN;
 	break;
       case METRIC_DOT:
@@ -305,8 +305,15 @@ namespace cubhnsw
 
 	  candidates_view_t<Traits> closest_view;
 	  {
+	    std::vector<slot_id_t> *cached_neighbors = m_storage->get_neighbors_cached_ids (context, new_slot, level);
+	    if (cached_neighbors != nullptr)
+	      {
+		cached_neighbors->clear();
+	      }
+#if 0
 	    neighbors_ref_type neighbors = get_neighbors (new_node_blk, level);
 	    neighbors.clear();
+#endif
 
 	    form_links_to_closest_ (context, new_node_blk, level, closest_view);
 	    closest_slot = closest_view[0].slot;
@@ -600,6 +607,16 @@ namespace cubhnsw
     refine_ (context, layer_connectivity,top, top_view, context.m_computed_distances_in_refines);
 
     // outgoing links from new node
+    std::vector<slot_id_t> *cached_neighbors = m_storage->get_neighbors_cached_ids (context, new_node_blk->id, level);
+    if (cached_neighbors != nullptr)
+      {
+	for (std::size_t i = 0; i != top_view.size(); i++)
+	  {
+	    cached_neighbors->push_back (top_view[i].slot);
+	  }
+      }
+
+#if 0
     neighbors_ref_type new_neighbors = get_neighbors (new_node_blk, level);
     for (std::size_t i = 0; i != top_view.size(); i++)
       {
@@ -608,6 +625,7 @@ namespace cubhnsw
 
     // neighbors of new node changed, refresh neighbors cache (if storage supports it)
     m_storage->refresh_neighbors_cache (context, new_node_blk->id, level);
+#endif
   }
 
   template <typename Traits>
@@ -627,19 +645,29 @@ namespace cubhnsw
 
 	neighbors_ref_type close_header;
 
-	// TODO: exclusive??
-	pinned_t close_node_blk = m_storage->get_node_by_slot_id (context, close_slot, lock_mode::exclusive);
-	{
-	  close_header = get_neighbors (close_node_blk, level);
-	  if (close_header.size () < layer_connectivity)
+	std::vector<slot_id_t> *cached_neighbors =
+		m_storage->get_neighbors_cached_ids (context, close_slot, level);
+	if (cached_neighbors != nullptr)
+	  {
+	    cached_neighbors->push_back (new_slot);
+	    continue;
+	  }
+	else
+	  {
+	    // TODO: exclusive??
+	    pinned_t close_node_blk = m_storage->get_node_by_slot_id (context, close_slot, lock_mode::exclusive);
 	    {
-	      close_header.push_back (new_slot);
+	      close_header = get_neighbors (close_node_blk, level);
+	      if (close_header.size () < layer_connectivity)
+		{
+		  close_header.push_back (new_slot);
 
-	      // neighbors of close_slot changed, refresh cache
-	      m_storage->refresh_neighbors_cache (context, close_slot, level);
-	      continue;
+		  // neighbors of close_slot changed, refresh cache
+		  m_storage->refresh_neighbors_cache (context, close_slot, level);
+		  continue;
+		}
 	    }
-	}
+	  }
 
 	top_candidates_t<Traits> &top_for_refine = context.m_top_for_refine;
 	top_for_refine.clear ();
@@ -648,26 +676,47 @@ namespace cubhnsw
 
 	top_for_refine.insert_reserved (candidate_t<Traits> (dist, close_slot));
 
-	for (std::size_t i = 0; i < close_header.size (); i++)
+
+	if (cached_neighbors != nullptr)
 	  {
-	    slot_id_t successor_slot = close_header.at (i);
-	    dist = compute_distance_between (context, close_slot, successor_slot);
-	    top_for_refine.insert_reserved (candidate_t<Traits> (dist, successor_slot));
+	    for (auto n : *cached_neighbors)
+	      {
+		slot_id_t successor_slot = n;
+		dist = compute_distance_between (context, close_slot, successor_slot);
+		top_for_refine.insert_reserved (candidate_t<Traits> (dist, successor_slot));
+	      }
+	    cached_neighbors->clear();
+	  }
+	else
+	  {
+	    for (std::size_t i = 0; i < close_header.size (); i++)
+	      {
+		slot_id_t successor_slot = close_header.at (i);
+		dist = compute_distance_between (context, close_slot, successor_slot);
+		top_for_refine.insert_reserved (candidate_t<Traits> (dist, successor_slot));
+	      }
+	    // remove all neighbors from close_header
+	    close_header.clear();
 	  }
 
-	// remove all neighbors from close_header
-	close_header.clear();
 	candidates_view_t<Traits> top_view;
 
 	(void) refine_ (context, layer_connectivity, top_for_refine, top_view, context.m_computed_distances_in_reverse_refines);
 
-	for (std::size_t i = 0; i != top_view.size (); i++)
+	if (cached_neighbors != nullptr)
 	  {
-	    close_header.push_back (top_view[i].slot);
+	    for (std::size_t i = 0; i != top_view.size (); i++)
+	      {
+		cached_neighbors->push_back (top_view[i].slot);
+	      }
 	  }
-
-	// neighbors of close_slot changed, refresh cache
-	m_storage->refresh_neighbors_cache (context, close_slot, level);
+	else
+	  {
+	    for (std::size_t i = 0; i != top_view.size (); i++)
+	      {
+		close_header.push_back (top_view[i].slot);
+	      }
+	  }
       }
 
     return NO_ERROR;

@@ -135,7 +135,7 @@ namespace cubhnsw
       }
 
       // optional: neighbors IDs cache accessor (disk_storage overrides; default: no cache)
-      virtual const std::vector<slot_id_t> *get_neighbors_cached_ids (
+      virtual std::vector<slot_id_t> *get_neighbors_cached_ids (
 	      algo_context_t<Traits> &,
 	      const slot_id_t &,
 	      level_t)
