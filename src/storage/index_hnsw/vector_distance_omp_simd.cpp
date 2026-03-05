@@ -36,6 +36,7 @@ static inline bool is_aligned_32 (const void *p)
   return (reinterpret_cast<std::uintptr_t> (p) & 31u) == 0u;
 }
 
+__attribute__((target("avx2,fma")))
 static inline float hsum256_ps (__m256 v)
 {
   // Horizontal sum of 8 floats
@@ -49,6 +50,7 @@ static inline float hsum256_ps (__m256 v)
   return _mm_cvtss_f32 (sum);
 }
 
+__attribute__((target("avx2,fma")))
 static inline float dot_avx2_dim256 (const float *__restrict a, const float *__restrict b)
 {
   // 256 floats = 32 * 8-float vectors.
@@ -99,6 +101,7 @@ static inline float dot_avx2_dim256 (const float *__restrict a, const float *__r
   return hsum256_ps (acc);
 }
 
+__attribute__((target("avx2,fma")))
 static inline float norm2_avx2_dim256 (const float *__restrict v)
 {
   // Computes sum(v[i]*v[i]) for 256 floats.
@@ -137,6 +140,7 @@ static inline float norm2_avx2_dim256 (const float *__restrict v)
   return hsum256_ps (acc);
 }
 
+__attribute__((target("avx2,fma")))
 static inline void scale_avx2_dim256 (float *__restrict v, float s)
 {
   const bool aligned = is_aligned_32 (v);
@@ -221,8 +225,10 @@ namespace cubhnsw
     return true;  // unit vector
   }
 
-  STATIC_INLINE distance_t __attribute__ ((ALWAYS_INLINE))
-  cubvec_cosine_distance (const float *vec1, const float *vec2, std::size_t dim)
+static inline distance_t __attribute__ ((always_inline))
+cubvec_cosine_distance (const float *__restrict vec1,
+			const float *__restrict vec2,
+			std::size_t dim)
   {
     float acc0=0, acc1=0, acc2=0, acc3=0;
     float dot = 0;
