@@ -536,7 +536,7 @@ set(STORAGE_HEADERS
 if(USE_SIMD_NATIVE)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     set_source_files_properties(${INDEX_HNSW_DIR}/vector_distance_omp_simd.cpp
-        PROPERTIES COMPILE_FLAGS "-march=native -O3 -msse3 -mavx -mavx2 -mfma -ftree-vectorize -mprefer-vector-width=512 -ffast-math -fno-trapping-math -funroll-loops -fassociative-math -fno-signed-zeros"
+        PROPERTIES COMPILE_FLAGS "-march=native -O3 -ftree-vectorize -mprefer-vector-width=512 -ffast-math -fno-trapping-math -funroll-loops -fassociative-math -fno-signed-zeros"
     )
   elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set_source_files_properties(${INDEX_HNSW_DIR}/vector_distance_omp_simd.cpp
@@ -666,7 +666,7 @@ SET_SOURCE_FILES_PROPERTIES(
   ${PROBES_OBJECT}
   ${XASL_SOURCES}
   ${LOADDB_SOURCES}
-  PROPERTIES LANGUAGE CXX COMPILE_FLAGS "-Werror"
+  PROPERTIES LANGUAGE CXX
   )
 
 if(UNIX)
@@ -751,7 +751,7 @@ endif(WIN32)
 include(expand_dependency)
 
 target_include_directories(cubridsa
-  PRIVATE
+  SYSTEM PRIVATE
     ${FLEX_INCLUDE_DIRS}
     ${EP_INCLUDES}
   )

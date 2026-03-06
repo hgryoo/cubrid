@@ -18,7 +18,45 @@
 
 #include "vector_distance.hpp"
 
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcpp"
+#pragma GCC diagnostic ignored "-Wunknown-pragmas"
+#pragma GCC diagnostic ignored "-Wpragmas"
+#endif
+
+#define SIMSIMD_DISABLE_FLOAT16
+#define SIMSIMD_DISABLE_BFLOAT16
+
+#define SIMSIMD_TARGET_AVX2
+#define SIMSIMD_DISABLE_AVX512
+#define SIMSIMD_DISABLE_ICE
+#define SIMSIMD_DISABLE_FLOAT16
+#define SIMSIMD_DISABLE_BFLOAT16
+
+#ifdef __AVX512F__
+#undef __AVX512F__
+#endif
+
+#ifdef __AVX512BW__
+#undef __AVX512BW__
+#endif
+
+#ifdef __AVX512VPOPCNTDQ__
+#undef __AVX512VPOPCNTDQ__
+#endif
+
+#include <simsimd/simsimd.h>
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
+#if defined(__AVX2__)
 #include <immintrin.h>
+#endif
+
+
 #include <cstddef>
 #include <cstdint>
 
@@ -31,12 +69,13 @@
 // XXX: SHOULD BE THE LAST INCLUDE HEADER
 #include "memory_wrapper.hpp"
 
+#if 0
 static inline bool is_aligned_32 (const void *p)
 {
   return (reinterpret_cast<std::uintptr_t> (p) & 31u) == 0u;
 }
 
-__attribute__((target("avx2,fma")))
+__attribute__ ((target ("avx2,fma")))
 static inline float hsum256_ps (__m256 v)
 {
   // Horizontal sum of 8 floats
@@ -50,7 +89,7 @@ static inline float hsum256_ps (__m256 v)
   return _mm_cvtss_f32 (sum);
 }
 
-__attribute__((target("avx2,fma")))
+__attribute__ ((target ("avx2,fma")))
 static inline float dot_avx2_dim256 (const float *__restrict a, const float *__restrict b)
 {
   // 256 floats = 32 * 8-float vectors.
@@ -101,7 +140,7 @@ static inline float dot_avx2_dim256 (const float *__restrict a, const float *__r
   return hsum256_ps (acc);
 }
 
-__attribute__((target("avx2,fma")))
+__attribute__ ((target ("avx2,fma")))
 static inline float norm2_avx2_dim256 (const float *__restrict v)
 {
   // Computes sum(v[i]*v[i]) for 256 floats.
@@ -140,7 +179,7 @@ static inline float norm2_avx2_dim256 (const float *__restrict v)
   return hsum256_ps (acc);
 }
 
-__attribute__((target("avx2,fma")))
+__attribute__ ((target ("avx2,fma")))
 static inline void scale_avx2_dim256 (float *__restrict v, float s)
 {
   const bool aligned = is_aligned_32 (v);
@@ -186,69 +225,68 @@ static inline void scale_avx2_dim256 (float *__restrict v, float s)
 	}
     }
 }
+#endif
 
 namespace cubhnsw
 {
+
+  static inline void scale_f32 (float *vec, std::size_t dim, float s)
+  {
+#if defined(__AVX2__)
+    __m256 vs = _mm256_set1_ps (s);
+
+    std::size_t i = 0;
+    for (; i + 8 <= dim; i += 8)
+      {
+	__m256 v = _mm256_loadu_ps (vec + i);
+	v = _mm256_mul_ps (v, vs);
+	_mm256_storeu_ps (vec + i, v);
+      }
+
+    for (; i < dim; ++i)
+      {
+	vec[i] *= s;
+      }
+#else
+
+    #pragma omp simd
+    for (size_t i = 0; i < dim; ++i)
+      {
+	vec[i] *= s;
+      }
+
+#endif
+  }
+
   bool
   cubvec_cosine_normalize (float *__restrict vec, std::size_t dim)
   {
-    float norm_sq = 0.0f;
+    simsimd_distance_t norm_sq;
 
-    #pragma omp simd reduction(+ : norm_sq)
-    for (std::size_t i = 0; i < dim; ++i)
-      {
-	norm_sq += vec[i] * vec[i];
-      }
+    simsimd_l2sq_f32 (vec, vec, dim, &norm_sq);
 
     constexpr float eps = 1e-12f;
     if (norm_sq < eps)
       {
-	// zero / near-zero vector is invalid for cosine/IP
 	return false;
       }
 
-    const float inv_norm = 1.0f / std::sqrt (norm_sq);
+    float norm = std::sqrt (norm_sq);
+    float inv = 1.0f / norm;
 
-    if (dim == 256)
-      {
-	scale_avx2_dim256 (vec, inv_norm);
-      }
-    else
-      {
-	#pragma omp simd
-	for (std::size_t i = 0; i < dim; ++i)
-	  {
-	    vec[i] *= inv_norm;
-	  }
-      }
+    scale_f32 (vec, dim, inv);
 
-    return true;  // unit vector
+    return true;
   }
 
-static inline distance_t __attribute__ ((always_inline))
-cubvec_cosine_distance (const float *__restrict vec1,
-			const float *__restrict vec2,
-			std::size_t dim)
+  STATIC_INLINE distance_t __attribute__ ((ALWAYS_INLINE))
+  cubvec_cosine_distance (const float *__restrict vec1,
+			  const float *__restrict vec2,
+			  std::size_t dim)
   {
-    float acc0=0, acc1=0, acc2=0, acc3=0;
-    float dot = 0;
+    simsimd_distance_t dot;
 
-    if (dim == 256)
-      {
-	dot = dot_avx2_dim256 (vec1, vec2);
-      }
-    else
-      {
-	#pragma omp simd reduction(+ : acc0, acc1, acc2, acc3)
-	for (size_t i = 0; i < dim; i += 4)
-	  {
-	    acc0 += vec1[i]   * vec2[i];
-	    acc1 += vec1[i+1] * vec2[i+1];
-	    acc2 += vec1[i+2] * vec2[i+2];
-	    acc3 += vec1[i+3] * vec2[i+3];
-	  }
-	dot = acc0 + acc1 + acc2 + acc3;
-      }
+    simsimd_dot_f32 (vec1, vec2, dim, &dot);
 
     return 1.0f - dot;
   }
@@ -286,6 +324,81 @@ cubvec_cosine_distance (const float *__restrict vec1,
     cubvec_cosine_distance,
     cubvec_l2_distance,
     cubvec_inner_product_distance
+  };
+
+  static inline void
+  cubvec_inner_product_batch4 (
+	  const float *query,
+	  const float *const vecs[4],
+	  std::size_t dim,
+	  float out[4])
+  {
+    simsimd_distance_t tmp;
+
+    simsimd_dot_f32 (query, vecs[0], dim, &tmp);
+    out[0] = static_cast<float> (tmp);
+
+    simsimd_dot_f32 (query, vecs[1], dim, &tmp);
+    out[1] = static_cast<float> (tmp);
+
+    simsimd_dot_f32 (query, vecs[2], dim, &tmp);
+    out[2] = static_cast<float> (tmp);
+
+    simsimd_dot_f32 (query, vecs[3], dim, &tmp);
+    out[3] = static_cast<float> (tmp);
+  }
+
+  static inline void
+  cubvec_cosine_batch4 (
+	  const float *query,
+	  const float *const vecs[4],
+	  std::size_t dim,
+	  float out[4])
+  {
+    simsimd_distance_t tmp;
+
+    simsimd_dot_f32 (query, vecs[0], dim, &tmp);
+    out[0] = 1.0f - static_cast<float> (tmp);
+
+    simsimd_dot_f32 (query, vecs[1], dim, &tmp);
+    out[1] = 1.0f - static_cast<float> (tmp);
+
+    simsimd_dot_f32 (query, vecs[2], dim, &tmp);
+    out[2] = 1.0f - static_cast<float> (tmp);
+
+    simsimd_dot_f32 (query, vecs[3], dim, &tmp);
+    out[3] = 1.0f - static_cast<float> (tmp);
+  }
+
+  static inline void
+  cubvec_l2_batch4 (
+	  const float *query,
+	  const float *const vecs[4],
+	  std::size_t dim,
+	  float out[4])
+  {
+    simsimd_distance_t tmp;
+
+    simsimd_l2sq_f32 (query, vecs[0], dim, &tmp);
+    out[0] = static_cast<float> (tmp);
+
+    simsimd_l2sq_f32 (query, vecs[1], dim, &tmp);
+    out[1] = static_cast<float> (tmp);
+
+    simsimd_l2sq_f32 (query, vecs[2], dim, &tmp);
+    out[2] = static_cast<float> (tmp);
+
+    simsimd_l2sq_f32 (query, vecs[3], dim, &tmp);
+    out[3] = static_cast<float> (tmp);
+  }
+
+  const std::array<distance_batch4_fn_t,
+	static_cast<std::size_t> (vector_distance_metric_t::MAX)>
+	metric_table_batch4 =
+  {
+    cubvec_cosine_batch4,
+    cubvec_l2_batch4,
+    cubvec_inner_product_batch4
   };
 
 } // namespace cubhnsw

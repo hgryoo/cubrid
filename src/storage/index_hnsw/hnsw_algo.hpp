@@ -121,6 +121,48 @@ namespace cubhnsw
 	return compute_distance_ (context, avec, bvec);
       }
 
+      inline void compute_distance_batch4_ (algo_context_t<Traits> &context,
+					    const float *__restrict query,
+					    const float *const *__restrict vecs4,
+					    distance_t *__restrict out4) const
+      {
+	if (context.m_is_perf_tracking)
+	  {
+	    // batch4니까 4개 증가
+	    context.m_computed_distances += 4;
+	  }
+
+	auto fn = metric_table_batch4[static_cast<size_t> (m_metric)];
+	if (fn != nullptr)
+	  {
+	    fn (query, vecs4, m_dimension, out4);
+	    return;
+	  }
+
+	// fallback: scalar 4번
+	out4[0] = metric_table[static_cast<size_t> (m_metric)] (query, vecs4[0], m_dimension);
+	out4[1] = metric_table[static_cast<size_t> (m_metric)] (query, vecs4[1], m_dimension);
+	out4[2] = metric_table[static_cast<size_t> (m_metric)] (query, vecs4[2], m_dimension);
+	out4[3] = metric_table[static_cast<size_t> (m_metric)] (query, vecs4[3], m_dimension);
+      }
+
+// slot 4개를 받아서 벡터를 fetch하고 batch4 수행
+      inline void compute_distance_from_query_batch4_ (algo_context_t<Traits> &context,
+	  const float *__restrict query,
+	  const slot_id_t slots[4],
+	  distance_t out4[4]) const
+      {
+	const float *vecs4[4];
+	vecs4[0] = m_storage->get_vector_by_slot_id (context, slots[0], lock_mode::shared);
+	vecs4[1] = m_storage->get_vector_by_slot_id (context, slots[1], lock_mode::shared);
+	vecs4[2] = m_storage->get_vector_by_slot_id (context, slots[2], lock_mode::shared);
+	vecs4[3] = m_storage->get_vector_by_slot_id (context, slots[3], lock_mode::shared);
+
+	compute_distance_batch4_ (context, query, vecs4, out4);
+      }
+
+      // batch distance
+
       inline neighbors_ref_type get_neighbors (const pinned_t &node_blk, const level_t level)
       {
 	node_type node = node_type (node_blk->data);
@@ -480,6 +522,8 @@ namespace cubhnsw
 	const std::vector<slot_id_t> *cached_neighbors =
 		m_storage->get_neighbors_cached_ids (context, candidate_slot, level);
 
+	slot_id_t slots4[4];
+	std::size_t cnt4 = 0;
 	if (cached_neighbors != nullptr)
 	  {
 	    for (slot_id_t successor_slot : *cached_neighbors)
@@ -490,19 +534,42 @@ namespace cubhnsw
 		    continue;
 		  }
 
-		distance_t sucessor_dist = compute_distance_from_query_ (context, query, successor_slot);
-		if (top.size () < expansion_limit || sucessor_dist < radius)
-		  {
-		    next.insert (candidate_t<Traits> (-sucessor_dist, successor_slot));
-		    top.insert (candidate_t<Traits> (sucessor_dist, successor_slot), expansion_limit);
-		    radius = top.top ().distance;
+		slots4[cnt4++] = successor_slot;
 
-		    HNSW_ALGO_PRINT ("[search_to_insert] radius: %f\n", radius);
-		    HNSW_ALGO_PRINT ("[search_to_insert] sucessor_dist: %f\n", sucessor_dist);
-		    HNSW_ALGO_PRINT ("[search_to_insert] top.size(), expansion_limit: %zu, %zu\n", top.size(), expansion_limit);
+		if (cnt4 == 4)
+		  {
+		    distance_t d4[4];
+		    compute_distance_from_query_batch4_ (context, query, slots4, d4);
+
+		    for (std::size_t k = 0; k < 4; ++k)
+		      {
+			distance_t sucessor_dist = d4[k];
+			slot_id_t s = slots4[k];
+
+			if (top.size () < expansion_limit || sucessor_dist < radius)
+			  {
+			    next.insert (candidate_t<Traits> (-sucessor_dist, s));
+			    top.insert (candidate_t<Traits> (sucessor_dist, s), expansion_limit);
+			    radius = top.top ().distance;
+			  }
+		      }
+		    cnt4 = 0;
 		  }
 	      }
-	    continue;
+
+	    // tail
+	    for (std::size_t k = 0; k < cnt4; ++k)
+	      {
+		slot_id_t s = slots4[k];
+		distance_t sucessor_dist = compute_distance_from_query_ (context, query, s);
+
+		if (top.size () < expansion_limit || sucessor_dist < radius)
+		  {
+		    next.insert (candidate_t<Traits> (-sucessor_dist, s));
+		    top.insert (candidate_t<Traits> (sucessor_dist, s), expansion_limit);
+		    radius = top.top ().distance;
+		  }
+	      }
 	  }
 
 	// No cache: load node and neighbors directly.
@@ -517,17 +584,40 @@ namespace cubhnsw
 	      {
 		continue;
 	      }
+	    slots4[cnt4++] = successor_slot;
 
-	    distance_t sucessor_dist = compute_distance_from_query_ (context, query, successor_slot);
+	    if (cnt4 == 4)
+	      {
+		distance_t d4[4];
+		compute_distance_from_query_batch4_ (context, query, slots4, d4);
+
+		for (std::size_t k = 0; k < 4; ++k)
+		  {
+		    distance_t sucessor_dist = d4[k];
+		    slot_id_t s = slots4[k];
+
+		    if (top.size () < expansion_limit || sucessor_dist < radius)
+		      {
+			next.insert (candidate_t<Traits> (-sucessor_dist, s));
+			top.insert (candidate_t<Traits> (sucessor_dist, s), expansion_limit);
+			radius = top.top ().distance;
+		      }
+		  }
+		cnt4 = 0;
+	      }
+	  }
+
+	// tail
+	for (std::size_t k = 0; k < cnt4; ++k)
+	  {
+	    slot_id_t s = slots4[k];
+	    distance_t sucessor_dist = compute_distance_from_query_ (context, query, s);
+
 	    if (top.size () < expansion_limit || sucessor_dist < radius)
 	      {
-		next.insert (candidate_t<Traits> (-sucessor_dist, successor_slot));
-		top.insert (candidate_t<Traits> (sucessor_dist, successor_slot), expansion_limit);
+		next.insert (candidate_t<Traits> (-sucessor_dist, s));
+		top.insert (candidate_t<Traits> (sucessor_dist, s), expansion_limit);
 		radius = top.top ().distance;
-
-		HNSW_ALGO_PRINT ("[search_to_insert] radius: %f\n", radius);
-		HNSW_ALGO_PRINT ("[search_to_insert] sucessor_dist: %f\n", sucessor_dist);
-		HNSW_ALGO_PRINT ("[search_to_insert] top.size(), expansion_limit: %zu, %zu\n", top.size(), expansion_limit);
 	      }
 	  }
       }
@@ -558,13 +648,44 @@ namespace cubhnsw
 
 	    if (cached_neighbors != nullptr)
 	      {
+		slot_id_t slots4[4];
+		std::size_t cnt4 = 0;
+
 		for (slot_id_t neighbor_id : *cached_neighbors)
 		  {
-		    distance_t candidate_dist = compute_distance_from_query_ (context, query, neighbor_id);
+		    slots4[cnt4++] = neighbor_id;
+
+		    if (cnt4 == 4)
+		      {
+			distance_t d4[4];
+			compute_distance_from_query_batch4_ (context, query, slots4, d4);
+
+			for (std::size_t k = 0; k < 4; ++k)
+			  {
+			    distance_t candidate_dist = d4[k];
+			    slot_id_t s = slots4[k];
+
+			    if (candidate_dist < closest_dist)
+			      {
+				closest_dist = candidate_dist;
+				closest_slot = s;
+				changed = true;
+			      }
+			  }
+			cnt4 = 0;
+		      }
+		  }
+
+// tail
+		for (std::size_t k = 0; k < cnt4; ++k)
+		  {
+		    slot_id_t s = slots4[k];
+		    distance_t candidate_dist = compute_distance_from_query_ (context, query, s);
+
 		    if (candidate_dist < closest_dist)
 		      {
 			closest_dist = candidate_dist;
-			closest_slot = neighbor_id;
+			closest_slot = s;
 			changed = true;
 		      }
 		  }

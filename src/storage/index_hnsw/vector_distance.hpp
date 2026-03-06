@@ -37,8 +37,18 @@ namespace cubhnsw
   using distance_t = float;
   using distance_fn_t = distance_t (*) (const float *, const float *, std::size_t);
 
+  using distance_batch4_fn_t = void (*) (
+				       const float *__restrict query,
+				       const float *const *__restrict vecs4, // vecs4[4]
+				       std::size_t dim,
+				       distance_t *__restrict out4            // out4[4]
+			       );
+
   extern const std::array<distance_fn_t,
 	 static_cast<std::size_t> (vector_distance_metric_t::MAX)>
 	 metric_table;
 
+  // NEW: batch table (NULL이면 scalar로 fallback)
+  extern const std::array<distance_batch4_fn_t,
+	 static_cast<std::size_t> (vector_distance_metric_t::MAX)> metric_table_batch4;
 } // namespace cubhnsw
