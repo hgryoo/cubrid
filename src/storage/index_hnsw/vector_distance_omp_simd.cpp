@@ -258,84 +258,30 @@ namespace cubhnsw
 #endif
   }
 
-static inline float
-hsum256_ps (__m256 v)
-{
-#if defined(__AVX2__)
-  __m128 vlow = _mm256_castps256_ps128(v);
-  __m128 vhigh = _mm256_extractf128_ps(v, 1);
-  vlow = _mm_add_ps(vlow, vhigh);
-
-  __m128 shuf = _mm_movehdup_ps(vlow);
-  __m128 sums = _mm_add_ps(vlow, shuf);
-  shuf = _mm_movehl_ps(shuf, sums);
-  sums = _mm_add_ss(sums, shuf);
-
-  return _mm_cvtss_f32(sums);
-#else
-  (void) v;
-  return 0.0f;
-#endif
-}
-
-static inline float
-dot_f32_self (const float *__restrict vec, std::size_t dim)
-{
-#if defined(__AVX2__)
-  __m256 acc = _mm256_setzero_ps();
-  std::size_t i = 0;
-
-  for (; i + 8 <= dim; i += 8)
-    {
-      __m256 v = _mm256_loadu_ps(vec + i);
-#if defined(__FMA__)
-      acc = _mm256_fmadd_ps(v, v, acc);
-#else
-      acc = _mm256_add_ps(acc, _mm256_mul_ps(v, v));
-#endif
-    }
-
-  float sum = hsum256_ps(acc);
-
-  for (; i < dim; ++i)
-    {
-      sum += vec[i] * vec[i];
-    }
-
-  return sum;
-#else
-  float sum = 0.0f;
-
-#pragma omp simd reduction(+:sum)
-  for (std::size_t i = 0; i < dim; ++i)
-    {
-      sum += vec[i] * vec[i];
-    }
-
-  return sum;
-#endif
-}
-
   bool
   cubvec_cosine_normalize (float *__restrict vec, std::size_t dim)
   {
-  if (vec == nullptr || dim == 0)
-    {
-      return false;
-    }
+    float norm_sq = 0.0f;
 
-  const float norm_sq = dot_f32_self(vec, dim);
-  constexpr float eps = 1e-12f;
+    #pragma omp simd reduction(+ : norm_sq)
+    for (std::size_t i = 0; i < dim; ++i)
+      {
+	norm_sq += vec[i] * vec[i];
+      }
 
-  if (!(norm_sq > eps))
-    {
-      return false;
-    }
+    constexpr float eps = 1e-12f;
+    if (norm_sq < eps)
+      {
+	// zero / near-zero vector is invalid for cosine/IP
+	return false;
+      }
 
-  const float inv_norm = 1.0f / std::sqrt(norm_sq);
-  scale_f32(vec, dim, inv_norm);
+    const float inv_norm = 1.0f / std::sqrt (norm_sq);
 
-  return true;
+    
+    scale_f32 (vec, dim, inv_norm);
+
+    return true;  // unit vector
   }
 
   STATIC_INLINE distance_t __attribute__ ((ALWAYS_INLINE))
