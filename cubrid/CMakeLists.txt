@@ -487,11 +487,11 @@ set(STORAGE_HEADERS
 if(USE_SIMD_NATIVE)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     set_source_files_properties(${INDEX_HNSW_DIR}/vector_distance_omp_simd.cpp
-        PROPERTIES COMPILE_FLAGS "-march=native -msse3 -mavx -mavx2 -mfma -O3 -ftree-vectorize -mprefer-vector-width=512 -ffast-math -fno-trapping-math -funroll-loops -fassociative-math -fno-signed-zeros"
+        PROPERTIES COMPILE_FLAGS "-march=native -O3 -ftree-vectorize -mprefer-vector-width=512 -ffast-math -fno-trapping-math -funroll-loops -fassociative-math -fno-signed-zeros"
     )
   elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set_source_files_properties(${INDEX_HNSW_DIR}/vector_distance_omp_simd.cpp
-        PROPERTIES COMPILE_FLAGS "-march=native -msse3 -mavx -mavx2 -mfma -O3 -fvectorize -mprefer-vector-width=512 -ffast-math -fno-trapping-math -funroll-loops -fassociative-math -fno-signed-zeros"
+        PROPERTIES COMPILE_FLAGS "-march=native -O3 -fvectorize -mprefer-vector-width=512 -ffast-math -fno-trapping-math -funroll-loops -fassociative-math -fno-signed-zeros"
     )
   endif()
 endif()
@@ -668,7 +668,7 @@ if(WIN32)
   target_link_libraries(cubrid LINK_PRIVATE ws2_32)
   set_target_properties(cubrid PROPERTIES LINK_FLAGS "/DEF:\"${CMAKE_SOURCE_DIR}/win/libcubrid/libcubrid.def\"" LINK_FLAGS_RELEASE "/NODEFAULTLIB:libcmt.lib" LINK_FLAGS_DEBUG "/NODEFAULTLIB:msvcrt.lib")
 endif(WIN32)
-target_include_directories(cubrid PRIVATE ${JAVA_INC} ${EP_INCLUDES} ${FLEX_INCLUDE_DIRS})
+target_include_directories(cubrid SYSTEM PRIVATE ${JAVA_INC} ${EP_INCLUDES} ${FLEX_INCLUDE_DIRS})
 
 if(UNIX)
   target_link_libraries(cubrid LINK_PRIVATE -Wl,-whole-archive ${EP_LIBS} -Wl,-no-whole-archive)
