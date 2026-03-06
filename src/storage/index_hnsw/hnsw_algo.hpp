@@ -146,7 +146,6 @@ namespace cubhnsw
 	out4[3] = metric_table[static_cast<size_t> (m_metric)] (query, vecs4[3], m_dimension);
       }
 
-// slot 4개를 받아서 벡터를 fetch하고 batch4 수행
       inline void compute_distance_from_query_batch4_ (algo_context_t<Traits> &context,
 	  const float *__restrict query,
 	  const slot_id_t slots[4],

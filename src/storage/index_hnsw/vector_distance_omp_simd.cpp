@@ -289,10 +289,13 @@ namespace cubhnsw
 			  const float *__restrict vec2,
 			  std::size_t dim)
   {
-    simsimd_distance_t dot;
+    simsimd_distance_t dot64;
+    simsimd_dot_f32 (vec1, vec2, dim, &dot64);
 
-    simsimd_dot_f32 (vec1, vec2, dim, &dot);
+    float dot = static_cast<float> (dot64);
 
+    // cosine for normalized vectors: dot should be in [-1, 1]
+    dot = std::max (-1.0f, std::min (1.0f, dot));
     return 1.0f - dot;
   }
 
@@ -363,16 +366,24 @@ namespace cubhnsw
     simsimd_distance_t tmp;
 
     simsimd_dot_f32 (query, vecs[0], dim, &tmp);
-    out[0] = 1.0f - static_cast<float> (tmp);
+    float dot0 = static_cast<float> (tmp);
+    dot0 = std::max (-1.0f, std::min (1.0f, dot0));
+    out[0] = 1.0f - dot0;
 
     simsimd_dot_f32 (query, vecs[1], dim, &tmp);
-    out[1] = 1.0f - static_cast<float> (tmp);
+    float dot1 = static_cast<float> (tmp);
+    dot1 = std::max (-1.0f, std::min (1.0f, dot1));
+    out[1] = 1.0f - dot1;
 
     simsimd_dot_f32 (query, vecs[2], dim, &tmp);
-    out[2] = 1.0f - static_cast<float> (tmp);
+    float dot2 = static_cast<float> (tmp);
+    dot2 = std::max (-1.0f, std::min (1.0f, dot2));
+    out[2] = 1.0f - dot2;
 
     simsimd_dot_f32 (query, vecs[3], dim, &tmp);
-    out[3] = 1.0f - static_cast<float> (tmp);
+    float dot3 = static_cast<float> (tmp);
+    dot3 = std::max (-1.0f, std::min (1.0f, dot3));
+    out[3] = 1.0f - dot3;
   }
 
   static inline void
