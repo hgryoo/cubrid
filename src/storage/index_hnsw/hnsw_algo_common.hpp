@@ -68,7 +68,7 @@ namespace cubhnsw
 
   struct neighbor_cache_entry
   {
-    std::vector<OID> neighbors;
+    std::vector<uint64_t> neighbors;
     std::vector<float> distances;
 
     void clear()

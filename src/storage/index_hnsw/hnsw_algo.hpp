@@ -90,7 +90,7 @@ namespace cubhnsw
       int form_reverse_links_ (algo_context_t<Traits> &context, const pinned_t &new_slot, const float *value,
 			       candidates_view_t<Traits> &new_neighbors,
 			       level_t level);
-      void refine_ (algo_context_t<Traits> &context, std::size_t needed, top_candidates_t<Traits> &top,
+      void refine_ (algo_context_t<Traits> &context, std::size_t needed, const level_t level, top_candidates_t<Traits> &top,
 		    candidates_view_t<Traits> &out, std::size_t &refines_counter) const;
 
       // random level generation
@@ -484,14 +484,15 @@ namespace cubhnsw
 	  {
 	    for (std::size_t i = 0; i < cached_neighbors->neighbors.size (); ++i)
 	      {
-		slot_id_t successor_slot = cached_neighbors->neighbors[i];
+		uint64_t packed_successor_slot = cached_neighbors->neighbors[i];
 
-		auto [it, inserted] = visits.insert (pack_oid (successor_slot));
+		auto [it, inserted] = visits.insert (packed_successor_slot);
 		if (!inserted)
 		  {
 		    continue;
 		  }
 
+		slot_id_t successor_slot = unpack_oid (packed_successor_slot);
 		distance_t sucessor_dist = compute_distance_from_query_ (context, query, successor_slot);
 		if (top.size () < expansion_limit || sucessor_dist < radius)
 		  {
@@ -559,13 +560,14 @@ namespace cubhnsw
 
 	    if (cached_neighbors != nullptr)
 	      {
-		for (slot_id_t neighbor_id : cached_neighbors->neighbors)
+		for (uint64_t neighbor_id : cached_neighbors->neighbors)
 		  {
-		    distance_t candidate_dist = compute_distance_from_query_ (context, query, neighbor_id);
+		    slot_id_t neighbor_slot = unpack_oid (neighbor_id);
+		    distance_t candidate_dist = compute_distance_from_query_ (context, query, neighbor_slot);
 		    if (candidate_dist < closest_dist)
 		      {
 			closest_dist = candidate_dist;
-			closest_slot = neighbor_id;
+			closest_slot = neighbor_slot;
 			changed = true;
 		      }
 		  }
@@ -605,7 +607,7 @@ namespace cubhnsw
     top_candidates_t<Traits> &top = context.m_top_candidates;
     std::size_t layer_connectivity = level == 0 ? m_connectivity * 2 : m_connectivity;
 
-    refine_ (context, layer_connectivity,top, top_view, context.m_computed_distances_in_refines);
+    refine_ (context, layer_connectivity, level, top, top_view, context.m_computed_distances_in_refines);
 
     // outgoing links from new node
     neighbor_cache_entry *cached_neighbors = m_storage->get_neighbors_cached_ids (context, new_node_blk->id, level);
@@ -613,7 +615,7 @@ namespace cubhnsw
       {
 	for (std::size_t i = 0; i != top_view.size(); i++)
 	  {
-	    cached_neighbors->neighbors.push_back (top_view[i].slot);
+	    cached_neighbors->neighbors.push_back (pack_oid (top_view[i].slot));
 	    cached_neighbors->distances.push_back (top_view[i].distance);
 	  }
       }
@@ -653,7 +655,7 @@ namespace cubhnsw
 		m_storage->get_neighbors_cached_ids (context, close_slot, level);
 	if (cached_neighbors != nullptr)
 	  {
-	    cached_neighbors->neighbors.push_back (new_slot);
+	    cached_neighbors->neighbors.push_back (pack_oid (new_slot));
 	    cached_neighbors->distances.push_back (dist);
 	    continue;
 	  }
@@ -682,9 +684,9 @@ namespace cubhnsw
 	  {
 	    for (std::size_t i = 0; i < cached_neighbors->neighbors.size (); ++i)
 	      {
-		slot_id_t successor_slot = cached_neighbors->neighbors[i];
+		uint64_t successor_slot = cached_neighbors->neighbors[i];
 		dist = cached_neighbors->distances[i];
-		top_for_refine.insert_reserved (candidate_t<Traits> (dist, successor_slot));
+		top_for_refine.insert_reserved (candidate_t<Traits> (dist, unpack_oid (successor_slot)));
 	      }
 	    cached_neighbors->clear();
 	  }
@@ -702,13 +704,14 @@ namespace cubhnsw
 
 	candidates_view_t<Traits> top_view;
 
-	(void) refine_ (context, layer_connectivity, top_for_refine, top_view, context.m_computed_distances_in_reverse_refines);
+	(void) refine_ (context, layer_connectivity, level, top_for_refine, top_view,
+			context.m_computed_distances_in_reverse_refines);
 
 	if (cached_neighbors != nullptr)
 	  {
 	    for (std::size_t i = 0; i != top_view.size (); i++)
 	      {
-		cached_neighbors->neighbors.push_back (top_view[i].slot);
+		cached_neighbors->neighbors.push_back (pack_oid (top_view[i].slot));
 		cached_neighbors->distances.push_back (top_view[i].distance);
 	      }
 	  }
@@ -726,7 +729,8 @@ namespace cubhnsw
 
   template <typename Traits>
   void
-  algo<Traits>::refine_ (algo_context_t<Traits> &context, std::size_t needed, top_candidates_t<Traits> &top,
+  algo<Traits>::refine_ (algo_context_t<Traits> &context, std::size_t needed, const level_t level,
+			 top_candidates_t<Traits> &top,
 			 candidates_view_t<Traits> &out, std::size_t &refines_counter) const
   {
     out = {};
@@ -757,8 +761,23 @@ namespace cubhnsw
 	for (; idx < submitted_count; idx++)
 	  {
 	    candidate_t submitted = top_data[idx];
-
-	    distance_t inter_result_dist = compute_distance_between (context, candidate.slot, submitted.slot);
+	    distance_t inter_result_dist = -1;
+	    neighbor_cache_entry *cached_neighbors = m_storage->get_neighbors_cached_ids (context, candidate.slot, level);
+	    if (cached_neighbors != nullptr)
+	      {
+		for (std::size_t i = 0; i < cached_neighbors->neighbors.size (); ++i)
+		  {
+		    if (cached_neighbors->neighbors[i] == pack_oid (submitted.slot))
+		      {
+			inter_result_dist = cached_neighbors->distances[i];
+			break;
+		      }
+		  }
+	      }
+	    else
+	      {
+		inter_result_dist = compute_distance_between (context, candidate.slot, submitted.slot);
+	      }
 	    if (inter_result_dist < candidate.distance)
 	      {
 		good = false;
