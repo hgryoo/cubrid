@@ -254,26 +254,28 @@ namespace cubhnsw
   void
   disk_storage::refresh_neighbors_cache (algo_context_t<traits> &context, const slot_id_t &slot, level_t level)
   {
-    neighbors_key key { slot, level };
+    uint64_t key = pack_oid_level (slot, level);
 
     pinned_t node_blk = get_node_by_slot_id (context, slot, lock_mode::shared);
     node_t<traits> node { reinterpret_cast<byte_t *> (node_blk->data) };
     neighbors_ref_t<traits> neighbors (node.neighbors_tape() + node_neighbors_offset_ (level));
 
-    std::vector<slot_id_t> neigh;
-    neigh.reserve (neighbors.size ());
+    neighbor_cache_entry entry;
+    entry.neighbors.reserve (neighbors.size ());
+    entry.distances.reserve (neighbors.size ());
     for (std::size_t i = 0; i < neighbors.size (); ++i)
       {
-	neigh.push_back (neighbors.at (i));
+	entry.neighbors.push_back (neighbors.at (i));
+	entry.distances.push_back (-1);
       }
 
-    m_neighbors_cache[std::move (key)] = std::move (neigh);
+    m_neighbors_cache[std::move (key)] = std::move (entry);
   }
 
-  std::vector<disk_storage::slot_id_t> *
+  neighbor_cache_entry *
   disk_storage::get_neighbors_cached_ids (algo_context_t<traits> &context, const slot_id_t &slot, level_t level)
   {
-    neighbors_key key { slot, level };
+    uint64_t key = pack_oid_level (slot, level);
     auto [it, inserted] = m_neighbors_cache.try_emplace (key);
 
     if (inserted)
@@ -288,7 +290,7 @@ namespace cubhnsw
   const float *
   disk_storage::get_vector_by_slot_id (algo_context_t<traits> &context, const slot_id_t &slot, const lock_mode &mode)
   {
-    auto it = m_vector_cache.find (slot);
+    auto it = m_vector_cache.find (pack_oid (slot));
     if (it != m_vector_cache.end ())
       {
 	return it->second.data ();
@@ -298,7 +300,7 @@ namespace cubhnsw
     node_t<disk_traits_t> node { reinterpret_cast<byte_t *> (node_blk->data) };
     const float *vec = node.get_vector ();
 
-    std::vector<float> &cached = m_vector_cache[slot];
+    std::vector<float> &cached = m_vector_cache[pack_oid (slot)];
     cached.assign (vec, vec + get_dimension ());
 
     return cached.data ();

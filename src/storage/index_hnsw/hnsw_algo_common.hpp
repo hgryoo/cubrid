@@ -63,54 +63,22 @@ namespace cubhnsw
     }
   };
 
-  struct oid_hash
+  using visited_set_t = ankerl::unordered_dense::set<uint64_t>;
+  using vector_cache_t = ankerl::unordered_dense::map<uint64_t, std::vector<float>>;
+
+  struct neighbor_cache_entry
   {
-    inline std::size_t operator() (const OID &o) const noexcept
+    std::vector<OID> neighbors;
+    std::vector<float> distances;
+
+    void clear()
     {
-      // bit packing of oid
-      return (uint64_t (uint32_t (o.pageid)) << 32)
-	     | (uint64_t (uint16_t (o.slotid)) << 16)
-	     |  uint64_t (uint16_t (o.volid));
+      neighbors.clear();
+      distances.clear();
     }
   };
 
-  struct oid_equal
-  {
-    inline bool operator() (const OID &a, const OID &b) const noexcept
-    {
-      return a.pageid == b.pageid && a.slotid == b.slotid && a.volid == b.volid;
-    }
-  };
-
-  template <typename T>
-  struct visit_set_helper
-  {
-    using type = ankerl::unordered_dense::set<T>;
-  };
-
-  template <>
-  struct visit_set_helper<OID>
-  {
-    using type = ankerl::unordered_dense::set<OID, oid_hash, oid_equal>;
-  };
-
-  template <typename Traits>
-  using visited_set_t = typename visit_set_helper<typename Traits::slot_id_t>::type;
-
-  template <typename T>
-  struct vector_cache_helper
-  {
-    using type = ankerl::unordered_dense::map<T, std::vector<float>>;
-  };
-
-  template <>
-  struct vector_cache_helper<OID>
-  {
-    using type = ankerl::unordered_dense::map<OID, std::vector<float>, oid_hash, oid_equal>;
-  };
-
-  template <typename Traits>
-  using vector_cache_t = typename vector_cache_helper<typename Traits::slot_id_t>::type;
+  using neighbors_cache_t = ankerl::unordered_dense::map<uint64_t, neighbor_cache_entry>;
 
   template <typename Traits>
   using candidates_view_t = std::vector<candidate_t<Traits>>;
@@ -125,6 +93,45 @@ namespace cubhnsw
   template <typename Traits>
   using next_candidates_t =
 	  max_heap_gt<candidate_t<Traits>, std::less<candidate_t<Traits>>, candidates_allocator_t<Traits>>;
+
+
+  inline uint64_t
+  pack_oid (const OID &oid)
+  {
+    return (uint64_t (uint32_t (oid.pageid)) << 32) |
+	   (uint64_t (uint16_t (oid.slotid)) << 16) |
+	   uint64_t (uint16_t (oid.volid));
+  }
+
+  inline OID
+  unpack_oid (uint64_t key)
+  {
+    OID oid;
+
+    oid.pageid = int32_t (key >> 32);
+    oid.slotid = int16_t ((key >> 16) & 0xFFFF);
+    oid.volid  = int16_t (key & 0xFFFF);
+
+    return oid;
+  }
+
+  inline uint64_t
+  pack_oid_level (const OID &oid, level_t level) noexcept
+  {
+    return (uint64_t (oid.pageid) << 37)
+	   | (uint64_t (uint16_t (oid.slotid)) << 21)
+	   | (uint64_t (uint16_t (oid.volid)) << 5)
+	   | uint64_t (level & 0x1F);
+  }
+
+  inline void
+  unpack_oid_level (uint64_t key, OID &oid, level_t &level) noexcept
+  {
+    level      = key & 0x1F;
+    oid.volid  = (key >> 5)  & 0xFFFF;
+    oid.slotid = (key >> 21) & 0xFFFF;
+    oid.pageid = key >> 37;
+  }
 
   template <typename Traits>
   struct add_result_t
@@ -147,7 +154,7 @@ namespace cubhnsw
     top_candidates_t<Traits> m_top_candidates;
     top_candidates_t<Traits> m_top_for_refine;
     next_candidates_t<Traits> m_next_candidates;
-    visited_set_t<Traits> m_visits;
+    visited_set_t m_visits;
     cubthread::entry *m_thread_p {nullptr};
 
     // stats

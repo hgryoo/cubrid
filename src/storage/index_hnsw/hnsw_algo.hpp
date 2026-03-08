@@ -305,7 +305,7 @@ namespace cubhnsw
 
 	  candidates_view_t<Traits> closest_view;
 	  {
-	    std::vector<slot_id_t> *cached_neighbors = m_storage->get_neighbors_cached_ids (context, new_slot, level);
+	    neighbor_cache_entry *cached_neighbors = m_storage->get_neighbors_cached_ids (context, new_slot, level);
 	    if (cached_neighbors != nullptr)
 	      {
 		cached_neighbors->clear();
@@ -454,7 +454,7 @@ namespace cubhnsw
   {
     next_candidates_t<Traits> &next = context.m_next_candidates;
     top_candidates_t<Traits> &top = context.m_top_candidates;
-    visited_set_t<Traits> &visits = context.m_visits;
+    visited_set_t &visits = context.m_visits;
 
     context.clear_candidates();
 
@@ -462,7 +462,7 @@ namespace cubhnsw
 
     next.insert_reserved (candidate_t<Traits> (-radius, start_slot));
     top.insert_reserved (candidate_t<Traits> (radius, start_slot));
-    visits.insert (start_slot);
+    visits.insert (pack_oid (start_slot));
 
     while (!next.empty ())
       {
@@ -477,14 +477,16 @@ namespace cubhnsw
 	slot_id_t candidate_slot = candidacy.slot;
 
 	// Try neighbors cache first (disk storage); fallback to direct neighbors_ref_type.
-	const std::vector<slot_id_t> *cached_neighbors =
+	neighbor_cache_entry *cached_neighbors =
 		m_storage->get_neighbors_cached_ids (context, candidate_slot, level);
 
 	if (cached_neighbors != nullptr)
 	  {
-	    for (slot_id_t successor_slot : *cached_neighbors)
+	    for (std::size_t i = 0; i < cached_neighbors->neighbors.size (); ++i)
 	      {
-		auto [it, inserted] = visits.insert (successor_slot);
+		slot_id_t successor_slot = cached_neighbors->neighbors[i];
+
+		auto [it, inserted] = visits.insert (pack_oid (successor_slot));
 		if (!inserted)
 		  {
 		    continue;
@@ -502,7 +504,6 @@ namespace cubhnsw
 		    HNSW_ALGO_PRINT ("[search_to_insert] top.size(), expansion_limit: %zu, %zu\n", top.size(), expansion_limit);
 		  }
 	      }
-	    continue;
 	  }
 
 	// No cache: load node and neighbors directly.
@@ -512,7 +513,7 @@ namespace cubhnsw
 	  {
 	    slot_id_t successor_slot = candidate_neighbors.at (i);
 
-	    auto [it, inserted] = visits.insert (successor_slot);
+	    auto [it, inserted] = visits.insert (pack_oid (successor_slot));
 	    if (!inserted)
 	      {
 		continue;
@@ -540,7 +541,7 @@ namespace cubhnsw
   algo<Traits>::seek_down_ (algo_context_t<Traits> &context, const float *query, const slot_id_t &start_slot,
 			    const level_t begin_level, const level_t end_level, slot_id_t &out_slot)
   {
-    visited_set_t<Traits> &visits = context.m_visits;
+    visited_set_t &visits = context.m_visits;
     visits.clear ();
 
     slot_id_t closest_slot = start_slot;
@@ -553,12 +554,12 @@ namespace cubhnsw
 	    changed = false;
 
 	    // Try neighbors cache first; fallback to direct neighbors_ref_type.
-	    const std::vector<slot_id_t> *cached_neighbors =
+	    neighbor_cache_entry *cached_neighbors =
 		    m_storage->get_neighbors_cached_ids (context, closest_slot, level);
 
 	    if (cached_neighbors != nullptr)
 	      {
-		for (slot_id_t neighbor_id : *cached_neighbors)
+		for (slot_id_t neighbor_id : cached_neighbors->neighbors)
 		  {
 		    distance_t candidate_dist = compute_distance_from_query_ (context, query, neighbor_id);
 		    if (candidate_dist < closest_dist)
@@ -607,12 +608,13 @@ namespace cubhnsw
     refine_ (context, layer_connectivity,top, top_view, context.m_computed_distances_in_refines);
 
     // outgoing links from new node
-    std::vector<slot_id_t> *cached_neighbors = m_storage->get_neighbors_cached_ids (context, new_node_blk->id, level);
+    neighbor_cache_entry *cached_neighbors = m_storage->get_neighbors_cached_ids (context, new_node_blk->id, level);
     if (cached_neighbors != nullptr)
       {
 	for (std::size_t i = 0; i != top_view.size(); i++)
 	  {
-	    cached_neighbors->push_back (top_view[i].slot);
+	    cached_neighbors->neighbors.push_back (top_view[i].slot);
+	    cached_neighbors->distances.push_back (top_view[i].distance);
 	  }
       }
 
@@ -645,11 +647,14 @@ namespace cubhnsw
 
 	neighbors_ref_type close_header;
 
-	std::vector<slot_id_t> *cached_neighbors =
+	distance_t dist = compute_distance_from_query_ (context, value, close_slot);
+
+	neighbor_cache_entry *cached_neighbors =
 		m_storage->get_neighbors_cached_ids (context, close_slot, level);
 	if (cached_neighbors != nullptr)
 	  {
-	    cached_neighbors->push_back (new_slot);
+	    cached_neighbors->neighbors.push_back (new_slot);
+	    cached_neighbors->distances.push_back (dist);
 	    continue;
 	  }
 	else
@@ -663,7 +668,7 @@ namespace cubhnsw
 		  close_header.push_back (new_slot);
 
 		  // neighbors of close_slot changed, refresh cache
-		  m_storage->refresh_neighbors_cache (context, close_slot, level);
+		  // m_storage->refresh_neighbors_cache (context, close_slot, level);
 		  continue;
 		}
 	    }
@@ -671,18 +676,14 @@ namespace cubhnsw
 
 	top_candidates_t<Traits> &top_for_refine = context.m_top_for_refine;
 	top_for_refine.clear ();
-
-	distance_t dist = compute_distance_from_query_ (context, value, close_slot);
-
 	top_for_refine.insert_reserved (candidate_t<Traits> (dist, close_slot));
-
 
 	if (cached_neighbors != nullptr)
 	  {
-	    for (auto n : *cached_neighbors)
+	    for (std::size_t i = 0; i < cached_neighbors->neighbors.size (); ++i)
 	      {
-		slot_id_t successor_slot = n;
-		dist = compute_distance_between (context, close_slot, successor_slot);
+		slot_id_t successor_slot = cached_neighbors->neighbors[i];
+		dist = cached_neighbors->distances[i];
 		top_for_refine.insert_reserved (candidate_t<Traits> (dist, successor_slot));
 	      }
 	    cached_neighbors->clear();
@@ -707,7 +708,8 @@ namespace cubhnsw
 	  {
 	    for (std::size_t i = 0; i != top_view.size (); i++)
 	      {
-		cached_neighbors->push_back (top_view[i].slot);
+		cached_neighbors->neighbors.push_back (top_view[i].slot);
+		cached_neighbors->distances.push_back (top_view[i].distance);
 	      }
 	  }
 	else
