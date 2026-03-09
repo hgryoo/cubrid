@@ -686,11 +686,11 @@ namespace cubhnsw
 	      {
 		uint64_t successor_slot = cached_neighbors->neighbors[i];
 		dist = cached_neighbors->distances[i];
-                if (dist == -1)
-                {
-                  dist = compute_distance_between (context, close_slot, unpack_oid (successor_slot));
-                  cached_neighbors->distances[i] = dist;
-                }
+		if (dist == -1)
+		  {
+		    dist = compute_distance_between (context, close_slot, unpack_oid (successor_slot));
+		    cached_neighbors->distances[i] = dist;
+		  }
 		top_for_refine.insert_reserved (candidate_t<Traits> (dist, unpack_oid (successor_slot)));
 	      }
 	    cached_neighbors->clear();
@@ -767,30 +767,34 @@ namespace cubhnsw
 	  {
 	    candidate_t submitted = top_data[idx];
 	    distance_t inter_result_dist = -1;
-	    neighbor_cache_entry *cached_neighbors = m_storage->get_neighbors_cached_ids (context, candidate.slot, level);
+	    bool found = false;
+
+	    neighbor_cache_entry *cached_neighbors =
+		    m_storage->get_neighbors_cached_ids (context, candidate.slot, level);
+
 	    if (cached_neighbors != nullptr)
 	      {
-		for (std::size_t i = 0; i < cached_neighbors->neighbors.size (); ++i)
+		for (std::size_t i = 0; i < cached_neighbors->neighbors.size(); ++i)
 		  {
 		    if (cached_neighbors->neighbors[i] == pack_oid (submitted.slot))
 		      {
-                        if (cached_neighbors->distances[i] != -1)
-                          {
+			if (cached_neighbors->distances[i] == -1)
+			  {
+			    cached_neighbors->distances[i] =
+				    compute_distance_between (context, candidate.slot, submitted.slot);
+			  }
 			inter_result_dist = cached_neighbors->distances[i];
-                          }
-                        else 
-                        {
-                          inter_result_dist = compute_distance_between (context, candidate.slot, submitted.slot);
-                          cached_neighbors->distances[i] = inter_result_dist;
-                        }
+			found = true;
 			break;
 		      }
 		  }
 	      }
-	    else
+
+	    if (!found)
 	      {
 		inter_result_dist = compute_distance_between (context, candidate.slot, submitted.slot);
 	      }
+
 	    if (inter_result_dist < candidate.distance)
 	      {
 		good = false;
