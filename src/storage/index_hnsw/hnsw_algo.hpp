@@ -616,7 +616,7 @@ namespace cubhnsw
 	for (std::size_t i = 0; i != top_view.size(); i++)
 	  {
 	    cached_neighbors->neighbors.push_back (pack_oid (top_view[i].slot));
-	    cached_neighbors->distances.push_back (top_view[i].distance);
+	    cached_neighbors->distances.push_back (-1);
 	  }
       }
 
@@ -649,14 +649,12 @@ namespace cubhnsw
 
 	neighbors_ref_type close_header;
 
-	distance_t dist = compute_distance_from_query_ (context, value, close_slot);
-
 	neighbor_cache_entry *cached_neighbors =
 		m_storage->get_neighbors_cached_ids (context, close_slot, level);
 	if (cached_neighbors != nullptr)
 	  {
 	    cached_neighbors->neighbors.push_back (pack_oid (new_slot));
-	    cached_neighbors->distances.push_back (dist);
+	    cached_neighbors->distances.push_back (-1);
 	    continue;
 	  }
 	else
@@ -676,6 +674,8 @@ namespace cubhnsw
 	    }
 	  }
 
+	distance_t dist = compute_distance_from_query_ (context, value, close_slot);
+
 	top_candidates_t<Traits> &top_for_refine = context.m_top_for_refine;
 	top_for_refine.clear ();
 	top_for_refine.insert_reserved (candidate_t<Traits> (dist, close_slot));
@@ -686,6 +686,11 @@ namespace cubhnsw
 	      {
 		uint64_t successor_slot = cached_neighbors->neighbors[i];
 		dist = cached_neighbors->distances[i];
+                if (dist == -1)
+                {
+                  dist = compute_distance_between (context, close_slot, unpack_oid (successor_slot));
+                  cached_neighbors->distances[i] = dist;
+                }
 		top_for_refine.insert_reserved (candidate_t<Traits> (dist, unpack_oid (successor_slot)));
 	      }
 	    cached_neighbors->clear();
@@ -712,7 +717,7 @@ namespace cubhnsw
 	    for (std::size_t i = 0; i != top_view.size (); i++)
 	      {
 		cached_neighbors->neighbors.push_back (pack_oid (top_view[i].slot));
-		cached_neighbors->distances.push_back (top_view[i].distance);
+		cached_neighbors->distances.push_back (-1);
 	      }
 	  }
 	else
@@ -769,7 +774,15 @@ namespace cubhnsw
 		  {
 		    if (cached_neighbors->neighbors[i] == pack_oid (submitted.slot))
 		      {
+                        if (cached_neighbors->distances[i] != -1)
+                          {
 			inter_result_dist = cached_neighbors->distances[i];
+                          }
+                        else 
+                        {
+                          inter_result_dist = compute_distance_between (context, candidate.slot, submitted.slot);
+                          cached_neighbors->distances[i] = inter_result_dist;
+                        }
 			break;
 		      }
 		  }

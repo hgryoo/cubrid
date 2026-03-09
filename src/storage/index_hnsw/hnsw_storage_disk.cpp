@@ -265,8 +265,8 @@ namespace cubhnsw
     entry.distances.reserve (neighbors.size ());
     for (std::size_t i = 0; i < neighbors.size (); ++i)
       {
-	entry.neighbors.push_back (pack_oid (neighbors.at (i)));
-	entry.distances.push_back (-1);
+	entry.neighbors.emplace_back (pack_oid (neighbors.at (i)));
+	entry.distances.emplace_back (-1);
       }
 
     m_neighbors_cache[std::move (key)] = std::move (entry);
@@ -281,7 +281,7 @@ namespace cubhnsw
     if (inserted)
       {
 	// TODO
-	// refresh_neighbors_cache (context, slot, level);
+	refresh_neighbors_cache (context, slot, level);
       }
 
     return &it->second;
