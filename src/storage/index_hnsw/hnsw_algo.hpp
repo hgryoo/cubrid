@@ -625,100 +625,57 @@ namespace cubhnsw
   algo<Traits>::form_reverse_links_ (algo_context_t<Traits> &context, const pinned_t &new_node_blk, const float *value,
 				     candidates_view_t<Traits> &new_neighbors)
   {
-    static constexpr float REVERSE_REFINE_PRUNE_RATIO = 1.10f;
-
     std::size_t level = context.m_level;
     std::size_t layer_connectivity = context.layer_connectivity (level, m_connectivity);
-
-    slot_id_t new_slot = new_node_blk->id;
-
     for (auto n : new_neighbors)
       {
 	slot_id_t close_slot = n.slot;
+	slot_id_t new_slot = new_node_blk->id;
 	if (close_slot == new_slot)
 	  {
 	    continue;
 	  }
 
-	// lock close node once
+	neighbors_ref_type close_header;
+
+	// TODO: exclusive??
 	pinned_t close_node_blk = m_storage->get_node_by_slot_id (context, close_slot, lock_mode::exclusive);
-	neighbors_ref_type close_header = get_neighbors (close_node_blk, level);
-
-	// fast path: still has room
-	if (close_header.size () < layer_connectivity)
-	  {
-	    close_header.push_back (new_slot);
-	    continue;
-	  }
-
-	// ------------------------------------------------------------------
-	// reverse refine pruning
-	//
-	// If the new node is clearly worse than the worst current neighbor
-	// (from the close node's perspective), skip the expensive refine_().
-	//
-	// This is an approximate pruning heuristic for build-time optimization.
-	// ------------------------------------------------------------------
-	distance_t dist_new = compute_distance_from_query_ (context, value, close_slot);
-
-	distance_t worst_existing = distance_t {};
-	bool has_existing = false;
-
-	for (std::size_t i = 0; i < close_header.size (); ++i)
-	  {
-	    slot_id_t successor_slot = close_header.at(i);
-	    if (successor_slot == new_slot)
-	      {
-		continue;
-	      }
-
-	    distance_t d = compute_distance_between (context, close_slot, successor_slot);
-
-	    if (!has_existing || d > worst_existing)
-	      {
-		worst_existing = d;
-		has_existing = true;
-	      }
-	  }
-
-	// if all current neighbors are valid and the new one is significantly
-	// worse than the worst existing neighbor, do not run full refine.
-	if (has_existing
-	    && dist_new >= worst_existing * REVERSE_REFINE_PRUNE_RATIO)
-	  {
-	    continue;
-	  }
+	{
+	  close_header = get_neighbors (close_node_blk, level);
+	  if (close_header.size () < layer_connectivity)
+	    {
+	      close_header.push_back (new_slot);
+	      continue;
+	    }
+	}
 
 	top_candidates_t<Traits> &top_for_refine = context.m_top_for_refine;
 	top_for_refine.clear ();
 
-	top_for_refine.insert_reserved (candidate_t<Traits> (dist_new, new_slot));
+	distance_t dist = compute_distance_from_query_ (context, value, close_slot);
 
-	for (std::size_t i = 0; i < close_header.size (); ++i)
+	top_for_refine.insert_reserved (candidate_t<Traits> (dist, close_slot));
+
+	for (std::size_t i = 0; i < close_header.size (); i++)
 	  {
-	    slot_id_t successor_slot = close_header.at(i);
-	    distance_t d = compute_distance_between (context, close_slot, successor_slot);
-	    top_for_refine.insert_reserved (candidate_t<Traits> (d, successor_slot));
+	    slot_id_t successor_slot = close_header.at (i);
+	    dist = compute_distance_between (context, close_slot, successor_slot);
+	    top_for_refine.insert_reserved (candidate_t<Traits> (dist, successor_slot));
 	  }
 
-	close_header.clear ();
-
+	// remove all neighbors from close_header
+	close_header.clear();
 	candidates_view_t<Traits> top_view;
+
 	std::size_t stat_computed_distance = 0;
-
-	(void) refine_ (context,
-			layer_connectivity,
-			top_for_refine,
-			top_view,
-			stat_computed_distance);
-
+	(void) refine_ (context, layer_connectivity, top_for_refine, top_view, stat_computed_distance);
 	context.m_stats.computed_distances_in_reverse_refines += stat_computed_distance;
 	if (context.m_level == 0)
 	  {
-	    context.m_stats.computed_distances_in_reverse_refines_l0 += stat_computed_distance;
+	    context.m_stats.computed_distances_in_reverse_refines_l0 = stat_computed_distance;
 	  }
 
-	for (std::size_t i = 0; i != top_view.size (); ++i)
+	for (std::size_t i = 0; i != top_view.size (); i++)
 	  {
 	    close_header.push_back (top_view[i].slot);
 	  }

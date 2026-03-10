@@ -161,7 +161,7 @@ namespace cubhnsw
       inline std::size_t node_neighbors_bytes_ (level_t level) const noexcept
       {
 	std::size_t neighbors_byte_non_base = get_connectivity() * sizeof (slot_id_t) + sizeof (neighbors_count_t);
-	return neighbors_byte_non_base * level + 1;
+	return neighbors_byte_non_base * (level + 1);
       }
 
       inline std::size_t node_neighbors_offset_ (level_t level) const noexcept
