@@ -117,13 +117,22 @@ namespace cubhnsw
 
       virtual void init_root (std::byte *root_block, std::size_t &root_size) = 0;
       virtual slot_id_t add_node (algo_context_t<Traits> &context, const OID &key, const float *vector,
-				  const level_t &level) = 0;
+				  const level_t &level, const std::uint64_t &hash) = 0;
 
       virtual pinned_t get_root (algo_context_t<Traits> &context, lock_mode mode) = 0;
       virtual pinned_t get_node_by_slot_id (algo_context_t<Traits> &context, const slot_id_t &slot_id,
 					    const lock_mode &mode) = 0;
       virtual const float *get_vector_by_slot_id (algo_context_t<Traits> &context, const slot_id_t &slot_id,
 	  const lock_mode &mode) = 0;
+
+
+      virtual  std::uint64_t get_hash_signature_by_slot_id (algo_context_t<Traits> &context,
+	  const slot_id_t &slot,
+	  lock_mode mode) = 0;
+
+      virtual  std::uint64_t compute_query_hash_signature (algo_context_t<Traits> &context,
+	  const float *query,
+	  std::size_t dim) const = 0;
 
       // promote lockmode from shared to exclusive
       virtual void promote_root (pinned_t &root) = 0;

@@ -256,7 +256,8 @@ namespace cubhnsw
 
       static constexpr std::size_t offset_key = 0;
       static constexpr std::size_t offset_level = offset_key + sizeof (slot_id_t);
-      static constexpr std::size_t offset_neighbors_offset = offset_level + sizeof (level_t);
+      static constexpr std::size_t offset_hash_signature = offset_level + sizeof (level_t);
+      static constexpr std::size_t offset_neighbors_offset = offset_hash_signature + sizeof (std::uint64_t);
       static constexpr std::size_t offset_vector = offset_neighbors_offset + sizeof (std::size_t);
       static constexpr std::size_t offset_header_end = offset_vector;
 
@@ -286,6 +287,15 @@ namespace cubhnsw
 	std::size_t offset = offset_header_end + sizeof (float) * dim;
 	set_neighbors_offset (offset);
 	std::memcpy (vector_tape(), v, dim * sizeof (float));
+      }
+
+      std::uint64_t get_hash_signature () const noexcept
+      {
+	return misaligned_load<std::uint64_t> (tape_ + offset_hash_signature);
+      }
+      void set_hash_signature (std::uint64_t v) noexcept
+      {
+	return misaligned_store<std::uint64_t> (tape_ + offset_hash_signature, v);
       }
 
       /*

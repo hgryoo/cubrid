@@ -34,6 +34,8 @@ namespace cubhnsw
     m_vfid = giid.vfid;
     m_root_vpid = VPID { giid.root_pageid, giid.vfid.volid };
     m_last_node_vpid = m_root_vpid;
+
+    init_hash_planes (build_params.dimension);
   }
 
   disk_storage::~disk_storage ()
@@ -134,7 +136,8 @@ namespace cubhnsw
   }
 
   disk_storage::slot_id_t
-  disk_storage::add_node (algo_context_t<traits> &context, const OID &key, const float *vector, const level_t &level)
+  disk_storage::add_node (algo_context_t<traits> &context, const OID &key, const float *vector, const level_t &level,
+			  const std::uint64_t &hash)
   {
     // insert node
     std::size_t bytes = this->node_bytes_ (level, get_dimension(), get_connectivity());
@@ -154,6 +157,7 @@ namespace cubhnsw
     node.set_key (key);
     node.set_level (level);
     node.set_vector (vector, get_dimension());
+    node.set_hash_signature (hash);
 
     PGSLOTID slot_id;
 
@@ -164,7 +168,13 @@ namespace cubhnsw
 	return slot_id_t { -1, -1, -1 };
       }
 
-    return { m_last_node_vpid.pageid, slot_id, m_last_node_vpid.volid };
+    slot_id_t new_slot = { m_last_node_vpid.pageid, slot_id, m_last_node_vpid.volid };
+
+    vector_cache_entry &cached = m_vector_cache[new_slot];
+    cached.hash_signature = hash;
+    cached.vector.assign (vector, vector + get_dimension ());
+
+    return new_slot;
   }
 
   disk_storage::pinned_t
@@ -249,20 +259,10 @@ namespace cubhnsw
   const float *
   disk_storage::get_vector_by_slot_id (algo_context_t<traits> &context, const slot_id_t &slot, const lock_mode &mode)
   {
-    auto it = m_vector_cache.find (slot);
-    if (it != m_vector_cache.end ())
-      {
-	return it->second.data ();
-      }
+    (void) mode;
 
-    pinned_t node_blk = get_node_by_slot_id (context, slot, mode);
-    node_t<disk_traits_t> node { reinterpret_cast<byte_t *> (node_blk->data) };
-    const float *vec = node.get_vector ();
-
-    std::vector<float> &cached = m_vector_cache[slot];
-    cached.assign (vec, vec + get_dimension ());
-
-    return cached.data ();
+    get_or_fill_vector_cache_ (context, slot, context.m_cache_temp);
+    return context.m_cache_temp.vector.data ();
   }
 
   // promote lockmode from shared to exclusive
@@ -330,4 +330,63 @@ namespace cubhnsw
 
     return error_code;
   }
+
+  std::uint64_t
+  disk_storage::get_hash_signature_by_slot_id (algo_context_t<traits>  &context,
+      const slot_id_t &slot,
+      lock_mode mode)
+  {
+    get_or_fill_vector_cache_ (context, slot, context.m_cache_temp);
+    return context.m_cache_temp.hash_signature;
+  }
+
+  std::uint64_t
+  disk_storage::compute_query_hash_signature (algo_context_t<traits>  &context,
+      const float *query,
+      std::size_t dim) const
+  {
+    std::uint64_t sig = 0;
+
+    for (std::size_t i = 0; i < HASH_SIGNATURE_BITS; i++)
+      {
+	const float *plane = m_hash_planes[i].data();
+
+	float dot = 0;
+
+	#pragma omp simd reduction(+:dot)
+	for (std::size_t j = 0; j < dim; j++)
+	  {
+	    dot += query[j] * plane[j];
+	  }
+
+	if (dot > 0)
+	  {
+	    sig |= (1ULL << i);
+	  }
+      }
+
+    return sig;
+  }
+
+  void
+  disk_storage::get_or_fill_vector_cache_ (algo_context_t<traits> &context,
+      const slot_id_t &slot, vector_cache_entry &cached)
+  {
+    auto it = m_vector_cache.find (slot);
+    if (it != m_vector_cache.end ())
+      {
+	cached = it->second;
+	return;
+      }
+
+    pinned_t node_blk = get_node_by_slot_id (context, slot, lock_mode::shared);
+    node_t<disk_traits_t> node { reinterpret_cast<byte_t *> (node_blk->data) };
+
+    auto [inserted_it, inserted] = m_vector_cache.try_emplace (slot);
+    cached = inserted_it->second;
+    cached.hash_signature = node.get_hash_signature ();
+    const float *vec = node.get_vector ();
+    cached.vector.assign (vec, vec + get_dimension ());
+  }
+
 }

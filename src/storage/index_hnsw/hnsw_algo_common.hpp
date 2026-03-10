@@ -94,16 +94,22 @@ namespace cubhnsw
   template <typename Traits>
   using visited_set_t = typename visit_set_helper<typename Traits::slot_id_t>::type;
 
+  struct vector_cache_entry
+  {
+    std::vector<float> vector;
+    std::uint64_t hash_signature;
+  };
+
   template <typename T>
   struct vector_cache_helper
   {
-    using type = ankerl::unordered_dense::map<T, std::vector<float>>;
+    using type = ankerl::unordered_dense::map<T, vector_cache_entry>;
   };
 
   template <>
   struct vector_cache_helper<OID>
   {
-    using type = ankerl::unordered_dense::map<OID, std::vector<float>, oid_hash, oid_equal>;
+    using type = ankerl::unordered_dense::map<OID, vector_cache_entry, oid_hash, oid_equal>;
   };
 
   template <typename Traits>
@@ -154,12 +160,17 @@ namespace cubhnsw
     std::size_t m_computed_distances_in_refines{};
     std::size_t m_computed_distances_in_reverse_refines{};
 
+    std::uint64_t m_query_hash_signature {0};
+    bool m_has_query_hash_signature {false};
+
     void clear_candidates ()
     {
       m_top_candidates.clear ();
       m_next_candidates.clear();
       m_visits.clear();
     }
+
+    vector_cache_entry m_cache_temp;
   };
 }
 

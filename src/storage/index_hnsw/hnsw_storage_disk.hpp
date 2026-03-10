@@ -24,6 +24,7 @@
 #include <unordered_map>
 #include <cstring>
 
+#include "hnsw_algo_common.hpp"
 #include "hnsw_storage.hpp"
 #include "thread_compat.hpp"
 
@@ -87,7 +88,7 @@ namespace cubhnsw
       virtual void init_root (std::byte *root_block, std::size_t &root_size) override;
 
       virtual slot_id_t add_node (algo_context_t<traits> &context, const OID &key, const float *vector,
-				  const level_t &level) override;
+				  const level_t &level, const std::uint64_t &hash) override;
 
       virtual pinned_t get_root (algo_context_t<traits> &context, lock_mode mode) override;
       virtual pinned_t get_node_by_slot_id (algo_context_t<traits> &context, const slot_id_t &slot_id,
@@ -98,6 +99,15 @@ namespace cubhnsw
       // promote lockmode from shared to exclusive
       // TODO: not implemented
       virtual void promote_root (pinned_t &root) override;
+
+      virtual std::uint64_t get_hash_signature_by_slot_id (algo_context_t<traits>  &context,
+	  const slot_id_t &slot,
+	  lock_mode mode) override;
+
+      virtual std::uint64_t compute_query_hash_signature (algo_context_t<traits>  &context,
+	  const float *query,
+	  std::size_t dim) const override;
+
 
     protected:
 
@@ -110,6 +120,8 @@ namespace cubhnsw
       PAGE_PTR alloc_new_page (cubthread::entry *thread_p, VFID &vfid, VPID &vpid);
       page_handle get_page_to_insert (algo_context_t<traits> &context, VFID &vfid, VPID &last_vpid, std::size_t bytes);
 
+      void get_or_fill_vector_cache_ (algo_context_t<traits> &context, const slot_id_t &slot, vector_cache_entry &cached);
+
     private:
       VFID m_vfid;
 
@@ -120,6 +132,27 @@ namespace cubhnsw
       VPID m_last_vec_vpid;
 
       vector_cache_t<traits> m_vector_cache;  // (slot_id_t, vector) cache
+
+      static constexpr std::size_t HASH_SIGNATURE_BITS = 64;
+      std::vector<std::vector<float>> m_hash_planes;
+
+      void init_hash_planes (std::size_t dim)
+      {
+	std::mt19937 rng (42);
+	std::normal_distribution<float> dist (0.0f, 1.0f);
+
+	m_hash_planes.resize (HASH_SIGNATURE_BITS);
+
+	for (size_t i = 0; i < HASH_SIGNATURE_BITS; i++)
+	  {
+	    m_hash_planes[i].resize (dim);
+
+	    for (size_t j = 0; j < dim; j++)
+	      {
+		m_hash_planes[i][j] = dist (rng);
+	      }
+	  }
+      }
 
       bool m_is_empty = true;
   };

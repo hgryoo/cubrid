@@ -36,6 +36,9 @@
 #define HNSW_ALGO_DEBUG 0
 #define HNSW_ALGO_PRINT(fmt, ...) do { if (HNSW_ALGO_DEBUG) { fprintf (stdout, fmt, ##__VA_ARGS__); fflush (stdout); } } while (0)
 
+#define HNSW_ENABLE_HASHPRUNE_QUERY 1
+#define HNSW_ENABLE_HASHPRUNE_REFINE 1
+
 namespace cubhnsw
 {
   /* this class is modified version of the usearch implementation */
@@ -120,6 +123,153 @@ namespace cubhnsw
 	return compute_distance_ (context, avec, bvec);
       }
 
+      using hash_sig_t = std::uint64_t;
+
+      static constexpr std::uint32_t HASHPRUNE_QUERY_THRESHOLD_DEFAULT = 28;
+      static constexpr std::uint32_t HASHPRUNE_REFINE_THRESHOLD_DEFAULT = 32;
+
+      inline std::uint32_t hash_hamming_distance_ (hash_sig_t a, hash_sig_t b) const
+      {
+	return static_cast<std::uint32_t> (__builtin_popcountll (a ^ b));
+      }
+
+      inline hash_sig_t get_hash_signature_ (algo_context_t<Traits> &context, const slot_id_t &slot) const
+      {
+	// You will implement this in storage / node layout.
+	return m_storage->get_hash_signature_by_slot_id (context, slot, lock_mode::shared);
+      }
+
+      inline hash_sig_t compute_query_hash_signature_ (algo_context_t<Traits> &context, const float *query) const
+      {
+	// You will implement this based on your hash planes / projection logic.
+	return m_storage->compute_query_hash_signature (context, query, m_dimension);
+      }
+
+      inline bool should_prune_query_candidate_ (const algo_context_t<Traits> &context,
+	  const level_t level,
+	  const std::size_t top_size,
+	  const std::size_t expansion_limit,
+	  const hash_sig_t node_sig) const
+      {
+#if HNSW_ENABLE_HASHPRUNE_QUERY
+	if (!m_enable_hashprune_query)
+	  {
+	    return false;
+	  }
+
+	if (!context.m_has_query_hash_signature)
+	  {
+	    return false;
+	  }
+
+	// Conservative:
+	// 1) only when the beam is already full
+	// 2) only at level 0
+	if (top_size < expansion_limit)
+	  {
+	    return false;
+	  }
+
+	if (level != 0)
+	  {
+	    return false;
+	  }
+
+	return hash_hamming_distance_ (context.m_query_hash_signature, node_sig) > m_hashprune_query_threshold;
+#else
+	(void) context;
+	(void) level;
+	(void) top_size;
+	(void) expansion_limit;
+	(void) node_sig;
+	return false;
+#endif
+      }
+
+      inline bool should_skip_interdistance_ (const hash_sig_t a, const hash_sig_t b) const
+      {
+#if HNSW_ENABLE_HASHPRUNE_REFINE
+	if (!m_enable_hashprune_refine)
+	  {
+	    return false;
+	  }
+
+	return hash_hamming_distance_ (a, b) > m_hashprune_refine_threshold;
+#else
+	(void) a;
+	(void) b;
+	return false;
+#endif
+      }
+
+      inline bool compute_distance_from_query_fused_ (algo_context_t<Traits> &context,
+	  const float *query,
+	  const slot_id_t &slot,
+	  const level_t level,
+	  const std::size_t top_size,
+	  const std::size_t expansion_limit,
+	  distance_t &out_dist) const
+      {
+	std::uint64_t node_hash =
+		m_storage->get_hash_signature_by_slot_id (context, slot, lock_mode::shared);
+
+	std::uint32_t hamming =
+		__builtin_popcountll (context.m_query_hash_signature ^ node_hash);
+
+	if (hamming > m_hashprune_query_threshold)
+	  {
+	    return false;
+	  }
+
+	out_dist = compute_distance_from_query_ (context, query, slot);
+	return true;
+      }
+
+      bool
+      compute_distance_between_fused_ (algo_context_t<Traits> &context,
+				       const slot_id_t &a,
+				       const slot_id_t &b,
+				       distance_t &out_dist) const
+      {
+	std::uint64_t hash_a =
+		m_storage->get_hash_signature_by_slot_id (context, a, lock_mode::shared);
+
+	std::uint64_t hash_b =
+		m_storage->get_hash_signature_by_slot_id (context, b, lock_mode::shared);
+
+	std::uint32_t hamming =
+		__builtin_popcountll (hash_a ^ hash_b);
+
+	if (hamming > m_hashprune_refine_threshold)
+	  {
+	    return false;
+	  }
+
+	out_dist = compute_distance_between (context, a, b);
+	return true;
+      }
+
+      inline bool is_redundant_candidate_fused_ (algo_context_t<Traits> &context,
+	  const slot_id_t &candidate_slot,
+	  const distance_t candidate_query_dist,
+	  const slot_id_t &submitted_slot) const
+      {
+#if HNSW_ENABLE_HASHPRUNE_REFINE
+	hash_sig_t candidate_sig = get_hash_signature_ (context, candidate_slot);
+	hash_sig_t submitted_sig = get_hash_signature_ (context, submitted_slot);
+
+	// If hashes are far apart, skip exact inter-node distance.
+	// Then this submitted node cannot reject the candidate.
+	if (should_skip_interdistance_ (candidate_sig, submitted_sig))
+	  {
+	    return false;
+	  }
+#endif
+
+	distance_t inter_result_dist = compute_distance_between (context, candidate_slot, submitted_slot);
+	return inter_result_dist < candidate_query_dist;
+      }
+
       inline neighbors_ref_type get_neighbors (const pinned_t &node_blk, const level_t level)
       {
 	node_type node = node_type (node_blk->data);
@@ -141,6 +291,12 @@ namespace cubhnsw
       std::size_t m_expansion;
 
       std::default_random_engine m_level_generator {std::random_device{}()};
+
+      bool m_enable_hashprune_query {true};
+      bool m_enable_hashprune_refine {true};
+
+      std::uint32_t m_hashprune_query_threshold {HASHPRUNE_QUERY_THRESHOLD_DEFAULT};
+      std::uint32_t m_hashprune_refine_threshold {HASHPRUNE_REFINE_THRESHOLD_DEFAULT};
 
       // precomputed
       double m_inverse_log_connectivity;
@@ -228,8 +384,12 @@ namespace cubhnsw
 	      abort ();
 	    }
 	}
+
+      context.m_query_hash_signature = compute_query_hash_signature_ (context, vector);
+      context.m_has_query_hash_signature = true;
+
       //
-      new_slot = m_storage->add_node (context, key, vector, new_target_level);
+      new_slot = m_storage->add_node (context, key, vector, new_target_level, context.m_query_hash_signature);
       //
 
       if (m_storage->is_empty())
@@ -357,6 +517,9 @@ namespace cubhnsw
 	  }
       }
 
+    context.m_query_hash_signature = compute_query_hash_signature_ (context, query);
+    context.m_has_query_hash_signature = true;
+
     slot_id_t closest_slot;
     if (seek_down_ (context, query, entry_slot, root_level, 0, closest_slot) != NO_ERROR)
       {
@@ -417,6 +580,7 @@ namespace cubhnsw
 	slot_id_t candidate_slot = candidacy.slot;
 	pinned_t candidate_node_blk = m_storage->get_node_by_slot_id (context, candidate_slot, lock_mode::shared);
 	neighbors_ref_type candidate_neighbors = get_neighbors (candidate_node_blk, level);
+
 	for (std::size_t i = 0; i < candidate_neighbors.size (); ++i)
 	  {
 	    slot_id_t successor_slot = candidate_neighbors.at (i);
@@ -427,16 +591,29 @@ namespace cubhnsw
 		continue;
 	      }
 
-	    distance_t sucessor_dist = compute_distance_from_query_ (context, query, successor_slot);
-	    if (top.size () < expansion_limit || sucessor_dist < radius)
+	    distance_t successor_dist = 0;
+	    bool accepted = compute_distance_from_query_fused_ (context,
+			    query,
+			    successor_slot,
+			    level,
+			    top.size (),
+			    expansion_limit,
+			    successor_dist);
+	    if (!accepted)
 	      {
-		next.insert (candidate_t<Traits> (-sucessor_dist, successor_slot));
-		top.insert (candidate_t<Traits> (sucessor_dist, successor_slot), expansion_limit);
+		continue;
+	      }
+
+	    if (top.size () < expansion_limit || successor_dist < radius)
+	      {
+		next.insert (candidate_t<Traits> (-successor_dist, successor_slot));
+		top.insert (candidate_t<Traits> (successor_dist, successor_slot), expansion_limit);
 		radius = top.top ().distance;
 
 		HNSW_ALGO_PRINT ("[search_to_insert] radius: %f\n", radius);
-		HNSW_ALGO_PRINT ("[search_to_insert] sucessor_dist: %f\n", sucessor_dist);
-		HNSW_ALGO_PRINT ("[search_to_insert] top.size(), expansion_limit: %zu, %zu\n", top.size(), expansion_limit);
+		HNSW_ALGO_PRINT ("[search_to_insert] successor_dist: %f\n", successor_dist);
+		HNSW_ALGO_PRINT ("[search_to_insert] top.size(), expansion_limit: %zu, %zu\n",
+				 top.size (), expansion_limit);
 	      }
 	  }
       }
@@ -455,6 +632,7 @@ namespace cubhnsw
 
     slot_id_t closest_slot = start_slot;
     distance_t closest_dist = compute_distance_from_query_ (context, query, closest_slot);
+
     for (level_t level = begin_level; level > end_level; --level)
       {
 	bool changed = false;
@@ -463,13 +641,25 @@ namespace cubhnsw
 	    changed = false;
 
 	    pinned_t closest_node_blk = m_storage->get_node_by_slot_id (context, closest_slot, lock_mode::shared);
-
 	    neighbors_ref_type neighbors = get_neighbors (closest_node_blk, level);
+
 	    for (std::size_t i = 0; i < neighbors.size (); ++i)
 	      {
 		slot_id_t neighbor_id = neighbors.at (i);
 
-		distance_t candidate_dist = compute_distance_from_query_ (context, query, neighbor_id);
+		distance_t candidate_dist = 0;
+		bool accepted = compute_distance_from_query_fused_ (context,
+				query,
+				neighbor_id,
+				level,
+				1,
+				std::numeric_limits<std::size_t>::max (),
+				candidate_dist);
+		if (!accepted)
+		  {
+		    continue;
+		  }
+
 		if (candidate_dist < closest_dist)
 		  {
 		    closest_dist = candidate_dist;
@@ -542,8 +732,16 @@ namespace cubhnsw
 	for (std::size_t i = 0; i < close_header.size (); i++)
 	  {
 	    slot_id_t successor_slot = close_header.at (i);
-	    dist = compute_distance_between (context, close_slot, successor_slot);
-	    top_for_refine.insert_reserved (candidate_t<Traits> (dist, successor_slot));
+	    distance_t dist_between;
+
+	    if (!compute_distance_between_fused_ (context,
+						  close_slot,
+						  successor_slot,
+						  dist_between))
+	      {
+		continue;
+	      }
+	    top_for_refine.insert_reserved (candidate_t<Traits> (dist_between, successor_slot));
 	  }
 
 	// remove all neighbors from close_header
@@ -570,14 +768,14 @@ namespace cubhnsw
     std::size_t old_computed_distances = 0;
 
     candidate_t<Traits> *top_data = top.data();
-    std::size_t const top_count = top.size();
+    std::size_t const top_count = top.size ();
     if (top_count < needed)
       {
 	out.assign (top_data, top_data + top_count);
 	return;
       }
 
-    top.sort_ascending();
+    top.sort_ascending ();
 
     if (context.m_is_perf_tracking)
       {
@@ -585,18 +783,21 @@ namespace cubhnsw
       }
 
     std::size_t submitted_count = 1;
-    std::size_t consumed_count = 1; /// Always equal or greater than `submitted_count`.
+    std::size_t consumed_count = 1;
+
     while (submitted_count < needed && consumed_count < top_count)
       {
 	candidate_t<Traits> candidate = top_data[consumed_count];
 	bool good = true;
-	std::size_t idx = 0;
-	for (; idx < submitted_count; idx++)
-	  {
-	    candidate_t submitted = top_data[idx];
 
-	    distance_t inter_result_dist = compute_distance_between (context, candidate.slot, submitted.slot);
-	    if (inter_result_dist < candidate.distance)
+	for (std::size_t idx = 0; idx < submitted_count; ++idx)
+	  {
+	    candidate_t<Traits> submitted = top_data[idx];
+
+	    if (is_redundant_candidate_fused_ (context,
+					       candidate.slot,
+					       candidate.distance,
+					       submitted.slot))
 	      {
 		good = false;
 		break;
@@ -606,9 +807,10 @@ namespace cubhnsw
 	if (good)
 	  {
 	    top_data[submitted_count] = top_data[consumed_count];
-	    submitted_count++;
+	    ++submitted_count;
 	  }
-	consumed_count++;
+
+	++consumed_count;
       }
 
     if (context.m_is_perf_tracking)
