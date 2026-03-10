@@ -448,15 +448,6 @@ namespace cubhnsw
     top.insert_reserved (candidate_t<Traits> (radius, start_slot));
     visits.insert (start_slot);
 
-    // ------------------------------------------------------------------
-    // Neighbor expansion pruning:
-    // - Standard HNSW termination: stop when the closest candidate in "next"
-    //   is already worse than current radius (worst in "top") while "top" is full.
-    // - Additional cap: do not expand more than `expansion_limit` candidates.
-    //   This bounds the number of neighbor expansions (and thus distance calls)
-    //   under degenerate graph layouts / cache effects.
-    // ------------------------------------------------------------------
-    std::size_t expanded = 0;
     while (!next.empty ())
       {
 	candidate_t candidacy = next.top ();
@@ -464,13 +455,6 @@ namespace cubhnsw
 	  {
 	    break;
 	  }
-
-	// Hard cap on number of expanded candidates at this layer.
-	if (expanded >= expansion_limit)
-	  {
-	    break;
-	  }
-	expanded++;
 
 	next.pop ();
 
@@ -766,23 +750,19 @@ namespace cubhnsw
 	old_computed_distances = context.m_stats.computed_distances;
       }
 
-    // Heuristic neighbor pruning (a.k.a. "diversified" selection in HNSW):
-    // keep a candidate only if it is not closer to any already selected neighbor
-    // than it is to the base point (represented by `candidate.distance`).
-    std::vector<candidate_t<Traits>> discarded;
-    discarded.reserve (top_count);
-
-    std::size_t selected_count = 0;
-    for (std::size_t i = 0; i < top_count && selected_count < needed; ++i)
+    std::size_t submitted_count = 1;
+    std::size_t consumed_count = 1; /// Always equal or greater than `submitted_count`.
+    while (submitted_count < needed && consumed_count < top_count)
       {
-	candidate_t<Traits> candidate = top_data[i];
+	candidate_t<Traits> candidate = top_data[consumed_count];
 	bool good = true;
-
-	for (std::size_t j = 0; j < selected_count; ++j)
+	std::size_t idx = 0;
+	for (; idx < submitted_count; idx++)
 	  {
-	    const candidate_t<Traits> &selected = top_data[j];
-	    distance_t inter_dist = compute_distance_between (context, candidate.slot, selected.slot);
-	    if (inter_dist < candidate.distance)
+	    candidate_t submitted = top_data[idx];
+
+	    distance_t inter_result_dist = compute_distance_between (context, candidate.slot, submitted.slot);
+	    if (inter_result_dist < candidate.distance)
 	      {
 		good = false;
 		break;
@@ -791,19 +771,10 @@ namespace cubhnsw
 
 	if (good)
 	  {
-	    top_data[selected_count++] = candidate;
+	    top_data[submitted_count] = top_data[consumed_count];
+	    submitted_count++;
 	  }
-	else
-	  {
-	    discarded.push_back (candidate);
-	  }
-      }
-
-    // If we could not gather enough diverse neighbors, keep some pruned ones
-    // to preserve connectivity (standard HNSW option).
-    for (std::size_t i = 0; selected_count < needed && i < discarded.size (); ++i)
-      {
-	top_data[selected_count++] = discarded[i];
+	consumed_count++;
       }
 
     if (context.m_is_perf_tracking)
@@ -811,9 +782,8 @@ namespace cubhnsw
 	refines_counter = context.m_stats.computed_distances - old_computed_distances;
       }
 
-    top.shrink (selected_count);
-    out.assign (top_data, top_data + selected_count);
-    // ======================================================================================
+    top.shrink (submitted_count);
+    out.assign (top_data, top_data + submitted_count);
   }
 
   template <typename Traits>
