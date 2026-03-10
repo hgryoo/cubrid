@@ -76,20 +76,18 @@ namespace cubhnsw
 
       // horizontal seeking
       int seek_on_layer_ (algo_context_t<Traits> &context, const float *query, const slot_id_t &start_slot,
-			  const level_t level,
 			  const std::size_t expansion_limit);
 
       // vertical seeking
       int seek_down_ (algo_context_t<Traits> &context, const float *query, const slot_id_t &start_slot,
-		      const level_t begin_level,
-		      const level_t end_level, slot_id_t &closest_slot);
+		      const level_t target_level,
+		      slot_id_t &closest_slot);
 
       // refining links
-      void form_links_to_closest_ (algo_context_t<Traits> &context, const pinned_t &new_slot, const level_t level,
+      void form_links_to_closest_ (algo_context_t<Traits> &context, const pinned_t &new_slot,
 				   candidates_view_t<Traits> &out);
       int form_reverse_links_ (algo_context_t<Traits> &context, const pinned_t &new_slot, const float *value,
-			       candidates_view_t<Traits> &new_neighbors,
-			       level_t level);
+			       candidates_view_t<Traits> &new_neighbors);
       void refine_ (algo_context_t<Traits> &context, std::size_t needed, top_candidates_t<Traits> &top,
 		    candidates_view_t<Traits> &out, std::size_t &refines_counter) const;
 
@@ -101,7 +99,11 @@ namespace cubhnsw
       {
 	if (context.m_is_perf_tracking)
 	  {
-	    context.m_computed_distances++;
+	    context.m_stats.computed_distances++;
+	    if (context.m_level == 0)
+	      {
+		context.m_stats.computed_distances_l0++;
+	      }
 	  }
 	return metric_table[static_cast<size_t> (m_metric)] (v1, v2, m_dimension);
       }
@@ -273,39 +275,21 @@ namespace cubhnsw
       slot_id_t closest_slot {};
       {
 	// TODO: error handling
-	(void) seek_down_ (context, vector, entry_slot, curr_max_level, new_target_level, closest_slot);
+	context.m_level = curr_max_level;
+	(void) seek_down_ (context, vector, entry_slot, new_target_level, closest_slot);
       }
 
-      if (context.m_is_debugging)
-	{
-	  fprintf (context.m_debug_fp, "===== node num: %zu, slot: %s =====\n", m_debug_cnt++, dump_oid (new_slot).c_str());
-	  if (!context.m_accessed_nodes.empty ())
-	    {
-	      for (const auto &node : context.m_accessed_nodes)
-		{
-		  fprintf (context.m_debug_fp, "(%s) -> ", node.data());
-		}
-	      fprintf (context.m_debug_fp, "END \n");
-	      context.m_accessed_nodes.clear();
-	    }
-	}
-
-      level_t level = (std::min) (new_target_level, curr_max_level);
+      assert (context.m_level == (std::min) (new_target_level, curr_max_level));
 
       pinned_t new_node_blk = m_storage->get_node_by_slot_id (context, new_slot, lock_mode::exclusive);
 
-      if (context.m_is_debugging)
+      while (context.m_level >= 0)
 	{
-	  fprintf (context.m_debug_fp, "target level: %d\n", level);
-	}
-
-      while (true)
-	{
-	  (void) seek_on_layer_ (context, vector, closest_slot, level, top_limit);
+	  (void) seek_on_layer_ (context, vector, closest_slot,top_limit);
 
 	  candidates_view_t<Traits> closest_view;
 	  {
-	    std::vector<slot_id_t> *cached_neighbors = m_storage->get_neighbors_cached_ids (context, new_slot, level);
+	    std::vector<slot_id_t> *cached_neighbors = m_storage->get_neighbors_cached_ids (context, new_slot, context.m_level);
 	    if (cached_neighbors != nullptr)
 	      {
 		cached_neighbors->clear();
@@ -315,14 +299,14 @@ namespace cubhnsw
 	    neighbors.clear();
 #endif
 
-	    form_links_to_closest_ (context, new_node_blk, level, closest_view);
+	    form_links_to_closest_ (context, new_node_blk, closest_view);
 	    closest_slot = closest_view[0].slot;
 	  }
-	  form_reverse_links_ (context, new_node_blk, vector, closest_view, level);
+	  form_reverse_links_ (context, new_node_blk, vector, closest_view);
 
 	  if (context.m_is_debugging)
 	    {
-	      fprintf (context.m_debug_fp, "level: %d\n", level);
+	      fprintf (context.m_debug_fp, "level: %d\n", context.m_level);
 	      if (!context.m_accessed_nodes.empty ())
 		{
 		  for (const auto &node : context.m_accessed_nodes)
@@ -334,26 +318,9 @@ namespace cubhnsw
 		}
 	    }
 
-	  if (level == 0)
-	    {
-	      break;
-	    }
-
-	  --level;
+	  --context.m_level;
 	}
     }
-
-    perfmon_add_stat (context.m_thread_p, PSTAT_HNSW_NUM_VISITED_NODE, context.m_visited_nodes);
-    perfmon_add_stat (context.m_thread_p, PSTAT_HNSW_NUM_COMPUTED_DISTANCES, context.m_computed_distances);
-    perfmon_add_stat (context.m_thread_p, PSTAT_HNSW_NUM_COMPUTED_DISTANCES_IN_REFINES,
-		      context.m_computed_distances_in_refines);
-    perfmon_add_stat (context.m_thread_p, PSTAT_HNSW_NUM_COMPUTED_DISTANCES_IN_REVERSE_REFINES,
-		      context.m_computed_distances_in_reverse_refines);
-
-    if (context.m_is_debugging)
-      {
-	context.close_debug_file();
-      }
 
     if (new_target_level > curr_max_level)
       {
@@ -366,7 +333,17 @@ namespace cubhnsw
 	root_node.set_entry (new_slot);
 	root_node.set_level (new_target_level);
 	m_storage->set_empty (false);
+
+	context.m_stats.entrypoint_updates++;
       }
+
+    if (context.m_is_debugging)
+      {
+	context.close_debug_file();
+      }
+
+    // recommend the function name "add_perf_stats"
+    context.collect_perf_stats();
 
     return result;
   }
@@ -419,38 +396,45 @@ namespace cubhnsw
       }
 
     slot_id_t closest_slot;
-    if (seek_down_ (context, query, entry_slot, root_level, 0, closest_slot) != NO_ERROR)
+
+    context.m_level = root_level;
+    if (seek_down_ (context, query, entry_slot, /* target level */ 0, closest_slot) != NO_ERROR)
       {
 	// TODO: error handling
 	assert (false);
       }
 
-    if (seek_on_layer_ (context, query, closest_slot, 0, expansion_size) != NO_ERROR)
+    // search from base level (0)
+    assert (context.m_level == 0);
+
+    if (seek_on_layer_ (context, query, closest_slot, expansion_size) != NO_ERROR)
       {
 	// TODO: error handling
 	assert (false);
       }
+
+    // not to collect stats after seeking on base layer (0-level)
+    context.m_level--;
 
     top.sort_ascending();
     top.shrink (k);
-
-    perfmon_add_stat (context.m_thread_p, PSTAT_HNSW_NUM_VISITED_NODE, context.m_visited_nodes);
-    perfmon_add_stat (context.m_thread_p, PSTAT_HNSW_NUM_COMPUTED_DISTANCES, context.m_computed_distances);
 
     result.results.assign (top.data(), top.data() + top.size());
     for (std::size_t i = 0; i < top.size (); ++i)
       {
 	pinned_t node_blk = m_storage->get_node_by_slot_id (context, result.results[i].slot, lock_mode::shared);
-
 	result.oids.push_back (node_type (node_blk->data).get_key());
       }
+
+    context.collect_perf_stats();
+
     return result;
   }
 
   template <typename Traits>
   int
   algo<Traits>::seek_on_layer_ (algo_context_t<Traits> &context, const float *query, const slot_id_t &start_slot,
-				const level_t level, const std::size_t expansion_limit)
+				const std::size_t expansion_limit)
   {
     next_candidates_t<Traits> &next = context.m_next_candidates;
     top_candidates_t<Traits> &top = context.m_top_candidates;
@@ -494,7 +478,7 @@ namespace cubhnsw
 
 	// Try neighbors cache first (disk storage); fallback to direct neighbors_ref_type.
 	const std::vector<slot_id_t> *cached_neighbors =
-		m_storage->get_neighbors_cached_ids (context, candidate_slot, level);
+		m_storage->get_neighbors_cached_ids (context, candidate_slot, context.m_level);
 
 	if (cached_neighbors != nullptr)
 	  {
@@ -523,7 +507,7 @@ namespace cubhnsw
 
 	// No cache: load node and neighbors directly.
 	pinned_t candidate_node_blk = m_storage->get_node_by_slot_id (context, candidate_slot, lock_mode::shared);
-	neighbors_ref_type candidate_neighbors = get_neighbors (candidate_node_blk, level);
+	neighbors_ref_type candidate_neighbors = get_neighbors (candidate_node_blk, context.m_level);
 	for (std::size_t i = 0; i < candidate_neighbors.size (); ++i)
 	  {
 	    slot_id_t successor_slot = candidate_neighbors.at (i);
@@ -554,14 +538,14 @@ namespace cubhnsw
   template <typename Traits>
   int
   algo<Traits>::seek_down_ (algo_context_t<Traits> &context, const float *query, const slot_id_t &start_slot,
-			    const level_t begin_level, const level_t end_level, slot_id_t &out_slot)
+			    const level_t target_level, slot_id_t &out_slot)
   {
     visited_set_t<Traits> &visits = context.m_visits;
     visits.clear ();
 
     slot_id_t closest_slot = start_slot;
     distance_t closest_dist = compute_distance_from_query_ (context, query, closest_slot);
-    for (level_t level = begin_level; level > end_level; --level)
+    for (; context.m_level > target_level; --context.m_level)
       {
 	bool changed = false;
 	do
@@ -570,8 +554,7 @@ namespace cubhnsw
 
 	    // Try neighbors cache first; fallback to direct neighbors_ref_type.
 	    const std::vector<slot_id_t> *cached_neighbors =
-		    m_storage->get_neighbors_cached_ids (context, closest_slot, level);
-
+		    m_storage->get_neighbors_cached_ids (context, closest_slot, context.m_level);
 	    if (cached_neighbors != nullptr)
 	      {
 		for (slot_id_t neighbor_id : *cached_neighbors)
@@ -589,7 +572,7 @@ namespace cubhnsw
 	      {
 		pinned_t closest_node_blk = m_storage->get_node_by_slot_id (context, closest_slot, lock_mode::shared);
 
-		neighbors_ref_type neighbors = get_neighbors (closest_node_blk, level);
+		neighbors_ref_type neighbors = get_neighbors (closest_node_blk, context.m_level);
 		for (std::size_t i = 0; i < neighbors.size (); ++i)
 		  {
 		    slot_id_t neighbor_id = neighbors.at (i);
@@ -615,15 +598,24 @@ namespace cubhnsw
   template <typename Traits>
   void
   algo<Traits>::form_links_to_closest_ (algo_context_t<Traits> &context, const pinned_t &new_node_blk,
-					const level_t level, candidates_view_t<Traits> &top_view)
+					candidates_view_t<Traits> &top_view)
   {
     top_candidates_t<Traits> &top = context.m_top_candidates;
-    std::size_t layer_connectivity = level == 0 ? m_connectivity * 2 : m_connectivity;
 
-    refine_ (context, layer_connectivity,top, top_view, context.m_computed_distances_in_refines);
+    std::size_t level = context.m_level;
+    std::size_t layer_connectivity = context.layer_connectivity (level, m_connectivity);
+
+    std::size_t stat_computed_distance = 0;
+    refine_ (context, layer_connectivity, top, top_view, stat_computed_distance);
+    context.m_stats.computed_distances_in_refines += stat_computed_distance;
+    if (context.m_level == 0)
+      {
+	context.m_stats.computed_distances_in_refines_l0 += stat_computed_distance;
+      }
 
     // outgoing links from new node
-    std::vector<slot_id_t> *cached_neighbors = m_storage->get_neighbors_cached_ids (context, new_node_blk->id, level);
+    std::vector<slot_id_t> *cached_neighbors = m_storage->get_neighbors_cached_ids (context, new_node_blk->id,
+	context.m_level);
     if (cached_neighbors != nullptr)
       {
 	for (std::size_t i = 0; i != top_view.size(); i++)
@@ -647,91 +639,104 @@ namespace cubhnsw
   template <typename Traits>
   int
   algo<Traits>::form_reverse_links_ (algo_context_t<Traits> &context, const pinned_t &new_node_blk, const float *value,
-				     candidates_view_t<Traits> &new_neighbors, level_t level)
+				     candidates_view_t<Traits> &new_neighbors)
   {
-    std::size_t layer_connectivity = level == 0 ? m_connectivity * 2 : m_connectivity;
+    static constexpr float REVERSE_REFINE_PRUNE_RATIO = 1.10f;
+
+    std::size_t level = context.m_level;
+    std::size_t layer_connectivity = context.layer_connectivity (level, m_connectivity);
+
+    slot_id_t new_slot = new_node_blk->id;
+
     for (auto n : new_neighbors)
       {
 	slot_id_t close_slot = n.slot;
-	slot_id_t new_slot = new_node_blk->id;
 	if (close_slot == new_slot)
 	  {
 	    continue;
 	  }
 
-	neighbors_ref_type close_header;
+	// lock close node once
+	pinned_t close_node_blk = m_storage->get_node_by_slot_id (context, close_slot, lock_mode::exclusive);
+	neighbors_ref_type close_header = get_neighbors (close_node_blk, level);
 
-	std::vector<slot_id_t> *cached_neighbors =
-		m_storage->get_neighbors_cached_ids (context, close_slot, level);
-	if (cached_neighbors != nullptr)
+	// fast path: still has room
+	if (close_header.size () < layer_connectivity)
 	  {
-	    cached_neighbors->push_back (new_slot);
+	    close_header.push_back (new_slot);
 	    continue;
 	  }
-	else
-	  {
-	    // TODO: exclusive??
-	    pinned_t close_node_blk = m_storage->get_node_by_slot_id (context, close_slot, lock_mode::exclusive);
-	    {
-	      close_header = get_neighbors (close_node_blk, level);
-	      if (close_header.size () < layer_connectivity)
-		{
-		  close_header.push_back (new_slot);
 
-		  // neighbors of close_slot changed, refresh cache
-		  m_storage->refresh_neighbors_cache (context, close_slot, level);
-		  continue;
-		}
-	    }
+	// ------------------------------------------------------------------
+	// reverse refine pruning
+	//
+	// If the new node is clearly worse than the worst current neighbor
+	// (from the close node's perspective), skip the expensive refine_().
+	//
+	// This is an approximate pruning heuristic for build-time optimization.
+	// ------------------------------------------------------------------
+	distance_t dist_new = compute_distance_from_query_ (context, value, close_slot);
+
+	distance_t worst_existing = distance_t {};
+	bool has_existing = false;
+
+	for (std::size_t i = 0; i < close_header.size (); ++i)
+	  {
+	    slot_id_t successor_slot = close_header.at(i);
+	    if (successor_slot == new_slot)
+	      {
+		continue;
+	      }
+
+	    distance_t d = compute_distance_between (context, close_slot, successor_slot);
+
+	    if (!has_existing || d > worst_existing)
+	      {
+		worst_existing = d;
+		has_existing = true;
+	      }
+	  }
+
+	// if all current neighbors are valid and the new one is significantly
+	// worse than the worst existing neighbor, do not run full refine.
+	if (has_existing
+	    && dist_new >= worst_existing * REVERSE_REFINE_PRUNE_RATIO)
+	  {
+	    continue;
 	  }
 
 	top_candidates_t<Traits> &top_for_refine = context.m_top_for_refine;
 	top_for_refine.clear ();
 
-	distance_t dist = compute_distance_from_query_ (context, value, close_slot);
+	top_for_refine.insert_reserved (candidate_t<Traits> (dist_new, new_slot));
 
-	top_for_refine.insert_reserved (candidate_t<Traits> (dist, close_slot));
-
-
-	if (cached_neighbors != nullptr)
+	for (std::size_t i = 0; i < close_header.size (); ++i)
 	  {
-	    for (auto n : *cached_neighbors)
-	      {
-		slot_id_t successor_slot = n;
-		dist = compute_distance_between (context, close_slot, successor_slot);
-		top_for_refine.insert_reserved (candidate_t<Traits> (dist, successor_slot));
-	      }
-	    cached_neighbors->clear();
+	    slot_id_t successor_slot = close_header.at(i);
+	    distance_t d = compute_distance_between (context, close_slot, successor_slot);
+	    top_for_refine.insert_reserved (candidate_t<Traits> (d, successor_slot));
 	  }
-	else
-	  {
-	    for (std::size_t i = 0; i < close_header.size (); i++)
-	      {
-		slot_id_t successor_slot = close_header.at (i);
-		dist = compute_distance_between (context, close_slot, successor_slot);
-		top_for_refine.insert_reserved (candidate_t<Traits> (dist, successor_slot));
-	      }
-	    // remove all neighbors from close_header
-	    close_header.clear();
-	  }
+
+	close_header.clear ();
 
 	candidates_view_t<Traits> top_view;
+	std::size_t stat_computed_distance = 0;
 
-	(void) refine_ (context, layer_connectivity, top_for_refine, top_view, context.m_computed_distances_in_reverse_refines);
+	(void) refine_ (context,
+			layer_connectivity,
+			top_for_refine,
+			top_view,
+			stat_computed_distance);
 
-	if (cached_neighbors != nullptr)
+	context.m_stats.computed_distances_in_reverse_refines += stat_computed_distance;
+	if (context.m_level == 0)
 	  {
-	    for (std::size_t i = 0; i != top_view.size (); i++)
-	      {
-		cached_neighbors->push_back (top_view[i].slot);
-	      }
+	    context.m_stats.computed_distances_in_reverse_refines_l0 += stat_computed_distance;
 	  }
-	else
+
+	for (std::size_t i = 0; i != top_view.size (); ++i)
 	  {
-	    for (std::size_t i = 0; i != top_view.size (); i++)
-	      {
-		close_header.push_back (top_view[i].slot);
-	      }
+	    close_header.push_back (top_view[i].slot);
 	  }
       }
 
@@ -758,7 +763,7 @@ namespace cubhnsw
 
     if (context.m_is_perf_tracking)
       {
-	old_computed_distances = context.m_computed_distances;
+	old_computed_distances = context.m_stats.computed_distances;
       }
 
     // Heuristic neighbor pruning (a.k.a. "diversified" selection in HNSW):
@@ -803,7 +808,7 @@ namespace cubhnsw
 
     if (context.m_is_perf_tracking)
       {
-	refines_counter = context.m_computed_distances - old_computed_distances;
+	refines_counter = context.m_stats.computed_distances - old_computed_distances;
       }
 
     top.shrink (selected_count);
