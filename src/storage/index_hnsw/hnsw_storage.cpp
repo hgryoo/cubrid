@@ -190,8 +190,9 @@ namespace cubhnsw
   const std::vector<slot_id_t> *
   storage::get_neighbors_cached_ids (algo_context_t &context, const slot_id_t &slot, level_t level)
   {
-    neighbors_key key { slot, level };
-    auto it = m_neighbors_cache.find (key);
+    uint64_t key = pack_oid (slot);
+    neighbors_key neighbors_key { key, level };
+    auto it = m_neighbors_cache.find (neighbors_key);
     if (it != m_neighbors_cache.end ())
       {
 	return &it->second;
@@ -207,14 +208,16 @@ namespace cubhnsw
 				     level_t level,
 				     const std::vector<slot_id_t> &neighbors)
   {
-    neighbors_key key { slot, level };
-    m_neighbors_cache[key] = neighbors;
+    uint64_t key = pack_oid (slot);
+    neighbors_key neighbors_key { key, level };
+    m_neighbors_cache[neighbors_key] = neighbors;
   }
 
   const float *
   storage::get_vector_by_slot_id (algo_context_t &context, const slot_id_t &slot, const lock_mode &mode)
   {
-    auto it = m_vector_cache.find (slot);
+    uint64_t key = pack_oid (slot);
+    auto it = m_vector_cache.find (key);
     if (it != m_vector_cache.end ())
       {
 	return it->second.data ();
@@ -224,7 +227,7 @@ namespace cubhnsw
     node_t node { reinterpret_cast<byte_t *> (node_blk->data) };
     const float *vec = node.get_vector ();
 
-    std::vector<float> &cached = m_vector_cache[slot];
+    std::vector<float> &cached = m_vector_cache[key];
     cached.assign (vec, vec + get_dimension ());
 
     return cached.data ();

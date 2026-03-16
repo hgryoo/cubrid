@@ -446,7 +446,7 @@ namespace cubhnsw
 
     next.insert_reserved (candidate_t (-radius, start_slot));
     top.insert_reserved (candidate_t (radius, start_slot));
-    visits.insert (start_slot);
+    visits.insert (pack_oid (start_slot));
 
     while (!next.empty ())
       {
@@ -472,7 +472,7 @@ namespace cubhnsw
 	      }
 	    for (slot_id_t successor_slot : *cached_neighbors)
 	      {
-		auto [it, inserted] = visits.insert (successor_slot);
+		auto [it, inserted] = visits.insert (pack_oid (successor_slot));
 		if (!inserted)
 		  {
 		    continue;
@@ -509,7 +509,7 @@ namespace cubhnsw
 	    slot_id_t successor_slot = candidate_neighbors.at (i);
 	    neigh.push_back (successor_slot);
 
-	    auto [it, inserted] = visits.insert (successor_slot);
+	    auto [it, inserted] = visits.insert (pack_oid (successor_slot));
 	    if (!inserted)
 	      {
 		continue;

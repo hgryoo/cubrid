@@ -66,47 +66,43 @@ namespace cubhnsw
     }
   };
 
-  struct oid_hash
-  {
-    inline std::size_t operator() (const OID &o) const noexcept
-    {
-      // bit packing of oid
-      return (uint64_t (uint32_t (o.pageid)) << 32)
-	     | (uint64_t (uint16_t (o.slotid)) << 16)
-	     |  uint64_t (uint16_t (o.volid));
-    }
-  };
-
-  struct oid_equal
-  {
-    inline bool operator() (const OID &a, const OID &b) const noexcept
-    {
-      return a.pageid == b.pageid && a.slotid == b.slotid && a.volid == b.volid;
-    }
-  };
-
   struct visit_set_helper
   {
-    using type = ankerl::unordered_dense::set<OID, oid_hash, oid_equal>;
+    using type = ankerl::unordered_dense::set<uint64_t>;
   };
 
   using visited_set_t = visit_set_helper::type;
 
   struct vector_cache_helper
   {
-    using type = ankerl::unordered_dense::map<OID, std::vector<float>, oid_hash, oid_equal>;
+    using type = ankerl::unordered_dense::map<uint64_t, std::vector<float>>;
   };
 
   using vector_cache_t = vector_cache_helper::type;
 
+  inline uint64_t pack_oid (const OID &oid)
+  {
+    return (uint64_t (uint32_t (oid.pageid)) << 32)
+	   | (uint64_t (uint16_t (oid.slotid)) << 16)
+	   |  uint64_t (uint16_t (oid.volid));
+  }
+
+  inline OID unpack_oid (uint64_t oid)
+  {
+    OID r;
+    r.pageid = int32_t (oid >> 32);
+    r.slotid = int16_t ((oid >> 16) & 0xFFFF);
+    r.volid  = int16_t (oid & 0xFFFF);
+    return r;
+  }
   struct neighbors_key
   {
-    slot_id_t slot;
+    uint64_t slot;
     level_t level;
 
     bool operator== (const neighbors_key &o) const noexcept
     {
-      return level == o.level && oid_equal {} (slot, o.slot);
+      return level == o.level && slot == o.slot;
     }
   };
 
@@ -114,7 +110,7 @@ namespace cubhnsw
   {
     std::size_t operator() (neighbors_key const &k) const noexcept
     {
-      std::size_t h = oid_hash {} (k.slot);
+      std::size_t h = std::hash<uint64_t> {} (k.slot);
       std::size_t x = std::hash<level_t> {} (k.level);
       h ^= x + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
       return h;
