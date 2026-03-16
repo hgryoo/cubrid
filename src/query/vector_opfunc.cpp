@@ -228,35 +228,31 @@ static inline float cubvec_inner_product (const float *vec1, const float *vec2, 
 static inline float
 cubvec_cosine_distance (const float *__restrict vec1, const float *__restrict vec2, size_t dim)
 {
+  float dot = 0.0f;
+  float norm1 = 0.0f;
+  float norm2 = 0.0f;
 
-  float ip = cubvec_inner_product (vec1, vec2, dim);
-  float norm1 = cubvec_norm_L2sqr (vec1, dim);
-  float norm2 = cubvec_norm_L2sqr (vec2, dim);
+  #pragma omp simd reduction(+:dot,norm1,norm2)
+  for (size_t i = 0; i < dim; ++i)
+    {
+      float a = vec1[i];
+      float b = vec2[i];
 
-  // Handle zero vectors to avoid division by zero
+      dot   += a * b;
+      norm1 += a * a;
+      norm2 += b * b;
+    }
+
   if (norm1 == 0.0f || norm2 == 0.0f)
     {
-      // NaN distance
-      return std::numeric_limits<float>::quiet_NaN();
+      return 1.0f;
     }
 
-  float similarity = ip / (sqrtf (norm1) * sqrtf (norm2));
+  float similarity = dot / sqrtf (norm1 * norm2);
 
-  // Clamp the similarity value to [-1, 1] to handle floating-point errors
-  if (similarity > 1.0f)
-    {
-      similarity = 1.0f;
-    }
-  if (similarity < -1.0f)
-    {
-      similarity = -1.0f;
-    }
+  similarity = std::max (-1.0f, std::min (1.0f, similarity));
 
-  // Cosine distance is 1 - cosine similarity
-  float distance = 1.0f - similarity;
-  assert (distance <= 2.0f && distance >= 0.0f);
-  return distance;
-
+  return 1.0f - similarity;
 }
 
 int vector_l1_distance (DB_VALUE *result, DB_VALUE *args[], int num_args)
