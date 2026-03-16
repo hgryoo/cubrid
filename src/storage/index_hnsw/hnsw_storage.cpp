@@ -185,21 +185,20 @@ namespace cubhnsw
   const float *
   storage::get_vector_by_slot_id (algo_context_t &context, const slot_id_t &slot, const lock_mode &mode)
   {
-    //auto it = m_vector_cache.find (slot);
-    //if (it != m_vector_cache.end ())
-    //  {
-    //  return it->second.data ();
-    //  }
+    auto it = m_vector_cache.find (slot);
+    if (it != m_vector_cache.end ())
+      {
+      return it->second.data ();
+      }
 
     pinned_t node_blk = get_node_by_slot_id (context, slot, mode);
     node_t node { reinterpret_cast<byte_t *> (node_blk->data) };
     const float *vec = node.get_vector ();
 
-    //std::vector<float> &cached = m_vector_cache[slot];
-    //cached.assign (vec, vec + get_dimension ());
+    std::vector<float> &cached = m_vector_cache[slot];
+    cached.assign (vec, vec + get_dimension ());
 
-    //return cached.data ();
-    return vec;
+    return cached.data ();
   }
 
   // promote lockmode from shared to exclusive
