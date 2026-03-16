@@ -190,6 +190,11 @@ namespace cubhnsw
   const std::vector<slot_id_t> *
   storage::get_neighbors_cached_ids (algo_context_t &context, const slot_id_t &slot, level_t level)
   {
+    if (context.m_op != operation_type_t::ADD)
+      {
+	return nullptr;
+      }
+
     uint64_t key = pack_oid (slot);
     neighbors_key neighbors_key { key, level };
     auto it = m_neighbors_cache.find (neighbors_key);
@@ -208,6 +213,11 @@ namespace cubhnsw
 				     level_t level,
 				     const std::vector<slot_id_t> &neighbors)
   {
+    if (context.m_op != operation_type_t::ADD)
+      {
+	return;
+      }
+
     uint64_t key = pack_oid (slot);
     neighbors_key neighbors_key { key, level };
     m_neighbors_cache[neighbors_key] = neighbors;

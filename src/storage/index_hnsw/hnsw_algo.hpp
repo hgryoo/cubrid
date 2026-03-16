@@ -173,6 +173,7 @@ namespace cubhnsw
     add_result_t result;
 
     algo_context_t context;
+    context.m_op = operation_type_t::ADD;
     context.m_thread_p = thread_p;
     context.m_is_perf_tracking = perfmon_is_perf_tracking ();
     context.m_is_debugging = prm_get_integer_value (PRM_ID_VECTOR_INDEX_DEBUG) != 0;

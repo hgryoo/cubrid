@@ -143,8 +143,16 @@ namespace cubhnsw
     std::vector<OID> oids {};
   };
 
+  enum operation_type_t
+  {
+    ADD,
+    SEARCH
+  };
+
   struct algo_context_t
   {
+    operation_type_t m_op;
+
     top_candidates_t m_top_candidates;
     top_candidates_t m_top_for_refine;
     next_candidates_t m_next_candidates;
