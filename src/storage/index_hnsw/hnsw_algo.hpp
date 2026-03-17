@@ -407,14 +407,14 @@ namespace cubhnsw
 	  {
 	    slot_id_t successor_slot = candidate_neighbors.at (i);
 
-            if (visits.find (successor_slot) != visits.end())
-              {
-                continue;
-              }
-            else 
-              {
-                visits.insert (successor_slot);
-              }
+	    if (visits.find (successor_slot) != visits.end())
+	      {
+		continue;
+	      }
+	    else
+	      {
+		visits.insert (successor_slot);
+	      }
 
 	    distance_t sucessor_dist = compute_distance_from_query_ (context, query, successor_slot);
 	    if (top.size () < expansion_limit || sucessor_dist < radius)
@@ -441,36 +441,84 @@ namespace cubhnsw
     cubthread::entry *thread_p = context.m_thread_p;
     visits.clear ();
 
+    const int beam_width = 4;
+    std::vector<candidate_t> beam;
+    beam.reserve (beam_width * 2);
+
     slot_id_t closest_slot = start_slot;
     distance_t closest_dist = compute_distance_from_query_ (context, query, closest_slot);
+
+    beam.push_back (candidate_t (closest_dist, closest_slot));
+    visits.insert (closest_slot);
+
     for (level_t level = begin_level; level > end_level; --level)
       {
-	bool changed = false;
-	do
+	std::vector<candidate_t> next_beam;
+	next_beam.reserve (beam_width * 4);
+
+	// 현재 beam에서 확장
+	for (const auto &cand : beam)
 	  {
-	    changed = false;
+	    pinned_t node_blk =
+		    m_storage->get_node_by_slot_id (context, cand.slot, lock_mode::shared);
 
-	    pinned_t closest_node_blk = m_storage->get_node_by_slot_id (context, closest_slot, lock_mode::shared);
+	    neighbors_ref_type neighbors = get_neighbors (node_blk, level);
 
-	    neighbors_ref_type neighbors = get_neighbors (closest_node_blk, level);
 	    for (std::size_t i = 0; i < neighbors.size (); ++i)
 	      {
-		slot_id_t neighbor_id = neighbors.at (i);
+		slot_id_t nid = neighbors.at (i);
 
-		distance_t candidate_dist = compute_distance_from_query_ (context, query, neighbor_id);
-		if (candidate_dist < closest_dist)
+                if (visits.find (nid) != visits.end ())
 		  {
-		    closest_dist = candidate_dist;
-		    closest_slot = neighbor_id;
-		    changed = true;
+		    continue;
 		  }
-	      }
+                else
+                  {
+                    visits.insert (nid);
+                  }
 
+		distance_t dist =
+			compute_distance_from_query_ (context, query, nid);
+
+		next_beam.push_back (candidate_t (dist, nid));
+	      }
 	  }
-	while (changed);
+
+	// 기존 beam도 유지 (중요: greedy fallback 방지)
+	next_beam.insert (next_beam.end (), beam.begin (), beam.end ());
+
+	if (next_beam.empty ())
+	  {
+	    break;
+	  }
+
+	// beam pruning
+	if ((int) next_beam.size () > beam_width)
+	  {
+	    std::nth_element (
+		    next_beam.begin (),
+		    next_beam.begin () + beam_width,
+		    next_beam.end (),
+		    [] (const candidate_t &a, const candidate_t &b)
+	    {
+	      return a.distance < b.distance;
+	    });
+
+	    next_beam.resize (beam_width);
+	  }
+
+	beam.swap (next_beam);
       }
 
-    out_slot = closest_slot;
+    // 최종 best 선택
+    auto best = std::min_element (
+			beam.begin (), beam.end (),
+			[] (const candidate_t &a, const candidate_t &b)
+    {
+      return a.distance < b.distance;
+    });
+
+    out_slot = best->slot;
     return NO_ERROR;
   }
 

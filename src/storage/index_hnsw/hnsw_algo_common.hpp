@@ -48,6 +48,7 @@ namespace cubhnsw
     distance_t distance;
     slot_id_t slot;
 
+    candidate_t () {}
     candidate_t (distance_t distance, slot_id_t slot): distance (distance), slot (slot) {}
     inline bool operator< (candidate_t other) const noexcept
     {
