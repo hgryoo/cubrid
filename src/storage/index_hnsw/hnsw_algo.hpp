@@ -456,6 +456,18 @@ namespace cubhnsw
 	std::vector<candidate_t> next_beam;
 	next_beam.reserve (beam_width * 4);
 
+	bool any_improved = false;
+
+	// 🔥 현재 beam 기준 worst distance 계산
+	distance_t current_worst = beam.front ().distance;
+	for (const auto &c : beam)
+	  {
+	    if (c.distance > current_worst)
+	      {
+		current_worst = c.distance;
+	      }
+	  }
+
 	// 현재 beam에서 확장
 	for (const auto &cand : beam)
 	  {
@@ -468,23 +480,34 @@ namespace cubhnsw
 	      {
 		slot_id_t nid = neighbors.at (i);
 
-                if (visits.find (nid) != visits.end ())
+		if (visits.find (nid) != visits.end ())
 		  {
 		    continue;
 		  }
-                else
-                  {
-                    visits.insert (nid);
-                  }
+		else
+		  {
+		    visits.insert (nid);
+		  }
 
 		distance_t dist =
 			compute_distance_from_query_ (context, query, nid);
+
+		// 🔥 distance pruning (beam이 어느 정도 찼을 때만)
+		if ((int) next_beam.size () >= beam_width && dist > current_worst)
+		  {
+		    continue;
+		  }
+
+		if (dist < current_worst)
+		  {
+		    any_improved = true;
+		  }
 
 		next_beam.push_back (candidate_t (dist, nid));
 	      }
 	  }
 
-	// 기존 beam도 유지 (중요: greedy fallback 방지)
+	// 기존 beam도 유지 (greedy fallback 방지)
 	next_beam.insert (next_beam.end (), beam.begin (), beam.end ());
 
 	if (next_beam.empty ())
@@ -492,7 +515,7 @@ namespace cubhnsw
 	    break;
 	  }
 
-	// beam pruning
+	// beam pruning (top-K 유지)
 	if ((int) next_beam.size () > beam_width)
 	  {
 	    std::nth_element (
@@ -505,6 +528,13 @@ namespace cubhnsw
 	    });
 
 	    next_beam.resize (beam_width);
+	  }
+
+	// 🔥 early stop: 더 이상 개선이 없으면 탐색 중단
+	if (!any_improved)
+	  {
+	    beam.swap (next_beam);
+	    break;
 	  }
 
 	beam.swap (next_beam);
