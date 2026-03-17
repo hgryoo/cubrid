@@ -24,6 +24,8 @@
 #define _HNSW_ALGO_COMMON_HPP_
 
 #include <random>
+#include <deque>
+#include <string_view>
 #include <ankerl/unordered_dense.h>
 
 #include "hnsw_api.hpp"
@@ -31,6 +33,7 @@
 #include "hnsw_utils.hpp"
 #include "thread_entry.hpp"
 #include "vector_distance.hpp"
+#include "environment_variable.h"
 
 namespace cubhnsw
 {
@@ -135,6 +138,43 @@ namespace cubhnsw
     std::size_t m_computed_distances{};
     std::size_t m_computed_distances_in_refines{};
     std::size_t m_computed_distances_in_reverse_refines{};
+
+    bool m_is_debugging {false};
+    FILE *m_debug_fp {nullptr};
+    std::vector<std::string> m_accessed_nodes; // for debug
+
+    void open_debug_file (std::size_t level_start_debug_cnt, std::size_t debug_cnt, int level)
+    {
+      char path[PATH_MAX];
+      if (!m_is_debugging)
+	{
+	  return;
+	}
+
+      constexpr std::size_t GROUP_SIZE = 10000;
+      std::size_t group_start =
+	      level_start_debug_cnt +
+	      ((debug_cnt - level_start_debug_cnt) / GROUP_SIZE) * GROUP_SIZE;
+
+      std::string filename =
+	      "hnsw_debug_" +
+	      std::to_string (group_start) +
+	      "_L" + std::to_string (level) +
+	      ".log";
+
+      envvar_tmpdir_file (path, PATH_MAX, filename.c_str());
+
+      m_debug_fp = fopen (path, "a");
+    }
+
+    void close_debug_file()
+    {
+      if (m_debug_fp)
+	{
+	  fclose (m_debug_fp);
+	  m_debug_fp = nullptr;
+	}
+    }
 
     void clear_candidates ()
     {
