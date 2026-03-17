@@ -407,11 +407,14 @@ namespace cubhnsw
 	  {
 	    slot_id_t successor_slot = candidate_neighbors.at (i);
 
-	    auto [it, inserted] = visits.insert (successor_slot);
-	    if (!inserted)
-	      {
-		continue;
-	      }
+            if (visits.find (successor_slot) != visits.end())
+              {
+                continue;
+              }
+            else 
+              {
+                visits.insert (successor_slot);
+              }
 
 	    distance_t sucessor_dist = compute_distance_from_query_ (context, query, successor_slot);
 	    if (top.size () < expansion_limit || sucessor_dist < radius)
