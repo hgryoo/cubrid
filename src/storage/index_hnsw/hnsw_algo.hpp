@@ -227,6 +227,7 @@ namespace cubhnsw
     add_result_t result;
 
     algo_context_t context;
+    context.m_op = operation_type_t::ADD;
     context.m_thread_p = thread_p;
     context.m_is_perf_tracking = perfmon_is_perf_tracking ();
     context.m_is_debugging = prm_get_integer_value (PRM_ID_VECTOR_INDEX_DEBUG) != 0;
@@ -416,6 +417,7 @@ namespace cubhnsw
       }
 
     algo_context_t context;
+    context.m_op = operation_type_t::SEARCH;
     context.m_thread_p = thread_p;
     context.clear_candidates();
 
@@ -495,7 +497,10 @@ namespace cubhnsw
     distance_t radius = compute_distance_from_query_ (context, query, start_slot);
 
     next.insert_reserved (candidate_t (-radius, start_slot));
-    top.insert_reserved (candidate_t (radius, start_slot));
+    if (context.m_op == operation_type_t::ADD)
+    {
+      top.insert_reserved (candidate_t (radius, start_slot));
+    }
     visits.insert (start_slot);
 
     while (!next.empty ())
