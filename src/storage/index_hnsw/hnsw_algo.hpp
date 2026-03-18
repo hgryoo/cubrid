@@ -122,6 +122,59 @@ namespace cubhnsw
 	return neighbors;
       }
 
+      /*
+       * Returns true when candidate "v" can be pruned while refining
+       * against an already selected node "u".
+       *
+       * Distances:
+       *   dist_qv : distance(query, candidate v)
+       *   dist_qu : distance(query, selected u)
+       *   dist_uv : distance(selected u, candidate v)
+       *
+       * For cosine metric, vectors are normalized before indexing/searching,
+       * and compute_distance_ returns:
+       *   d_cos(x, y) = 1 - dot(x, y)
+       *
+       * Since normalized cosine distance is proportional to squared L2:
+       *   ||x - y||^2 = 2 * d_cos(x, y)
+       *
+       * We can use a sqrt-free conservative form of triangle inequality:
+       *
+       *   if ||q-v|| > ||q-u|| + ||u-v||  => prune v
+       *
+       * In squared-distance form, a sufficient condition is:
+       *
+       *   ||q-v||^2 > 2 * (||q-u||^2 + ||u-v||^2)
+       *
+       * Because:
+       *   (a + b)^2 <= 2 * (a^2 + b^2)
+       *
+       * This condition is conservative:
+       * - if it says "prune", pruning is safe
+       * - if it says "keep", we simply fall back to the original heuristic
+       */
+      inline bool should_prune_in_refine_ (const distance_t dist_qv,
+					   const distance_t dist_qu,
+					   const distance_t dist_uv) const
+      {
+         constexpr distance_t alpha = static_cast<distance_t> (1.0f);
+
+	/* Original HNSW diversification heuristic */
+	if (dist_uv < alpha * dist_qv)
+	  {
+	    return true;
+	  }
+
+	/* Additional cosine-specific conservative triangle pruning */
+	if (m_metric == vector_distance_metric_t::COSINE)
+	  {
+	    return dist_qv > static_cast<distance_t> (2.0f) * alpha * (dist_qu + dist_uv);
+	  }
+
+	return false;
+      }
+
+
       // variables
       storage *m_storage {nullptr};
 
@@ -707,6 +760,7 @@ namespace cubhnsw
     while (submitted_count < needed && consumed_count < top_count)
       {
 	candidate_t candidate = top_data[consumed_count];
+        const distance_t dist_qv = candidate.distance;
 	bool good = true;
 	std::size_t idx = 0;
 	for (; idx < submitted_count; idx++)
@@ -714,7 +768,9 @@ namespace cubhnsw
 	    candidate_t submitted = top_data[idx];
 
 	    distance_t inter_result_dist = compute_distance_between (context, candidate.slot, submitted.slot);
-	    if (inter_result_dist < candidate.distance)
+	    if (should_prune_in_refine_ (dist_qv,
+					 submitted.distance,
+					 inter_result_dist))
 	      {
 		good = false;
 		break;
