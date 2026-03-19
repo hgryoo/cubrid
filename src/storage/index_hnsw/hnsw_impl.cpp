@@ -586,6 +586,7 @@ hnsw_impl::add (cubthread::entry *thread_p, int n_vectors, const OID *oid, const
   if (!graph_profile.empty())
     {
       fprintf (stdout, "%s\n", graph_profile.c_str ());
+      fflush (stdout);
     }
 
   return NO_ERROR;

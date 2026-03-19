@@ -217,7 +217,7 @@ extern bool lock_has_lock_transaction (int tran_index);
 #endif
 extern bool lock_is_waiting_transaction (int tran_index);
 extern LK_ENTRY *lock_get_class_lock (THREAD_ENTRY * thread_p, const OID * class_oid);
-extern void lock_notify_isolation_incons (THREAD_ENTRY * thread_p,
+extern void lock_notify_isolation_incons (THREAD_ENTRY * thread_p, 
 					  bool (*fun) (const OID * class_oid, const OID * oid, void *args), void *args);
 extern int lock_reacquire_crash_locks (THREAD_ENTRY * thread_p, LK_ACQUIRED_LOCKS * acqlocks, int tran_index);
 extern void lock_unlock_all_shared_get_all_exclusive (THREAD_ENTRY * thread_p, LK_ACQUIRED_LOCKS * acqlocks);

@@ -643,8 +643,9 @@ namespace cubhnsw
 	    if (cached_neighbors != nullptr)
 	      {
 		context.add_stat (context.m_stats.neighbors_cache_hits, context.m_stats.neighbors_cache_hits_l0, 1);
-		for (slot_id_t neighbor_id : *cached_neighbors)
+		for (std::size_t i = 0; i < cached_neighbors->size (); ++i)
 		  {
+		    slot_id_t neighbor_id = (*cached_neighbors)[i];
 		    distance_t candidate_dist = compute_distance_from_query_ (context, query, neighbor_id);
 		    if (candidate_dist < closest_dist)
 		      {
@@ -653,6 +654,7 @@ namespace cubhnsw
 			changed = true;
 		      }
 		  }
+		num_neighbor_scan += cached_neighbors->size ();
 	      }
 	    else
 	      {
@@ -668,8 +670,6 @@ namespace cubhnsw
 		    slot_id_t neighbor_id = neighbors.at (i);
 		    neigh.push_back (neighbor_id);
 
-		    num_neighbor_scan++;
-
 		    distance_t candidate_dist = compute_distance_from_query_ (context, query, neighbor_id);
 		    if (candidate_dist < closest_dist)
 		      {
@@ -679,7 +679,9 @@ namespace cubhnsw
 		      }
 		  }
 		m_storage->set_neighbors_cached_ids (context, original_closest_slot, context.m_level, neigh);
+		num_neighbor_scan += neighbors.size ();
 	      }
+
 	    num_visits++;
 	  }
 	while (changed);
