@@ -358,6 +358,7 @@ namespace cubhnsw
 	  fprintf (context.m_debug_fp, "target level: %d\n", context.m_level);
 	}
 
+      context.m_level = std::min (new_target_level, curr_max_level);
       while (context.m_level >= 0)
 	{
 	  (void) seek_on_layer_ (context, vector, closest_slot,top_limit);
@@ -698,10 +699,9 @@ namespace cubhnsw
     top_candidates_t &top = context.m_top_candidates;
 
     std::size_t level = context.m_level;
-    std::size_t layer_connectivity = get_layer_connectivity (level, m_connectivity);
 
     std::size_t refines_counter = 0;
-    refine_ (context, layer_connectivity, top, top_view, refines_counter);
+    refine_ (context, m_connectivity, top, top_view, refines_counter);
     context.add_stat (context.m_stats.computed_distances_in_refines, context.m_stats.computed_distances_in_refines_l0,
 		      refines_counter);
 
