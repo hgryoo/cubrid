@@ -18,6 +18,13 @@
 
 #include "test_lock_manager_mock_runtime.hpp"
 
+
+#if defined (TEST_LOCK_MANAGER_WITH_CUBRID_API)
+#include "lock_manager.h"
+#include "thread_entry.hpp"
+#include "thread_manager.hpp"
+#endif
+
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -36,9 +43,98 @@ namespace test_lock_manager
     }
   } // namespace
 
+#if defined (TEST_LOCK_MANAGER_WITH_CUBRID_API)
+  class real_thread_entry
+  {
+    public:
+      explicit real_thread_entry (int tran_index)
+	: m_thread_entry ()
+      {
+	cubthread::set_thread_local_entry (m_thread_entry);
+	m_thread_entry.tran_index = tran_index;
+      }
+
+      ~real_thread_entry ()
+      {
+	cubthread::clear_thread_local_entry ();
+      }
+
+      THREAD_ENTRY *get (void)
+      {
+	return &m_thread_entry;
+      }
+
+    private:
+      THREAD_ENTRY m_thread_entry;
+  };
+
+  static OID
+  make_test_oid (int pageid, int slotid)
+  {
+    OID oid;
+    oid.volid = 1;
+    oid.pageid = pageid;
+    oid.slotid = slotid;
+    return oid;
+  }
+
+  static void
+  run_lock_manager_api_suite (void)
+  {
+    LK_INIT_CONFIG config;
+    int error = NO_ERROR;
+
+    lock_initialize_default_config (&config);
+
+    require_true (config.initial_object_locks > 0, "default initial_object_locks must be positive");
+    require_true (config.object_res_block_count > 0, "default object_res_block_count must be positive");
+    require_true (config.object_entry_block_count > 0, "default object_entry_block_count must be positive");
+
+    config.start_deadlock_detector = false;
+    config.initial_object_locks = 128;
+    config.object_res_block_count = 2;
+    config.object_entry_block_count = 1;
+
+    error = lock_initialize_with_config (&config);
+    require_true (error == NO_ERROR, "lock_initialize_with_config should succeed");
+
+    {
+      real_thread_entry thread_one (1);
+      real_thread_entry thread_two (2);
+      OID class_oid = make_test_oid (100, 0);
+      OID inst_oid = make_test_oid (200, 1);
+
+      error = lock_object (thread_one.get (), &inst_oid, &class_oid, S_LOCK, LK_COND_LOCK);
+      require_true (error == LK_GRANTED, "thread_one S lock should be granted");
+
+      error = lock_object (thread_two.get (), &inst_oid, &class_oid, S_LOCK, LK_COND_LOCK);
+      require_true (error == LK_GRANTED, "thread_two shared lock should be granted");
+
+      lock_unlock_all (thread_one.get ());
+      lock_unlock_all (thread_two.get ());
+
+      error = lock_object (thread_one.get (), &inst_oid, &class_oid, X_LOCK, LK_COND_LOCK);
+      require_true (error == LK_GRANTED, "thread_one X lock should be granted");
+
+      error = lock_object (thread_two.get (), &inst_oid, &class_oid, X_LOCK, LK_COND_LOCK);
+      require_true (error != LK_GRANTED, "thread_two conflicting X lock should not be granted");
+
+      lock_unlock_all (thread_one.get ());
+      lock_unlock_all (thread_two.get ());
+    }
+
+    lock_finalize ();
+
+    std::cout << "[functional] passed: lock_manager_api" << std::endl;
+  }
+#endif
+
   int
   run_functional_suite (void)
   {
+#if defined (TEST_LOCK_MANAGER_WITH_CUBRID_API)
+    run_lock_manager_api_suite ();
+#endif
     const scenario_config configs[] = {
       { scenario_kind::hot_row, 4, 8, 1, 1 },
       { scenario_kind::lock_conversion, 4, 6, 4, 1 },
