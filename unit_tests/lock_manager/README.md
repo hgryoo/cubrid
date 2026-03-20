@@ -31,7 +31,9 @@ Because of that, it is better to build a lock-manager-specific seam and load the
 
 At the current code stage, a good first step is an **initialization seam** based on `LK_INIT_CONFIG`,
 `lock_initialize_default_config()`, and `lock_initialize_with_config()`, so object lock table sizing,
-block partitioning, and daemon startup can be controlled externally.
+block partitioning, and daemon startup can be controlled externally. The runtime should also prebuild
+an OID pool so class/object locality and collision patterns are explicit benchmark inputs rather than
+ad-hoc values scattered through each scenario.
 
 ## Recommended architecture
 
@@ -87,7 +89,7 @@ int lock_initialize_with_config (const LK_INIT_CONFIG *config);
 
 This allows unit tests and benchmarks to exercise the same code path without being pinned to server defaults.
 
-### 3. Let the test module own mock OID generation
+### 3. Let the test module own a prebuilt mock OID pool
 
 Even without the real object module, lock resource keys can be created as long as the `OID` values are filled in
 consistently. Recommended rules:
@@ -110,6 +112,14 @@ make_mock_oid (int pageid, short slotid)
   return oid;
 }
 ```
+
+The test harness should build this pool before generating any operations, and scenarios should only draw
+from that pool. This keeps the distribution stable and makes it possible to tune:
+
+- number of classes in the workload
+- number of rows per class
+- hot-row versus cold-row skew
+- hash-collision pressure
 
 With this approach, the following cases can be reproduced without descending into storage/object/locator:
 
@@ -225,11 +235,11 @@ unit_tests/lock_manager/
   - run scenarios A-G above
   - sweep thread count / hash size / hotspot ratio
 - `test_lock_manager_mock_runtime.*`
-  - mock thread registry
-  - mock suspend/resume
-  - fake clock / event hooks
+  - transaction-to-thread execution runtime
+  - worker-thread scheduling and barriers
+  - wait/timeout hooks for blocked lock requests
 - `test_lock_manager_scenarios.*`
-  - generate mock OID sets
+  - prebuild class/object OID pools
   - define workload scripts
 
 ## Current runner usage

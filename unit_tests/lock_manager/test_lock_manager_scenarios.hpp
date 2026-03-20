@@ -33,6 +33,21 @@ namespace test_lock_manager
     int slotid;
   };
 
+  struct oid_bucket
+  {
+    mock_oid class_oid;
+    std::vector<mock_oid> object_oids;
+  };
+
+  struct oid_pool
+  {
+    mock_oid root_class_oid;
+    mock_oid hot_class_oid;
+    mock_oid hot_object_oid;
+    std::vector<oid_bucket> buckets;
+    std::vector<mock_oid> hash_collision_oids;
+  };
+
   enum class scenario_kind
   {
     hot_row,
@@ -101,6 +116,7 @@ namespace test_lock_manager
   std::string to_string (operation_kind kind);
   std::string to_string (wait_kind kind);
 
+  oid_pool build_oid_pool (const scenario_config &config);
   std::vector<operation> build_operations (const scenario_config &config);
   scenario_summary summarize (scenario_kind kind, const std::vector<operation> &operations);
   std::string format_operation (const operation &op);

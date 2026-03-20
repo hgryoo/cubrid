@@ -98,6 +98,18 @@ namespace test_lock_manager
       return BARRIER_BASE + iter * 32 + slot;
     }
 
+    const oid_bucket &
+    get_bucket (const oid_pool &pool, int index)
+    {
+      return pool.buckets[static_cast<std::size_t> (index % static_cast<int> (pool.buckets.size ()) )];
+    }
+
+    const mock_oid &
+    get_object_from_bucket (const oid_bucket &bucket, int index)
+    {
+      return bucket.object_oids[static_cast<std::size_t> (index % static_cast<int> (bucket.object_oids.size ()) )];
+    }
+
     const scenario_metadata &
     get_metadata (scenario_kind kind)
     {
@@ -189,10 +201,47 @@ namespace test_lock_manager
     return "unknown";
   }
 
+  oid_pool
+  build_oid_pool (const scenario_config &config)
+  {
+    oid_pool pool;
+    const int effective_hotset = std::max (config.hotset_size, 1);
+    const int bucket_count = std::max (std::max (config.transaction_count, effective_hotset), 4);
+    const int object_count_per_bucket = std::max (effective_hotset * 4, 8);
+
+    pool.root_class_oid = make_oid (1, 0);
+    pool.hot_class_oid = make_oid (100, 0);
+    pool.hot_object_oid = make_oid (200, 1);
+
+    pool.buckets.reserve (bucket_count);
+    for (int bucket_index = 0; bucket_index < bucket_count; bucket_index++)
+      {
+        oid_bucket bucket;
+        bucket.class_oid = make_oid (1000 + bucket_index, 0);
+        bucket.object_oids.reserve (object_count_per_bucket);
+
+        for (int object_index = 0; object_index < object_count_per_bucket; object_index++)
+          {
+            bucket.object_oids.push_back (make_oid (2000 + bucket_index * 128 + object_index, object_index % 32));
+          }
+
+        pool.buckets.push_back (bucket);
+      }
+
+    pool.hash_collision_oids.reserve (object_count_per_bucket);
+    for (int index = 0; index < object_count_per_bucket; index++)
+      {
+        pool.hash_collision_oids.push_back (make_oid (6000 + index * 1024, index % 32));
+      }
+
+    return pool;
+  }
+
   std::vector<operation>
   build_operations (const scenario_config &config)
   {
     std::vector<operation> ops;
+    const oid_pool pool = build_oid_pool (config);
     const int effective_hotset = std::max (config.hotset_size, 1);
     const int pair_count = std::max (config.transaction_count / 2, 1);
 
@@ -205,7 +254,8 @@ namespace test_lock_manager
 	  {
 	    const int own_txn_id = iter * config.transaction_count + worker;
 	    const int shared_txn_id = iter * pair_count + (worker / 2);
-	    const mock_oid class_oid = make_oid (100 + (worker % effective_hotset), 0);
+            const oid_bucket &worker_bucket = get_bucket (pool, worker);
+	    const mock_oid &class_oid = worker_bucket.class_oid;
 
 	    switch (config.kind)
 	      {
@@ -213,7 +263,7 @@ namespace test_lock_manager
 		ops.push_back (make_begin (worker, own_txn_id));
 		ops.push_back (make_barrier (worker, own_txn_id, iteration_barrier));
 		ops.push_back (make_lock (worker, own_txn_id, operation_kind::acquire, "X_LOCK", wait_kind::conditional,
-					  false, make_oid (100, 0), make_oid (200, 1)));
+					  false, pool.hot_class_oid, pool.hot_object_oid));
 		ops.push_back (make_sleep (worker, own_txn_id, 1));
 		ops.push_back (make_commit (worker, own_txn_id));
 		break;
@@ -222,27 +272,28 @@ namespace test_lock_manager
 		{
 		  const int pair_barrier_one = make_barrier_id (iter, 10 + (worker / 2) * 2);
 		  const int pair_barrier_two = pair_barrier_one + 1;
+                  const oid_bucket &shared_bucket = get_bucket (pool, worker / 2);
+                  const mock_oid &pair_hot_oid = get_object_from_bucket (shared_bucket, 0);
+                  const mock_oid &pair_cold_oid = get_object_from_bucket (shared_bucket, worker + iter);
 
 		ops.push_back (make_begin (worker, shared_txn_id));
 		if ((worker % 2) == 0)
 		  {
 		    ops.push_back (make_lock (worker, shared_txn_id, operation_kind::acquire, "IX_LOCK",
-					      wait_kind::conditional, true, make_oid (100, 0), make_oid (100, 0)));
+					      wait_kind::conditional, true, shared_bucket.class_oid, shared_bucket.class_oid));
 		    ops.push_back (make_lock (worker, shared_txn_id, operation_kind::acquire, "X_LOCK",
-					      wait_kind::conditional, false, make_oid (100, 0),
-					      make_oid (210 + (worker / 2), 0)));
+					      wait_kind::conditional, false, shared_bucket.class_oid, pair_hot_oid));
 		  }
 		ops.push_back (make_barrier (worker, shared_txn_id, pair_barrier_one));
 		if ((worker % 2) != 0)
 		  {
 		    ops.push_back (make_lock (worker, shared_txn_id, operation_kind::acquire, "X_LOCK",
-					      wait_kind::conditional, false, make_oid (100, 0),
-					      make_oid (210 + (worker / 2), worker % effective_hotset)));
+					      wait_kind::conditional, false, shared_bucket.class_oid, pair_cold_oid));
 		  }
 		if ((worker % 2) == 0 && ((iter + worker) % 8) == 0)
 		  {
 		    ops.push_back (make_lock (worker, shared_txn_id, operation_kind::acquire, "X_LOCK",
-					      wait_kind::conditional, true, make_oid (100, 0), make_oid (100, 0)));
+					      wait_kind::conditional, true, shared_bucket.class_oid, shared_bucket.class_oid));
 		  }
 		ops.push_back (make_barrier (worker, shared_txn_id, pair_barrier_two));
 		ops.push_back (make_commit (worker, shared_txn_id));
@@ -251,7 +302,9 @@ namespace test_lock_manager
 
 	      case scenario_kind::lock_conversion:
 		{
-		  const mock_oid conversion_oid = (worker % 2 == 0) ? make_oid (300, 1) : make_oid (300 + worker, 1);
+		  const mock_oid &conversion_oid = (worker % 2 == 0)
+                                                    ? pool.hot_object_oid
+                                                    : get_object_from_bucket (worker_bucket, iter + worker);
 
 		ops.push_back (make_begin (worker, own_txn_id));
 		ops.push_back (make_lock (worker, own_txn_id, operation_kind::acquire, "S_LOCK", wait_kind::conditional,
@@ -269,13 +322,16 @@ namespace test_lock_manager
 		    const int peer = (worker == 0) ? 1 : 0;
 		    const int pair_barrier = make_barrier_id (iter, 20);
 		    const int txn_id = iter * 2 + worker;
+                    const oid_bucket &deadlock_bucket = get_bucket (pool, 0);
+                    const mock_oid &first_oid = get_object_from_bucket (deadlock_bucket, worker);
+                    const mock_oid &second_oid = get_object_from_bucket (deadlock_bucket, peer);
 
 		    ops.push_back (make_begin (worker, txn_id));
 		    ops.push_back (make_lock (worker, txn_id, operation_kind::acquire, "X_LOCK", wait_kind::conditional,
-					      false, make_oid (110, 0), make_oid (400 + worker, 1)));
+					      false, deadlock_bucket.class_oid, first_oid));
 		    ops.push_back (make_barrier (worker, txn_id, pair_barrier));
 		    ops.push_back (make_lock (worker, txn_id, operation_kind::acquire, "X_LOCK",
-					      wait_kind::unconditional, false, make_oid (110, 0), make_oid (400 + peer, 1)));
+					      wait_kind::unconditional, false, deadlock_bucket.class_oid, second_oid));
 		    ops.push_back (make_commit (worker, txn_id));
 		  }
 		break;
@@ -283,24 +339,30 @@ namespace test_lock_manager
 	      case scenario_kind::hash_collision:
 		ops.push_back (make_begin (worker, own_txn_id));
 		ops.push_back (make_lock (worker, own_txn_id, operation_kind::acquire, "X_LOCK", wait_kind::conditional,
-					  false, make_oid (120, 0), make_oid (500 + (iter % effective_hotset) * 1024, worker)));
+					  false, pool.buckets[0].class_oid,
+                                          pool.hash_collision_oids[static_cast<std::size_t> ((iter + worker)
+                                                                                            % static_cast<int> (pool.hash_collision_oids.size ()))]));
 		ops.push_back (make_commit (worker, own_txn_id));
 		break;
 
 	      case scenario_kind::low_contention:
 		ops.push_back (make_begin (worker, own_txn_id));
 		ops.push_back (make_lock (worker, own_txn_id, operation_kind::acquire, "X_LOCK", wait_kind::conditional,
-					  false, class_oid, make_oid (600 + worker * config.iterations + iter, worker)));
+					  false, class_oid, get_object_from_bucket (worker_bucket, iter)));
 		ops.push_back (make_commit (worker, own_txn_id));
 		break;
 
 	      case scenario_kind::escalation_sweep:
+                {
+                  const oid_bucket &sweep_bucket = get_bucket (pool, worker);
 		ops.push_back (make_begin (worker, own_txn_id));
 		ops.push_back (make_lock (worker, own_txn_id, operation_kind::acquire, "IX_LOCK", wait_kind::conditional,
-					  true, make_oid (130, 0), make_oid (130, 0)));
+					  true, sweep_bucket.class_oid, sweep_bucket.class_oid));
 		ops.push_back (make_lock (worker, own_txn_id, operation_kind::acquire, "X_LOCK", wait_kind::conditional,
-					  false, make_oid (130, 0), make_oid (700 + worker, iter % (effective_hotset * 2))));
+					  false, sweep_bucket.class_oid,
+                                          get_object_from_bucket (sweep_bucket, iter % (effective_hotset * 2))));
 		ops.push_back (make_commit (worker, own_txn_id));
+                }
 		break;
 	      }
 	  }
