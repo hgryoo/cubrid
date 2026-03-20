@@ -18,6 +18,7 @@
 
 #include "test_lock_manager_mock_runtime.hpp"
 
+
 #if defined (TEST_LOCK_MANAGER_WITH_CUBRID_API)
 #include "lock_manager.h"
 #include "thread_entry.hpp"
@@ -134,7 +135,6 @@ namespace test_lock_manager
 #if defined (TEST_LOCK_MANAGER_WITH_CUBRID_API)
     run_lock_manager_api_suite ();
 #endif
-
     const scenario_config configs[] = {
       { scenario_kind::hot_row, 4, 8, 1, 1 },
       { scenario_kind::lock_conversion, 4, 6, 4, 1 },

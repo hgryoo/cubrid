@@ -275,7 +275,6 @@ test_lock_manager --functional
 ```
 
 The current functional suite validates:
-
 - `lock_manager_api` calls `lock_initialize_default_config()`, then performs a smoke initialization/finalization
   cycle through `lock_initialize_with_config()` / `lock_finalize()` when the test binary is built through the
   normal CMake target and linked with the engine library; it also issues real `lock_object()` and
@@ -289,7 +288,6 @@ Each passing scenario is printed as a separate `[functional] passed: ...` line.
 
 If you build only the standalone scenario sources with a direct compiler command, the mock-runtime scenario checks
 still run, but the direct `lock_manager.h` API smoke test is only enabled for the full `test_lock_manager` CMake target.
-
 #### 3. Benchmark mode
 
 Use this mode to run all implemented scenarios repeatedly and print CSV-style performance output.
