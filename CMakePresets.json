@@ -22,7 +22,8 @@
       "inherits": "default",
       "description": "Release build",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "UNIT_TESTS": "ON"
       }
     },
     {
@@ -30,7 +31,8 @@
       "inherits": "default",
       "description": "Debug build",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "UNIT_TESTS": "ON"
       }
     },
     {

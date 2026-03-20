@@ -104,10 +104,10 @@ if (UNIT_TESTS OR UNIT_TEST_MONITOR)
   add_subdirectory(monitor)
 endif(UNIT_TESTS OR UNIT_TEST_MONITOR)
 
-if (UNIT_TEST_LOCK_MANAGER)
+if (UNIT_TESTS OR  UNIT_TEST_LOCK_MANAGER)
   message("    lock_manager")
   add_subdirectory(lock_manager)
-endif(UNIT_TEST_LOCK_MANAGER)
+endif(UNIT_TESTS OR UNIT_TEST_LOCK_MANAGER)
 
 #[[
 TODO compilation fails
