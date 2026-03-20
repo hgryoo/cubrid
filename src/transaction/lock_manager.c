@@ -429,6 +429,7 @@ static const int SIZEOF_LK_ACQOBJ_LOCK = sizeof (LK_ACQOBJ_LOCK);
 /* minimum # of locks that are required */
 /* TODO : change const */
 #define LK_MIN_OBJECT_LOCKS  (MAX_NTRANS * 300)
+#define LK_INITIAL_OBJECT_LOCK_TABLE_SIZE 10000
 
 /* the ratio in the number of lock entries for each entry type */
 static const float LK_RES_RATIO = 0.1f;
@@ -490,8 +491,10 @@ static void lock_initialize_resource (LK_RES * res_ptr);
 static void lock_initialize_resource_as_allocated (LK_RES * res_ptr, LOCK lock);
 static unsigned int lock_get_hash_value (const OID * oid, int htsize);
 static int lock_initialize_tran_lock_table (void);
-static void lock_initialize_object_hash_table (void);
-static int lock_initialize_object_lock_entry_list (void);
+static void lock_initialize_default_config_internal (LK_INIT_CONFIG *config);
+static void lock_sanitize_init_config (LK_INIT_CONFIG *config);
+static void lock_initialize_object_hash_table (const LK_INIT_CONFIG *config);
+static int lock_initialize_object_lock_entry_list (const LK_INIT_CONFIG *config);
 static int lock_initialize_deadlock_detection (void);
 static int lock_remove_resource (THREAD_ENTRY * thread_p, LK_RES * res_ptr);
 static void lock_finalize_tran_lock_table (void);
@@ -1116,15 +1119,52 @@ lock_initialize_tran_lock_table (void)
  * Note:This function initializes an object lock hash table.
  */
 static void
-lock_initialize_object_hash_table (void)
+lock_initialize_default_config_internal (LK_INIT_CONFIG * config)
 {
-#define LK_INITIAL_OBJECT_LOCK_TABLE_SIZE       10000
+  config->initial_object_locks = LK_INITIAL_OBJECT_LOCK_TABLE_SIZE;
+  config->object_res_block_count = 2;
+  config->object_entry_block_count = 1;
+  config->start_deadlock_detector = true;
+}
+#endif /* SERVER_MODE */
 
-  lk_Gl.max_obj_locks = LK_INITIAL_OBJECT_LOCK_TABLE_SIZE;
+#if defined(SERVER_MODE)
+static void
+lock_sanitize_init_config (LK_INIT_CONFIG * config)
+{
+  if (config->initial_object_locks <= 0)
+    {
+      config->initial_object_locks = LK_INITIAL_OBJECT_LOCK_TABLE_SIZE;
+    }
+
+  if (config->object_res_block_count <= 0)
+    {
+      config->object_res_block_count = 2;
+    }
+
+  if (config->object_entry_block_count <= 0)
+    {
+      config->object_entry_block_count = 1;
+    }
+}
+#endif /* SERVER_MODE */
+
+#if defined(SERVER_MODE)
+/*
+ * lock_initialize_object_hash_table - Initializes the object lock hash table
+ *
+ * return: error code
+ *
+ * Note:This function initializes an object lock hash table.
+ */
+static void
+lock_initialize_object_hash_table (const LK_INIT_CONFIG * config)
+{
+  lk_Gl.max_obj_locks = config->initial_object_locks;
 
   const int obj_hash_size = MAX (lk_Gl.max_obj_locks, LK_MIN_OBJECT_LOCKS);
 
-  const int block_count = 2;
+  const int block_count = config->object_res_block_count;
   const int block_size = (int) MAX ((lk_Gl.max_obj_locks * LK_RES_RATIO) / block_count, 1);
   lk_Obj_lock_res_desc.max_alloc_cnt = prm_get_integer_value (PRM_ID_LK_ESCALATION_AT);
 
@@ -1147,12 +1187,12 @@ lock_initialize_object_hash_table (void)
  *     2. a list of freed object lock entries.
  */
 static int
-lock_initialize_object_lock_entry_list (void)
+lock_initialize_object_lock_entry_list (const LK_INIT_CONFIG * config)
 {
   int block_count, block_size, ret;
 
   /* initialize the entry freelist */
-  block_count = 1;
+  block_count = config->object_entry_block_count;
   block_size = (int) MAX ((lk_Gl.max_obj_locks * LK_ENTRY_RATIO), 1);
   obj_lock_entry_desc.max_alloc_cnt = prm_get_integer_value (PRM_ID_LK_ESCALATION_AT);
 
@@ -5621,23 +5661,43 @@ lock_dump_resource (THREAD_ENTRY * thread_p, FILE * outfp, LK_RES * res_ptr)
  *
  * Note:Initialize the lock manager memory structures.
  */
+void
+lock_initialize_default_config (LK_INIT_CONFIG * config)
+{
+#if defined (SERVER_MODE)
+  assert (config != NULL);
+
+  lock_initialize_default_config_internal (config);
+#else /* defined (SERVER_MODE) */
+  (void) config;
+#endif /* defined (SERVER_MODE) */
+}
+
 int
-lock_initialize (void)
+lock_initialize_with_config (const LK_INIT_CONFIG * config)
 {
 #if !defined (SERVER_MODE)
   lk_Standalone_has_xlock = false;
   return NO_ERROR;
-#else /* !SERVER_MODE */
+#else /* !defined (SERVER_MODE) */
   const char *env_value;
   int error_code = NO_ERROR;
+  LK_INIT_CONFIG local_config;
+
+  lock_initialize_default_config_internal (&local_config);
+  if (config != NULL)
+    {
+      local_config = *config;
+    }
+  lock_sanitize_init_config (&local_config);
 
   error_code = lock_initialize_tran_lock_table ();
   if (error_code != NO_ERROR)
     {
       goto error;
     }
-  lock_initialize_object_hash_table ();
-  error_code = lock_initialize_object_lock_entry_list ();
+  lock_initialize_object_hash_table (&local_config);
+  error_code = lock_initialize_object_lock_entry_list (&local_config);
   if (error_code != NO_ERROR)
     {
       goto error;
@@ -5678,7 +5738,10 @@ lock_initialize (void)
     }
 #endif /* LK_DUMP */
 
-  lock_deadlock_detect_daemon_init ();
+  if (local_config.start_deadlock_detector)
+    {
+      lock_deadlock_detect_daemon_init ();
+    }
 
   return error_code;
 
@@ -5686,6 +5749,12 @@ error:
   (void) lock_finalize ();
   return error_code;
 #endif /* !SERVER_MODE */
+}
+
+int
+lock_initialize (void)
+{
+  return lock_initialize_with_config (NULL);
 }
 
 #if defined(SERVER_MODE)
@@ -5825,6 +5894,7 @@ void
 lock_deadlock_detect_daemon_destroy ()
 {
   cubthread::get_manager ()->destroy_daemon (lock_Deadlock_detect_daemon);
+  lock_Deadlock_detect_daemon = NULL;
 }
 #endif /* SERVER_MODE */
 
@@ -5877,7 +5947,10 @@ lock_finalize (void)
   lk_Gl.m_obj_hash_table.destroy ();
   lf_freelist_destroy (&lk_Gl.obj_free_entry_list);
 
-  lock_deadlock_detect_daemon_destroy ();
+  if (lock_Deadlock_detect_daemon != NULL)
+    {
+      lock_deadlock_detect_daemon_destroy ();
+    }
 #endif /* !SERVER_MODE */
 }
 

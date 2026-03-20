@@ -72,6 +72,15 @@ typedef enum
   KEY_LOCK_ESCALATED = 2
 } KEY_LOCK_ESCALATION;
 
+typedef struct lk_init_config LK_INIT_CONFIG;
+struct lk_init_config
+{
+  int initial_object_locks;
+  int object_res_block_count;
+  int object_entry_block_count;
+  bool start_deadlock_detector;
+};
+
 /*****************************/
 /* Lock Heap Entry Structure */
 /*****************************/
@@ -194,6 +203,8 @@ struct lk_res
 #if defined(SERVER_MODE)
 extern void lock_remove_all_inst_locks (THREAD_ENTRY * thread_p, int tran_index, const OID * class_oid, LOCK lock);
 #endif /* SERVER_MODE */
+extern void lock_initialize_default_config (LK_INIT_CONFIG *config);
+extern int lock_initialize_with_config (const LK_INIT_CONFIG *config);
 extern int lock_initialize (void);
 extern void lock_finalize (void);
 extern int lock_hold_object_instant (THREAD_ENTRY * thread_p, const OID * oid, const OID * class_oid, LOCK lock);
