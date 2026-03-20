@@ -503,9 +503,11 @@ namespace cubhnsw
 	    m_storage->get_neighbors_cached_ids (context, slot, context.m_level);
     if (cached_neighbors != nullptr)
       {
+	context.m_stats.on_neighbors_cache_hit (context.m_is_perf_tracking, context.m_level);
 	return *cached_neighbors;
       }
 
+    context.m_stats.on_neighbors_page_fix (context.m_is_perf_tracking, context.m_level);
     pinned_t node_blk = m_storage->get_node_by_slot_id (context, slot, lock_mode::shared);
     neighbors_ref_type neighbors = get_neighbors (node_blk, context.m_level);
 
