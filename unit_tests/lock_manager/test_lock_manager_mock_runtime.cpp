@@ -225,7 +225,7 @@ namespace test_lock_manager
 	barriers.emplace (entry.first, std::unique_ptr<cyclic_barrier> (new cyclic_barrier (entry.second.size ())));
       }
 
-    LK_INIT_CONFIG lock_init_config;
+    LK_CONFIG lock_init_config;
     const float previous_deadlock_interval = prm_get_float_value (PRM_ID_LK_RUN_DEADLOCK_INTERVAL);
     const int previous_lock_escalation_at = prm_get_integer_value (PRM_ID_LK_ESCALATION_AT);
     UINT64 *base_stats = NULL;

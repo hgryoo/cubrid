@@ -29,7 +29,7 @@ because it has the following characteristics:
 Because of that, it is better to build a lock-manager-specific seam and load the module through
 `unit_tests/lock_manager/` than to start by booting the entire server and then stressing the lock manager.
 
-At the current code stage, a good first step is an **initialization seam** based on `LK_INIT_CONFIG`,
+At the current code stage, a good first step is an **initialization seam** based on `LK_CONFIG`,
 `lock_initialize_default_config()`, and `lock_initialize_with_config()`, so object lock table sizing,
 block partitioning, and daemon startup can be controlled externally. The runtime should also prebuild
 an OID pool so class/object locality and collision patterns are explicit benchmark inputs rather than
@@ -74,11 +74,11 @@ while unit tests would provide a `mock_runtime` to control:
 Keep the current `lock_initialize()` / `lock_finalize()` entry points, but add test-oriented initialization APIs such as:
 
 ```c
-void lock_initialize_default_config (LK_INIT_CONFIG *config);
-int lock_initialize_with_config (const LK_INIT_CONFIG *config);
+void lock_initialize_default_config (LK_CONFIG *config);
+int lock_initialize_with_config (const LK_CONFIG *config);
 ```
 
-`LK_INIT_CONFIG` should provide at least the following controls:
+`LK_CONFIG` should provide at least the following controls:
 
 - hash bucket sizing
 - resource freelist preallocation sizing

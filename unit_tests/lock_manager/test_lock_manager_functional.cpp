@@ -118,7 +118,7 @@ namespace test_lock_manager
   {
     assert (cubthread::get_manager () != NULL);
 
-    LK_INIT_CONFIG config;
+    LK_CONFIG config;
     int error = NO_ERROR;
 
     lock_initialize_default_config (&config);
