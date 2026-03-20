@@ -139,8 +139,6 @@ namespace cubhnsw
     SPAGE_SLOT *slotp = spage_get_slot (root_page_ptr, 1);
     assert (slotp != nullptr);
 
-    context.add_stat (context.m_stats.page_access, context.m_stats.page_access_l0, 1);
-
     OID oid = { root_vpid.pageid, 1, root_vpid.volid };
 
     pinned_t::data_t blk;
@@ -169,12 +167,7 @@ namespace cubhnsw
     SPAGE_SLOT *slotp = spage_get_slot (node_page_ptr, id.slotid);
     assert (slotp != nullptr);
 
-    context.add_stat (context.m_stats.page_access, context.m_stats.page_access_l0, 1);
-
-    if (context.m_is_debugging)
-      {
-	context.m_accessed_nodes.push_back (dump_slot (id));
-      }
+    context.m_stats.on_page_access (context.m_is_perf_tracking, context.m_level);
 
     pinned_t::data_t blk;
     blk.id = id;
@@ -189,6 +182,7 @@ namespace cubhnsw
   const std::vector<slot_id_t> *
   storage::get_neighbors_cached_ids (algo_context_t &context, const slot_id_t &slot, level_t level)
   {
+    (void) context;
     neighbors_key key { slot, level };
     auto it = m_neighbors_cache.find (key);
     if (it != m_neighbors_cache.end ())
@@ -196,8 +190,15 @@ namespace cubhnsw
 	return &it->second;
       }
 
-    // Not cached yet: let caller fall back to loading neighbors directly.
     return nullptr;
+  }
+
+  std::vector<slot_id_t> &
+  storage::get_or_create_neighbors_cached_ids (algo_context_t &context, const slot_id_t &slot, level_t level)
+  {
+    (void) context;
+    neighbors_key key { slot, level };
+    return m_neighbors_cache[key];
   }
 
   void
@@ -206,6 +207,7 @@ namespace cubhnsw
 				     level_t level,
 				     const std::vector<slot_id_t> &neighbors)
   {
+    (void) context;
     neighbors_key key { slot, level };
     m_neighbors_cache[key] = neighbors;
   }
@@ -213,16 +215,16 @@ namespace cubhnsw
   const float *
   storage::get_vector_by_slot_id (algo_context_t &context, const slot_id_t &slot, const lock_mode &mode)
   {
-    context.add_stat (context.m_stats.vector_access, context.m_stats.vector_access_l0, 1);
+    context.m_stats.on_vector_access (context.m_is_perf_tracking, context.m_level);
 
     auto it = m_vector_cache.find (slot);
     if (it != m_vector_cache.end ())
       {
-	context.add_stat (context.m_stats.vector_cache_hit, context.m_stats.vector_cache_hit_l0, 1);
+	context.m_stats.on_vector_cache_hit (context.m_is_perf_tracking, context.m_level);
 	return it->second.data ();
       }
 
-    context.add_stat (context.m_stats.vector_cache_miss, context.m_stats.vector_cache_miss_l0, 1);
+    context.m_stats.on_vector_cache_miss (context.m_is_perf_tracking, context.m_level);
 
     pinned_t node_blk = get_node_by_slot_id (context, slot, mode);
     node_t node { reinterpret_cast<byte_t *> (node_blk->data) };
