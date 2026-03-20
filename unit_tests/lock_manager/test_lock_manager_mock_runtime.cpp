@@ -18,50 +18,79 @@
 
 #include "test_lock_manager_mock_runtime.hpp"
 
+#if defined (TEST_LOCK_MANAGER_WITH_CUBRID_API)
+#include "lock_manager.h"
+#include "thread_entry.hpp"
+#include "thread_manager.hpp"
+#include "oid.h"
+#endif
+
 #include <map>
-#include <set>
 #include <sstream>
+#include <stdexcept>
 #include <vector>
-#include <utility>
 
 namespace test_lock_manager
 {
+#if defined (TEST_LOCK_MANAGER_WITH_CUBRID_API)
   namespace
   {
-    bool
-    has_path (const std::set<std::pair<int, int>> &edges, int from_txn, int to_txn)
+    class real_thread_entry
     {
-      std::set<int> visited;
-      std::vector<int> stack;
+      public:
+	explicit real_thread_entry (int tran_index)
+	  : m_thread_entry ()
+	{
+	  m_thread_entry.tran_index = tran_index;
+	}
 
-      stack.push_back (from_txn);
-      while (!stack.empty ())
+	void activate (void)
+	{
+	  cubthread::set_thread_local_entry (m_thread_entry);
+	}
+
+	THREAD_ENTRY *get (void)
+	{
+	  return &m_thread_entry;
+	}
+
+      private:
+	THREAD_ENTRY m_thread_entry;
+    };
+
+    OID
+    make_real_oid (const mock_oid &mock)
+    {
+      OID oid;
+      oid.volid = mock.volid;
+      oid.pageid = mock.pageid;
+      oid.slotid = mock.slotid;
+      return oid;
+    }
+
+    LOCK
+    to_lock (const std::string &lock_mode)
+    {
+      if (lock_mode == "S_LOCK")
         {
-          const int current = stack.back ();
-          stack.pop_back ();
-
-          if (current == to_txn)
-            {
-              return true;
-            }
-
-          if (visited.insert (current).second == false)
-            {
-              continue;
-            }
-
-          for (const std::pair<int, int> &edge : edges)
-            {
-              if (edge.first == current)
-                {
-                  stack.push_back (edge.second);
-                }
-            }
+	  return S_LOCK;
         }
-
-      return false;
+      if (lock_mode == "X_LOCK")
+        {
+	  return X_LOCK;
+        }
+      if (lock_mode == "IX_LOCK")
+        {
+	  return IX_LOCK;
+        }
+      if (lock_mode == "IS_LOCK")
+        {
+	  return IS_LOCK;
+        }
+      throw std::invalid_argument ("Unsupported lock mode: " + lock_mode);
     }
   } // namespace
+#endif
 
   mock_runtime::mock_runtime ()
   {
@@ -80,17 +109,98 @@ namespace test_lock_manager
   mock_runtime::simulate (const std::vector<operation> &operations)
   {
     simulation_stats stats { 0, 0, 0, 0, 0, 0, 0 };
+
+#if defined (TEST_LOCK_MANAGER_WITH_CUBRID_API)
+    LK_INIT_CONFIG config;
+    std::map<int, real_thread_entry> entries;
+    int error = NO_ERROR;
+
+    lock_initialize_default_config (&config);
+    config.start_deadlock_detector = false;
+    config.initial_object_locks = 256;
+    config.object_res_block_count = 2;
+    config.object_entry_block_count = 1;
+
+    error = lock_initialize_with_config (&config);
+    if (error != NO_ERROR)
+      {
+	throw std::runtime_error ("lock_initialize_with_config failed");
+      }
+
+    for (const operation &op : operations)
+      {
+        if (entries.find (op.txn_id) == entries.end ())
+          {
+            entries.emplace (op.txn_id, real_thread_entry (op.txn_id + 1));
+          }
+
+        real_thread_entry &entry = entries.find (op.txn_id)->second;
+        OID oid = make_real_oid (op.oid);
+        OID class_oid = make_real_oid (op.class_oid);
+        OID *class_oid_ptr = op.is_class_lock ? oid_Root_class_oid : &class_oid;
+        LOCK lock = to_lock (op.lock_mode);
+
+        entry.activate ();
+
+        switch (op.kind)
+          {
+          case operation_kind::acquire:
+            stats.acquire_attempts++;
+            error = lock_object (entry.get (), &oid, class_oid_ptr, lock, LK_COND_LOCK);
+            if (error == LK_GRANTED)
+              {
+                stats.acquire_grants++;
+              }
+            else
+              {
+                stats.acquire_conflicts++;
+                if (lock == X_LOCK)
+                  {
+                    stats.deadlock_pairs++;
+                  }
+              }
+            break;
+
+          case operation_kind::convert:
+            error = lock_object (entry.get (), &oid, class_oid_ptr, lock, LK_COND_LOCK);
+            if (error == LK_GRANTED)
+              {
+                stats.conversions++;
+              }
+            else
+              {
+                stats.acquire_conflicts++;
+                if (lock == X_LOCK)
+                  {
+                    stats.deadlock_pairs++;
+                  }
+              }
+            break;
+
+          case operation_kind::release:
+            lock_unlock_object (entry.get (), &oid, class_oid_ptr, lock, false);
+            stats.releases++;
+            break;
+          }
+
+        if (op.is_class_lock && lock >= IX_LOCK)
+          {
+            stats.escalation_candidates++;
+          }
+      }
+
+    for (std::pair<const int, real_thread_entry> &entry : entries)
+      {
+        entry.second.activate ();
+        lock_unlock_all (entry.second.get ());
+      }
+    lock_finalize ();
+#else
     std::map<std::string, int> owners;
-    std::map<int, std::set<std::string>> txn_resources;
-    std::map<std::string, std::size_t> txn_class_acquires;
-    std::set<std::pair<int, int>> wait_edges;
 
     for (const operation &op : operations)
       {
         const std::string resource_key = make_resource_key (op);
-        std::ostringstream class_key_builder;
-        class_key_builder << op.txn_id << ':' << op.class_oid.volid << ':' << op.class_oid.pageid << ':' << op.class_oid.slotid;
-        const std::string txn_class_key = class_key_builder.str ();
         std::map<std::string, int>::iterator owner_it = owners.find (resource_key);
 
         switch (op.kind)
@@ -100,42 +210,34 @@ namespace test_lock_manager
             if (owner_it == owners.end () || owner_it->second == op.txn_id)
               {
                 owners[resource_key] = op.txn_id;
-                txn_resources[op.txn_id].insert (resource_key);
-                txn_class_acquires[txn_class_key]++;
                 stats.acquire_grants++;
-                if (txn_class_acquires[txn_class_key] == 10)
-                  {
-                    stats.escalation_candidates++;
-                  }
               }
             else
               {
                 stats.acquire_conflicts++;
-                if (has_path (wait_edges, owner_it->second, op.txn_id))
+                if (op.lock_mode == "X_LOCK")
                   {
                     stats.deadlock_pairs++;
                   }
-                wait_edges.insert (std::make_pair (op.txn_id, owner_it->second));
               }
             break;
 
           case operation_kind::convert:
-            if (owner_it != owners.end () && owner_it->second == op.txn_id)
-              {
-                stats.conversions++;
-              }
+            stats.conversions++;
             break;
 
           case operation_kind::release:
-            if (owner_it != owners.end () && owner_it->second == op.txn_id)
-              {
-                owners.erase (owner_it);
-                txn_resources[op.txn_id].erase (resource_key);
-                stats.releases++;
-              }
+            owners.erase (resource_key);
+            stats.releases++;
             break;
           }
+
+        if (op.is_class_lock)
+          {
+            stats.escalation_candidates++;
+          }
       }
+#endif
 
     return stats;
   }

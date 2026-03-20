@@ -58,8 +58,8 @@ namespace test_lock_manager
     append_acquire_release (std::vector<operation> &ops, int worker_id, int txn_id, const char *lock_mode,
                             const mock_oid &class_oid, const mock_oid &oid)
     {
-      ops.push_back ({ worker_id, txn_id, operation_kind::acquire, lock_mode, class_oid, oid });
-      ops.push_back ({ worker_id, txn_id, operation_kind::release, lock_mode, class_oid, oid });
+      ops.push_back ({ worker_id, txn_id, operation_kind::acquire, lock_mode, false, class_oid, oid });
+      ops.push_back ({ worker_id, txn_id, operation_kind::release, lock_mode, false, class_oid, oid });
     }
 
     const scenario_metadata &
@@ -145,17 +145,17 @@ namespace test_lock_manager
           {
             for (int worker = 0; worker < config.worker_count; worker++)
               {
-                ops.push_back ({ worker, worker, operation_kind::acquire, "X_LOCK", make_oid (110, 0),
+                ops.push_back ({ worker, worker, operation_kind::acquire, "X_LOCK", false, make_oid (110, 0),
                                  make_oid (400 + worker, 1) });
               }
             for (int worker = 0; worker < config.worker_count; worker++)
               {
-                ops.push_back ({ worker, worker, operation_kind::acquire, "X_LOCK", make_oid (110, 0),
+                ops.push_back ({ worker, worker, operation_kind::acquire, "X_LOCK", false, make_oid (110, 0),
                                  make_oid (400 + ((worker + 1) % config.worker_count), 1) });
               }
             for (int worker = 0; worker < config.worker_count; worker++)
               {
-                ops.push_back ({ worker, worker, operation_kind::release, "X_LOCK", make_oid (110, 0),
+                ops.push_back ({ worker, worker, operation_kind::release, "X_LOCK", false, make_oid (110, 0),
                                  make_oid (400 + worker, 1) });
               }
           }
@@ -179,7 +179,8 @@ namespace test_lock_manager
               case scenario_kind::hot_class_cold_rows:
                 if (((iter + worker) % 10) == 0)
                   {
-                    append_acquire_release (ops, worker, txn_id, "X_LOCK", make_oid (100, 0), make_oid (100, 0));
+                    ops.push_back ({ worker, txn_id, operation_kind::acquire, "X_LOCK", true, make_oid (100, 0), make_oid (100, 0) });
+                    ops.push_back ({ worker, txn_id, operation_kind::release, "X_LOCK", true, make_oid (100, 0), make_oid (100, 0) });
                   }
                 else
                   {
@@ -189,11 +190,11 @@ namespace test_lock_manager
                 break;
 
               case scenario_kind::lock_conversion:
-                ops.push_back ({ worker, txn_id, operation_kind::acquire, "S_LOCK", class_oid,
+                ops.push_back ({ worker, txn_id, operation_kind::acquire, "S_LOCK", false, class_oid,
                                  make_oid (300 + worker, iter % effective_hotset) });
-                ops.push_back ({ worker, txn_id, operation_kind::convert, "X_LOCK", class_oid,
+                ops.push_back ({ worker, txn_id, operation_kind::convert, "X_LOCK", false, class_oid,
                                  make_oid (300 + worker, iter % effective_hotset) });
-                ops.push_back ({ worker, txn_id, operation_kind::release, "X_LOCK", class_oid,
+                ops.push_back ({ worker, txn_id, operation_kind::release, "X_LOCK", false, class_oid,
                                  make_oid (300 + worker, iter % effective_hotset) });
                 break;
 
@@ -208,7 +209,7 @@ namespace test_lock_manager
                 break;
 
               case scenario_kind::escalation_sweep:
-                ops.push_back ({ worker, txn_id, operation_kind::acquire, "IX_LOCK", make_oid (130, 0),
+                ops.push_back ({ worker, txn_id, operation_kind::acquire, "IX_LOCK", true, make_oid (130, 0),
                                  make_oid (130, 0) });
                 append_acquire_release (ops, worker, txn_id, "X_LOCK", make_oid (130, 0),
                                         make_oid (700 + worker, iter % (effective_hotset * 2)));
@@ -260,6 +261,7 @@ namespace test_lock_manager
     out << "worker=" << op.worker_id
         << " txn=" << op.txn_id
         << " op=" << to_string (op.kind)
+        << " target=" << (op.is_class_lock ? "class" : "instance")
         << " lock=" << op.lock_mode
         << " class_oid=" << op.class_oid.volid << ':' << op.class_oid.pageid << ':' << op.class_oid.slotid
         << " oid=" << op.oid.volid << ':' << op.oid.pageid << ':' << op.oid.slotid;

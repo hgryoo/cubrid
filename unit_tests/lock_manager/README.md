@@ -268,7 +268,7 @@ This prints:
 
 #### 2. Functional test mode
 
-Use this mode to run deterministic checks for a subset of scenarios against the mock runtime.
+Use this mode to run deterministic checks for a subset of scenarios against the lock manager API.
 
 ```bash
 test_lock_manager --functional
@@ -281,13 +281,15 @@ The current functional suite validates:
   `lock_unlock_all()` calls against two explicit `tran_index` values to validate shared-grant and conflict paths
 - `hot_row` uses exactly one target OID
 - `lock_conversion` produces conversion events
-- `deadlock_detector` produces at least one deadlock pair in the mock runtime
+- `deadlock_detector` produces at least one conflicting `X_LOCK` denial along the deadlock-prone lock order
 - `escalation_sweep` produces escalation candidates
 
 Each passing scenario is printed as a separate `[functional] passed: ...` line.
 
-If you build only the standalone scenario sources with a direct compiler command, the mock-runtime scenario checks
-still run, but the direct `lock_manager.h` API smoke test is only enabled for the full `test_lock_manager` CMake target.
+If you build only the standalone scenario sources with a direct compiler command, only the lightweight fallback path
+is exercised. The full `lock_manager.h` API-driven functional path is enabled by the normal `test_lock_manager`
+CMake target.
+
 #### 3. Benchmark mode
 
 Use this mode to run all implemented scenarios repeatedly and print CSV-style performance output.
@@ -318,7 +320,7 @@ This is useful for comparing relative workload pressure even before the harness 
 - Keep the default runtime bound to the existing server implementation.
 - Preserve current behavior by making `lock_initialize()` use the default runtime internally.
 
-### Step 2: secure deterministic functional unit tests with a mock runtime
+### Step 2: secure deterministic functional unit tests with real lock-manager API calls
 
 - Start with deterministic 1-thread, 2-thread, and 3-thread scenarios.
 - Control deadlock and timeout behavior using a fake clock so tests stay non-flaky.
@@ -364,8 +366,9 @@ Even these five steps are enough to answer practical questions such as:
 
 ## Conclusion
 
-For lock manager performance testing, independently loading `lock_manager` with a mock runtime + mock OID workload is
-far more efficient and analytically useful than trying to reproduce full-DB workloads first.
+For lock manager performance testing, independently loading `lock_manager` with mock OID workloads and driving it
+through the exported lock-manager API is far more efficient and analytically useful than trying to reproduce full-DB
+workloads first.
 
 In one sentence, the recommended direction is this:
 

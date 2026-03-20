@@ -18,7 +18,6 @@
 
 #include "test_lock_manager_mock_runtime.hpp"
 
-
 #if defined (TEST_LOCK_MANAGER_WITH_CUBRID_API)
 #include "lock_manager.h"
 #include "thread_entry.hpp"

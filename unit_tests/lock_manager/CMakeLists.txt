@@ -40,7 +40,6 @@ add_executable (test_lock_manager
   )
 
 target_compile_definitions (test_lock_manager PRIVATE
-
   SERVER_MODE
   TEST_LOCK_MANAGER_WITH_CUBRID_API
   ${COMMON_DEFS}
@@ -53,7 +52,6 @@ target_include_directories (test_lock_manager PRIVATE
 target_link_libraries (test_lock_manager LINK_PRIVATE
   test_common
   )
-
 if(UNIX)
   target_link_libraries (test_lock_manager LINK_PRIVATE
     cubrid

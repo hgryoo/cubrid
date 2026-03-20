@@ -57,6 +57,7 @@ namespace test_lock_manager
     int txn_id;
     operation_kind kind;
     std::string lock_mode;
+    bool is_class_lock;
     mock_oid class_oid;
     mock_oid oid;
   };
