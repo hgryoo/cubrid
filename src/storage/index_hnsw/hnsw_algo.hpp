@@ -538,6 +538,14 @@ namespace cubhnsw
 	new_neighbors.push_back (top_view[i].slot);
       }
 
+    std::vector<slot_id_t> neigh;
+    neigh.reserve (new_neighbors.size ());
+    for (std::size_t i = 0; i < new_neighbors.size (); ++i)
+      {
+	neigh.push_back (new_neighbors.at (i));
+      }
+    m_storage->set_neighbors_cached_ids (context, new_node_blk->id, level, neigh);
+
     m_graph_structure_profile.on_edges_added (level, top_view.size ());
   }
 
@@ -564,9 +572,31 @@ namespace cubhnsw
 	pinned_t close_node_blk = m_storage->get_node_by_slot_id (context, close_slot, lock_mode::exclusive);
 	{
 	  close_header = get_neighbors (close_node_blk, level);
+	  bool already_connected = false;
+	  for (std::size_t i = 0; i < close_header.size (); ++i)
+	    {
+	      if (close_header.at (i) == new_slot)
+		{
+		  already_connected = true;
+		  break;
+		}
+	    }
+	  if (already_connected)
+	    {
+	      continue;
+	    }
+
 	  if (close_header.size () < layer_connectivity)
 	    {
 	      close_header.push_back (new_slot);
+
+	      std::vector<slot_id_t> neigh;
+	      neigh.reserve (close_header.size ());
+	      for (std::size_t i = 0; i < close_header.size (); ++i)
+		{
+		  neigh.push_back (close_header.at (i));
+		}
+	      m_storage->set_neighbors_cached_ids (context, close_slot, level, neigh);
 
 	      m_graph_structure_profile.on_edges_added (level, 1);
 	      continue;
@@ -599,6 +629,15 @@ namespace cubhnsw
 	  {
 	    close_header.push_back (top_view[i].slot);
 	  }
+
+	std::vector<slot_id_t> neigh;
+	neigh.reserve (close_header.size ());
+	for (std::size_t i = 0; i < close_header.size (); ++i)
+	  {
+	    neigh.push_back (close_header.at (i));
+	  }
+	m_storage->set_neighbors_cached_ids (context, close_slot, level, neigh);
+
 	m_graph_structure_profile.on_edges_added (level, top_view.size ());
       }
 
