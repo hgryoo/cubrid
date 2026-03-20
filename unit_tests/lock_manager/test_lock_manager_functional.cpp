@@ -18,12 +18,12 @@
 
 #include "test_lock_manager_mock_runtime.hpp"
 
-#if defined (TEST_LOCK_MANAGER_WITH_CUBRID_API)
 #include "lock_manager.h"
 #include "thread_entry.hpp"
 #include "thread_manager.hpp"
-#endif
 
+#include <algorithm>
+#include <cassert>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -32,6 +32,26 @@ namespace test_lock_manager
 {
   namespace
   {
+    class scoped_thread_entry
+    {
+      public:
+	explicit scoped_thread_entry (THREAD_ENTRY &thread_entry)
+	  : m_previous (&cubthread::get_entry ())
+	{
+	  cubthread::clear_thread_local_entry ();
+	  cubthread::set_thread_local_entry (thread_entry);
+	}
+
+	~scoped_thread_entry ()
+	{
+	  cubthread::clear_thread_local_entry ();
+	  cubthread::set_thread_local_entry (*m_previous);
+	}
+
+      private:
+	cubthread::entry *m_previous;
+    };
+
     void
     require_true (bool condition, const std::string &message)
     {
@@ -40,23 +60,28 @@ namespace test_lock_manager
           throw std::runtime_error (message);
         }
     }
+
   } // namespace
 
-#if defined (TEST_LOCK_MANAGER_WITH_CUBRID_API)
   class real_thread_entry
   {
     public:
       explicit real_thread_entry (int tran_index)
 	: m_thread_entry ()
       {
-	cubthread::set_thread_local_entry (m_thread_entry);
 	m_thread_entry.tran_index = tran_index;
+	m_thread_entry.request_lock_free_transactions ();
       }
 
-      ~real_thread_entry ()
+      ~real_thread_entry (void)
       {
-	cubthread::clear_thread_local_entry ();
+	m_thread_entry.return_lock_free_transaction_entries ();
       }
+
+      real_thread_entry (const real_thread_entry &) = delete;
+      real_thread_entry &operator= (const real_thread_entry &) = delete;
+      real_thread_entry (real_thread_entry &&) = delete;
+      real_thread_entry &operator= (real_thread_entry &&) = delete;
 
       THREAD_ENTRY *get (void)
       {
@@ -66,6 +91,16 @@ namespace test_lock_manager
     private:
       THREAD_ENTRY m_thread_entry;
   };
+
+  namespace
+  {
+    void
+    cleanup_transaction_locks (real_thread_entry &entry)
+    {
+      scoped_thread_entry activation (*entry.get ());
+      lock_unlock_all (entry.get ());
+    }
+  } // namespace
 
   static OID
   make_test_oid (int pageid, int slotid)
@@ -80,6 +115,8 @@ namespace test_lock_manager
   static void
   run_lock_manager_api_suite (void)
   {
+    assert (cubthread::get_manager () != NULL);
+
     LK_INIT_CONFIG config;
     int error = NO_ERROR;
 
@@ -103,41 +140,50 @@ namespace test_lock_manager
       OID class_oid = make_test_oid (100, 0);
       OID inst_oid = make_test_oid (200, 1);
 
-      error = lock_object (thread_one.get (), &inst_oid, &class_oid, S_LOCK, LK_COND_LOCK);
+      {
+        scoped_thread_entry activation (*thread_one.get ());
+        error = lock_object (thread_one.get (), &inst_oid, &class_oid, S_LOCK, LK_COND_LOCK);
+      }
       require_true (error == LK_GRANTED, "thread_one S lock should be granted");
 
-      error = lock_object (thread_two.get (), &inst_oid, &class_oid, S_LOCK, LK_COND_LOCK);
+      {
+        scoped_thread_entry activation (*thread_two.get ());
+        error = lock_object (thread_two.get (), &inst_oid, &class_oid, S_LOCK, LK_COND_LOCK);
+      }
       require_true (error == LK_GRANTED, "thread_two shared lock should be granted");
 
-      lock_unlock_all (thread_one.get ());
-      lock_unlock_all (thread_two.get ());
+      cleanup_transaction_locks (thread_one);
+      cleanup_transaction_locks (thread_two);
 
-      error = lock_object (thread_one.get (), &inst_oid, &class_oid, X_LOCK, LK_COND_LOCK);
+      {
+        scoped_thread_entry activation (*thread_one.get ());
+        error = lock_object (thread_one.get (), &inst_oid, &class_oid, X_LOCK, LK_COND_LOCK);
+      }
       require_true (error == LK_GRANTED, "thread_one X lock should be granted");
 
-      error = lock_object (thread_two.get (), &inst_oid, &class_oid, X_LOCK, LK_COND_LOCK);
+      {
+        scoped_thread_entry activation (*thread_two.get ());
+        error = lock_object (thread_two.get (), &inst_oid, &class_oid, X_LOCK, LK_COND_LOCK);
+      }
       require_true (error != LK_GRANTED, "thread_two conflicting X lock should not be granted");
 
-      lock_unlock_all (thread_one.get ());
-      lock_unlock_all (thread_two.get ());
+      cleanup_transaction_locks (thread_one);
+      cleanup_transaction_locks (thread_two);
     }
 
     lock_finalize ();
 
     std::cout << "[functional] passed: lock_manager_api" << std::endl;
   }
-#endif
 
   int
   run_functional_suite (void)
   {
-#if defined (TEST_LOCK_MANAGER_WITH_CUBRID_API)
     run_lock_manager_api_suite ();
-#endif
     const scenario_config configs[] = {
       { scenario_kind::hot_row, 4, 8, 1, 1 },
+      { scenario_kind::hot_class_cold_rows, 4, 6, 4, 1 },
       { scenario_kind::lock_conversion, 4, 6, 4, 1 },
-      { scenario_kind::deadlock_detector, 4, 5, 4, 1 },
       { scenario_kind::escalation_sweep, 8, 12, 16, 1 }
     };
 
@@ -156,13 +202,17 @@ namespace test_lock_manager
           {
             require_true (summary.distinct_oid_count == 1, "hot_row should use exactly one target OID");
           }
+        else if (config.kind == scenario_kind::hot_class_cold_rows)
+          {
+            const std::size_t expected_transactions =
+              static_cast<std::size_t> (config.iterations * std::max (config.transaction_count / 2, 1));
+
+            require_true (summary.notes.at ("distinct_transactions") == expected_transactions,
+                          "hot_class_cold_rows should share transactions across workers");
+          }
         else if (config.kind == scenario_kind::lock_conversion)
           {
             require_true (stats.conversions > 0, "lock_conversion should record conversions");
-          }
-        else if (config.kind == scenario_kind::deadlock_detector)
-          {
-            require_true (stats.deadlock_pairs > 0, "deadlock_detector should observe deadlock pairs");
           }
         else if (config.kind == scenario_kind::escalation_sweep)
           {

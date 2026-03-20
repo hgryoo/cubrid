@@ -110,7 +110,7 @@ class test_string_buffer
 	    }
 	  else
 	    {
-	      ERR ("[%s(%d)] StrBuf() realloc() new_len=%d", __FILE__, __LINE__, len);
+	      ERR ("[%s(%d)] StrBuf() realloc() new_len=%zu", __FILE__, __LINE__, len);
 	    }
 	}
     }

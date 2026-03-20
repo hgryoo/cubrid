@@ -41,7 +41,6 @@ add_executable (test_lock_manager
 
 target_compile_definitions (test_lock_manager PRIVATE
   SERVER_MODE
-  TEST_LOCK_MANAGER_WITH_CUBRID_API
   ${COMMON_DEFS}
   )
 

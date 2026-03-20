@@ -17,20 +17,168 @@
  */
 
 #include "test_lock_manager_scenarios.hpp"
+#include "boot_sr.h"
+#include "critical_section.h"
+#include "error_manager.h"
+#include "language_support.h"
+#include "log_impl.h"
+#include "object_domain.h"
+#include "page_buffer.h"
+#include "thread_manager.hpp"
 
 #include <cstdlib>
 #include <exception>
+#include <new>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 
 namespace
 {
+  class scoped_thread_environment
+  {
+    public:
+	scoped_thread_environment ()
+	  : m_main_entry (NULL)
+	, m_tdes_area (NULL)
+	, m_tdes_count (4096)
+	, m_error_initialized (false)
+	, m_thread_initialized (false)
+	, m_csect_initialized (false)
+	, m_pgbuf_initialized (false)
+      {
+	if (er_init (NULL, ER_NEVER_EXIT) != NO_ERROR)
+	  {
+	    throw std::runtime_error ("failed to initialize error manager");
+	  }
+	m_error_initialized = true;
+
+	if (lang_init () != NO_ERROR)
+	  {
+	    throw std::runtime_error ("failed to initialize language support");
+	  }
+	if (lang_set_charset_lang ("en_US.iso88591") != NO_ERROR)
+	  {
+	    throw std::runtime_error ("failed to set language charset");
+	  }
+	if (tp_init () != NO_ERROR)
+	  {
+	    throw std::runtime_error ("failed to initialize type domains");
+	  }
+
+	cubthread::initialize (m_main_entry);
+	if (cubthread::initialize_thread_entries () != NO_ERROR)
+	  {
+	    throw std::runtime_error ("failed to initialize thread entries");
+	  }
+	m_thread_initialized = true;
+	boot_server_status (BOOT_SERVER_UP);
+	log_Gl.rcv_phase = LOG_RESTARTED;
+
+	if (csect_initialize_static_critical_sections () != NO_ERROR)
+	  {
+	    throw std::runtime_error ("failed to initialize critical sections");
+	  }
+	m_csect_initialized = true;
+
+	initialize_fake_tdes ();
+
+	if (pgbuf_initialize () != NO_ERROR)
+	  {
+	    throw std::runtime_error ("failed to initialize page buffer");
+	  }
+	m_pgbuf_initialized = true;
+      }
+
+      ~scoped_thread_environment ()
+      {
+	if (m_pgbuf_initialized)
+	  {
+	    pgbuf_finalize ();
+	  }
+	if (m_csect_initialized)
+	  {
+	    csect_finalize_static_critical_sections ();
+	  }
+	finalize_fake_tdes ();
+	if (m_thread_initialized)
+	  {
+	    boot_server_status (BOOT_SERVER_DOWN);
+	    cubthread::return_lock_free_transaction_entries ();
+	    cubthread::finalize ();
+	  }
+	if (m_error_initialized)
+	  {
+	    er_final (ER_ALL_FINAL);
+	  }
+      }
+
+    private:
+      void
+      initialize_fake_tdes ()
+      {
+	size_t ptr_array_size = m_tdes_count * sizeof (*log_Gl.trantable.all_tdes);
+	size_t area_size = sizeof (LOG_ADDR_TDESAREA) + m_tdes_count * sizeof (LOG_TDES);
+
+	log_Gl.trantable = TRANTABLE_INITIALIZER;
+	log_Gl.trantable.all_tdes = (LOG_TDES **) malloc (ptr_array_size);
+	if (log_Gl.trantable.all_tdes == NULL)
+	  {
+	    throw std::bad_alloc ();
+	  }
+
+	m_tdes_area = (LOG_ADDR_TDESAREA *) malloc (area_size);
+	if (m_tdes_area == NULL)
+	  {
+	    throw std::bad_alloc ();
+	  }
+
+	m_tdes_area->tdesarea = (LOG_TDES *) ((char *) m_tdes_area + sizeof (LOG_ADDR_TDESAREA));
+	m_tdes_area->next = NULL;
+
+	for (int index = 0; index < m_tdes_count; index++)
+	  {
+	    LOG_TDES *tdes = &m_tdes_area->tdesarea[index];
+	    log_Gl.trantable.all_tdes[index] = tdes;
+	    logtb_initialize_tdes (tdes, index);
+	  }
+
+	log_Gl.trantable.area = m_tdes_area;
+	log_Gl.trantable.num_total_indices = m_tdes_count;
+	log_Gl.trantable.num_assigned_indices = m_tdes_count;
+      }
+
+      void
+      finalize_fake_tdes ()
+      {
+	if (log_Gl.trantable.all_tdes != NULL)
+	  {
+	    free (log_Gl.trantable.all_tdes);
+	    log_Gl.trantable.all_tdes = NULL;
+	  }
+	if (m_tdes_area != NULL)
+	  {
+	    free (m_tdes_area);
+	    m_tdes_area = NULL;
+	  }
+	log_Gl.trantable = TRANTABLE_INITIALIZER;
+      }
+
+      cubthread::entry *m_main_entry;
+      LOG_ADDR_TDESAREA *m_tdes_area;
+      int m_tdes_count;
+      bool m_error_initialized;
+      bool m_thread_initialized;
+      bool m_csect_initialized;
+      bool m_pgbuf_initialized;
+  };
+
   void
   print_usage (const char *progname)
   {
     std::cout << "Usage: " << progname
               << " [--list] [--functional] [--benchmark] [--scenario <name>]"
-              << " [--workers N] [--iterations N] [--hotset N] [--sample N] [--loops N]" << std::endl;
+              << " [--transaction N] [--iterations N] [--hotset N] [--sample N] [--loops N]" << std::endl;
   }
 
   int
@@ -83,9 +231,9 @@ main (int argc, char **argv)
             {
               config.kind = test_lock_manager::parse_scenario_kind (argv[++index]);
             }
-          else if (arg == "--workers" && index + 1 < argc)
+          else if (arg == "--transaction" && index + 1 < argc)
             {
-              config.worker_count = parse_int ("--workers", argv[++index]);
+              config.transaction_count = parse_int ("--transaction", argv[++index]);
             }
           else if (arg == "--iterations" && index + 1 < argc)
             {
@@ -123,11 +271,13 @@ main (int argc, char **argv)
 
       if (run_functional)
         {
+          scoped_thread_environment thread_env;
           return test_lock_manager::run_functional_suite ();
         }
 
       if (run_benchmark)
         {
+          scoped_thread_environment thread_env;
           return test_lock_manager::run_benchmark_suite (benchmark_loops);
         }
 
@@ -136,7 +286,7 @@ main (int argc, char **argv)
 
       std::cout << "Scenario: " << summary.name << std::endl;
       std::cout << "Description: " << summary.description << std::endl;
-      std::cout << "Workers: " << config.worker_count << std::endl;
+      std::cout << "Transactions: " << config.transaction_count << std::endl;
       std::cout << "Iterations: " << config.iterations << std::endl;
       std::cout << "Hotset size: " << config.hotset_size << std::endl;
       std::cout << "Operations: " << summary.operation_count << std::endl;

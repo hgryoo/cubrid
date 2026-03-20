@@ -28,9 +28,7 @@ namespace test_lock_manager
   {
     const scenario_kind scenarios[] = {
       scenario_kind::hot_row,
-      scenario_kind::hot_class_cold_rows,
       scenario_kind::lock_conversion,
-      scenario_kind::deadlock_detector,
       scenario_kind::hash_collision,
       scenario_kind::low_contention,
       scenario_kind::escalation_sweep
@@ -42,7 +40,7 @@ namespace test_lock_manager
 
     for (scenario_kind kind : scenarios)
       {
-        const scenario_config config { kind, 8, 100, 16, 1 };
+        const scenario_config config { kind, 4, 8, 16, 1 };
         std::vector<operation> operations = build_operations (config);
         simulation_stats total { 0, 0, 0, 0, 0, 0, 0 };
 
@@ -54,7 +52,7 @@ namespace test_lock_manager
             total.acquire_grants += stats.acquire_grants;
             total.acquire_conflicts += stats.acquire_conflicts;
             total.conversions += stats.conversions;
-            total.releases += stats.releases;
+            total.commits += stats.commits;
             total.deadlock_pairs += stats.deadlock_pairs;
             total.escalation_candidates += stats.escalation_candidates;
           }

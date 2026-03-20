@@ -33,7 +33,7 @@ namespace test_lock_manager
     std::size_t acquire_grants;
     std::size_t acquire_conflicts;
     std::size_t conversions;
-    std::size_t releases;
+    std::size_t commits;
     std::size_t deadlock_pairs;
     std::size_t escalation_candidates;
   };
@@ -44,9 +44,6 @@ namespace test_lock_manager
       mock_runtime ();
 
       simulation_stats simulate (const std::vector<operation> &operations);
-
-    private:
-      std::string make_resource_key (const operation &op) const;
   };
 } // namespace test_lock_manager
 

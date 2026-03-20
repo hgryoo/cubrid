@@ -46,9 +46,18 @@ namespace test_lock_manager
 
   enum class operation_kind
   {
+    begin_transaction,
     acquire,
     convert,
-    release
+    commit_transaction,
+    barrier,
+    sleep
+  };
+
+  enum class wait_kind
+  {
+    conditional,
+    unconditional
   };
 
   struct operation
@@ -57,15 +66,17 @@ namespace test_lock_manager
     int txn_id;
     operation_kind kind;
     std::string lock_mode;
+    wait_kind wait_policy;
     bool is_class_lock;
     mock_oid class_oid;
     mock_oid oid;
+    int value;
   };
 
   struct scenario_config
   {
     scenario_kind kind;
-    int worker_count;
+    int transaction_count;
     int iterations;
     int hotset_size;
     int seed;
@@ -88,6 +99,7 @@ namespace test_lock_manager
   scenario_kind parse_scenario_kind (const std::string &name);
   std::string to_string (scenario_kind kind);
   std::string to_string (operation_kind kind);
+  std::string to_string (wait_kind kind);
 
   std::vector<operation> build_operations (const scenario_config &config);
   scenario_summary summarize (scenario_kind kind, const std::vector<operation> &operations);

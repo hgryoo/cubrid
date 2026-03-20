@@ -242,9 +242,9 @@ Examples:
 
 ```bash
 test_lock_manager --list
-test_lock_manager --scenario hot_row --workers 8 --iterations 1000 --sample 10
-test_lock_manager --scenario deadlock_detector --workers 4 --iterations 20 --sample 12
-test_lock_manager --scenario escalation_sweep --workers 8 --iterations 50 --hotset 16
+test_lock_manager --scenario hot_row --transaction 8 --iterations 1000 --sample 10
+test_lock_manager --scenario deadlock_detector --transaction 4 --iterations 20 --sample 12
+test_lock_manager --scenario escalation_sweep --transaction 8 --iterations 50 --hotset 16
 ```
 
 ### How to run each test mode
@@ -254,13 +254,13 @@ test_lock_manager --scenario escalation_sweep --workers 8 --iterations 50 --hots
 Use this mode to generate a deterministic mock-OID workload and inspect its composition.
 
 ```bash
-test_lock_manager --scenario hot_row --workers 8 --iterations 1000 --sample 10
+test_lock_manager --scenario hot_row --transaction 8 --iterations 1000 --sample 10
 ```
 
 This prints:
 
 - the scenario name and description
-- worker count / iteration count / hotset size
+- transaction count / iteration count / hotset size
 - total operation count
 - distinct class count / distinct OID count
 - operation-kind and lock-mode distributions
@@ -276,8 +276,7 @@ test_lock_manager --functional
 
 The current functional suite validates:
 - `lock_manager_api` calls `lock_initialize_default_config()`, then performs a smoke initialization/finalization
-  cycle through `lock_initialize_with_config()` / `lock_finalize()` when the test binary is built through the
-  normal CMake target and linked with the engine library; it also issues real `lock_object()` and
+  cycle through `lock_initialize_with_config()` / `lock_finalize()`; it also issues real `lock_object()` and
   `lock_unlock_all()` calls against two explicit `tran_index` values to validate shared-grant and conflict paths
 - `hot_row` uses exactly one target OID
 - `lock_conversion` produces conversion events
@@ -285,10 +284,6 @@ The current functional suite validates:
 - `escalation_sweep` produces escalation candidates
 
 Each passing scenario is printed as a separate `[functional] passed: ...` line.
-
-If you build only the standalone scenario sources with a direct compiler command, only the lightweight fallback path
-is exercised. The full `lock_manager.h` API-driven functional path is enabled by the normal `test_lock_manager`
-CMake target.
 
 #### 3. Benchmark mode
 
@@ -328,7 +323,7 @@ This is useful for comparing relative workload pressure even before the harness 
 ### Step 3: add a benchmark binary
 
 - Build `test_lock_manager` only when `UNIT_TEST_LOCK_MANAGER=ON`.
-- Accept runtime arguments such as scenario/thread_count/seconds/hash_size.
+- Accept runtime arguments such as scenario/transaction_count/seconds/hash_size.
 - Print results to stdout in table form, and optionally also export CSV.
 
 ### Step 4: separate CI from performance runs
