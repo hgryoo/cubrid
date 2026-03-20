@@ -290,10 +290,10 @@ The current functional suite validates:
   cycle through `lock_initialize_with_config()` / `lock_finalize()`; it also issues real `lock_object()` and
   `lock_unlock_all()` calls against two explicit `tran_index` values to validate shared-grant and conflict paths
 - `hot_row` uses exactly one target OID
-- `lock_conversion` produces conversion events
+- `lock_conversion` produces engine `Num_object_locks_converted` events
 - `deadlock_detector` drives real blocking `X_LOCK` acquisition on worker threads and validates that deadlock
-  resolution produces aborted or timed-out waiters
-- `escalation_sweep` produces escalation candidates
+  detection increments engine `Num_lock_deadlocks_detected`
+- `escalation_sweep` drives real escalation and validates engine `Num_object_lock_escalations`
 
 Each passing scenario is printed as a separate `[functional] passed: ...` line.
 
@@ -302,7 +302,7 @@ Each passing scenario is printed as a separate `[functional] passed: ...` line.
 Use this mode to run all implemented scenarios repeatedly and print CSV-style performance output.
 
 ```bash
-test_lock_manager --benchmark --loops 100 --transaction 8 --class-count 8 --objects-per-class 64 --hot-ratio 75 --collision-ratio 20 --benchmark-format both
+test_lock_manager --benchmark --loops 100 --transaction 8 --class-count 8 --objects-per-class 64 --hot-ratio 75 --collision-ratio 20 --deadlock-detection-interval 0.25 --lock-escalation-at 16 --benchmark-format both
 ```
 
 The output columns are:
@@ -312,12 +312,18 @@ The output columns are:
 - `ops`
 - `total_us`
 - `ops_per_sec`
+- `deadlock_interval_secs`
 - `conflicts`
-- `deadlock_pairs`
-- `conversions`
-- `escalation_candidates`
+- `lock_waits`
+- `lock_conversions`
+- `lock_escalations`
+- `deadlocks_detected`
+- `lock_wait_time_usec`
 
-This is useful for comparing relative workload pressure even before the harness is connected to the production lock manager.
+These values now come from the engine perf/stat layer instead of harness-side bookkeeping. The benchmark also prints
+an `Engine Lock Stats` section in a statdump-like format so `Num_object_locks_acquired`, `Num_object_locks_waits`,
+`Num_object_locks_converted`, `Num_object_lock_escalations`, and `Num_lock_deadlocks_detected` can be read with the
+same naming style used by the server-side statistics dump.
 Deadlock-heavy runs can also emit detector and timeout log lines from the underlying engine while still completing.
 When `--benchmark-format pretty` or `--benchmark-format both` is used, the runner also prints a human-friendly
 summary with ASCII throughput/conflict/deadlock bars so scenario differences are easier to scan.
@@ -351,6 +357,12 @@ parameters are best understood as "workload shape controls" rather than as one-o
 - `--loops`
   - Number of times the full benchmark suite is repeated for measurement.
   - Use small values while tuning a workload shape, then increase once the pattern looks right.
+- `--deadlock-detection-interval`
+  - Deadlock detector polling interval in seconds.
+  - Lower values make deadlock detection react faster, but can also add more detector overhead and reduce throughput in deadlock-heavy workloads.
+- `--lock-escalation-at`
+  - Engine `lock_escalation` threshold applied before each simulated run.
+  - Lower values make `escalation_sweep` and mixed class/object scenarios escalate sooner.
 - `--benchmark-format`
   - `csv`: machine-friendly output only
   - `pretty`: human-friendly summary only
@@ -384,6 +396,7 @@ Use the parameters as a way to control where contention appears.
   - keep `--transaction` small but at least 2
   - keep `--class-count` low
   - keep `--hot-ratio` high
+  - reduce `--deadlock-detection-interval`
   - use `deadlock_detector`
 
 ### Example workload families
@@ -396,22 +409,22 @@ The goal is not SQL realism; the goal is to borrow their contention patterns and
 Use this table when you want a quick starting point instead of tuning each parameter from scratch.
 The values are intentionally opinionated; treat them as baseline presets and adjust from there.
 
-| Goal | Approximation | `--transaction` | `--iterations` | `--class-count` | `--objects-per-class` | `--hot-ratio` | `--collision-ratio` | `--loops` | Watch first |
-|------|---------------|-----------------|----------------|-----------------|-----------------------|---------------|---------------------|-----------|-------------|
-| Broad low-contention OLTP | YCSB uniform | 16 | 100 | 16 | 256 | 20 | 5 | 20 | `low_contention`, `lock_conversion` |
-| Hot-key skew | YCSB zipfian | 16 | 100 | 4 | 64 | 85 | 10 | 20 | `hot_row`, `hot_class_cold_rows` |
-| Multi-table write hotspot | TPC-C new-order style | 10 | 80 | 8 | 48 | 70 | 5 | 20 | `hot_class_cold_rows`, `lock_conversion` |
-| Partition or warehouse skew | TPC-C warehouse skew | 24 | 60 | 2 | 96 | 75 | 10 | 20 | `hot_row`, `escalation_sweep` |
-| Internal lock-table stress | Hash collision stress | 12 | 80 | 4 | 32 | 50 | 80 | 20 | `hash_collision` |
-| Deadlock-heavy regression check | Wait-for graph stress | 2 | 20 | 1 | 8 | 100 | 25 | 10 | `deadlock_detector`, `deadlock_pairs` |
-| Escalation sensitivity check | Row accumulation under one class | 8 | 50 | 8 | 64 | 60 | 20 | 20 | `escalation_sweep`, `escalation_candidates` |
+| Goal | Approximation | `--transaction` | `--iterations` | `--class-count` | `--objects-per-class` | `--hot-ratio` | `--collision-ratio` | `--deadlock-detection-interval` | `--lock-escalation-at` | `--loops` | Watch first |
+|------|---------------|-----------------|----------------|-----------------|-----------------------|---------------|---------------------|---------------------------------|--------------------------|-----------|-------------|
+| Broad low-contention OLTP | YCSB uniform | 16 | 100 | 16 | 256 | 20 | 5 | 1.0 | 1000 | 20 | `low_contention`, `lock_conversion` |
+| Hot-key skew | YCSB zipfian | 16 | 100 | 4 | 64 | 85 | 10 | 1.0 | 1000 | 20 | `hot_row`, `hot_class_cold_rows` |
+| Multi-table write hotspot | TPC-C new-order style | 10 | 80 | 8 | 48 | 70 | 5 | 1.0 | 1000 | 20 | `hot_class_cold_rows`, `lock_conversion` |
+| Partition or warehouse skew | TPC-C warehouse skew | 24 | 60 | 2 | 96 | 75 | 10 | 1.0 | 8 | 20 | `hot_row`, `escalation_sweep` |
+| Internal lock-table stress | Hash collision stress | 12 | 80 | 4 | 32 | 50 | 80 | 1.0 | 1000 | 20 | `hash_collision` |
+| Deadlock-heavy regression check | Wait-for graph stress | 2 | 20 | 1 | 8 | 100 | 25 | 0.1 | 1000 | 10 | `deadlock_detector`, `deadlocks_detected`, `lock_wait_time_usec` |
+| Escalation sensitivity check | Row accumulation under one class | 8 | 50 | 8 | 64 | 60 | 20 | 1.0 | 4 | 20 | `escalation_sweep`, `lock_escalations` |
 
 Example commands:
 
 ```bash
-test_lock_manager --benchmark --transaction 16 --iterations 100 --class-count 16 --objects-per-class 256 --hot-ratio 20 --collision-ratio 5 --loops 20 --benchmark-format both
-test_lock_manager --benchmark --transaction 16 --iterations 100 --class-count 4 --objects-per-class 64 --hot-ratio 85 --collision-ratio 10 --loops 20 --benchmark-format both
-test_lock_manager --benchmark --transaction 10 --iterations 80 --class-count 8 --objects-per-class 48 --hot-ratio 70 --collision-ratio 5 --loops 20 --benchmark-format both
+test_lock_manager --benchmark --transaction 16 --iterations 100 --class-count 16 --objects-per-class 256 --hot-ratio 20 --collision-ratio 5 --deadlock-detection-interval 1.0 --lock-escalation-at 1000 --loops 20 --benchmark-format both
+test_lock_manager --benchmark --transaction 16 --iterations 100 --class-count 4 --objects-per-class 64 --hot-ratio 85 --collision-ratio 10 --deadlock-detection-interval 1.0 --lock-escalation-at 1000 --loops 20 --benchmark-format both
+test_lock_manager --benchmark --transaction 10 --iterations 80 --class-count 8 --objects-per-class 48 --hot-ratio 70 --collision-ratio 5 --deadlock-detection-interval 1.0 --lock-escalation-at 1000 --loops 20 --benchmark-format both
 ```
 
 #### 1. YCSB-like uniform read/update mix
@@ -428,6 +441,7 @@ test_lock_manager --benchmark \
   --objects-per-class 256 \
   --hot-ratio 20 \
   --collision-ratio 5 \
+  --deadlock-detection-interval 1.0 \
   --loops 20 \
   --benchmark-format both
 ```
@@ -458,6 +472,7 @@ test_lock_manager --benchmark \
   --objects-per-class 64 \
   --hot-ratio 85 \
   --collision-ratio 10 \
+  --deadlock-detection-interval 1.0 \
   --loops 20 \
   --benchmark-format both
 ```
@@ -486,6 +501,7 @@ test_lock_manager --benchmark \
   --objects-per-class 48 \
   --hot-ratio 70 \
   --collision-ratio 5 \
+  --deadlock-detection-interval 1.0 \
   --loops 20 \
   --benchmark-format both
 ```
@@ -513,6 +529,7 @@ test_lock_manager --benchmark \
   --objects-per-class 96 \
   --hot-ratio 75 \
   --collision-ratio 10 \
+  --deadlock-detection-interval 1.0 \
   --loops 20 \
   --benchmark-format both
 ```
@@ -541,6 +558,7 @@ test_lock_manager --benchmark \
   --objects-per-class 32 \
   --hot-ratio 50 \
   --collision-ratio 80 \
+  --deadlock-detection-interval 1.0 \
   --loops 20 \
   --benchmark-format both
 ```
@@ -560,11 +578,11 @@ The pretty summary is most useful when read comparatively across scenarios.
   - class/instance interaction cost is high
 - If `lock_conversion` shows high conversions but low conflicts:
   - conversion path is active without severe contention
-- If `deadlock_detector` shows very low throughput and non-zero `deadlock_pairs`:
+- If `deadlock_detector` shows very low throughput and non-zero `deadlocks_detected`:
   - the wait-for graph and victim resolution path is actively engaged
 - If `hash_collision` drops sharply while `low_contention` remains healthy:
   - internal lock-table/hash structure is the bottleneck, not logical contention
-- If `escalation_sweep` shows many escalation candidates:
+- If `escalation_sweep` shows many `lock_escalations`:
   - row accumulation under the same class is high enough that escalation policy deserves attention
 
 For manual analysis, a good workflow is:

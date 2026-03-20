@@ -99,6 +99,8 @@ namespace test_lock_manager
     int objects_per_class;
     int hot_ratio;
     int collision_ratio;
+    float deadlock_detection_interval_in_secs;
+    int lock_escalation_at;
     int seed;
   };
 

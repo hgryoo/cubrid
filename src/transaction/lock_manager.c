@@ -491,10 +491,10 @@ static void lock_initialize_resource (LK_RES * res_ptr);
 static void lock_initialize_resource_as_allocated (LK_RES * res_ptr, LOCK lock);
 static unsigned int lock_get_hash_value (const OID * oid, int htsize);
 static int lock_initialize_tran_lock_table (void);
-static void lock_initialize_default_config_internal (LK_INIT_CONFIG *config);
-static void lock_sanitize_init_config (LK_INIT_CONFIG *config);
-static void lock_initialize_object_hash_table (const LK_INIT_CONFIG *config);
-static int lock_initialize_object_lock_entry_list (const LK_INIT_CONFIG *config);
+static void lock_initialize_default_config_internal (LK_INIT_CONFIG * config);
+static void lock_sanitize_init_config (LK_INIT_CONFIG * config);
+static void lock_initialize_object_hash_table (const LK_INIT_CONFIG * config);
+static int lock_initialize_object_lock_entry_list (const LK_INIT_CONFIG * config);
 static int lock_initialize_deadlock_detection (void);
 static int lock_remove_resource (THREAD_ENTRY * thread_p, LK_RES * res_ptr);
 static void lock_finalize_tran_lock_table (void);
@@ -3088,6 +3088,7 @@ lock_escalate_if_needed (THREAD_ENTRY * thread_p, LK_ENTRY * class_entry, int tr
 	}
 
       /* 2. release original class lock only one time in order to maintain original class lock count */
+      perfmon_inc_stat (thread_p, PSTAT_LK_NUM_ESCALATED_ON_OBJECTS);
       lock_internal_perform_unlock_object (thread_p, class_entry, false, true);
     }
 
@@ -8046,6 +8047,11 @@ final_:
 #endif /* ENABLE_UNUSED_FUNCTION */
 
   /* dump deadlock cycle to event log file */
+  if (victim_count > 0)
+    {
+      perfmon_add_stat (thread_p, PSTAT_LK_NUM_DEADLOCKS_DETECTED, victim_count);
+    }
+
   for (k = 0; k < victim_count; k++)
     {
       log_fp = event_log_start (thread_p, "DEADLOCK");

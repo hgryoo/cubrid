@@ -25,6 +25,8 @@
 #include "log_impl.h"
 #include "object_domain.h"
 #include "page_buffer.h"
+#include "perf_monitor.h"
+#include "system_parameter.h"
 #include "thread_manager.hpp"
 
 #include <cstdlib>
@@ -39,14 +41,15 @@ namespace
   class scoped_thread_environment
   {
     public:
-	scoped_thread_environment ()
-	  : m_main_entry (NULL)
+      scoped_thread_environment ()
+	: m_main_entry (NULL)
 	, m_tdes_area (NULL)
 	, m_tdes_count (4096)
 	, m_error_initialized (false)
 	, m_thread_initialized (false)
 	, m_csect_initialized (false)
 	, m_event_log_initialized (false)
+	, m_perfmon_initialized (false)
 	, m_pgbuf_initialized (false)
       {
 	if (er_init (NULL, ER_NEVER_EXIT) != NO_ERROR)
@@ -88,6 +91,12 @@ namespace
 
 	initialize_fake_tdes ();
 
+	if (perfmon_initialize (m_tdes_count) != NO_ERROR)
+	  {
+	    throw std::runtime_error ("failed to initialize perf monitor");
+	  }
+	m_perfmon_initialized = true;
+
 	if (pgbuf_initialize () != NO_ERROR)
 	  {
 	    throw std::runtime_error ("failed to initialize page buffer");
@@ -104,6 +113,10 @@ namespace
 	if (m_event_log_initialized)
 	  {
 	    event_log_final ();
+	  }
+	if (m_perfmon_initialized)
+	  {
+	    perfmon_finalize ();
 	  }
 	if (m_csect_initialized)
 	  {
@@ -180,6 +193,7 @@ namespace
       bool m_thread_initialized;
       bool m_csect_initialized;
       bool m_event_log_initialized;
+      bool m_perfmon_initialized;
       bool m_pgbuf_initialized;
   };
 
@@ -187,10 +201,11 @@ namespace
   print_usage (const char *progname)
   {
     std::cout << "Usage: " << progname
-              << " [--list] [--functional] [--benchmark] [--scenario <name>]"
-              << " [--transaction N] [--iterations N] [--hotset N] [--class-count N]"
-              << " [--objects-per-class N] [--hot-ratio N] [--collision-ratio N]"
-              << " [--sample N] [--loops N] [--benchmark-format csv|pretty|both]" << std::endl;
+	      << " [--list] [--functional] [--benchmark] [--scenario <name>]"
+	      << " [--transaction N] [--iterations N] [--hotset N] [--class-count N]"
+	      << " [--objects-per-class N] [--hot-ratio N] [--collision-ratio N]"
+	      << " [--deadlock-detection-interval FLOAT] [--lock-escalation-at N]"
+	      << " [--sample N] [--loops N] [--benchmark-format csv|pretty|both]" << std::endl;
   }
 
   int
@@ -200,7 +215,7 @@ namespace
     long parsed = std::strtol (value, &end_ptr, 10);
     if (end_ptr == value || *end_ptr != '\0' || parsed <= 0)
       {
-        throw std::invalid_argument (std::string ("Invalid value for ") + arg_name + ": " + value);
+	throw std::invalid_argument (std::string ("Invalid value for ") + arg_name + ": " + value);
       }
     return static_cast<int> (parsed);
   }
@@ -211,9 +226,21 @@ namespace
     const int ratio = parse_int (arg_name, value);
     if (ratio > 100)
       {
-        throw std::invalid_argument (std::string ("Invalid ratio for ") + arg_name + ": " + value);
+	throw std::invalid_argument (std::string ("Invalid ratio for ") + arg_name + ": " + value);
       }
     return ratio;
+  }
+
+  float
+  parse_float (const char *arg_name, const char *value)
+  {
+    char *end_ptr = NULL;
+    float parsed = std::strtof (value, &end_ptr);
+    if (end_ptr == value || *end_ptr != '\0' || parsed < 0.1f)
+      {
+	throw std::invalid_argument (std::string ("Invalid value for ") + arg_name + ": " + value);
+      }
+    return parsed;
   }
 }
 
@@ -222,16 +249,19 @@ main (int argc, char **argv)
 {
   try
     {
-      test_lock_manager::scenario_config config {
-        test_lock_manager::scenario_kind::hot_row,
-        4,
-        10,
-        4,
-        4,
-        16,
-        70,
-        25,
-        1
+      test_lock_manager::scenario_config config
+      {
+	test_lock_manager::scenario_kind::hot_row,
+	4,
+	10,
+	4,
+	4,
+	16,
+	70,
+	25,
+	prm_get_float_value (PRM_ID_LK_RUN_DEADLOCK_INTERVAL),
+	prm_get_integer_value (PRM_ID_LK_ESCALATION_AT),
+	1
       };
       int sample_count = 8;
       int benchmark_loops = 10;
@@ -242,99 +272,108 @@ main (int argc, char **argv)
       bool run_benchmark = false;
 
       for (int index = 1; index < argc; index++)
-        {
-          std::string arg = argv[index];
-          if (arg == "--list")
-            {
-              list_only = true;
-            }
-          else if (arg == "--functional")
-            {
-              run_functional = true;
-            }
-          else if (arg == "--benchmark")
-            {
-              run_benchmark = true;
-            }
-          else if (arg == "--scenario" && index + 1 < argc)
-            {
-              config.kind = test_lock_manager::parse_scenario_kind (argv[++index]);
-            }
-          else if (arg == "--transaction" && index + 1 < argc)
-            {
-              config.transaction_count = parse_int ("--transaction", argv[++index]);
-            }
-          else if (arg == "--iterations" && index + 1 < argc)
-            {
-              config.iterations = parse_int ("--iterations", argv[++index]);
-            }
-          else if (arg == "--hotset" && index + 1 < argc)
-            {
-              config.hotset_size = parse_int ("--hotset", argv[++index]);
-              hotset_explicit = true;
-            }
-          else if (arg == "--class-count" && index + 1 < argc)
-            {
-              config.class_count = parse_int ("--class-count", argv[++index]);
-            }
-          else if (arg == "--objects-per-class" && index + 1 < argc)
-            {
-              config.objects_per_class = parse_int ("--objects-per-class", argv[++index]);
-            }
-          else if (arg == "--hot-ratio" && index + 1 < argc)
-            {
-              config.hot_ratio = parse_ratio ("--hot-ratio", argv[++index]);
-            }
-          else if (arg == "--collision-ratio" && index + 1 < argc)
-            {
-              config.collision_ratio = parse_ratio ("--collision-ratio", argv[++index]);
-            }
-          else if (arg == "--sample" && index + 1 < argc)
-            {
-              sample_count = parse_int ("--sample", argv[++index]);
-            }
-          else if (arg == "--loops" && index + 1 < argc)
-            {
-              benchmark_loops = parse_int ("--loops", argv[++index]);
-            }
-          else if (arg == "--benchmark-format" && index + 1 < argc)
-            {
-              benchmark_format = test_lock_manager::parse_benchmark_output_format (argv[++index]);
-            }
-          else
-            {
-              print_usage (argv[0]);
-              throw std::invalid_argument ("Unknown argument: " + arg);
-            }
-        }
+	{
+	  std::string arg = argv[index];
+	  if (arg == "--list")
+	    {
+	      list_only = true;
+	    }
+	  else if (arg == "--functional")
+	    {
+	      run_functional = true;
+	    }
+	  else if (arg == "--benchmark")
+	    {
+	      run_benchmark = true;
+	    }
+	  else if (arg == "--scenario" && index + 1 < argc)
+	    {
+	      config.kind = test_lock_manager::parse_scenario_kind (argv[++index]);
+	    }
+	  else if (arg == "--transaction" && index + 1 < argc)
+	    {
+	      config.transaction_count = parse_int ("--transaction", argv[++index]);
+	    }
+	  else if (arg == "--iterations" && index + 1 < argc)
+	    {
+	      config.iterations = parse_int ("--iterations", argv[++index]);
+	    }
+	  else if (arg == "--hotset" && index + 1 < argc)
+	    {
+	      config.hotset_size = parse_int ("--hotset", argv[++index]);
+	      hotset_explicit = true;
+	    }
+	  else if (arg == "--class-count" && index + 1 < argc)
+	    {
+	      config.class_count = parse_int ("--class-count", argv[++index]);
+	    }
+	  else if (arg == "--objects-per-class" && index + 1 < argc)
+	    {
+	      config.objects_per_class = parse_int ("--objects-per-class", argv[++index]);
+	    }
+	  else if (arg == "--hot-ratio" && index + 1 < argc)
+	    {
+	      config.hot_ratio = parse_ratio ("--hot-ratio", argv[++index]);
+	    }
+	  else if (arg == "--collision-ratio" && index + 1 < argc)
+	    {
+	      config.collision_ratio = parse_ratio ("--collision-ratio", argv[++index]);
+	    }
+	  else if (arg == "--deadlock-detection-interval" && index + 1 < argc)
+	    {
+	      config.deadlock_detection_interval_in_secs =
+		      parse_float ("--deadlock-detection-interval", argv[++index]);
+	    }
+	  else if (arg == "--lock-escalation-at" && index + 1 < argc)
+	    {
+	      config.lock_escalation_at = parse_int ("--lock-escalation-at", argv[++index]);
+	    }
+	  else if (arg == "--sample" && index + 1 < argc)
+	    {
+	      sample_count = parse_int ("--sample", argv[++index]);
+	    }
+	  else if (arg == "--loops" && index + 1 < argc)
+	    {
+	      benchmark_loops = parse_int ("--loops", argv[++index]);
+	    }
+	  else if (arg == "--benchmark-format" && index + 1 < argc)
+	    {
+	      benchmark_format = test_lock_manager::parse_benchmark_output_format (argv[++index]);
+	    }
+	  else
+	    {
+	      print_usage (argv[0]);
+	      throw std::invalid_argument ("Unknown argument: " + arg);
+	    }
+	}
 
       if (!hotset_explicit)
-        {
-          config.hotset_size = std::max (config.objects_per_class / 4, 1);
-        }
+	{
+	  config.hotset_size = std::max (config.objects_per_class / 4, 1);
+	}
 
       if (list_only)
-        {
-          std::cout << "Available scenarios:" << std::endl;
-          for (const std::string &name : test_lock_manager::get_scenario_names ())
-            {
-              test_lock_manager::scenario_kind kind = test_lock_manager::parse_scenario_kind (name);
-              std::cout << "  - " << name << ": " << test_lock_manager::get_scenario_description (kind) << std::endl;
-            }
-          return 0;
-        }
+	{
+	  std::cout << "Available scenarios:" << std::endl;
+	  for (const std::string &name : test_lock_manager::get_scenario_names ())
+	    {
+	      test_lock_manager::scenario_kind kind = test_lock_manager::parse_scenario_kind (name);
+	      std::cout << "  - " << name << ": " << test_lock_manager::get_scenario_description (kind) << std::endl;
+	    }
+	  return 0;
+	}
 
       if (run_functional)
-        {
-          scoped_thread_environment thread_env;
-          return test_lock_manager::run_functional_suite ();
-        }
+	{
+	  scoped_thread_environment thread_env;
+	  return test_lock_manager::run_functional_suite ();
+	}
 
       if (run_benchmark)
-        {
-          scoped_thread_environment thread_env;
-          return test_lock_manager::run_benchmark_suite (benchmark_loops, config, benchmark_format);
-        }
+	{
+	  scoped_thread_environment thread_env;
+	  return test_lock_manager::run_benchmark_suite (benchmark_loops, config, benchmark_format);
+	}
 
       const std::vector<test_lock_manager::operation> operations = test_lock_manager::build_operations (config);
       const test_lock_manager::scenario_summary summary = test_lock_manager::summarize (config.kind, operations);
@@ -348,27 +387,29 @@ main (int argc, char **argv)
       std::cout << "Objects per class: " << config.objects_per_class << std::endl;
       std::cout << "Hot access ratio: " << config.hot_ratio << std::endl;
       std::cout << "Collision access ratio: " << config.collision_ratio << std::endl;
+      std::cout << "Deadlock detection interval (secs): " << config.deadlock_detection_interval_in_secs << std::endl;
+      std::cout << "Lock escalation threshold: " << config.lock_escalation_at << std::endl;
       std::cout << "Operations: " << summary.operation_count << std::endl;
       std::cout << "Distinct classes: " << summary.distinct_class_count << std::endl;
       std::cout << "Distinct OIDs: " << summary.distinct_oid_count << std::endl;
 
       std::cout << "Operation kind counts:" << std::endl;
       for (const auto &entry : summary.operation_kind_counts)
-        {
-          std::cout << "  - " << entry.first << ": " << entry.second << std::endl;
-        }
+	{
+	  std::cout << "  - " << entry.first << ": " << entry.second << std::endl;
+	}
 
       std::cout << "Lock mode counts:" << std::endl;
       for (const auto &entry : summary.lock_mode_counts)
-        {
-          std::cout << "  - " << entry.first << ": " << entry.second << std::endl;
-        }
+	{
+	  std::cout << "  - " << entry.first << ": " << entry.second << std::endl;
+	}
 
       std::cout << "Sample operations:" << std::endl;
       for (int idx = 0; idx < sample_count && idx < static_cast<int> (operations.size ()); idx++)
-        {
-          std::cout << "  - " << test_lock_manager::format_operation (operations[idx]) << std::endl;
-        }
+	{
+	  std::cout << "  - " << test_lock_manager::format_operation (operations[idx]) << std::endl;
+	}
 
       return 0;
     }

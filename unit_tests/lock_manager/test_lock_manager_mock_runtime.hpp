@@ -32,10 +32,15 @@ namespace test_lock_manager
     std::size_t acquire_attempts;
     std::size_t acquire_grants;
     std::size_t acquire_conflicts;
-    std::size_t conversions;
     std::size_t commits;
-    std::size_t deadlock_pairs;
-    std::size_t escalation_candidates;
+    std::size_t engine_lock_acquires;
+    std::size_t engine_lock_conversions;
+    std::size_t engine_lock_rerequests;
+    std::size_t engine_lock_waits;
+    std::size_t engine_lock_wait_time_usec;
+    std::size_t engine_lock_escalations;
+    std::size_t engine_deadlocks_detected;
+    std::string engine_statdump;
   };
 
   class mock_runtime
@@ -45,7 +50,7 @@ namespace test_lock_manager
 
       // Executes scenario operations on a cubthread::entry_workpool so each worker
       // runs with a real THREAD_ENTRY on an actual worker thread.
-      simulation_stats simulate (const std::vector<operation> &operations);
+      simulation_stats simulate (const std::vector<operation> &operations, const scenario_config &config);
   };
 } // namespace test_lock_manager
 

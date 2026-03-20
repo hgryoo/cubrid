@@ -21,6 +21,8 @@
 #include "lock_manager.h"
 #include "log_impl.h"
 #include "oid.h"
+#include "perf_monitor.h"
+#include "system_parameter.h"
 #include "thread_entry_task.hpp"
 #include "thread_manager.hpp"
 
@@ -28,9 +30,12 @@
 #include <cassert>
 #include <chrono>
 #include <condition_variable>
+#include <iomanip>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <cstdlib>
+#include <sstream>
 #include <set>
 #include <stdexcept>
 #include <thread>
@@ -40,6 +45,18 @@ namespace test_lock_manager
 {
   namespace
   {
+    UINT64
+    diff_perf_value (const UINT64 *current_stats, const UINT64 *base_stats, PERF_STAT_ID stat_id)
+    {
+      const int offset = pstat_Metadata[stat_id].start_offset;
+
+      if (current_stats[offset] >= base_stats[offset])
+	{
+	  return current_stats[offset] - base_stats[offset];
+	}
+      return 0;
+    }
+
     struct transaction_context
     {
       int txn_id;
@@ -153,10 +170,9 @@ namespace test_lock_manager
   }
 
   simulation_stats
-  mock_runtime::simulate (const std::vector<operation> &operations)
+  mock_runtime::simulate (const std::vector<operation> &operations, const scenario_config &config)
   {
-    simulation_stats stats { 0, 0, 0, 0, 0, 0, 0 };
-    LK_INIT_CONFIG config;
+    simulation_stats stats { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "" };
     std::map<int, transaction_context> txns;
     std::map<int, std::set<int>> txn_participants;
     std::map<int, worker_context> workers;
@@ -209,26 +225,62 @@ namespace test_lock_manager
 	barriers.emplace (entry.first, std::unique_ptr<cyclic_barrier> (new cyclic_barrier (entry.second.size ())));
       }
 
-    lock_initialize_default_config (&config);
-    config.start_deadlock_detector = true;
-    config.initial_object_locks = 256;
-    config.object_res_block_count = 2;
-    config.object_entry_block_count = 1;
+    LK_INIT_CONFIG lock_init_config;
+    const float previous_deadlock_interval = prm_get_float_value (PRM_ID_LK_RUN_DEADLOCK_INTERVAL);
+    const int previous_lock_escalation_at = prm_get_integer_value (PRM_ID_LK_ESCALATION_AT);
+    UINT64 *base_stats = NULL;
+    UINT64 *current_stats = NULL;
 
-    error = lock_initialize_with_config (&config);
+    lock_initialize_default_config (&lock_init_config);
+    lock_init_config.start_deadlock_detector = true;
+    lock_init_config.initial_object_locks = 256;
+    lock_init_config.object_res_block_count = 2;
+    lock_init_config.object_entry_block_count = 1;
+
+    prm_set_float_value (PRM_ID_LK_RUN_DEADLOCK_INTERVAL, config.deadlock_detection_interval_in_secs);
+    prm_set_integer_value (PRM_ID_LK_ESCALATION_AT, config.lock_escalation_at);
+    base_stats = perfmon_allocate_values ();
+    current_stats = perfmon_allocate_values ();
+    if (base_stats == NULL || current_stats == NULL)
+      {
+	free_and_init (base_stats);
+	free_and_init (current_stats);
+	prm_set_integer_value (PRM_ID_LK_ESCALATION_AT, previous_lock_escalation_at);
+	prm_set_float_value (PRM_ID_LK_RUN_DEADLOCK_INTERVAL, previous_deadlock_interval);
+	throw std::runtime_error ("perfmon_allocate_values failed");
+      }
+    if (!pstat_Global.initialized || pstat_Global.global_stats == NULL)
+      {
+	free_and_init (base_stats);
+	free_and_init (current_stats);
+	prm_set_integer_value (PRM_ID_LK_ESCALATION_AT, previous_lock_escalation_at);
+	prm_set_float_value (PRM_ID_LK_RUN_DEADLOCK_INTERVAL, previous_deadlock_interval);
+	throw std::runtime_error ("perfmon global stats not initialized");
+      }
+    perfmon_copy_values (base_stats, pstat_Global.global_stats);
+
+    error = lock_initialize_with_config (&lock_init_config);
     if (error != NO_ERROR)
       {
+	free_and_init (base_stats);
+	free_and_init (current_stats);
+	prm_set_integer_value (PRM_ID_LK_ESCALATION_AT, previous_lock_escalation_at);
+	prm_set_float_value (PRM_ID_LK_RUN_DEADLOCK_INTERVAL, previous_deadlock_interval);
 	throw std::runtime_error ("lock_initialize_with_config failed");
       }
 
     cubthread::system_worker_entry_manager worker_entry_manager (TT_WORKER);
     cubthread::entry_workpool *worker_pool =
-      cubthread::get_manager ()->create_worker_pool (workers.size (), workers.size (), "test_lock_manager_runtime",
-						     &worker_entry_manager, workers.size (), false);
+	    cubthread::get_manager ()->create_worker_pool (workers.size (), workers.size (), "test_lock_manager_runtime",
+		&worker_entry_manager, workers.size (), false);
 
     if (worker_pool == NULL)
       {
 	lock_finalize ();
+	free_and_init (base_stats);
+	free_and_init (current_stats);
+	prm_set_integer_value (PRM_ID_LK_ESCALATION_AT, previous_lock_escalation_at);
+	prm_set_float_value (PRM_ID_LK_RUN_DEADLOCK_INTERVAL, previous_deadlock_interval);
 	throw std::runtime_error ("create_worker_pool failed");
       }
 
@@ -276,9 +328,9 @@ namespace test_lock_manager
 	    worker_context &worker = worker_entry.second;
 
 	    cubthread::entry_task *task =
-	      new cubthread::entry_callable_task (
-		[&worker, &txns, &barriers, &stats, &stats_mutex, &thread_failure, &failure_mutex,
-		 &pending_workers, &completion_mutex, &completion_cv] (cubthread::entry &thread_ref)
+		    new cubthread::entry_callable_task (
+		    [&worker, &txns, &barriers, &stats, &stats_mutex, &thread_failure, &failure_mutex,
+			      &pending_workers, &completion_mutex, &completion_cv] (cubthread::entry &thread_ref)
 	    {
 	      try
 		{
@@ -290,94 +342,88 @@ namespace test_lock_manager
 		      switch (op.kind)
 			{
 			case operation_kind::begin_transaction:
-			  {
-			    std::lock_guard<std::mutex> execution_guard (txn.execution_mutex);
-			    LOG_TDES *tdes = LOG_FIND_TDES (txn.tran_index);
+			{
+			  std::lock_guard<std::mutex> execution_guard (txn.execution_mutex);
+			  LOG_TDES *tdes = LOG_FIND_TDES (txn.tran_index);
+			  bool start_watch = false;
 
-			    std::lock_guard<std::mutex> guard (txn.mutex);
-			    txn.active = true;
-			    txn.committed_workers = 0;
-			    tdes->state = TRAN_ACTIVE;
-			    tdes->tran_abort_reason = TRAN_NORMAL;
-			    if (tdes->trid == NULL_TRANID)
-			      {
-				(void) logtb_get_new_tran_id (&thread_ref, tdes);
-			      }
-			    lock_clear_deadlock_victim (txn.tran_index);
-			  }
-			  break;
+			  std::lock_guard<std::mutex> guard (txn.mutex);
+			  start_watch = !txn.active;
+			  txn.active = true;
+			  txn.committed_workers = 0;
+			  tdes->state = TRAN_ACTIVE;
+			  tdes->tran_abort_reason = TRAN_NORMAL;
+			  if (tdes->trid == NULL_TRANID)
+			    {
+			      (void) logtb_get_new_tran_id (&thread_ref, tdes);
+			    }
+			  lock_clear_deadlock_victim (txn.tran_index);
+			  if (start_watch)
+			    {
+			      perfmon_start_watch (&thread_ref);
+			    }
+			}
+			break;
 
 			case operation_kind::acquire:
 			case operation_kind::convert:
-			  {
-			    std::lock_guard<std::mutex> execution_guard (txn.execution_mutex);
-			    const OID oid = make_real_oid (op.oid);
-			    OID class_oid = make_real_oid (op.class_oid);
-			    OID *class_oid_ptr = op.is_class_lock ? oid_Root_class_oid : &class_oid;
-			    const LOCK lock = to_lock (op.lock_mode);
-			    const int granted = lock_object (&thread_ref, &oid, class_oid_ptr, lock, to_cond_flag (op.wait_policy));
+			{
+			  std::lock_guard<std::mutex> execution_guard (txn.execution_mutex);
+			  const OID oid = make_real_oid (op.oid);
+			  OID class_oid = make_real_oid (op.class_oid);
+			  OID *class_oid_ptr = op.is_class_lock ? oid_Root_class_oid : &class_oid;
+			  const LOCK lock = to_lock (op.lock_mode);
+			  const int granted = lock_object (&thread_ref, &oid, class_oid_ptr, lock, to_cond_flag (op.wait_policy));
 
-			    std::lock_guard<std::mutex> guard (stats_mutex);
-			    stats.acquire_attempts++;
-			    if (granted == LK_GRANTED)
-			      {
-				stats.acquire_grants++;
-				if (op.kind == operation_kind::convert)
-				  {
-				    stats.conversions++;
-				  }
-			      }
-			    else
-			      {
-				LOG_TDES *tdes = LOG_FIND_TDES (txn.tran_index);
-				stats.acquire_conflicts++;
-				if (granted == LK_NOTGRANTED_DUE_TIMEOUT || granted == LK_NOTGRANTED_DUE_ABORTED)
-				  {
-				    stats.deadlock_pairs++;
-				  }
-				if (granted == LK_NOTGRANTED_DUE_ABORTED)
-				  {
-				    tdes->state = TRAN_UNACTIVE_UNILATERALLY_ABORTED;
-				  }
-				else if (granted == LK_NOTGRANTED_DUE_TIMEOUT && tdes->tran_abort_reason != TRAN_NORMAL)
-				  {
-				    tdes->state = TRAN_UNACTIVE_ABORTED;
-				  }
-			      }
-
-			    if (op.is_class_lock && lock >= IX_LOCK)
-			      {
-				stats.escalation_candidates++;
-			      }
-			  }
-			  break;
-
-			case operation_kind::commit_transaction:
-			  {
-			    std::lock_guard<std::mutex> execution_guard (txn.execution_mutex);
-			    LOG_TDES *tdes = LOG_FIND_TDES (txn.tran_index);
-			    bool finalize_txn = false;
+			  std::lock_guard<std::mutex> guard (stats_mutex);
+			  stats.acquire_attempts++;
+			  if (granted == LK_GRANTED)
 			    {
-			      std::lock_guard<std::mutex> guard (txn.mutex);
-			      txn.committed_workers++;
-			      finalize_txn = txn.active && txn.committed_workers == txn.participant_count;
-			      if (finalize_txn)
+			      stats.acquire_grants++;
+			    }
+			  else
+			    {
+			      LOG_TDES *tdes = LOG_FIND_TDES (txn.tran_index);
+			      stats.acquire_conflicts++;
+			      if (granted == LK_NOTGRANTED_DUE_ABORTED)
 				{
-				  txn.active = false;
+				  tdes->state = TRAN_UNACTIVE_UNILATERALLY_ABORTED;
+				}
+			      else if (granted == LK_NOTGRANTED_DUE_TIMEOUT && tdes->tran_abort_reason != TRAN_NORMAL)
+				{
+				  tdes->state = TRAN_UNACTIVE_ABORTED;
 				}
 			    }
+			}
+			break;
 
+			case operation_kind::commit_transaction:
+			{
+			  std::lock_guard<std::mutex> execution_guard (txn.execution_mutex);
+			  LOG_TDES *tdes = LOG_FIND_TDES (txn.tran_index);
+			  bool finalize_txn = false;
+			  {
+			    std::lock_guard<std::mutex> guard (txn.mutex);
+			    txn.committed_workers++;
+			    finalize_txn = txn.active && txn.committed_workers == txn.participant_count;
 			    if (finalize_txn)
 			      {
-				cleanup_transaction_locks (&thread_ref);
-				tdes->state = is_transaction_aborted (tdes) ? TRAN_UNACTIVE_ABORTED : TRAN_UNACTIVE_COMMITTED;
-				lock_clear_deadlock_victim (txn.tran_index);
+				txn.active = false;
 			      }
-
-			    std::lock_guard<std::mutex> guard (stats_mutex);
-			    stats.commits++;
 			  }
-			  break;
+
+			  if (finalize_txn)
+			    {
+			      cleanup_transaction_locks (&thread_ref);
+			      tdes->state = is_transaction_aborted (tdes) ? TRAN_UNACTIVE_ABORTED : TRAN_UNACTIVE_COMMITTED;
+			      lock_clear_deadlock_victim (txn.tran_index);
+			      perfmon_stop_watch (&thread_ref);
+			    }
+
+			  std::lock_guard<std::mutex> guard (stats_mutex);
+			  stats.commits++;
+			}
+			break;
 
 			case operation_kind::barrier:
 			  barriers.find (op.value)->second->wait ();
@@ -423,6 +469,10 @@ namespace test_lock_manager
 	  }
 	cubthread::get_manager ()->destroy_worker_pool (worker_pool);
 	lock_finalize ();
+	free_and_init (base_stats);
+	free_and_init (current_stats);
+	prm_set_integer_value (PRM_ID_LK_ESCALATION_AT, previous_lock_escalation_at);
+	prm_set_float_value (PRM_ID_LK_RUN_DEADLOCK_INTERVAL, previous_deadlock_interval);
 	throw;
       }
 
@@ -434,6 +484,38 @@ namespace test_lock_manager
 
     cubthread::get_manager ()->destroy_worker_pool (worker_pool);
     lock_finalize ();
+    perfmon_copy_values (current_stats, pstat_Global.global_stats);
+    stats.engine_lock_acquires = diff_perf_value (current_stats, base_stats, PSTAT_LK_NUM_ACQUIRED_ON_OBJECTS);
+    stats.engine_lock_conversions = diff_perf_value (current_stats, base_stats, PSTAT_LK_NUM_CONVERTED_ON_OBJECTS);
+    stats.engine_lock_rerequests = diff_perf_value (current_stats, base_stats, PSTAT_LK_NUM_RE_REQUESTED_ON_OBJECTS);
+    stats.engine_lock_waits = diff_perf_value (current_stats, base_stats, PSTAT_LK_NUM_WAITED_ON_OBJECTS);
+    stats.engine_lock_wait_time_usec = diff_perf_value (current_stats, base_stats, PSTAT_LK_NUM_WAITED_TIME_ON_OBJECTS);
+    stats.engine_lock_escalations = diff_perf_value (current_stats, base_stats, PSTAT_LK_NUM_ESCALATED_ON_OBJECTS);
+    stats.engine_deadlocks_detected = diff_perf_value (current_stats, base_stats, PSTAT_LK_NUM_DEADLOCKS_DETECTED);
+    {
+      const PERF_STAT_ID stat_ids[] =
+      {
+	PSTAT_LK_NUM_ACQUIRED_ON_OBJECTS,
+	PSTAT_LK_NUM_CONVERTED_ON_OBJECTS,
+	PSTAT_LK_NUM_RE_REQUESTED_ON_OBJECTS,
+	PSTAT_LK_NUM_WAITED_ON_OBJECTS,
+	PSTAT_LK_NUM_WAITED_TIME_ON_OBJECTS,
+	PSTAT_LK_NUM_ESCALATED_ON_OBJECTS,
+	PSTAT_LK_NUM_DEADLOCKS_DETECTED
+      };
+      std::ostringstream stream;
+
+      for (const PERF_STAT_ID stat_id : stat_ids)
+	{
+	  stream << std::left << std::setw (32) << pstat_Metadata[stat_id].stat_name
+		 << " = " << diff_perf_value (current_stats, base_stats, stat_id) << '\n';
+	}
+      stats.engine_statdump = stream.str ();
+    }
+    free_and_init (base_stats);
+    free_and_init (current_stats);
+    prm_set_integer_value (PRM_ID_LK_ESCALATION_AT, previous_lock_escalation_at);
+    prm_set_float_value (PRM_ID_LK_RUN_DEADLOCK_INTERVAL, previous_deadlock_interval);
 
     if (thread_failure != nullptr)
       {

@@ -246,6 +246,8 @@ PSTAT_METADATA pstat_Metadata[] = {
   /* TODO: Count and timer */
   PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_LK_NUM_WAITED_ON_OBJECTS, "Num_object_locks_waits"),
   PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_LK_NUM_WAITED_TIME_ON_OBJECTS, "Num_object_locks_time_waited_usec"),
+  PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_LK_NUM_ESCALATED_ON_OBJECTS, "Num_object_lock_escalations"),
+  PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_LK_NUM_DEADLOCKS_DETECTED, "Num_lock_deadlocks_detected"),
 
   /* Execution statistics for transactions */
   PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_TRAN_NUM_COMMITS, "Num_tran_commits"),

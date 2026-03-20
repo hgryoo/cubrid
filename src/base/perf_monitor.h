@@ -321,6 +321,8 @@ typedef enum
   PSTAT_LK_NUM_WAITED_ON_OBJECTS,
   PSTAT_LK_NUM_WAITED_TIME_ON_OBJECTS,	/* include this to avoid client-server compat issue even if extended stats are
 					 * disabled */
+  PSTAT_LK_NUM_ESCALATED_ON_OBJECTS,
+  PSTAT_LK_NUM_DEADLOCKS_DETECTED,
 
   /* Execution statistics for transactions */
   PSTAT_TRAN_NUM_COMMITS,
