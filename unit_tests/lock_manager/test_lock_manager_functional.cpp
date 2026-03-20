@@ -181,10 +181,11 @@ namespace test_lock_manager
   {
     run_lock_manager_api_suite ();
     const scenario_config configs[] = {
-      { scenario_kind::hot_row, 4, 8, 1, 1 },
-      { scenario_kind::hot_class_cold_rows, 4, 6, 4, 1 },
-      { scenario_kind::lock_conversion, 4, 6, 4, 1 },
-      { scenario_kind::escalation_sweep, 8, 12, 16, 1 }
+      { scenario_kind::hot_row, 4, 8, 1, 1, 16, 70, 25, 1 },
+      { scenario_kind::hot_class_cold_rows, 4, 6, 4, 4, 16, 70, 25, 1 },
+      { scenario_kind::lock_conversion, 4, 6, 4, 4, 16, 70, 25, 1 },
+      { scenario_kind::deadlock_detector, 2, 3, 2, 1, 8, 100, 25, 1 },
+      { scenario_kind::escalation_sweep, 8, 12, 16, 8, 32, 70, 25, 1 }
     };
 
     mock_runtime runtime;
@@ -204,8 +205,7 @@ namespace test_lock_manager
           }
         else if (config.kind == scenario_kind::hot_class_cold_rows)
           {
-            const std::size_t expected_transactions =
-              static_cast<std::size_t> (config.iterations * std::max (config.transaction_count / 2, 1));
+            const std::size_t expected_transactions = static_cast<std::size_t> (std::max (config.transaction_count / 2, 1));
 
             require_true (summary.notes.at ("distinct_transactions") == expected_transactions,
                           "hot_class_cold_rows should share transactions across workers");
@@ -213,6 +213,10 @@ namespace test_lock_manager
         else if (config.kind == scenario_kind::lock_conversion)
           {
             require_true (stats.conversions > 0, "lock_conversion should record conversions");
+          }
+        else if (config.kind == scenario_kind::deadlock_detector)
+          {
+            require_true (stats.deadlock_pairs > 0, "deadlock_detector should observe deadlock victims or timeouts");
           }
         else if (config.kind == scenario_kind::escalation_sweep)
           {

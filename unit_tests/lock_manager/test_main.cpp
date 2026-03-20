@@ -20,6 +20,7 @@
 #include "boot_sr.h"
 #include "critical_section.h"
 #include "error_manager.h"
+#include "event_log.h"
 #include "language_support.h"
 #include "log_impl.h"
 #include "object_domain.h"
@@ -45,6 +46,7 @@ namespace
 	, m_error_initialized (false)
 	, m_thread_initialized (false)
 	, m_csect_initialized (false)
+	, m_event_log_initialized (false)
 	, m_pgbuf_initialized (false)
       {
 	if (er_init (NULL, ER_NEVER_EXIT) != NO_ERROR)
@@ -81,6 +83,9 @@ namespace
 	  }
 	m_csect_initialized = true;
 
+	event_log_init ("test_lock_manager");
+	m_event_log_initialized = true;
+
 	initialize_fake_tdes ();
 
 	if (pgbuf_initialize () != NO_ERROR)
@@ -95,6 +100,10 @@ namespace
 	if (m_pgbuf_initialized)
 	  {
 	    pgbuf_finalize ();
+	  }
+	if (m_event_log_initialized)
+	  {
+	    event_log_final ();
 	  }
 	if (m_csect_initialized)
 	  {
@@ -170,6 +179,7 @@ namespace
       bool m_error_initialized;
       bool m_thread_initialized;
       bool m_csect_initialized;
+      bool m_event_log_initialized;
       bool m_pgbuf_initialized;
   };
 
@@ -178,7 +188,9 @@ namespace
   {
     std::cout << "Usage: " << progname
               << " [--list] [--functional] [--benchmark] [--scenario <name>]"
-              << " [--transaction N] [--iterations N] [--hotset N] [--sample N] [--loops N]" << std::endl;
+              << " [--transaction N] [--iterations N] [--hotset N] [--class-count N]"
+              << " [--objects-per-class N] [--hot-ratio N] [--collision-ratio N]"
+              << " [--sample N] [--loops N] [--benchmark-format csv|pretty|both]" << std::endl;
   }
 
   int
@@ -192,6 +204,17 @@ namespace
       }
     return static_cast<int> (parsed);
   }
+
+  int
+  parse_ratio (const char *arg_name, const char *value)
+  {
+    const int ratio = parse_int (arg_name, value);
+    if (ratio > 100)
+      {
+        throw std::invalid_argument (std::string ("Invalid ratio for ") + arg_name + ": " + value);
+      }
+    return ratio;
+  }
 }
 
 int
@@ -204,10 +227,16 @@ main (int argc, char **argv)
         4,
         10,
         4,
+        4,
+        16,
+        70,
+        25,
         1
       };
       int sample_count = 8;
       int benchmark_loops = 10;
+      test_lock_manager::benchmark_output_format benchmark_format = test_lock_manager::benchmark_output_format::both;
+      bool hotset_explicit = false;
       bool list_only = false;
       bool run_functional = false;
       bool run_benchmark = false;
@@ -242,6 +271,23 @@ main (int argc, char **argv)
           else if (arg == "--hotset" && index + 1 < argc)
             {
               config.hotset_size = parse_int ("--hotset", argv[++index]);
+              hotset_explicit = true;
+            }
+          else if (arg == "--class-count" && index + 1 < argc)
+            {
+              config.class_count = parse_int ("--class-count", argv[++index]);
+            }
+          else if (arg == "--objects-per-class" && index + 1 < argc)
+            {
+              config.objects_per_class = parse_int ("--objects-per-class", argv[++index]);
+            }
+          else if (arg == "--hot-ratio" && index + 1 < argc)
+            {
+              config.hot_ratio = parse_ratio ("--hot-ratio", argv[++index]);
+            }
+          else if (arg == "--collision-ratio" && index + 1 < argc)
+            {
+              config.collision_ratio = parse_ratio ("--collision-ratio", argv[++index]);
             }
           else if (arg == "--sample" && index + 1 < argc)
             {
@@ -251,11 +297,20 @@ main (int argc, char **argv)
             {
               benchmark_loops = parse_int ("--loops", argv[++index]);
             }
+          else if (arg == "--benchmark-format" && index + 1 < argc)
+            {
+              benchmark_format = test_lock_manager::parse_benchmark_output_format (argv[++index]);
+            }
           else
             {
               print_usage (argv[0]);
               throw std::invalid_argument ("Unknown argument: " + arg);
             }
+        }
+
+      if (!hotset_explicit)
+        {
+          config.hotset_size = std::max (config.objects_per_class / 4, 1);
         }
 
       if (list_only)
@@ -278,7 +333,7 @@ main (int argc, char **argv)
       if (run_benchmark)
         {
           scoped_thread_environment thread_env;
-          return test_lock_manager::run_benchmark_suite (benchmark_loops);
+          return test_lock_manager::run_benchmark_suite (benchmark_loops, config, benchmark_format);
         }
 
       const std::vector<test_lock_manager::operation> operations = test_lock_manager::build_operations (config);
@@ -288,7 +343,11 @@ main (int argc, char **argv)
       std::cout << "Description: " << summary.description << std::endl;
       std::cout << "Transactions: " << config.transaction_count << std::endl;
       std::cout << "Iterations: " << config.iterations << std::endl;
-      std::cout << "Hotset size: " << config.hotset_size << std::endl;
+      std::cout << "Hotset size per class: " << config.hotset_size << std::endl;
+      std::cout << "Class count: " << config.class_count << std::endl;
+      std::cout << "Objects per class: " << config.objects_per_class << std::endl;
+      std::cout << "Hot access ratio: " << config.hot_ratio << std::endl;
+      std::cout << "Collision access ratio: " << config.collision_ratio << std::endl;
       std::cout << "Operations: " << summary.operation_count << std::endl;
       std::cout << "Distinct classes: " << summary.distinct_class_count << std::endl;
       std::cout << "Distinct OIDs: " << summary.distinct_oid_count << std::endl;

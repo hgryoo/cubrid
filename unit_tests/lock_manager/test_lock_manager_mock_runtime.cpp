@@ -47,6 +47,7 @@ namespace test_lock_manager
       std::size_t participant_count;
       std::size_t committed_workers;
       bool active;
+      std::mutex execution_mutex;
       std::mutex mutex;
     };
 
@@ -137,6 +138,12 @@ namespace test_lock_manager
     cleanup_transaction_locks (THREAD_ENTRY *thread_p)
     {
       lock_unlock_all (thread_p);
+    }
+
+    bool
+    is_transaction_aborted (const LOG_TDES *tdes)
+    {
+      return tdes->tran_abort_reason != TRAN_NORMAL || LOG_ISTRAN_ABORTED (tdes);
     }
   } // namespace
 
@@ -284,6 +291,7 @@ namespace test_lock_manager
 			{
 			case operation_kind::begin_transaction:
 			  {
+			    std::lock_guard<std::mutex> execution_guard (txn.execution_mutex);
 			    LOG_TDES *tdes = LOG_FIND_TDES (txn.tran_index);
 
 			    std::lock_guard<std::mutex> guard (txn.mutex);
@@ -293,7 +301,7 @@ namespace test_lock_manager
 			    tdes->tran_abort_reason = TRAN_NORMAL;
 			    if (tdes->trid == NULL_TRANID)
 			      {
-				tdes->trid = txn.tran_index;
+				(void) logtb_get_new_tran_id (&thread_ref, tdes);
 			      }
 			    lock_clear_deadlock_victim (txn.tran_index);
 			  }
@@ -302,6 +310,7 @@ namespace test_lock_manager
 			case operation_kind::acquire:
 			case operation_kind::convert:
 			  {
+			    std::lock_guard<std::mutex> execution_guard (txn.execution_mutex);
 			    const OID oid = make_real_oid (op.oid);
 			    OID class_oid = make_real_oid (op.class_oid);
 			    OID *class_oid_ptr = op.is_class_lock ? oid_Root_class_oid : &class_oid;
@@ -320,10 +329,19 @@ namespace test_lock_manager
 			      }
 			    else
 			      {
+				LOG_TDES *tdes = LOG_FIND_TDES (txn.tran_index);
 				stats.acquire_conflicts++;
 				if (granted == LK_NOTGRANTED_DUE_TIMEOUT || granted == LK_NOTGRANTED_DUE_ABORTED)
 				  {
 				    stats.deadlock_pairs++;
+				  }
+				if (granted == LK_NOTGRANTED_DUE_ABORTED)
+				  {
+				    tdes->state = TRAN_UNACTIVE_UNILATERALLY_ABORTED;
+				  }
+				else if (granted == LK_NOTGRANTED_DUE_TIMEOUT && tdes->tran_abort_reason != TRAN_NORMAL)
+				  {
+				    tdes->state = TRAN_UNACTIVE_ABORTED;
 				  }
 			      }
 
@@ -336,6 +354,8 @@ namespace test_lock_manager
 
 			case operation_kind::commit_transaction:
 			  {
+			    std::lock_guard<std::mutex> execution_guard (txn.execution_mutex);
+			    LOG_TDES *tdes = LOG_FIND_TDES (txn.tran_index);
 			    bool finalize_txn = false;
 			    {
 			      std::lock_guard<std::mutex> guard (txn.mutex);
@@ -350,7 +370,8 @@ namespace test_lock_manager
 			    if (finalize_txn)
 			      {
 				cleanup_transaction_locks (&thread_ref);
-				LOG_FIND_TDES (txn.tran_index)->state = TRAN_UNACTIVE_COMMITTED;
+				tdes->state = is_transaction_aborted (tdes) ? TRAN_UNACTIVE_ABORTED : TRAN_UNACTIVE_COMMITTED;
+				lock_clear_deadlock_victim (txn.tran_index);
 			      }
 
 			    std::lock_guard<std::mutex> guard (stats_mutex);

@@ -43,6 +43,8 @@ namespace test_lock_manager
     public:
       mock_runtime ();
 
+      // Executes scenario operations on a cubthread::entry_workpool so each worker
+      // runs with a real THREAD_ENTRY on an actual worker thread.
       simulation_stats simulate (const std::vector<operation> &operations);
   };
 } // namespace test_lock_manager

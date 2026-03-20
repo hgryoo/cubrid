@@ -36,6 +36,7 @@ namespace test_lock_manager
   struct oid_bucket
   {
     mock_oid class_oid;
+    std::size_t hot_object_count;
     std::vector<mock_oid> object_oids;
   };
 
@@ -94,6 +95,10 @@ namespace test_lock_manager
     int transaction_count;
     int iterations;
     int hotset_size;
+    int class_count;
+    int objects_per_class;
+    int hot_ratio;
+    int collision_ratio;
     int seed;
   };
 
@@ -109,19 +114,28 @@ namespace test_lock_manager
     std::map<std::string, std::size_t> notes;
   };
 
+  enum class benchmark_output_format
+  {
+    csv,
+    pretty,
+    both
+  };
+
   std::vector<std::string> get_scenario_names (void);
   std::string get_scenario_description (scenario_kind kind);
   scenario_kind parse_scenario_kind (const std::string &name);
   std::string to_string (scenario_kind kind);
   std::string to_string (operation_kind kind);
   std::string to_string (wait_kind kind);
+  std::string to_string (benchmark_output_format format);
+  benchmark_output_format parse_benchmark_output_format (const std::string &name);
 
   oid_pool build_oid_pool (const scenario_config &config);
   std::vector<operation> build_operations (const scenario_config &config);
   scenario_summary summarize (scenario_kind kind, const std::vector<operation> &operations);
   std::string format_operation (const operation &op);
   int run_functional_suite (void);
-  int run_benchmark_suite (int loops);
+  int run_benchmark_suite (int loops, const scenario_config &base_config, benchmark_output_format format);
 } // namespace test_lock_manager
 
 #endif // _TEST_LOCK_MANAGER_SCENARIOS_HPP_

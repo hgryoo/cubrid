@@ -236,7 +236,7 @@ unit_tests/lock_manager/
   - sweep thread count / hash size / hotspot ratio
 - `test_lock_manager_mock_runtime.*`
   - transaction-to-thread execution runtime
-  - worker-thread scheduling and barriers
+  - `cubthread::entry_workpool` based worker-thread scheduling and barriers
   - wait/timeout hooks for blocked lock requests
 - `test_lock_manager_scenarios.*`
   - prebuild class/object OID pools
@@ -245,16 +245,16 @@ unit_tests/lock_manager/
 ## Current runner usage
 
 The current `test_lock_manager` binary can already list and execute deterministic scenario plans.
-It does not yet drive the production lock manager directly, but it does let you run the planned workloads,
-inspect operation mixes, and validate that mock OID generation and scenario composition match expectations.
+It drives the exported lock-manager API through a lightweight server-style harness and executes worker actions
+on a `cubthread::entry_workpool`, so each worker runs with a real `THREAD_ENTRY` on an actual worker thread.
 
 Examples:
 
 ```bash
 test_lock_manager --list
-test_lock_manager --scenario hot_row --transaction 8 --iterations 1000 --sample 10
-test_lock_manager --scenario deadlock_detector --transaction 4 --iterations 20 --sample 12
-test_lock_manager --scenario escalation_sweep --transaction 8 --iterations 50 --hotset 16
+test_lock_manager --scenario hot_row --transaction 8 --iterations 1000 --class-count 4 --objects-per-class 64 --hot-ratio 80 --sample 10
+test_lock_manager --scenario deadlock_detector --transaction 2 --iterations 20 --class-count 1 --objects-per-class 8 --hot-ratio 100 --sample 12
+test_lock_manager --scenario escalation_sweep --transaction 8 --iterations 50 --class-count 8 --objects-per-class 64 --hot-ratio 60 --collision-ratio 20 --hotset 16
 ```
 
 ### How to run each test mode
@@ -264,13 +264,14 @@ test_lock_manager --scenario escalation_sweep --transaction 8 --iterations 50 --
 Use this mode to generate a deterministic mock-OID workload and inspect its composition.
 
 ```bash
-test_lock_manager --scenario hot_row --transaction 8 --iterations 1000 --sample 10
+test_lock_manager --scenario hot_row --transaction 8 --iterations 1000 --class-count 4 --objects-per-class 64 --hot-ratio 80 --sample 10
 ```
 
 This prints:
 
 - the scenario name and description
 - transaction count / iteration count / hotset size
+- class count / objects per class / hot ratio / collision ratio
 - total operation count
 - distinct class count / distinct OID count
 - operation-kind and lock-mode distributions
@@ -290,7 +291,8 @@ The current functional suite validates:
   `lock_unlock_all()` calls against two explicit `tran_index` values to validate shared-grant and conflict paths
 - `hot_row` uses exactly one target OID
 - `lock_conversion` produces conversion events
-- `deadlock_detector` produces at least one conflicting `X_LOCK` denial along the deadlock-prone lock order
+- `deadlock_detector` drives real blocking `X_LOCK` acquisition on worker threads and validates that deadlock
+  resolution produces aborted or timed-out waiters
 - `escalation_sweep` produces escalation candidates
 
 Each passing scenario is printed as a separate `[functional] passed: ...` line.
@@ -300,7 +302,7 @@ Each passing scenario is printed as a separate `[functional] passed: ...` line.
 Use this mode to run all implemented scenarios repeatedly and print CSV-style performance output.
 
 ```bash
-test_lock_manager --benchmark --loops 100
+test_lock_manager --benchmark --loops 100 --transaction 8 --class-count 8 --objects-per-class 64 --hot-ratio 75 --collision-ratio 20 --benchmark-format both
 ```
 
 The output columns are:
@@ -316,6 +318,261 @@ The output columns are:
 - `escalation_candidates`
 
 This is useful for comparing relative workload pressure even before the harness is connected to the production lock manager.
+Deadlock-heavy runs can also emit detector and timeout log lines from the underlying engine while still completing.
+When `--benchmark-format pretty` or `--benchmark-format both` is used, the runner also prints a human-friendly
+summary with ASCII throughput/conflict/deadlock bars so scenario differences are easier to scan.
+
+### Benchmark parameters
+
+The benchmark runner reuses the same base configuration for every scenario in the suite. That means the CLI
+parameters are best understood as "workload shape controls" rather than as one-off options for a single case.
+
+- `--transaction`
+  - Number of concurrent worker transactions scheduled into the benchmark run.
+  - Higher values usually increase lock-table concurrency, waiter-list pressure, and deadlock exposure.
+- `--iterations`
+  - Number of scripted operation rounds per transaction.
+  - Higher values increase total lock acquire/convert/commit volume.
+- `--class-count`
+  - Number of logical class OID buckets prebuilt in the OID pool.
+  - Lower values force more transactions into the same table-level lock domain; higher values spread load across more tables.
+- `--objects-per-class`
+  - Number of object OIDs created under each class bucket.
+  - Low values make row-level reuse and collision more likely; high values spread row locks out.
+- `--hotset`
+  - Number of objects per class that belong to the hot subset.
+  - If omitted, the runner derives it as roughly `objects_per_class / 4`.
+- `--hot-ratio`
+  - Percentage of accesses routed to the hot subset.
+  - High values repeatedly revisit the same hot rows; low values spend more requests on the cold remainder.
+- `--collision-ratio`
+  - Percentage of accesses routed to the prebuilt hash-collision OID set.
+  - This matters most for `hash_collision`, where the collision set is generated to land in the same lock-hash bucket under the default lock-table sizing.
+- `--loops`
+  - Number of times the full benchmark suite is repeated for measurement.
+  - Use small values while tuning a workload shape, then increase once the pattern looks right.
+- `--benchmark-format`
+  - `csv`: machine-friendly output only
+  - `pretty`: human-friendly summary only
+  - `both`: CSV plus summary/ASCII bars
+
+### Practical tuning guidance
+
+Use the parameters as a way to control where contention appears.
+
+- More table-level contention:
+  - reduce `--class-count`
+  - increase `--transaction`
+  - increase `--iterations`
+- More row hotspot contention:
+  - reduce `--hotset`
+  - reduce `--objects-per-class`
+  - increase `--hot-ratio`
+  - use scenarios like `hot_row` or `hot_class_cold_rows`
+- More hash bucket pressure:
+  - increase `--collision-ratio`
+  - use `hash_collision`
+- More lock conversion pressure:
+  - keep `--transaction` moderate
+  - keep `--class-count` low-to-medium
+  - use `lock_conversion`
+- More escalation-style pressure:
+  - keep `--class-count` low
+  - keep `--objects-per-class` moderate
+  - use `escalation_sweep`
+- More deadlock pressure:
+  - keep `--transaction` small but at least 2
+  - keep `--class-count` low
+  - keep `--hot-ratio` high
+  - use `deadlock_detector`
+
+### Example workload families
+
+The current harness is not a full TPC-C or YCSB implementation, but it can approximate their lock-shape tendencies.
+The goal is not SQL realism; the goal is to borrow their contention patterns and reproduce similar lock-manager stress.
+
+### Recommended presets
+
+Use this table when you want a quick starting point instead of tuning each parameter from scratch.
+The values are intentionally opinionated; treat them as baseline presets and adjust from there.
+
+| Goal | Approximation | `--transaction` | `--iterations` | `--class-count` | `--objects-per-class` | `--hot-ratio` | `--collision-ratio` | `--loops` | Watch first |
+|------|---------------|-----------------|----------------|-----------------|-----------------------|---------------|---------------------|-----------|-------------|
+| Broad low-contention OLTP | YCSB uniform | 16 | 100 | 16 | 256 | 20 | 5 | 20 | `low_contention`, `lock_conversion` |
+| Hot-key skew | YCSB zipfian | 16 | 100 | 4 | 64 | 85 | 10 | 20 | `hot_row`, `hot_class_cold_rows` |
+| Multi-table write hotspot | TPC-C new-order style | 10 | 80 | 8 | 48 | 70 | 5 | 20 | `hot_class_cold_rows`, `lock_conversion` |
+| Partition or warehouse skew | TPC-C warehouse skew | 24 | 60 | 2 | 96 | 75 | 10 | 20 | `hot_row`, `escalation_sweep` |
+| Internal lock-table stress | Hash collision stress | 12 | 80 | 4 | 32 | 50 | 80 | 20 | `hash_collision` |
+| Deadlock-heavy regression check | Wait-for graph stress | 2 | 20 | 1 | 8 | 100 | 25 | 10 | `deadlock_detector`, `deadlock_pairs` |
+| Escalation sensitivity check | Row accumulation under one class | 8 | 50 | 8 | 64 | 60 | 20 | 20 | `escalation_sweep`, `escalation_candidates` |
+
+Example commands:
+
+```bash
+test_lock_manager --benchmark --transaction 16 --iterations 100 --class-count 16 --objects-per-class 256 --hot-ratio 20 --collision-ratio 5 --loops 20 --benchmark-format both
+test_lock_manager --benchmark --transaction 16 --iterations 100 --class-count 4 --objects-per-class 64 --hot-ratio 85 --collision-ratio 10 --loops 20 --benchmark-format both
+test_lock_manager --benchmark --transaction 10 --iterations 80 --class-count 8 --objects-per-class 48 --hot-ratio 70 --collision-ratio 5 --loops 20 --benchmark-format both
+```
+
+#### 1. YCSB-like uniform read/update mix
+
+This approximates a broad key-value workload where requests are spread fairly evenly.
+
+Recommended settings:
+
+```bash
+test_lock_manager --benchmark \
+  --transaction 16 \
+  --iterations 100 \
+  --class-count 16 \
+  --objects-per-class 256 \
+  --hot-ratio 20 \
+  --collision-ratio 5 \
+  --loops 20 \
+  --benchmark-format both
+```
+
+Interpretation:
+
+- large `class-count` and `objects-per-class` spread locks widely
+- low `hot-ratio` keeps hotspots weak
+- low `collision-ratio` avoids artificial hash stress
+- `low_contention` and `lock_conversion` become the most representative rows in the output
+
+This is closest to:
+
+- YCSB Workload A/B with a large keyspace
+- applications where rows are mostly independent and conflict is incidental
+
+#### 2. YCSB-like zipfian hotspot
+
+This approximates a skewed key-value workload where a small fraction of rows takes most of the traffic.
+
+Recommended settings:
+
+```bash
+test_lock_manager --benchmark \
+  --transaction 16 \
+  --iterations 100 \
+  --class-count 4 \
+  --objects-per-class 64 \
+  --hot-ratio 85 \
+  --collision-ratio 10 \
+  --loops 20 \
+  --benchmark-format both
+```
+
+Interpretation:
+
+- fewer classes and fewer rows per class make the working set smaller
+- high `hot-ratio` forces repeated access to the same small row subset
+- `hot_row` and `hot_class_cold_rows` should show strong conflict growth
+
+This is closest to:
+
+- YCSB Workload A/F under skewed popularity
+- cache-miss fallback paths where many requests converge on a small key set
+
+#### 3. TPC-C new-order style hotspot
+
+TPC-C mixes many tables, but lock pressure often concentrates on a few high-traffic logical entities such as
+district/order counters and hot warehouse-local rows. To approximate that pattern:
+
+```bash
+test_lock_manager --benchmark \
+  --transaction 10 \
+  --iterations 80 \
+  --class-count 8 \
+  --objects-per-class 48 \
+  --hot-ratio 70 \
+  --collision-ratio 5 \
+  --loops 20 \
+  --benchmark-format both
+```
+
+Interpretation:
+
+- medium `class-count` reflects multiple tables participating in a transaction
+- medium/high `hot-ratio` creates repeated access to hot rows inside each table
+- `hot_class_cold_rows` is the best proxy here because it mixes class and instance pressure
+
+This is closest to:
+
+- TPC-C `NEW_ORDER` / `PAYMENT`-like write-heavy flows
+- OLTP systems where several related tables are touched per business action
+
+#### 4. TPC-C warehouse skew / partition imbalance
+
+This approximates many transactions targeting a small subset of partitions or warehouses.
+
+```bash
+test_lock_manager --benchmark \
+  --transaction 24 \
+  --iterations 60 \
+  --class-count 2 \
+  --objects-per-class 96 \
+  --hot-ratio 75 \
+  --collision-ratio 10 \
+  --loops 20 \
+  --benchmark-format both
+```
+
+Interpretation:
+
+- very low `class-count` forces more work into the same table domains
+- high concurrency with moderate row cardinality increases lock waits
+- `hot_class_cold_rows`, `hot_row`, and `escalation_sweep` become useful signals
+
+This is closest to:
+
+- a TPC-C deployment where a few warehouses dominate traffic
+- tenant imbalance in multi-tenant OLTP systems
+
+#### 5. Secondary-index / lock-hash stress
+
+This does not correspond directly to a standard benchmark, but it is useful when you want to isolate internal
+lock-table behavior instead of business workload realism.
+
+```bash
+test_lock_manager --benchmark \
+  --transaction 12 \
+  --iterations 80 \
+  --class-count 4 \
+  --objects-per-class 32 \
+  --hot-ratio 50 \
+  --collision-ratio 80 \
+  --loops 20 \
+  --benchmark-format both
+```
+
+Interpretation:
+
+- high `collision-ratio` intentionally stresses hash-chain and bucket-mutex behavior
+- `hash_collision` becomes the key row to inspect
+
+### How to read the output
+
+The pretty summary is most useful when read comparatively across scenarios.
+
+- If `hot_row` is much slower than `low_contention`:
+  - row-level waiter management is dominating
+- If `hot_class_cold_rows` is much slower than `hot_row`:
+  - class/instance interaction cost is high
+- If `lock_conversion` shows high conversions but low conflicts:
+  - conversion path is active without severe contention
+- If `deadlock_detector` shows very low throughput and non-zero `deadlock_pairs`:
+  - the wait-for graph and victim resolution path is actively engaged
+- If `hash_collision` drops sharply while `low_contention` remains healthy:
+  - internal lock-table/hash structure is the bottleneck, not logical contention
+- If `escalation_sweep` shows many escalation candidates:
+  - row accumulation under the same class is high enough that escalation policy deserves attention
+
+For manual analysis, a good workflow is:
+
+1. Start with `--benchmark-format pretty` and a small `--loops` value.
+2. Adjust one parameter at a time, especially `class-count`, `objects-per-class`, and `hot-ratio`.
+3. Once the shape looks right, rerun with `--benchmark-format both`.
+4. Save the CSV portion for diffing across commits or branches.
 
 ## Incremental rollout order
 
