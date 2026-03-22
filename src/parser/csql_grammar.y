@@ -114,6 +114,7 @@ extern int expecting_pl_lang_spec;
 extern int yylex(void);
 
 static void pt_fill_conn_info_container(PARSER_CONTEXT *parser, int buffer_pos, container_10 *ctn, container_2 info);
+static PT_NODE *parser_make_spatial_data_type (PARSER_CONTEXT *parser, const char *type_name);
 /*%CODE_END%*/%}
 
 %{
@@ -1021,6 +1022,8 @@ BEGIN_SUPPRESS_WARNING_BISON_FLEX
 %type <node> pl_language_spec
 %type <node> opt_sp_default_value
 %type <node> table_column
+%type <node> opt_spatial_type_mod
+%type <node> spatial_type_subtype
 
 /*}}}*/
 
@@ -1228,11 +1231,14 @@ BEGIN_SUPPRESS_WARNING_BISON_FLEX
 %token FUNCTION
 %token GENERAL
 %token GET
+%token GEOGRAPHY
+%token GEOMETRYCOLLECTION
 %token GLOBAL
 %token GO
 %token GOTO
 %token GRANT
 %token GROUP_
+%token GEOMETRY
 %token HAVING
 %token HOUR_
 %token HOUR_MILLISECOND
@@ -1271,6 +1277,7 @@ BEGIN_SUPPRESS_WARNING_BISON_FLEX
 %token LEVEL
 %token LIKE
 %token LIMIT
+%token LINESTRING
 %token LIST
 %token LOCAL
 %token LOCAL_TRANSACTION_ID
@@ -1292,7 +1299,10 @@ BEGIN_SUPPRESS_WARNING_BISON_FLEX
 %token MODULE
 %token Monetary
 %token MONTH_
+%token MULTILINESTRING
 %token MULTISET
+%token MULTIPOINT
+%token MULTIPOLYGON
 %token MULTISET_OF
 %token NA
 %token NAMES
@@ -1322,6 +1332,7 @@ BEGIN_SUPPRESS_WARNING_BISON_FLEX
 %token PARAMETERS
 %token PARTIAL
 %token PARTITION
+%token POINT
 %token POSITION
 %token PRECISION
 %token PREPARE
@@ -1330,6 +1341,7 @@ BEGIN_SUPPRESS_WARNING_BISON_FLEX
 %token PRIOR
 %token PRIVILEGES
 %token PROCEDURE
+%token POLYGON
 %token QUERY
 %token READ
 %token RECURSIVE
@@ -1534,10 +1546,13 @@ BEGIN_SUPPRESS_WARNING_BISON_FLEX
 %token <cptr> EXPLAIN
 %token <cptr> FIRST_VALUE
 %token <cptr> FORCE
+%token <cptr> GEOGRAPHY
+%token <cptr> GEOMETRYCOLLECTION
 %token <cptr> FULLSCAN
 %token <cptr> GE_INF_
 %token <cptr> GE_LE_
 %token <cptr> GE_LT_
+%token <cptr> GEOMETRY
 %token <cptr> GRANTS
 %token <cptr> GROUP_CONCAT
 %token <cptr> GROUPS
@@ -1596,6 +1611,7 @@ BEGIN_SUPPRESS_WARNING_BISON_FLEX
 %token <cptr> LAST_VALUE
 %token <cptr> LCASE
 %token <cptr> LEAD
+%token <cptr> LINESTRING
 %token <cptr> LOCK_
 %token <cptr> LOG
 %token <cptr> MATCHED
@@ -1604,6 +1620,9 @@ BEGIN_SUPPRESS_WARNING_BISON_FLEX
 %token <cptr> MEDIAN
 %token <cptr> MEMBERS
 %token <cptr> MINVALUE
+%token <cptr> MULTILINESTRING
+%token <cptr> MULTIPOINT
+%token <cptr> MULTIPOLYGON
 %token <cptr> NAME
 %token <cptr> NESTED
 %token <cptr> NOCYCLE
@@ -1631,12 +1650,14 @@ BEGIN_SUPPRESS_WARNING_BISON_FLEX
 %token <cptr> PERCENTILE_DISC
 %token <cptr> PLCSQL
 %token <cptr> PLCSQL_TEXT_SOME
+%token <cptr> POINT
 %token <cptr> PORT
 %token <cptr> PRINT
 %token <cptr> PRIORITY
 %token <cptr> PRIVATE
 %token <cptr> PROMOTE
 %token <cptr> PROPERTIES
+%token <cptr> POLYGON
 %token <cptr> PUBLIC
 %token <cptr> QUARTER
 %token <cptr> QUEUES
@@ -19201,6 +19222,81 @@ primitive_type
 			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_CLOB), NULL);
 			$$ = ctn;
 		}}
+	| GEOMETRY opt_spatial_type_mod
+		{{
+			container_2 ctn;
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
+
+			if ($2 != NULL)
+			  {
+			    parser_free_node (this_parser, $2);
+			  }
+
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			$$ = ctn;
+		}}
+	| GEOGRAPHY opt_spatial_type_mod
+		{{
+			container_2 ctn;
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
+
+			if ($2 != NULL)
+			  {
+			    parser_free_node (this_parser, $2);
+			  }
+
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			$$ = ctn;
+		}}
+	| POINT
+		{{
+			container_2 ctn;
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			$$ = ctn;
+		}}
+	| LINESTRING
+		{{
+			container_2 ctn;
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			$$ = ctn;
+		}}
+	| POLYGON
+		{{
+			container_2 ctn;
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			$$ = ctn;
+		}}
+	| MULTIPOINT
+		{{
+			container_2 ctn;
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			$$ = ctn;
+		}}
+	| MULTILINESTRING
+		{{
+			container_2 ctn;
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			$$ = ctn;
+		}}
+	| MULTIPOLYGON
+		{{
+			container_2 ctn;
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			$$ = ctn;
+		}}
+	| GEOMETRYCOLLECTION
+		{{
+			container_2 ctn;
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			$$ = ctn;
+		}}
 	| class_name opt_identity
 		{{
 			container_2 ctn;
@@ -19590,6 +19686,65 @@ primitive_type
 
 			$$ = ctn;
 	  }}
+	;
+
+opt_spatial_type_mod
+	: /* empty */
+		{{
+			$$ = NULL;
+		}}
+	| '(' ')'
+		{{
+			$$ = NULL;
+		}}
+	| '(' spatial_type_subtype ')'
+		{{
+			$$ = $2;
+		}}
+	| '(' spatial_type_subtype ',' unsigned_integer ')'
+		{{
+			if ($4 != NULL)
+			  {
+			    parser_free_node (this_parser, $4);
+			  }
+
+			$$ = $2;
+		}}
+	;
+
+spatial_type_subtype
+	: identifier
+		{{
+			$$ = $1;
+		}}
+	| POINT
+		{{
+			SET_CPTR_2_PTNAME ($$, $1, @$.buffer_pos);
+		}}
+	| LINESTRING
+		{{
+			SET_CPTR_2_PTNAME ($$, $1, @$.buffer_pos);
+		}}
+	| POLYGON
+		{{
+			SET_CPTR_2_PTNAME ($$, $1, @$.buffer_pos);
+		}}
+	| MULTIPOINT
+		{{
+			SET_CPTR_2_PTNAME ($$, $1, @$.buffer_pos);
+		}}
+	| MULTILINESTRING
+		{{
+			SET_CPTR_2_PTNAME ($$, $1, @$.buffer_pos);
+		}}
+	| MULTIPOLYGON
+		{{
+			SET_CPTR_2_PTNAME ($$, $1, @$.buffer_pos);
+		}}
+	| GEOMETRYCOLLECTION
+		{{
+			SET_CPTR_2_PTNAME ($$, $1, @$.buffer_pos);
+		}}
 	;
 
 opt_internal_external
@@ -20580,9 +20735,11 @@ identifier
 	| EXPLAIN                {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| FIRST_VALUE            {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| FULLSCAN               {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
+	| GEOGRAPHY              {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| GE_INF_                {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| GE_LE_                 {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| GE_LT_                 {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
+	| GEOMETRY               {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| GRANTS                 {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| GROUPS                 {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| GROUP_CONCAT           {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
@@ -22541,6 +22698,34 @@ parser_make_expr_with_func (PARSER_CONTEXT * parser, FUNC_CODE func_code,
 }
 
 static PT_NODE *
+parser_make_spatial_data_type (PARSER_CONTEXT *parser, const char *type_name)
+{
+  PT_NODE *dt = parser_new_node (parser, PT_DATA_TYPE);
+  PT_NODE *entity = parser_new_node (parser, PT_NAME);
+
+  if (dt == NULL)
+    {
+      if (entity != NULL)
+	{
+	  parser_free_node (parser, entity);
+	}
+
+      return NULL;
+    }
+
+  dt->type_enum = PT_TYPE_OBJECT;
+  dt->data_type = NULL;
+
+  if (entity != NULL)
+    {
+      entity->info.name.original = (char *) type_name;
+      dt->info.data_type.entity = entity;
+    }
+
+  return dt;
+}
+
+static PT_NODE *
 parser_make_func_with_arg_count (PARSER_CONTEXT * parser, FUNC_CODE func_code, PT_NODE * args_list,
                                  size_t min_args, size_t max_args)
 {
@@ -24072,6 +24257,146 @@ parser_keyword_func (const char *name, PT_NODE * args)
 	{
 	  return parser_make_expression (this_parser, key->op, NULL, NULL, NULL);
 	}
+
+    case F_ST_ASTEXT:
+    case F_ST_ASBINARY:
+    case F_ST_SRID:
+    case F_ST_GEOMETRYTYPE:
+    case F_ST_X:
+    case F_ST_Y:
+    case F_ST_AREA:
+    case F_ST_LENGTH:
+      return parser_make_func_with_arg_count (this_parser, (FUNC_CODE) key->op, args, 1, 1);
+
+    case F_ST_GEOMFROMTEXT:
+    case F_ST_GEOMFROMWKB:
+      return parser_make_func_with_arg_count (this_parser, (FUNC_CODE) key->op, args, 1, 2);
+
+    case F_ST_GEOMFROMGEOJSON:
+      return parser_make_func_with_arg_count (this_parser, (FUNC_CODE) key->op, args, 1, 1);
+
+    case F_ST_SETSRID:
+    case F_ST_DISTANCE:
+    case F_ST_CONTAINS:
+    case F_ST_INTERSECTS:
+      return parser_make_func_with_arg_count (this_parser, (FUNC_CODE) key->op, args, 2, 2);
+
+    case F_ST_AFFINE:
+    case F_ST_AREA_SPHEROID:
+    case F_ST_ASGEOJSON:
+    case F_ST_ASHEXWKB:
+    case F_ST_ASSVG:
+    case F_ST_ASWKB:
+    case F_ST_AZIMUTH:
+    case F_ST_BOUNDARY:
+    case F_ST_BUFFER:
+    case F_ST_BUILDAREA:
+    case F_ST_CENTROID:
+    case F_ST_COLLECT:
+    case F_ST_COLLECTIONEXTRACT:
+    case F_ST_CONCAVEHULL:
+    case F_ST_CONTAINSPROPERLY:
+    case F_ST_CONVEXHULL:
+    case F_ST_COVERAGEINVALIDEDGES:
+    case F_ST_COVERAGESIMPLIFY:
+    case F_ST_COVERAGEUNION:
+    case F_ST_COVEREDBY:
+    case F_ST_COVERS:
+    case F_ST_CROSSES:
+    case F_ST_DWITHIN:
+    case F_ST_DWITHIN_GEOS:
+    case F_ST_DWITHIN_SPHEROID:
+    case F_ST_DIFFERENCE:
+    case F_ST_DIMENSION:
+    case F_ST_DISJOINT:
+    case F_ST_DISTANCE_GEOS:
+    case F_ST_DISTANCE_SPHERE:
+    case F_ST_DISTANCE_SPHEROID:
+    case F_ST_DUMP:
+    case F_ST_ENDPOINT:
+    case F_ST_ENVELOPE:
+    case F_ST_EQUALS:
+    case F_ST_EXTENT:
+    case F_ST_EXTENT_APPROX:
+    case F_ST_EXTERIORRING:
+    case F_ST_FLIPCOORDINATES:
+    case F_ST_FORCE2D:
+    case F_ST_FORCE3DM:
+    case F_ST_FORCE3DZ:
+    case F_ST_FORCE4D:
+    case F_ST_GEOMFROMHEXEWKB:
+    case F_ST_GEOMFROMHEXWKB:
+    case F_ST_HASM:
+    case F_ST_HASZ:
+    case F_ST_HILBERT:
+    case F_ST_INTERSECTION:
+    case F_ST_INTERSECTS_EXTENT:
+    case F_ST_ISCLOSED:
+    case F_ST_ISEMPTY:
+    case F_ST_ISRING:
+    case F_ST_ISSIMPLE:
+    case F_ST_ISVALID:
+    case F_ST_LENGTH_SPHEROID:
+    case F_ST_LINEINTERPOLATEPOINT:
+    case F_ST_LINEINTERPOLATEPOINTS:
+    case F_ST_LINEMERGE:
+    case F_ST_LINESTRING2DFROMWKB:
+    case F_ST_LINESUBSTRING:
+    case F_ST_M:
+    case F_ST_MMAX:
+    case F_ST_MMIN:
+    case F_ST_MAKEENVELOPE:
+    case F_ST_MAKELINE:
+    case F_ST_MAKEPOLYGON:
+    case F_ST_MAKEVALID:
+    case F_ST_MAXIMUMINSCRIBEDCIRCLE:
+    case F_ST_MINIMUMROTATEDRECTANGLE:
+    case F_ST_MULTI:
+    case F_ST_NGEOMETRIES:
+    case F_ST_NINTERIORRINGS:
+    case F_ST_NPOINTS:
+    case F_ST_NODE:
+    case F_ST_NORMALIZE:
+    case F_ST_NUMGEOMETRIES:
+    case F_ST_NUMINTERIORRINGS:
+    case F_ST_NUMPOINTS:
+    case F_ST_OVERLAPS:
+    case F_ST_PERIMETER:
+    case F_ST_PERIMETER_SPHEROID:
+    case F_ST_POINT:
+    case F_ST_POINT2D:
+    case F_ST_POINT2DFROMWKB:
+    case F_ST_POINT3D:
+    case F_ST_POINT4D:
+    case F_ST_POINTN:
+    case F_ST_POINTONSURFACE:
+    case F_ST_POINTS:
+    case F_ST_POLYGON2DFROMWKB:
+    case F_ST_POLYGONIZE:
+    case F_ST_QUADKEY:
+    case F_ST_REDUCEPRECISION:
+    case F_ST_REMOVEREPEATEDPOINTS:
+    case F_ST_REVERSE:
+    case F_ST_SHORTESTLINE:
+    case F_ST_SIMPLIFY:
+    case F_ST_SIMPLIFYPRESERVETOPOLOGY:
+    case F_ST_STARTPOINT:
+    case F_ST_TILEENVELOPE:
+    case F_ST_TOUCHES:
+    case F_ST_TRANSFORM:
+    case F_ST_UNION:
+    case F_ST_VORONOIDIAGRAM:
+    case F_ST_WITHIN:
+    case F_ST_WITHINPROPERLY:
+    case F_ST_XMAX:
+    case F_ST_XMIN:
+    case F_ST_YMAX:
+    case F_ST_YMIN:
+    case F_ST_Z:
+    case F_ST_ZMFLAG:
+    case F_ST_ZMAX:
+    case F_ST_ZMIN:
+      return parser_make_expr_with_func (this_parser, (FUNC_CODE) key->op, args);
 
       /* arg 2 */
     case PT_DATE_FORMAT:

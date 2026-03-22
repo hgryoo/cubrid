@@ -50,6 +50,11 @@ func_all_signatures sig_ret_int_arg_any =
   {PT_TYPE_INTEGER, {PT_GENERIC_TYPE_ANY}, {}},
 };
 
+func_all_signatures sig_ret_int_arg_r_any =
+{
+  {PT_TYPE_INTEGER, {}, {PT_GENERIC_TYPE_ANY}},
+};
+
 func_all_signatures sig_ret_int_arg_doc =
 {
   {PT_TYPE_INTEGER, {PT_GENERIC_TYPE_JSON_DOC}, {}},
@@ -58,6 +63,73 @@ func_all_signatures sig_ret_int_arg_doc =
 func_all_signatures sig_ret_int_arg_str =
 {
   {PT_TYPE_INTEGER, {PT_GENERIC_TYPE_STRING}, {}},
+};
+
+func_all_signatures sig_ret_string_arg_r_any =
+{
+  {PT_TYPE_VARCHAR, {}, {PT_GENERIC_TYPE_ANY}},
+};
+
+func_all_signatures sig_ret_varbit_arg_r_any =
+{
+  {PT_TYPE_VARBIT, {}, {PT_GENERIC_TYPE_ANY}},
+};
+
+func_all_signatures sig_ret_string_arg_object =
+{
+  {PT_TYPE_VARCHAR, {PT_TYPE_OBJECT}, {}},
+};
+
+func_all_signatures sig_ret_varbit_arg_object =
+{
+  {PT_TYPE_VARBIT, {PT_TYPE_OBJECT}, {}},
+};
+
+func_all_signatures sig_ret_double_arg_object =
+{
+  {PT_TYPE_DOUBLE, {PT_TYPE_OBJECT}, {}},
+};
+
+func_all_signatures sig_ret_double_arg_object_object =
+{
+  {PT_TYPE_DOUBLE, {PT_TYPE_OBJECT, PT_TYPE_OBJECT}, {}},
+};
+
+func_all_signatures sig_ret_int_arg_object =
+{
+  {PT_TYPE_INTEGER, {PT_TYPE_OBJECT}, {}},
+};
+
+func_all_signatures sig_ret_int_arg_object_object =
+{
+  {PT_TYPE_INTEGER, {PT_TYPE_OBJECT, PT_TYPE_OBJECT}, {}},
+};
+
+func_all_signatures sig_ret_object_arg_str_or_str_int =
+{
+  {PT_TYPE_OBJECT, {PT_GENERIC_TYPE_STRING}, {}},
+  {PT_TYPE_OBJECT, {PT_GENERIC_TYPE_STRING, PT_TYPE_INTEGER}, {}},
+};
+
+func_all_signatures sig_ret_object_arg_any_or_any_int =
+{
+  {PT_TYPE_OBJECT, {PT_GENERIC_TYPE_ANY}, {}},
+  {PT_TYPE_OBJECT, {PT_GENERIC_TYPE_ANY, PT_TYPE_INTEGER}, {}},
+};
+
+func_all_signatures sig_ret_object_arg_str =
+{
+  {PT_TYPE_OBJECT, {PT_GENERIC_TYPE_STRING}, {}},
+};
+
+func_all_signatures sig_ret_object_arg_object_int =
+{
+  {PT_TYPE_OBJECT, {PT_TYPE_OBJECT, PT_TYPE_INTEGER}, {}},
+};
+
+func_all_signatures sig_ret_object_arg_r_any =
+{
+  {PT_TYPE_OBJECT, {}, {PT_GENERIC_TYPE_ANY}},
 };
 
 func_all_signatures sig_ret_bigint =
@@ -511,6 +583,151 @@ get_signatures (FUNC_CODE ft)
       return &sig_of_regexp_replace;
     case F_REGEXP_SUBSTR:
       return &sig_of_regexp_substr;
+    case F_ST_ASTEXT:
+    case F_ST_GEOMETRYTYPE:
+      return &sig_ret_string_arg_object;
+    case F_ST_ASBINARY:
+      return &sig_ret_varbit_arg_object;
+    case F_ST_GEOMFROMTEXT:
+      return &sig_ret_object_arg_str_or_str_int;
+    case F_ST_GEOMFROMWKB:
+      return &sig_ret_object_arg_any_or_any_int;
+    case F_ST_GEOMFROMGEOJSON:
+      return &sig_ret_object_arg_str;
+    case F_ST_SRID:
+      return &sig_ret_int_arg_object;
+    case F_ST_SETSRID:
+      return &sig_ret_object_arg_object_int;
+    case F_ST_X:
+    case F_ST_Y:
+    case F_ST_AREA:
+    case F_ST_LENGTH:
+      return &sig_ret_double_arg_object;
+    case F_ST_DISTANCE:
+      return &sig_ret_double_arg_object_object;
+    case F_ST_CONTAINS:
+    case F_ST_INTERSECTS:
+      return &sig_ret_int_arg_object_object;
+    case F_ST_AFFINE:
+    case F_ST_BOUNDARY:
+    case F_ST_BUFFER:
+    case F_ST_BUILDAREA:
+    case F_ST_CENTROID:
+    case F_ST_COLLECT:
+    case F_ST_COLLECTIONEXTRACT:
+    case F_ST_CONCAVEHULL:
+    case F_ST_CONVEXHULL:
+    case F_ST_COVERAGEINVALIDEDGES:
+    case F_ST_COVERAGESIMPLIFY:
+    case F_ST_COVERAGEUNION:
+    case F_ST_DIFFERENCE:
+    case F_ST_DUMP:
+    case F_ST_ENDPOINT:
+    case F_ST_ENVELOPE:
+    case F_ST_EXTENT:
+    case F_ST_EXTENT_APPROX:
+    case F_ST_EXTERIORRING:
+    case F_ST_FLIPCOORDINATES:
+    case F_ST_FORCE2D:
+    case F_ST_FORCE3DM:
+    case F_ST_FORCE3DZ:
+    case F_ST_FORCE4D:
+    case F_ST_GEOMFROMHEXEWKB:
+    case F_ST_GEOMFROMHEXWKB:
+    case F_ST_INTERSECTION:
+    case F_ST_LINEINTERPOLATEPOINT:
+    case F_ST_LINEINTERPOLATEPOINTS:
+    case F_ST_LINEMERGE:
+    case F_ST_LINESTRING2DFROMWKB:
+    case F_ST_LINESUBSTRING:
+    case F_ST_MAKEENVELOPE:
+    case F_ST_MAKELINE:
+    case F_ST_MAKEPOLYGON:
+    case F_ST_MAKEVALID:
+    case F_ST_MAXIMUMINSCRIBEDCIRCLE:
+    case F_ST_MINIMUMROTATEDRECTANGLE:
+    case F_ST_MULTI:
+    case F_ST_NODE:
+    case F_ST_NORMALIZE:
+    case F_ST_POINT:
+    case F_ST_POINT2D:
+    case F_ST_POINT2DFROMWKB:
+    case F_ST_POINT3D:
+    case F_ST_POINT4D:
+    case F_ST_POINTN:
+    case F_ST_POINTONSURFACE:
+    case F_ST_POINTS:
+    case F_ST_POLYGON2DFROMWKB:
+    case F_ST_POLYGONIZE:
+    case F_ST_REDUCEPRECISION:
+    case F_ST_REMOVEREPEATEDPOINTS:
+    case F_ST_REVERSE:
+    case F_ST_SHORTESTLINE:
+    case F_ST_SIMPLIFY:
+    case F_ST_SIMPLIFYPRESERVETOPOLOGY:
+    case F_ST_STARTPOINT:
+    case F_ST_TILEENVELOPE:
+    case F_ST_TRANSFORM:
+    case F_ST_UNION:
+    case F_ST_VORONOIDIAGRAM:
+      return &sig_ret_object_arg_r_any;
+    case F_ST_ASWKB:
+      return &sig_ret_varbit_arg_r_any;
+    case F_ST_AZIMUTH:
+    case F_ST_AREA_SPHEROID:
+    case F_ST_DISTANCE_GEOS:
+    case F_ST_DISTANCE_SPHERE:
+    case F_ST_DISTANCE_SPHEROID:
+    case F_ST_LENGTH_SPHEROID:
+    case F_ST_M:
+    case F_ST_MMAX:
+    case F_ST_MMIN:
+    case F_ST_PERIMETER:
+    case F_ST_PERIMETER_SPHEROID:
+    case F_ST_XMAX:
+    case F_ST_XMIN:
+    case F_ST_YMAX:
+    case F_ST_YMIN:
+    case F_ST_Z:
+    case F_ST_ZMAX:
+    case F_ST_ZMIN:
+      return &sig_ret_double_arg_r_any;
+    case F_ST_CONTAINSPROPERLY:
+    case F_ST_COVEREDBY:
+    case F_ST_COVERS:
+    case F_ST_CROSSES:
+    case F_ST_DWITHIN:
+    case F_ST_DWITHIN_GEOS:
+    case F_ST_DWITHIN_SPHEROID:
+    case F_ST_DIMENSION:
+    case F_ST_DISJOINT:
+    case F_ST_EQUALS:
+    case F_ST_HASM:
+    case F_ST_HASZ:
+    case F_ST_HILBERT:
+    case F_ST_INTERSECTS_EXTENT:
+    case F_ST_ISCLOSED:
+    case F_ST_ISEMPTY:
+    case F_ST_ISRING:
+    case F_ST_ISSIMPLE:
+    case F_ST_ISVALID:
+    case F_ST_NGEOMETRIES:
+    case F_ST_NINTERIORRINGS:
+    case F_ST_NPOINTS:
+    case F_ST_NUMGEOMETRIES:
+    case F_ST_NUMINTERIORRINGS:
+    case F_ST_NUMPOINTS:
+    case F_ST_OVERLAPS:
+    case F_ST_TOUCHES:
+    case F_ST_WITHIN:
+    case F_ST_WITHINPROPERLY:
+    case F_ST_ZMFLAG:
+      return &sig_ret_int_arg_r_any;
+    case F_ST_ASHEXWKB:
+    case F_ST_ASGEOJSON:
+    case F_ST_ASSVG:
+    case F_ST_QUADKEY:
+      return &sig_ret_string_arg_r_any;
     default:
       assert (false);
       return nullptr;
@@ -2952,6 +3169,136 @@ pt_is_function_new_type_checking (FUNC_CODE fcode)
     case F_REGEXP_LIKE:
     case F_REGEXP_REPLACE:
     case F_REGEXP_SUBSTR:
+    case F_ST_AFFINE:
+    case F_ST_AREA_SPHEROID:
+    case F_ST_ASGEOJSON:
+    case F_ST_ASHEXWKB:
+    case F_ST_ASSVG:
+    case F_ST_ASTEXT:
+    case F_ST_ASWKB:
+    case F_ST_ASBINARY:
+    case F_ST_AZIMUTH:
+    case F_ST_BOUNDARY:
+    case F_ST_BUFFER:
+    case F_ST_BUILDAREA:
+    case F_ST_CENTROID:
+    case F_ST_COLLECT:
+    case F_ST_COLLECTIONEXTRACT:
+    case F_ST_CONCAVEHULL:
+    case F_ST_CONTAINSPROPERLY:
+    case F_ST_CONVEXHULL:
+    case F_ST_COVERAGEINVALIDEDGES:
+    case F_ST_COVERAGESIMPLIFY:
+    case F_ST_COVERAGEUNION:
+    case F_ST_COVEREDBY:
+    case F_ST_COVERS:
+    case F_ST_CROSSES:
+    case F_ST_DWITHIN:
+    case F_ST_DWITHIN_GEOS:
+    case F_ST_DWITHIN_SPHEROID:
+    case F_ST_DIFFERENCE:
+    case F_ST_DIMENSION:
+    case F_ST_DISJOINT:
+    case F_ST_DISTANCE_GEOS:
+    case F_ST_DISTANCE_SPHERE:
+    case F_ST_DISTANCE_SPHEROID:
+    case F_ST_DUMP:
+    case F_ST_ENDPOINT:
+    case F_ST_ENVELOPE:
+    case F_ST_EQUALS:
+    case F_ST_EXTENT:
+    case F_ST_EXTENT_APPROX:
+    case F_ST_EXTERIORRING:
+    case F_ST_FLIPCOORDINATES:
+    case F_ST_FORCE2D:
+    case F_ST_FORCE3DM:
+    case F_ST_FORCE3DZ:
+    case F_ST_FORCE4D:
+    case F_ST_GEOMFROMTEXT:
+    case F_ST_GEOMFROMWKB:
+    case F_ST_GEOMFROMGEOJSON:
+    case F_ST_GEOMFROMHEXEWKB:
+    case F_ST_GEOMFROMHEXWKB:
+    case F_ST_SRID:
+    case F_ST_SETSRID:
+    case F_ST_GEOMETRYTYPE:
+    case F_ST_HASM:
+    case F_ST_HASZ:
+    case F_ST_HILBERT:
+    case F_ST_INTERSECTION:
+    case F_ST_INTERSECTS_EXTENT:
+    case F_ST_ISCLOSED:
+    case F_ST_ISEMPTY:
+    case F_ST_ISRING:
+    case F_ST_ISSIMPLE:
+    case F_ST_ISVALID:
+    case F_ST_LENGTH_SPHEROID:
+    case F_ST_LINEINTERPOLATEPOINT:
+    case F_ST_LINEINTERPOLATEPOINTS:
+    case F_ST_LINEMERGE:
+    case F_ST_LINESTRING2DFROMWKB:
+    case F_ST_LINESUBSTRING:
+    case F_ST_M:
+    case F_ST_MMAX:
+    case F_ST_MMIN:
+    case F_ST_MAKEENVELOPE:
+    case F_ST_MAKELINE:
+    case F_ST_MAKEPOLYGON:
+    case F_ST_MAKEVALID:
+    case F_ST_MAXIMUMINSCRIBEDCIRCLE:
+    case F_ST_MINIMUMROTATEDRECTANGLE:
+    case F_ST_MULTI:
+    case F_ST_NGEOMETRIES:
+    case F_ST_NINTERIORRINGS:
+    case F_ST_NPOINTS:
+    case F_ST_NODE:
+    case F_ST_NORMALIZE:
+    case F_ST_NUMGEOMETRIES:
+    case F_ST_NUMINTERIORRINGS:
+    case F_ST_NUMPOINTS:
+    case F_ST_OVERLAPS:
+    case F_ST_PERIMETER:
+    case F_ST_PERIMETER_SPHEROID:
+    case F_ST_POINT:
+    case F_ST_POINT2D:
+    case F_ST_POINT2DFROMWKB:
+    case F_ST_POINT3D:
+    case F_ST_POINT4D:
+    case F_ST_POINTN:
+    case F_ST_POINTONSURFACE:
+    case F_ST_POINTS:
+    case F_ST_POLYGON2DFROMWKB:
+    case F_ST_POLYGONIZE:
+    case F_ST_QUADKEY:
+    case F_ST_REDUCEPRECISION:
+    case F_ST_REMOVEREPEATEDPOINTS:
+    case F_ST_REVERSE:
+    case F_ST_SHORTESTLINE:
+    case F_ST_SIMPLIFY:
+    case F_ST_SIMPLIFYPRESERVETOPOLOGY:
+    case F_ST_STARTPOINT:
+    case F_ST_TILEENVELOPE:
+    case F_ST_TOUCHES:
+    case F_ST_TRANSFORM:
+    case F_ST_UNION:
+    case F_ST_VORONOIDIAGRAM:
+    case F_ST_WITHIN:
+    case F_ST_WITHINPROPERLY:
+    case F_ST_X:
+    case F_ST_XMAX:
+    case F_ST_XMIN:
+    case F_ST_Y:
+    case F_ST_YMAX:
+    case F_ST_YMIN:
+    case F_ST_Z:
+    case F_ST_ZMFLAG:
+    case F_ST_ZMAX:
+    case F_ST_ZMIN:
+    case F_ST_DISTANCE:
+    case F_ST_CONTAINS:
+    case F_ST_INTERSECTS:
+    case F_ST_AREA:
+    case F_ST_LENGTH:
     // COUNT functions
     case PT_COUNT:
     case PT_COUNT_STAR:

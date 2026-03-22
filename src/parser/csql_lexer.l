@@ -411,6 +411,12 @@ IDL       [a-zA-Z0-9_]
 [fF][lL][oO][aA][tT]							{ begin_token(yytext);   return FLOAT_; }
 [fF][oO][rR]								{ begin_token(yytext);   return For; }
 [gG][eE][nN][eE][rR][aA][lL]						{ begin_token(yytext);   return GENERAL; }
+[gG][eE][oO][gG][rR][aA][pP][hH][yY]					{ begin_token(yytext);
+										csql_yylval.cptr = pt_makename(yytext);
+										return GEOGRAPHY; }
+[gG][eE][oO][mM][eE][tT][rR][yY][cC][oO][lL][lL][eE][cC][tT][iI][oO][nN]		{ begin_token(yytext);
+										csql_yylval.cptr = pt_makename(yytext);
+										return GEOMETRYCOLLECTION; }
 [gG][eE][tT]								{ begin_token(yytext);   return GET; }
 [gG][eE]_[iI][nN][fF]							{ begin_token(yytext);
 										csql_yylval.cptr = pt_makename(yytext);
@@ -421,6 +427,9 @@ IDL       [a-zA-Z0-9_]
 [gG][eE]_[lL][tT]							{ begin_token(yytext);
 										csql_yylval.cptr = pt_makename(yytext);
 										return GE_LT_; }
+[gG][eE][oO][mM][eE][tT][rR][yY]					{ begin_token(yytext);
+										csql_yylval.cptr = pt_makename(yytext);
+										return GEOMETRY; }
 [gG][lL][oO][bB][aA][lL]						{ begin_token(yytext);   return GLOBAL; }
 [gG][oO]								{ begin_token(yytext);   return GO; }
 [gG][oO][tT][oO]							{ begin_token(yytext);   return GOTO; }
@@ -645,6 +654,9 @@ IDL       [a-zA-Z0-9_]
 [lL][eE][vV][eE][lL]							{ begin_token(yytext);   return LEVEL; }
 [lL][iI][kK][eE]							{ begin_token(yytext);   return LIKE; }
 [lL][iI][mM][iI][tT]							{ begin_token(yytext);   return LIMIT; }
+[lL][iI][nN][eE][sS][tT][rR][iI][nN][gG]					{ begin_token(yytext);
+										csql_yylval.cptr = pt_makename(yytext);
+										return LINESTRING; }
 [lL][iI][sS][tT]							{ begin_token(yytext);   return LIST; }
 [lL][oO][cC][aA][lL]							{ begin_token(yytext);   return LOCAL; }
 [lL][oO][cC][aA][lL]_[tT][rR][aA][nN][sS][aA][cC][tT][iI][oO][nN]_[iI][dD] { begin_token(yytext);   return LOCAL_TRANSACTION_ID; }
@@ -688,6 +700,15 @@ IDL       [a-zA-Z0-9_]
 [mM][oO][dD][iI][fF][yY]						{ begin_token(yytext);   return MODIFY; }
 [mM][oO][dD][uU][lL][eE]						{ begin_token(yytext);   return MODULE; }
 [mM][oO][nN][tT][hH]							{ begin_token(yytext);   return MONTH_; }
+[mM][uU][lL][tT][iI][lL][iI][nN][eE][sS][tT][rR][iI][nN][gG]			{ begin_token(yytext);
+										csql_yylval.cptr = pt_makename(yytext);
+										return MULTILINESTRING; }
+[mM][uU][lL][tT][iI][pP][oO][iI][nN][tT]					{ begin_token(yytext);
+										csql_yylval.cptr = pt_makename(yytext);
+										return MULTIPOINT; }
+[mM][uU][lL][tT][iI][pP][oO][lL][yY][gG][oO][nN]				{ begin_token(yytext);
+										csql_yylval.cptr = pt_makename(yytext);
+										return MULTIPOLYGON; }
 [mM][uU][lL][tT][iI][sS][eE][tT]					{ begin_token(yytext);   return MULTISET; }
 [mM][uU][lL][tT][iI][sS][eE][tT]_[oO][fF]				{ begin_token(yytext);   return MULTISET_OF; }
 [mM][aA][xX]								{ begin_token(yytext);   return Max; }
@@ -799,6 +820,9 @@ IDL       [a-zA-Z0-9_]
 [pP][eE][rR][cC][eE][nN][tT][iI][lL][eE]_[dD][iI][sS][cC]	        { begin_token(yytext);
 										csql_yylval.cptr = pt_makename(yytext);
 										return PERCENTILE_DISC; }
+[pP][oO][iI][nN][tT]							{ begin_token(yytext);
+										csql_yylval.cptr = pt_makename(yytext);
+										return POINT; }
 [pP][lL][cC][sS][qQ][lL]				                { begin_token(yytext);
 										csql_yylval.cptr = pt_makename(yytext);
 										return PLCSQL; }
@@ -828,6 +852,9 @@ IDL       [a-zA-Z0-9_]
 [pP][rR][oO][pP][eE][rR][tT][iI][eE][sS]				{ begin_token(yytext);
 										csql_yylval.cptr = pt_makename(yytext);
 										return PROPERTIES; }
+[pP][oO][lL][yY][gG][oO][nN]						{ begin_token(yytext);
+										csql_yylval.cptr = pt_makename(yytext);
+										return POLYGON; }
 [pP][uU][bB][lL][iI][cC]						{ begin_token(yytext);
 										csql_yylval.cptr = pt_makename(yytext);
 										return PUBLIC; }
