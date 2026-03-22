@@ -253,6 +253,12 @@ void db_value_printer::describe_type (const db_value *value)
 	case DB_TYPE_JSON:
 	  m_buf ("JSON");
 	  break;
+	case DB_TYPE_GEOMETRY:
+	  m_buf ("GEOMETRY");
+	  break;
+	case DB_TYPE_GEOGRAPHY:
+	  m_buf ("GEOGRAPHY");
+	  break;
 	default:
 	  m_buf ("UNKNOWN");
 	  break;
@@ -322,6 +328,16 @@ void db_value_printer::describe_value (const db_value *value)
 
 	case DB_TYPE_JSON:
 	  m_buf ("json '");
+	  describe_data (value);
+	  m_buf += '\'';
+	  break;
+	case DB_TYPE_GEOMETRY:
+	  m_buf ("geometry '");
+	  describe_data (value);
+	  m_buf += '\'';
+	  break;
+	case DB_TYPE_GEOGRAPHY:
+	  m_buf ("geography '");
 	  describe_data (value);
 	  m_buf += '\'';
 	  break;
@@ -528,6 +544,10 @@ void db_value_printer::describe_data (const db_value *value)
       json_body = db_get_json_raw_body (value);
       m_buf ("%s", json_body);
       db_private_free (NULL, json_body);
+      break;
+    case DB_TYPE_GEOMETRY:
+    case DB_TYPE_GEOGRAPHY:
+      m_buf ("%s", db_get_spatial_string (value));
       break;
 
     case DB_TYPE_MIDXKEY:

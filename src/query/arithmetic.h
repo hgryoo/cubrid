@@ -95,4 +95,19 @@ extern int db_evaluate_json_type_dbval (DB_VALUE * result, DB_VALUE * const *arg
 extern int db_evaluate_json_unquote (DB_VALUE * result, DB_VALUE * const *args, int num_args);
 extern int db_evaluate_json_valid (DB_VALUE * result, DB_VALUE * const *args, int num_args);
 
+// spatial functions
+extern int db_evaluate_st_astext (DB_VALUE * result, DB_VALUE * const *args, int num_args);
+extern int db_evaluate_st_geomfromtext (DB_VALUE * result, DB_VALUE * const *args, int num_args);
+extern int db_evaluate_st_srid (DB_VALUE * result, DB_VALUE * const *args, int num_args);
+extern int db_evaluate_st_setsrid (DB_VALUE * result, DB_VALUE * const *args, int num_args);
+extern int db_evaluate_st_geometrytype (DB_VALUE * result, DB_VALUE * const *args, int num_args);
+extern int db_evaluate_st_x (DB_VALUE * result, DB_VALUE * const *args, int num_args);
+extern int db_evaluate_st_y (DB_VALUE * result, DB_VALUE * const *args, int num_args);
+extern int db_evaluate_st_distance (DB_VALUE * result, DB_VALUE * const *args, int num_args);
+extern int db_evaluate_st_contains (DB_VALUE * result, DB_VALUE * const *args, int num_args);
+extern int db_evaluate_st_intersects (DB_VALUE * result, DB_VALUE * const *args, int num_args);
+extern int db_evaluate_st_area (DB_VALUE * result, DB_VALUE * const *args, int num_args);
+extern int db_evaluate_st_length (DB_VALUE * result, DB_VALUE * const *args, int num_args);
+extern int db_evaluate_st_envelope (DB_VALUE * result, DB_VALUE * const *args, int num_args);
+
 #endif /* _ARITHMETIC_H_ */

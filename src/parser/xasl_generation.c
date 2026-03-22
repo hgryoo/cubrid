@@ -6923,9 +6923,21 @@ pt_function_to_regu (PARSER_CONTEXT * parser, PT_NODE * function)
 	case F_JSON_TYPE:
 	case F_JSON_UNQUOTE:
 	case F_JSON_VALID:
+	case F_ST_ASTEXT:
+	case F_ST_GEOMFROMTEXT:
+	case F_ST_SRID:
+	case F_ST_SETSRID:
+	case F_ST_GEOMETRYTYPE:
+	case F_ST_X:
+	case F_ST_Y:
+	case F_ST_DISTANCE:
+	case F_ST_CONTAINS:
+	case F_ST_INTERSECTS:
+	case F_ST_AREA:
+	case F_ST_LENGTH:
+	case F_ST_ENVELOPE:
 	  result_type = pt_node_to_db_type (function);
 	  break;
-	case F_ST_ASTEXT:
 	case F_ST_AFFINE:
 	case F_ST_AREA_SPHEROID:
 	case F_ST_ASGEOJSON:
@@ -6941,20 +6953,14 @@ pt_function_to_regu (PARSER_CONTEXT * parser, PT_NODE * function)
 	case F_ST_COLLECT:
 	case F_ST_COLLECTIONEXTRACT:
 	case F_ST_CONCAVEHULL:
-	case F_ST_GEOMFROMTEXT:
 	case F_ST_GEOMFROMWKB:
 	case F_ST_GEOMFROMGEOJSON:
 	case F_ST_GEOMFROMHEXEWKB:
 	case F_ST_GEOMFROMHEXWKB:
-	case F_ST_SRID:
-	case F_ST_SETSRID:
-	case F_ST_GEOMETRYTYPE:
 	case F_ST_HASM:
 	case F_ST_HASZ:
 	case F_ST_HILBERT:
 	case F_ST_INTERSECTION:
-	case F_ST_X:
-	case F_ST_Y:
 	case F_ST_XMAX:
 	case F_ST_XMIN:
 	case F_ST_YMAX:
@@ -6963,11 +6969,9 @@ pt_function_to_regu (PARSER_CONTEXT * parser, PT_NODE * function)
 	case F_ST_ZMFLAG:
 	case F_ST_ZMAX:
 	case F_ST_ZMIN:
-	case F_ST_DISTANCE:
 	case F_ST_DISTANCE_GEOS:
 	case F_ST_DISTANCE_SPHERE:
 	case F_ST_DISTANCE_SPHEROID:
-	case F_ST_CONTAINS:
 	case F_ST_CONTAINSPROPERLY:
 	case F_ST_CONVEXHULL:
 	case F_ST_COVERAGEINVALIDEDGES:
@@ -6984,7 +6988,6 @@ pt_function_to_regu (PARSER_CONTEXT * parser, PT_NODE * function)
 	case F_ST_DISJOINT:
 	case F_ST_DUMP:
 	case F_ST_ENDPOINT:
-	case F_ST_ENVELOPE:
 	case F_ST_EQUALS:
 	case F_ST_EXTENT:
 	case F_ST_EXTENT_APPROX:
@@ -6994,15 +6997,12 @@ pt_function_to_regu (PARSER_CONTEXT * parser, PT_NODE * function)
 	case F_ST_FORCE3DM:
 	case F_ST_FORCE3DZ:
 	case F_ST_FORCE4D:
-	case F_ST_INTERSECTS:
 	case F_ST_INTERSECTS_EXTENT:
 	case F_ST_ISCLOSED:
 	case F_ST_ISEMPTY:
 	case F_ST_ISRING:
 	case F_ST_ISSIMPLE:
 	case F_ST_ISVALID:
-	case F_ST_AREA:
-	case F_ST_LENGTH:
 	case F_ST_LENGTH_SPHEROID:
 	case F_ST_LINEINTERPOLATEPOINT:
 	case F_ST_LINEINTERPOLATEPOINTS:

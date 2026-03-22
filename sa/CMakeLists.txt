@@ -739,17 +739,23 @@ target_include_directories(cubridsa
   PRIVATE
     ${FLEX_INCLUDE_DIRS}
     ${EP_INCLUDES}
+    ${LIBGEOS_INCLUDES}
   )
 
 target_link_libraries(cubridsa
   PRIVATE
     ${EP_LIBS}
+    ${LIBGEOS_LIBS}
   PUBLIC
     ${CMAKE_DL_LIBS}
     stdc++fs
     rt
     cascci
   )
+
+if(LIBGEOS_TARGET AND TARGET ${LIBGEOS_TARGET})
+  add_dependencies(cubridsa ${LIBGEOS_TARGET})
+endif()
 
 add_dependencies(cubridsa
   gen_csql_grammar

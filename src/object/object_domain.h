@@ -173,6 +173,8 @@ extern TP_DOMAIN tp_VarBit_domain;
 extern TP_DOMAIN tp_Midxkey_domain;
 extern TP_DOMAIN tp_Enumeration_domain;
 extern TP_DOMAIN tp_Json_domain;
+extern TP_DOMAIN tp_Geometry_domain;
+extern TP_DOMAIN tp_Geography_domain;
 extern TP_DOMAIN tp_Bigint_domain;
 
 /*
@@ -251,6 +253,9 @@ typedef enum tp_match
                                      || TP_IS_BIT_TYPE(typeid))
 
 #define TP_IS_STRING_TYPE(typeid) TP_IS_CHAR_BIT_TYPE((typeid))
+
+#define TP_IS_SPATIAL_TYPE(typeid) \
+  (((typeid) == DB_TYPE_GEOMETRY) || ((typeid) == DB_TYPE_GEOGRAPHY))
 
 #define TP_IS_NUMERIC_TYPE(typeid) \
   (((typeid) == DB_TYPE_INTEGER) || ((typeid) == DB_TYPE_FLOAT) \

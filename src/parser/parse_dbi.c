@@ -80,6 +80,8 @@ static PT_NODE *pt_bind_helper (PARSER_CONTEXT * parser, PT_NODE * node, DB_VALU
 static PT_NODE *pt_bind_set_type (PARSER_CONTEXT * parser, PT_NODE * node, DB_VALUE * val, int *data_type_added);
 static PT_NODE *pt_set_elements_to_value (PARSER_CONTEXT * parser, const DB_VALUE * val);
 static int pt_get_enumeration_from_data_type (PARSER_CONTEXT * parser, PT_NODE * dt, DB_ENUMERATION * enumeration);
+static const char *pt_spatial_subtype_to_name (int subtype);
+static const char *pt_spatial_domain_name (const PT_NODE * dt);
 
 /*
  * pt_misc_to_qp_misc_operand() - convert a PT_MISC_TYPE trim qualifier or
@@ -657,6 +659,21 @@ pt_dbval_to_value (PARSER_CONTEXT * parser, const DB_VALUE * val)
 		    pt_append_bytes (parser, NULL, db_get_json_schema (val), strlen (db_get_json_schema (val)));
 		}
 	    }
+	}
+      break;
+    case DB_TYPE_GEOMETRY:
+    case DB_TYPE_GEOGRAPHY:
+      result->data_type = parser_new_node (parser, PT_DATA_TYPE);
+      if (result->data_type == NULL)
+	{
+	  parser_free_node (parser, result);
+	  result = NULL;
+	}
+      else
+	{
+	  result->data_type->type_enum = result->type_enum;
+	  result->info.value.data_value.str =
+	    pt_append_nulstring (parser, (PARSER_VARCHAR *) NULL, db_get_spatial_string (val));
 	}
       break;
     case DB_TYPE_NUMERIC:
@@ -1516,6 +1533,12 @@ pt_type_enum_to_db_domain_name (const PT_TYPE_ENUM t)
     case PT_TYPE_JSON:
       name = "json";
       break;
+    case PT_TYPE_GEOMETRY:
+      name = "geometry";
+      break;
+    case PT_TYPE_GEOGRAPHY:
+      name = "geography";
+      break;
     }
 
   return name;
@@ -1587,6 +1610,8 @@ pt_type_enum_to_db_domain (const PT_TYPE_ENUM t)
     case DB_TYPE_MIDXKEY:
     case DB_TYPE_ENUMERATION:
     case DB_TYPE_JSON:
+    case DB_TYPE_GEOMETRY:
+    case DB_TYPE_GEOGRAPHY:
       retval = tp_domain_construct (domain_type, (DB_OBJECT *) 0, 0, 0, (TP_DOMAIN *) 0);
       break;
 
@@ -1644,8 +1669,14 @@ pt_data_type_to_db_domain_name (const PT_NODE * dt)
       return "unknown data_type";
     }
 
-  if (dt->type_enum == PT_TYPE_OBJECT)
+  if (dt->type_enum == PT_TYPE_OBJECT
+      || dt->type_enum == PT_TYPE_GEOMETRY
+      || dt->type_enum == PT_TYPE_GEOGRAPHY)
     {
+      if (dt->type_enum == PT_TYPE_GEOMETRY || dt->type_enum == PT_TYPE_GEOGRAPHY)
+	{
+	  return pt_spatial_domain_name (dt);
+	}
       if (dt->info.data_type.entity && dt->info.data_type.entity->node_type == PT_NAME)
 	{
 	  return dt->info.data_type.entity->info.name.original;
@@ -1828,7 +1859,19 @@ pt_data_type_to_db_domain (PARSER_CONTEXT * parser, PT_NODE * dt, const char *cl
     case DB_TYPE_VOBJ:
     case DB_TYPE_OID:
     case DB_TYPE_BIGINT:
-      return pt_type_enum_to_db_domain (dt->type_enum);
+    case DB_TYPE_GEOMETRY:
+    case DB_TYPE_GEOGRAPHY:
+      {
+	DB_DOMAIN *domain = pt_type_enum_to_db_domain (dt->type_enum);
+
+	if (domain != NULL && TP_IS_SPATIAL_TYPE (domain_type))
+	  {
+	    domain->precision = dt->info.data_type.precision;
+	    domain->scale = dt->info.data_type.dec_precision;
+	  }
+
+	return domain;
+      }
 
     case DB_TYPE_JSON:
       if (dt->info.data_type.json_schema)
@@ -2056,7 +2099,19 @@ pt_node_data_type_to_db_domain (PARSER_CONTEXT * parser, PT_NODE * dt, PT_TYPE_E
     case DB_TYPE_OID:
     case DB_TYPE_MIDXKEY:
     case DB_TYPE_BIGINT:
-      return pt_type_enum_to_db_domain (type);
+    case DB_TYPE_GEOMETRY:
+    case DB_TYPE_GEOGRAPHY:
+      {
+	DB_DOMAIN *domain = pt_type_enum_to_db_domain (type);
+
+	if (domain != NULL && TP_IS_SPATIAL_TYPE (domain_type))
+	  {
+	    domain->precision = dt->info.data_type.precision;
+	    domain->scale = dt->info.data_type.dec_precision;
+	  }
+
+	return domain;
+      }
 
     case DB_TYPE_JSON:
       if (dt->info.data_type.json_schema)
@@ -2361,6 +2416,12 @@ pt_type_enum_to_db (const PT_TYPE_ENUM t)
 
     case PT_TYPE_JSON:
       db_type = DB_TYPE_JSON;
+      break;
+    case PT_TYPE_GEOMETRY:
+      db_type = DB_TYPE_GEOMETRY;
+      break;
+    case PT_TYPE_GEOGRAPHY:
+      db_type = DB_TYPE_GEOGRAPHY;
       break;
 
     case PT_TYPE_OBJECT:
@@ -2683,6 +2744,12 @@ pt_db_to_type_enum (const DB_TYPE t)
     case DB_TYPE_JSON:
       pt_type = PT_TYPE_JSON;
       break;
+    case DB_TYPE_GEOMETRY:
+      pt_type = PT_TYPE_GEOMETRY;
+      break;
+    case DB_TYPE_GEOGRAPHY:
+      pt_type = PT_TYPE_GEOGRAPHY;
+      break;
 
       /* these guys should not get encountered */
     case DB_TYPE_OID:
@@ -2929,6 +2996,21 @@ pt_bind_helper (PARSER_CONTEXT * parser, PT_NODE * node, DB_VALUE * val, int *da
 	    {
 	      const char *schema_raw = val->data.json.schema_raw;
 	      dt->info.data_type.json_schema = pt_append_bytes (parser, NULL, schema_raw, strlen (schema_raw));
+	    }
+	}
+      break;
+
+    case DB_TYPE_GEOMETRY:
+    case DB_TYPE_GEOGRAPHY:
+      dt = parser_new_node (parser, PT_DATA_TYPE);
+      if (dt)
+	{
+	  dt->type_enum = node->type_enum;
+	  dt->info.data_type.entity = parser_new_node (parser, PT_NAME);
+	  if (dt->info.data_type.entity != NULL)
+	    {
+	      dt->info.data_type.entity->info.name.original = (char *) (val_type == DB_TYPE_GEOGRAPHY ?
+								       "GEOGRAPHY" : "GEOMETRY");
 	    }
 	}
       break;
@@ -3482,6 +3564,48 @@ pt_db_value_initialize (PARSER_CONTEXT * parser, PT_NODE * value, DB_VALUE * db_
       *more_type_info_needed = (value->data_type == NULL);
       break;
 
+    case PT_TYPE_GEOMETRY:
+      {
+	char *serialized =
+	  (char *) db_private_alloc (NULL, value->info.value.data_value.str->length + 1);
+	if (serialized == NULL)
+	  {
+	    return (DB_VALUE *) NULL;
+	  }
+	memcpy (serialized, value->info.value.data_value.str->bytes, value->info.value.data_value.str->length);
+	serialized[value->info.value.data_value.str->length] = '\0';
+	db_value_domain_init (db_value, DB_TYPE_GEOMETRY,
+			      value->data_type ? value->data_type->info.data_type.precision : DB_SPATIAL_SUBTYPE_ANY,
+			      value->data_type ? value->data_type->info.data_type.dec_precision : 0);
+	db_make_geometry_ex (db_value, serialized, value->info.value.data_value.str->length,
+			     value->data_type ? value->data_type->info.data_type.precision : DB_SPATIAL_SUBTYPE_ANY,
+			     value->data_type ? value->data_type->info.data_type.dec_precision : 0, true);
+      }
+      value->info.value.db_value_is_in_workspace = true;
+      *more_type_info_needed = (value->data_type == NULL);
+      break;
+
+    case PT_TYPE_GEOGRAPHY:
+      {
+	char *serialized =
+	  (char *) db_private_alloc (NULL, value->info.value.data_value.str->length + 1);
+	if (serialized == NULL)
+	  {
+	    return (DB_VALUE *) NULL;
+	  }
+	memcpy (serialized, value->info.value.data_value.str->bytes, value->info.value.data_value.str->length);
+	serialized[value->info.value.data_value.str->length] = '\0';
+	db_value_domain_init (db_value, DB_TYPE_GEOGRAPHY,
+			      value->data_type ? value->data_type->info.data_type.precision : DB_SPATIAL_SUBTYPE_ANY,
+			      value->data_type ? value->data_type->info.data_type.dec_precision : 0);
+	db_make_geography_ex (db_value, serialized, value->info.value.data_value.str->length,
+			      value->data_type ? value->data_type->info.data_type.precision : DB_SPATIAL_SUBTYPE_ANY,
+			      value->data_type ? value->data_type->info.data_type.dec_precision : 0, true);
+      }
+      value->info.value.db_value_is_in_workspace = true;
+      *more_type_info_needed = (value->data_type == NULL);
+      break;
+
     case PT_TYPE_OBJECT:
       db_make_object (db_value, value->info.value.data_value.op);
       value->info.value.db_value_is_in_workspace = true;
@@ -3546,4 +3670,56 @@ db_json_val_from_str (const char *raw_str, const int str_size, DB_VALUE * json_v
   db_make_json (json_val, json_doc, true);
 
   return error_code;
+}
+static const char *
+pt_spatial_subtype_to_name (int subtype)
+{
+  switch (subtype)
+    {
+    case DB_SPATIAL_SUBTYPE_POINT:
+      return "POINT";
+    case DB_SPATIAL_SUBTYPE_LINESTRING:
+      return "LINESTRING";
+    case DB_SPATIAL_SUBTYPE_POLYGON:
+      return "POLYGON";
+    case DB_SPATIAL_SUBTYPE_MULTIPOINT:
+      return "MULTIPOINT";
+    case DB_SPATIAL_SUBTYPE_MULTILINESTRING:
+      return "MULTILINESTRING";
+    case DB_SPATIAL_SUBTYPE_MULTIPOLYGON:
+      return "MULTIPOLYGON";
+    case DB_SPATIAL_SUBTYPE_GEOMETRYCOLLECTION:
+      return "GEOMETRYCOLLECTION";
+    case DB_SPATIAL_SUBTYPE_ANY:
+    default:
+      return NULL;
+    }
+}
+
+static const char *
+pt_spatial_domain_name (const PT_NODE * dt)
+{
+  static char spatial_buf[128];
+  const char *base_name = (dt->type_enum == PT_TYPE_GEOGRAPHY) ? "geography" : "geometry";
+  const char *subtype_name = pt_spatial_subtype_to_name (dt->info.data_type.precision);
+
+  if (subtype_name == NULL && dt->info.data_type.dec_precision <= 0)
+    {
+      return base_name;
+    }
+
+  if (subtype_name != NULL && dt->info.data_type.dec_precision > 0)
+    {
+      snprintf (spatial_buf, sizeof (spatial_buf), "%s(%s,%d)", base_name, subtype_name, dt->info.data_type.dec_precision);
+    }
+  else if (subtype_name != NULL)
+    {
+      snprintf (spatial_buf, sizeof (spatial_buf), "%s(%s)", base_name, subtype_name);
+    }
+  else
+    {
+      snprintf (spatial_buf, sizeof (spatial_buf), "%s(%d)", base_name, dt->info.data_type.dec_precision);
+    }
+
+  return spatial_buf;
 }

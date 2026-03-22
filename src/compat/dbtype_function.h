@@ -224,6 +224,9 @@
 #define DB_GET_COMPRESSED_SIZE(value) db_get_compressed_size(value)
 
 #define DB_GET_JSON_DOCUMENT(value) db_get_json_document(value)
+#define DB_GET_SPATIAL(value) db_get_spatial(value)
+#define DB_GET_SPATIAL_STRING(value) db_get_spatial_string(value)
+#define DB_GET_SPATIAL_STRING_SIZE(value) db_get_spatial_string_size(value)
 
 #define DB_GET_SEQ DB_GET_SEQUENCE
 
@@ -291,6 +294,10 @@ extern "C"
   extern int db_convert_json_into_scalar (const DB_VALUE * src, DB_VALUE * dest);
   extern bool db_is_json_value_type (DB_TYPE type);
   extern bool db_is_json_doc_type (DB_TYPE type);
+  extern const DB_SPATIAL *db_get_spatial (const DB_VALUE * value);
+  extern const char *db_get_spatial_string (const DB_VALUE * value);
+  extern int db_get_spatial_string_size (const DB_VALUE * value);
+  extern int db_spatial_build_internal (DB_VALUE * value);
 
   extern int db_get_int (const DB_VALUE * value);
   extern DB_C_SHORT db_get_short (const DB_VALUE * value);
@@ -382,6 +389,15 @@ extern "C"
 					int compressed_size, bool compressed_need_clear);
 
   extern int db_make_json (DB_VALUE * value, JSON_DOC * json_document, bool need_clear);
+  extern int db_make_spatial_ex (DB_VALUE * value, DB_TYPE type, const char *serialized, int length, int subtype, int srid,
+				 bool need_clear);
+  extern int db_make_spatial (DB_VALUE * value, DB_TYPE type, const char *serialized, int length, bool need_clear);
+  extern int db_make_geometry_ex (DB_VALUE * value, const char *serialized, int length, int subtype, int srid,
+				  bool need_clear);
+  extern int db_make_geometry (DB_VALUE * value, const char *serialized, int length, bool need_clear);
+  extern int db_make_geography_ex (DB_VALUE * value, const char *serialized, int length, int subtype, int srid,
+				   bool need_clear);
+  extern int db_make_geography (DB_VALUE * value, const char *serialized, int length, bool need_clear);
 
 #ifdef __cplusplus
 }

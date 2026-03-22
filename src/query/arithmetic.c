@@ -39,6 +39,8 @@
 #include "string_opfunc.h"
 #include "tz_support.h"
 
+#include <geos_c.h>
+
 #include <algorithm>
 #include <assert.h>
 #include <cctype>
@@ -6520,4 +6522,636 @@ is_any_arg_null (DB_VALUE * const *args, int num_args)
 	}
     }
   return false;
+}
+
+static int
+spatial_geos_type_to_subtype (int geos_type)
+{
+  switch (geos_type)
+    {
+    case GEOS_POINT:
+      return DB_SPATIAL_SUBTYPE_POINT;
+    case GEOS_LINESTRING:
+    case GEOS_LINEARRING:
+      return DB_SPATIAL_SUBTYPE_LINESTRING;
+    case GEOS_POLYGON:
+      return DB_SPATIAL_SUBTYPE_POLYGON;
+    case GEOS_MULTIPOINT:
+      return DB_SPATIAL_SUBTYPE_MULTIPOINT;
+    case GEOS_MULTILINESTRING:
+      return DB_SPATIAL_SUBTYPE_MULTILINESTRING;
+    case GEOS_MULTIPOLYGON:
+      return DB_SPATIAL_SUBTYPE_MULTIPOLYGON;
+    case GEOS_GEOMETRYCOLLECTION:
+      return DB_SPATIAL_SUBTYPE_GEOMETRYCOLLECTION;
+    default:
+      return DB_SPATIAL_SUBTYPE_ANY;
+    }
+}
+
+static const char *
+spatial_subtype_to_name (int subtype)
+{
+  switch (subtype)
+    {
+    case DB_SPATIAL_SUBTYPE_POINT:
+      return "POINT";
+    case DB_SPATIAL_SUBTYPE_LINESTRING:
+      return "LINESTRING";
+    case DB_SPATIAL_SUBTYPE_POLYGON:
+      return "POLYGON";
+    case DB_SPATIAL_SUBTYPE_MULTIPOINT:
+      return "MULTIPOINT";
+    case DB_SPATIAL_SUBTYPE_MULTILINESTRING:
+      return "MULTILINESTRING";
+    case DB_SPATIAL_SUBTYPE_MULTIPOLYGON:
+      return "MULTIPOLYGON";
+    case DB_SPATIAL_SUBTYPE_GEOMETRYCOLLECTION:
+      return "GEOMETRYCOLLECTION";
+    default:
+      return "GEOMETRY";
+    }
+}
+
+static int
+spatial_validate_arg (DB_VALUE * value, const DB_SPATIAL **spatial_out)
+{
+  DB_TYPE type;
+
+  if (value == NULL)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OBJ_INVALID_ARGUMENTS, 0);
+      return ER_OBJ_INVALID_ARGUMENTS;
+    }
+
+  type = DB_VALUE_DOMAIN_TYPE (value);
+  if (type != DB_TYPE_GEOMETRY && type != DB_TYPE_GEOGRAPHY)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QPROC_INVALID_DATATYPE, 0);
+      return ER_QPROC_INVALID_DATATYPE;
+    }
+
+  if (db_spatial_build_internal (value) != NO_ERROR)
+    {
+      return er_errid ();
+    }
+
+  *spatial_out = db_get_spatial (value);
+  return NO_ERROR;
+}
+
+static int
+spatial_make_varchar_result (DB_VALUE * result, const char *str)
+{
+  int length;
+
+  if (str == NULL)
+    {
+      db_make_null (result);
+      return NO_ERROR;
+    }
+
+  length = (int) strlen (str);
+  return db_make_varchar (result, length, str, length, LANG_COERCIBLE_CODESET, LANG_COERCIBLE_COLL);
+}
+
+static int
+spatial_make_result_from_geometry (DB_VALUE * result, DB_TYPE type, GEOSContextHandle_t context, GEOSGeometry * geometry, int srid)
+{
+  GEOSWKTWriter *writer = NULL;
+  char *wkt = NULL;
+  char *serialized = NULL;
+  int subtype;
+  int length;
+  int error = NO_ERROR;
+
+  writer = GEOSWKTWriter_create_r (context);
+  if (writer == NULL)
+    {
+      GEOSGeom_destroy_r (context, geometry);
+      GEOS_finish_r (context);
+      return ER_FAILED;
+    }
+
+  GEOSWKTWriter_setTrim_r (context, writer, 1);
+  wkt = GEOSWKTWriter_write_r (context, writer, geometry);
+  GEOSWKTWriter_destroy_r (context, writer);
+
+  if (wkt == NULL)
+    {
+      GEOSGeom_destroy_r (context, geometry);
+      GEOS_finish_r (context);
+      return ER_FAILED;
+    }
+
+  length = (int) strlen (wkt);
+  serialized = (char *) db_private_alloc (NULL, length + 1);
+  if (serialized == NULL)
+    {
+      GEOSFree_r (context, wkt);
+      GEOSGeom_destroy_r (context, geometry);
+      GEOS_finish_r (context);
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+
+  memcpy (serialized, wkt, length + 1);
+  GEOSFree_r (context, wkt);
+
+  subtype = spatial_geos_type_to_subtype (GEOSGeomTypeId_r (context, geometry));
+  error = db_value_domain_init (result, type, subtype, 0);
+  if (error != NO_ERROR)
+    {
+      db_private_free_and_init (NULL, serialized);
+      GEOSGeom_destroy_r (context, geometry);
+      GEOS_finish_r (context);
+      return error;
+    }
+
+  result->domain.general_info.is_null = 0;
+  result->data.spatial.serialized = serialized;
+  result->data.spatial.length = length;
+  result->data.spatial.geometry = geometry;
+  result->data.spatial.context = context;
+  result->data.spatial.subtype = subtype;
+  result->data.spatial.srid = srid;
+  result->need_clear = true;
+  return NO_ERROR;
+}
+
+static int
+spatial_make_temp_geometry (const DB_SPATIAL * spatial, GEOSContextHandle_t context, GEOSGeometry **geometry_out)
+{
+  GEOSWKTReader *reader = NULL;
+  GEOSGeometry *geometry = NULL;
+
+  reader = GEOSWKTReader_create_r (context);
+  if (reader == NULL)
+    {
+      return ER_FAILED;
+    }
+
+  geometry = GEOSWKTReader_read_r (context, reader, spatial->serialized);
+  GEOSWKTReader_destroy_r (context, reader);
+  if (geometry == NULL)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OBJ_INVALID_ARGUMENTS, 0);
+      return ER_OBJ_INVALID_ARGUMENTS;
+    }
+
+  if (spatial->srid != 0)
+    {
+      GEOSSetSRID_r (context, geometry, spatial->srid);
+    }
+
+  *geometry_out = geometry;
+  return NO_ERROR;
+}
+
+static int
+spatial_get_int_arg (DB_VALUE * value, int *arg_int)
+{
+  switch (DB_VALUE_DOMAIN_TYPE (value))
+    {
+    case DB_TYPE_SHORT:
+      *arg_int = db_get_short (value);
+      return NO_ERROR;
+    case DB_TYPE_INTEGER:
+      *arg_int = db_get_int (value);
+      return NO_ERROR;
+    case DB_TYPE_BIGINT:
+      *arg_int = (int) db_get_bigint (value);
+      return NO_ERROR;
+    default:
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QPROC_INVALID_DATATYPE, 0);
+      return ER_QPROC_INVALID_DATATYPE;
+    }
+}
+
+static int
+spatial_get_point_coordinate (DB_VALUE * value, bool get_x, DB_VALUE * result)
+{
+  const DB_SPATIAL *spatial = NULL;
+  const GEOSCoordSequence *coord_seq = NULL;
+  GEOSContextHandle_t context;
+  double coord = 0.0;
+  int error;
+
+  error = spatial_validate_arg (value, &spatial);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  if (spatial->subtype != DB_SPATIAL_SUBTYPE_POINT)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OBJ_INVALID_ARGUMENTS, 0);
+      return ER_OBJ_INVALID_ARGUMENTS;
+    }
+
+  context = (GEOSContextHandle_t) spatial->context;
+  coord_seq = GEOSGeom_getCoordSeq_r (context, (const GEOSGeometry *) spatial->geometry);
+  if (coord_seq == NULL)
+    {
+      return ER_FAILED;
+    }
+
+  if (get_x)
+    {
+      if (GEOSCoordSeq_getX_r (context, coord_seq, 0, &coord) == 0)
+	{
+	  return ER_FAILED;
+	}
+    }
+  else
+    {
+      if (GEOSCoordSeq_getY_r (context, coord_seq, 0, &coord) == 0)
+	{
+	  return ER_FAILED;
+	}
+    }
+
+  db_make_double (result, coord);
+  return NO_ERROR;
+}
+
+int
+db_evaluate_st_astext (DB_VALUE * result, DB_VALUE * const *args, int num_args)
+{
+  const DB_SPATIAL *spatial = NULL;
+  int error;
+
+  db_make_null (result);
+  if (num_args != 1 || is_any_arg_null (args, num_args))
+    {
+      return NO_ERROR;
+    }
+
+  error = spatial_validate_arg (args[0], &spatial);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  return spatial_make_varchar_result (result, spatial->serialized);
+}
+
+int
+db_evaluate_st_geomfromtext (DB_VALUE * result, DB_VALUE * const *args, int num_args)
+{
+  DB_TYPE result_type = DB_TYPE_GEOMETRY;
+  const char *input = NULL;
+  char *serialized = NULL;
+  int length;
+  int srid = 0;
+  int error;
+
+  db_make_null (result);
+  if (num_args < 1 || num_args > 2 || is_any_arg_null (args, num_args))
+    {
+      return NO_ERROR;
+    }
+
+  if (!DB_IS_STRING (args[0]))
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QPROC_INVALID_DATATYPE, 0);
+      return ER_QPROC_INVALID_DATATYPE;
+    }
+
+  if (num_args == 2)
+    {
+      error = spatial_get_int_arg (args[1], &srid);
+      if (error != NO_ERROR)
+	{
+	  return error;
+	}
+    }
+
+  if (DB_VALUE_DOMAIN_TYPE (result) == DB_TYPE_GEOGRAPHY)
+    {
+      result_type = DB_TYPE_GEOGRAPHY;
+    }
+
+  input = db_get_string (args[0]);
+  length = db_get_string_size (args[0]);
+  serialized = (char *) db_private_alloc (NULL, length + 1);
+  if (serialized == NULL)
+    {
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+  memcpy (serialized, input, length);
+  serialized[length] = '\0';
+
+  return db_make_spatial_ex (result, result_type, serialized, length, DB_SPATIAL_SUBTYPE_ANY, srid, true);
+}
+
+int
+db_evaluate_st_srid (DB_VALUE * result, DB_VALUE * const *args, int num_args)
+{
+  const DB_SPATIAL *spatial = NULL;
+  int error;
+
+  db_make_null (result);
+  if (num_args != 1 || is_any_arg_null (args, num_args))
+    {
+      return NO_ERROR;
+    }
+
+  error = spatial_validate_arg (args[0], &spatial);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  db_make_int (result, spatial->srid);
+  return NO_ERROR;
+}
+
+int
+db_evaluate_st_setsrid (DB_VALUE * result, DB_VALUE * const *args, int num_args)
+{
+  const DB_SPATIAL *spatial = NULL;
+  char *serialized = NULL;
+  int srid;
+  int error;
+
+  db_make_null (result);
+  if (num_args != 2 || is_any_arg_null (args, num_args))
+    {
+      return NO_ERROR;
+    }
+
+  error = spatial_validate_arg (args[0], &spatial);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  error = spatial_get_int_arg (args[1], &srid);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  serialized = (char *) db_private_alloc (NULL, spatial->length + 1);
+  if (serialized == NULL)
+    {
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+  memcpy (serialized, spatial->serialized, spatial->length);
+  serialized[spatial->length] = '\0';
+
+  return db_make_spatial_ex (result, DB_VALUE_DOMAIN_TYPE (args[0]), serialized, spatial->length, spatial->subtype,
+			     srid, true);
+}
+
+int
+db_evaluate_st_geometrytype (DB_VALUE * result, DB_VALUE * const *args, int num_args)
+{
+  const DB_SPATIAL *spatial = NULL;
+  int error;
+
+  db_make_null (result);
+  if (num_args != 1 || is_any_arg_null (args, num_args))
+    {
+      return NO_ERROR;
+    }
+
+  error = spatial_validate_arg (args[0], &spatial);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  return spatial_make_varchar_result (result, spatial_subtype_to_name (spatial->subtype));
+}
+
+int
+db_evaluate_st_x (DB_VALUE * result, DB_VALUE * const *args, int num_args)
+{
+  db_make_null (result);
+  if (num_args != 1 || is_any_arg_null (args, num_args))
+    {
+      return NO_ERROR;
+    }
+  return spatial_get_point_coordinate (args[0], true, result);
+}
+
+int
+db_evaluate_st_y (DB_VALUE * result, DB_VALUE * const *args, int num_args)
+{
+  db_make_null (result);
+  if (num_args != 1 || is_any_arg_null (args, num_args))
+    {
+      return NO_ERROR;
+    }
+  return spatial_get_point_coordinate (args[0], false, result);
+}
+
+int
+db_evaluate_st_area (DB_VALUE * result, DB_VALUE * const *args, int num_args)
+{
+  const DB_SPATIAL *spatial = NULL;
+  double area = 0.0;
+  int error;
+
+  db_make_null (result);
+  if (num_args != 1 || is_any_arg_null (args, num_args))
+    {
+      return NO_ERROR;
+    }
+
+  error = spatial_validate_arg (args[0], &spatial);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  if (GEOSArea_r ((GEOSContextHandle_t) spatial->context, (const GEOSGeometry *) spatial->geometry, &area) == 0)
+    {
+      return ER_FAILED;
+    }
+
+  db_make_double (result, area);
+  return NO_ERROR;
+}
+
+int
+db_evaluate_st_length (DB_VALUE * result, DB_VALUE * const *args, int num_args)
+{
+  const DB_SPATIAL *spatial = NULL;
+  double length = 0.0;
+  int error;
+
+  db_make_null (result);
+  if (num_args != 1 || is_any_arg_null (args, num_args))
+    {
+      return NO_ERROR;
+    }
+
+  error = spatial_validate_arg (args[0], &spatial);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  if (GEOSLength_r ((GEOSContextHandle_t) spatial->context, (const GEOSGeometry *) spatial->geometry, &length) == 0)
+    {
+      return ER_FAILED;
+    }
+
+  db_make_double (result, length);
+  return NO_ERROR;
+}
+
+static int
+spatial_eval_binary_predicate_or_metric (DB_VALUE * result, DB_VALUE * const *args, int num_args,
+					 bool is_metric, char (*predicate_func) (GEOSContextHandle_t, const GEOSGeometry *,
+										 const GEOSGeometry *),
+					 int (*metric_func) (GEOSContextHandle_t, const GEOSGeometry *,
+							     const GEOSGeometry *, double *))
+{
+  const DB_SPATIAL *spatial1 = NULL;
+  const DB_SPATIAL *spatial2 = NULL;
+  GEOSContextHandle_t context = NULL;
+  GEOSGeometry *geom1 = NULL;
+  GEOSGeometry *geom2 = NULL;
+  double metric = 0.0;
+  char predicate;
+  int error;
+
+  db_make_null (result);
+  if (num_args != 2 || is_any_arg_null (args, num_args))
+    {
+      return NO_ERROR;
+    }
+
+  error = spatial_validate_arg (args[0], &spatial1);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+  error = spatial_validate_arg (args[1], &spatial2);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  context = GEOS_init_r ();
+  if (context == NULL)
+    {
+      return ER_FAILED;
+    }
+
+  error = spatial_make_temp_geometry (spatial1, context, &geom1);
+  if (error != NO_ERROR)
+    {
+      GEOS_finish_r (context);
+      return error;
+    }
+
+  error = spatial_make_temp_geometry (spatial2, context, &geom2);
+  if (error != NO_ERROR)
+    {
+      GEOSGeom_destroy_r (context, geom1);
+      GEOS_finish_r (context);
+      return error;
+    }
+
+  if (is_metric)
+    {
+      if (metric_func (context, geom1, geom2, &metric) == 0)
+	{
+	  error = ER_FAILED;
+	}
+      else
+	{
+	  db_make_double (result, metric);
+	  error = NO_ERROR;
+	}
+    }
+  else
+    {
+      predicate = predicate_func (context, geom1, geom2);
+      if (predicate == 2)
+	{
+	  error = ER_FAILED;
+	}
+      else
+	{
+	  db_make_int (result, predicate ? 1 : 0);
+	  error = NO_ERROR;
+	}
+    }
+
+  GEOSGeom_destroy_r (context, geom1);
+  GEOSGeom_destroy_r (context, geom2);
+  GEOS_finish_r (context);
+  return error;
+}
+
+int
+db_evaluate_st_distance (DB_VALUE * result, DB_VALUE * const *args, int num_args)
+{
+  return spatial_eval_binary_predicate_or_metric (result, args, num_args, true, NULL, GEOSDistance_r);
+}
+
+int
+db_evaluate_st_contains (DB_VALUE * result, DB_VALUE * const *args, int num_args)
+{
+  return spatial_eval_binary_predicate_or_metric (result, args, num_args, false, GEOSContains_r, NULL);
+}
+
+int
+db_evaluate_st_intersects (DB_VALUE * result, DB_VALUE * const *args, int num_args)
+{
+  return spatial_eval_binary_predicate_or_metric (result, args, num_args, false, GEOSIntersects_r, NULL);
+}
+
+int
+db_evaluate_st_envelope (DB_VALUE * result, DB_VALUE * const *args, int num_args)
+{
+  const DB_SPATIAL *spatial = NULL;
+  GEOSContextHandle_t context = NULL;
+  GEOSGeometry *geom = NULL;
+  GEOSGeometry *envelope = NULL;
+  DB_TYPE result_type;
+  int srid;
+  int error;
+
+  db_make_null (result);
+  if (num_args != 1 || is_any_arg_null (args, num_args))
+    {
+      return NO_ERROR;
+    }
+
+  error = spatial_validate_arg (args[0], &spatial);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  context = GEOS_init_r ();
+  if (context == NULL)
+    {
+      return ER_FAILED;
+    }
+
+  error = spatial_make_temp_geometry (spatial, context, &geom);
+  if (error != NO_ERROR)
+    {
+      GEOS_finish_r (context);
+      return error;
+    }
+
+  envelope = GEOSEnvelope_r (context, geom);
+  GEOSGeom_destroy_r (context, geom);
+  if (envelope == NULL)
+    {
+      GEOS_finish_r (context);
+      return ER_FAILED;
+    }
+
+  result_type = DB_VALUE_DOMAIN_TYPE (args[0]);
+  srid = spatial->srid;
+  return spatial_make_result_from_geometry (result, result_type, context, envelope, srid);
 }

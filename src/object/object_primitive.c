@@ -47,6 +47,8 @@
 #include "system_parameter.h"
 #include "tz_support.h"
 
+#include <geos_c.h>
+
 #include <utility>
 
 #if !defined (SERVER_MODE)
@@ -118,6 +120,12 @@ extern unsigned int db_on_server;
  */
 #define OR_NUMERIC_SIZE(precision) DB_NUMERIC_BUF_SIZE
 #define MR_NUMERIC_SIZE(precision) DB_NUMERIC_BUF_SIZE
+
+static GEOSContextHandle_t spatial_create_context (void);
+static int spatial_geos_type_to_subtype (int geos_type);
+static int spatial_copy_serialized (char **copy, const char *serialized, int length);
+static void spatial_clear_internal (DB_SPATIAL * spatial);
+static int spatial_build_internal_from_serialized (DB_TYPE type, DB_SPATIAL * spatial, int declared_subtype, int srid);
 
 #define STR_SIZE(prec, codeset)                                             \
      (((codeset) == INTL_CODESET_RAW_BITS) ? ((prec+7)/8) :		    \
@@ -870,6 +878,27 @@ static DB_VALUE_COMPARE_RESULT mr_data_cmpdisk_json (void *mem1, void *mem2, TP_
 						     int total_order, int *start_colp);
 static DB_VALUE_COMPARE_RESULT mr_cmpval_json (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int total_order,
 					       int *start_colp, int collation);
+static void mr_initmem_spatial (void *mem, TP_DOMAIN * domain);
+static int mr_setmem_spatial (void *memptr, TP_DOMAIN * domain, DB_VALUE * value);
+static int mr_getmem_spatial (void *memptr, TP_DOMAIN * domain, DB_VALUE * value, bool copy);
+static int mr_data_lengthmem_spatial (void *memptr, TP_DOMAIN * domain, int disk);
+static void mr_data_writemem_spatial (OR_BUF * buf, void *memptr, TP_DOMAIN * domain);
+static void mr_data_readmem_spatial (OR_BUF * buf, void *memptr, TP_DOMAIN * domain, int size);
+static void mr_freemem_spatial (void *memptr);
+static void mr_initval_geometry (DB_VALUE * value, int precision, int scale);
+static void mr_initval_geography (DB_VALUE * value, int precision, int scale);
+static int mr_setval_geometry (DB_VALUE * dest, const DB_VALUE * src, bool copy);
+static int mr_setval_geography (DB_VALUE * dest, const DB_VALUE * src, bool copy);
+static int mr_data_lengthval_spatial (DB_VALUE * value, int disk);
+static int mr_data_writeval_spatial (OR_BUF * buf, DB_VALUE * value);
+static int mr_data_readval_geometry (OR_BUF * buf, DB_VALUE * value, TP_DOMAIN * domain, int size, bool copy,
+				     char *copy_buf, int copy_buf_len);
+static int mr_data_readval_geography (OR_BUF * buf, DB_VALUE * value, TP_DOMAIN * domain, int size, bool copy,
+				      char *copy_buf, int copy_buf_len);
+static DB_VALUE_COMPARE_RESULT mr_data_cmpdisk_spatial (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coercion,
+							int total_order, int *start_colp);
+static DB_VALUE_COMPARE_RESULT mr_cmpval_spatial (DB_VALUE * value1, DB_VALUE * value2, int do_coercion,
+						  int total_order, int *start_colp, int collation);
 /*
  * Value_area
  *    Area used for allocation of value containers that may be given out
@@ -1730,6 +1759,8 @@ const PR_TYPE *tp_Type_id_map[] = {
   &tp_Datetimetz,
   &tp_Datetimeltz,
   &tp_Json,
+  &tp_Geometry,
+  &tp_Geography,
 };
 
 const PR_TYPE tp_ResultSet = {
@@ -1910,6 +1941,16 @@ pr_clear_value (DB_VALUE * value)
 	  value->data.json.document = NULL;
 	  value->data.json.schema_raw = NULL;
 	}
+      break;
+
+    case DB_TYPE_GEOMETRY:
+    case DB_TYPE_GEOGRAPHY:
+      if (value->need_clear && value->data.spatial.serialized != NULL)
+	{
+	  db_private_free (NULL, const_cast < char *>(value->data.spatial.serialized));
+	}
+      value->data.spatial.serialized = NULL;
+      value->data.spatial.length = 0;
       break;
 
     case DB_TYPE_OBJECT:
@@ -14815,4 +14856,728 @@ mr_cmpval_json (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int total
   pr_clear_value (&scalar_value1);
   pr_clear_value (&scalar_value2);
   return cmp_result;
+}
+
+static GEOSContextHandle_t
+spatial_create_context (void)
+{
+  return GEOS_init_r ();
+}
+
+static int
+spatial_geos_type_to_subtype (int geos_type)
+{
+  switch (geos_type)
+    {
+    case GEOS_POINT:
+      return DB_SPATIAL_SUBTYPE_POINT;
+    case GEOS_LINESTRING:
+    case GEOS_LINEARRING:
+      return DB_SPATIAL_SUBTYPE_LINESTRING;
+    case GEOS_POLYGON:
+      return DB_SPATIAL_SUBTYPE_POLYGON;
+    case GEOS_MULTIPOINT:
+      return DB_SPATIAL_SUBTYPE_MULTIPOINT;
+    case GEOS_MULTILINESTRING:
+      return DB_SPATIAL_SUBTYPE_MULTILINESTRING;
+    case GEOS_MULTIPOLYGON:
+      return DB_SPATIAL_SUBTYPE_MULTIPOLYGON;
+    case GEOS_GEOMETRYCOLLECTION:
+      return DB_SPATIAL_SUBTYPE_GEOMETRYCOLLECTION;
+    default:
+      return DB_SPATIAL_SUBTYPE_ANY;
+    }
+}
+
+static int
+spatial_copy_serialized (char **copy, const char *serialized, int length)
+{
+  char *new_copy = NULL;
+
+  assert (copy != NULL);
+
+  *copy = NULL;
+  if (serialized == NULL)
+    {
+      return NO_ERROR;
+    }
+
+  new_copy = (char *) db_private_alloc (NULL, length + 1);
+  if (new_copy == NULL)
+    {
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+
+  memcpy (new_copy, serialized, length);
+  new_copy[length] = '\0';
+  *copy = new_copy;
+  return NO_ERROR;
+}
+
+static void
+spatial_clear_internal (DB_SPATIAL * spatial)
+{
+  if (spatial == NULL)
+    {
+      return;
+    }
+
+  if (spatial->geometry != NULL && spatial->context != NULL)
+    {
+      GEOSGeom_destroy_r ((GEOSContextHandle_t) spatial->context, (GEOSGeometry *) spatial->geometry);
+    }
+
+  if (spatial->context != NULL)
+    {
+      GEOS_finish_r ((GEOSContextHandle_t) spatial->context);
+    }
+
+  spatial->geometry = NULL;
+  spatial->context = NULL;
+  spatial->subtype = DB_SPATIAL_SUBTYPE_ANY;
+  spatial->srid = 0;
+}
+
+static int
+spatial_build_internal_from_serialized (DB_TYPE type, DB_SPATIAL * spatial, int declared_subtype, int srid)
+{
+  GEOSContextHandle_t context = NULL;
+  GEOSWKTReader *reader = NULL;
+  GEOSGeometry *geometry = NULL;
+  int actual_subtype = DB_SPATIAL_SUBTYPE_ANY;
+  int geos_type = -1;
+
+  assert (type == DB_TYPE_GEOMETRY || type == DB_TYPE_GEOGRAPHY);
+
+  if (spatial == NULL || spatial->serialized == NULL)
+    {
+      return NO_ERROR;
+    }
+
+  spatial_clear_internal (spatial);
+
+  context = spatial_create_context ();
+  if (context == NULL)
+    {
+      return ER_FAILED;
+    }
+
+  reader = GEOSWKTReader_create_r (context);
+  if (reader == NULL)
+    {
+      GEOS_finish_r (context);
+      return ER_FAILED;
+    }
+
+  geometry = GEOSWKTReader_read_r (context, reader, spatial->serialized);
+  GEOSWKTReader_destroy_r (context, reader);
+  reader = NULL;
+
+  if (geometry == NULL)
+    {
+      GEOS_finish_r (context);
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OBJ_INVALID_ARGUMENTS, 0);
+      return ER_OBJ_INVALID_ARGUMENTS;
+    }
+
+  geos_type = GEOSGeomTypeId_r (context, geometry);
+  actual_subtype = spatial_geos_type_to_subtype (geos_type);
+  if (declared_subtype != DB_SPATIAL_SUBTYPE_ANY && actual_subtype != declared_subtype)
+    {
+      GEOSGeom_destroy_r (context, geometry);
+      GEOS_finish_r (context);
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OBJ_INVALID_ARGUMENTS, 0);
+      return ER_OBJ_INVALID_ARGUMENTS;
+    }
+
+  if (srid != 0)
+    {
+      GEOSSetSRID_r (context, geometry, srid);
+    }
+  else
+    {
+      srid = GEOSGetSRID_r (context, geometry);
+    }
+
+  spatial->context = context;
+  spatial->geometry = geometry;
+  spatial->subtype = actual_subtype;
+  spatial->srid = srid;
+  return NO_ERROR;
+}
+
+int
+db_spatial_build_internal (DB_VALUE * value)
+{
+  DB_SPATIAL *spatial = NULL;
+  DB_TYPE type;
+
+  if (value == NULL || DB_IS_NULL (value))
+    {
+      return NO_ERROR;
+    }
+
+  type = DB_VALUE_DOMAIN_TYPE (value);
+  if (type != DB_TYPE_GEOMETRY && type != DB_TYPE_GEOGRAPHY)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OBJ_INVALID_ARGUMENTS, 0);
+      return ER_OBJ_INVALID_ARGUMENTS;
+    }
+
+  spatial = &value->data.spatial;
+  return spatial_build_internal_from_serialized (type, spatial, spatial->subtype, spatial->srid);
+}
+
+const PR_TYPE tp_Geometry = {
+  "geometry", DB_TYPE_GEOMETRY, 1, sizeof (DB_SPATIAL), 0, 1,
+  mr_initmem_spatial,
+  mr_initval_geometry,
+  mr_setmem_spatial,
+  mr_getmem_spatial,
+  mr_setval_geometry,
+  mr_data_lengthmem_spatial,
+  mr_data_lengthval_spatial,
+  mr_data_writemem_spatial,
+  mr_data_readmem_spatial,
+  mr_data_writeval_spatial,
+  mr_data_readval_geometry,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  mr_freemem_spatial,
+  mr_data_cmpdisk_spatial,
+  mr_cmpval_spatial
+};
+
+const PR_TYPE *tp_Type_geometry = &tp_Geometry;
+
+const PR_TYPE tp_Geography = {
+  "geography", DB_TYPE_GEOGRAPHY, 1, sizeof (DB_SPATIAL), 0, 1,
+  mr_initmem_spatial,
+  mr_initval_geography,
+  mr_setmem_spatial,
+  mr_getmem_spatial,
+  mr_setval_geography,
+  mr_data_lengthmem_spatial,
+  mr_data_lengthval_spatial,
+  mr_data_writemem_spatial,
+  mr_data_readmem_spatial,
+  mr_data_writeval_spatial,
+  mr_data_readval_geography,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  mr_freemem_spatial,
+  mr_data_cmpdisk_spatial,
+  mr_cmpval_spatial
+};
+
+const PR_TYPE *tp_Type_geography = &tp_Geography;
+
+static void
+mr_initmem_spatial (void *mem, TP_DOMAIN * domain)
+{
+  DB_SPATIAL *spatial = (DB_SPATIAL *) mem;
+
+  if (spatial == NULL)
+    {
+      assert (false);
+      return;
+    }
+
+  spatial->serialized = NULL;
+  spatial->length = 0;
+  spatial->geometry = NULL;
+  spatial->context = NULL;
+  spatial->subtype = DB_SPATIAL_SUBTYPE_ANY;
+  spatial->srid = 0;
+}
+
+static void
+mr_freemem_spatial (void *memptr)
+{
+  DB_SPATIAL *spatial = (DB_SPATIAL *) memptr;
+
+  if (spatial == NULL)
+    {
+      return;
+    }
+
+  spatial_clear_internal (spatial);
+
+  if (spatial->serialized != NULL)
+    {
+      db_private_free (NULL, const_cast < char *>(spatial->serialized));
+      spatial->serialized = NULL;
+      spatial->length = 0;
+    }
+}
+
+static int
+mr_setmem_spatial (void *memptr, TP_DOMAIN * domain, DB_VALUE * value)
+{
+  DB_SPATIAL *spatial = (DB_SPATIAL *) memptr;
+  const DB_SPATIAL *src_spatial = NULL;
+  char *copy = NULL;
+  int error = NO_ERROR;
+
+  if (spatial == NULL)
+    {
+      assert (false);
+      return ER_FAILED;
+    }
+
+  mr_freemem_spatial (memptr);
+  mr_initmem_spatial (memptr, domain);
+
+  if (value == NULL || DB_IS_NULL (value))
+    {
+      return NO_ERROR;
+    }
+
+  src_spatial = db_get_spatial (value);
+  error = spatial_copy_serialized (&copy, src_spatial->serialized, src_spatial->length);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  spatial->serialized = copy;
+  spatial->length = src_spatial->length;
+  spatial->subtype = src_spatial->subtype;
+  spatial->srid = src_spatial->srid;
+
+  return spatial_build_internal_from_serialized (DB_VALUE_DOMAIN_TYPE (value), spatial, spatial->subtype, spatial->srid);
+}
+
+static int
+mr_getmem_spatial (void *memptr, TP_DOMAIN * domain, DB_VALUE * value, bool copy)
+{
+  DB_SPATIAL *spatial = (DB_SPATIAL *) memptr;
+  char *copied_str = NULL;
+
+  if (spatial == NULL || spatial->serialized == NULL)
+    {
+      db_make_null (value);
+      db_value_domain_init (value, domain->type->id, domain->precision, 0);
+      value->need_clear = false;
+      return NO_ERROR;
+    }
+
+  if (copy)
+    {
+      copied_str = (char *) db_private_alloc (NULL, spatial->length + 1);
+      if (copied_str == NULL)
+	{
+	  return ER_OUT_OF_VIRTUAL_MEMORY;
+	}
+
+      memcpy (copied_str, spatial->serialized, spatial->length);
+      copied_str[spatial->length] = '\0';
+    }
+
+  return db_make_spatial_ex (value, domain->type->id, copy ? copied_str : spatial->serialized, spatial->length,
+			     spatial->subtype, spatial->srid, copy);
+}
+
+static int
+mr_data_lengthmem_spatial (void *memptr, TP_DOMAIN * domain, int disk)
+{
+  DB_SPATIAL *spatial = (DB_SPATIAL *) memptr;
+
+  if (!disk)
+    {
+      return sizeof (DB_SPATIAL);
+    }
+
+  if (spatial == NULL || spatial->serialized == NULL)
+    {
+      return 0;
+    }
+
+  return OR_INT_SIZE * 2 + spatial->length;
+}
+
+static void
+mr_data_writemem_spatial (OR_BUF * buf, void *memptr, TP_DOMAIN * domain)
+{
+  DB_SPATIAL *spatial = (DB_SPATIAL *) memptr;
+
+  if (spatial == NULL || spatial->serialized == NULL || spatial->length == 0)
+    {
+      return;
+    }
+
+  or_put_int (buf, spatial->subtype);
+  or_put_int (buf, spatial->srid);
+  or_put_data (buf, (char *) spatial->serialized, spatial->length);
+}
+
+static void
+mr_data_readmem_spatial (OR_BUF * buf, void *memptr, TP_DOMAIN * domain, int size)
+{
+  DB_SPATIAL *spatial = (DB_SPATIAL *) memptr;
+  char *copy = NULL;
+  int rc = NO_ERROR;
+  int subtype = DB_SPATIAL_SUBTYPE_ANY;
+  int srid = 0;
+  int payload_size = size;
+
+  if (size == 0)
+    {
+      if (spatial != NULL)
+	{
+	  mr_initmem_spatial (memptr, domain);
+	}
+      return;
+    }
+
+  if (spatial == NULL)
+    {
+      or_advance (buf, size);
+      return;
+    }
+
+  mr_freemem_spatial (memptr);
+
+  if (size < OR_INT_SIZE * 2)
+    {
+      or_advance (buf, size);
+      assert (false);
+      return;
+    }
+
+  subtype = or_get_int (buf, &rc);
+  if (rc != NO_ERROR)
+    {
+      assert (false);
+      return;
+    }
+
+  srid = or_get_int (buf, &rc);
+  if (rc != NO_ERROR)
+    {
+      assert (false);
+      return;
+    }
+
+  payload_size -= OR_INT_SIZE * 2;
+
+  copy = (char *) db_private_alloc (NULL, payload_size + 1);
+  if (copy == NULL)
+    {
+      or_advance (buf, payload_size);
+      return;
+    }
+
+  rc = or_get_data (buf, copy, payload_size);
+  if (rc != NO_ERROR)
+    {
+      db_private_free_and_init (NULL, copy);
+      assert (false);
+      return;
+    }
+
+  copy[payload_size] = '\0';
+  spatial->serialized = copy;
+  spatial->length = payload_size;
+  spatial->subtype = subtype;
+  spatial->srid = srid;
+  rc = spatial_build_internal_from_serialized (domain->type->id, spatial, subtype, srid);
+  if (rc != NO_ERROR)
+    {
+      mr_freemem_spatial (memptr);
+      assert (false);
+    }
+}
+
+static void
+mr_initval_geometry (DB_VALUE * value, int precision, int scale)
+{
+  db_value_domain_init (value, DB_TYPE_GEOMETRY, precision, scale);
+  value->need_clear = false;
+}
+
+static void
+mr_initval_geography (DB_VALUE * value, int precision, int scale)
+{
+  db_value_domain_init (value, DB_TYPE_GEOGRAPHY, precision, scale);
+  value->need_clear = false;
+}
+
+static int
+mr_setval_geometry (DB_VALUE * dest, const DB_VALUE * src, bool copy)
+{
+  int error = NO_ERROR;
+  const DB_SPATIAL *src_spatial = NULL;
+  char *serialized_copy = NULL;
+
+  if (src == NULL || DB_IS_NULL (src))
+    {
+      return db_value_domain_init (dest, DB_TYPE_GEOMETRY, DB_DEFAULT_PRECISION, DB_DEFAULT_SCALE);
+    }
+
+  src_spatial = db_get_spatial (src);
+  if (copy)
+    {
+      serialized_copy = (char *) db_private_alloc (NULL, src_spatial->length + 1);
+      if (serialized_copy == NULL)
+	{
+	  return ER_OUT_OF_VIRTUAL_MEMORY;
+	}
+      memcpy (serialized_copy, src_spatial->serialized, src_spatial->length);
+      serialized_copy[src_spatial->length] = '\0';
+    }
+
+  error = db_value_domain_init (dest, DB_TYPE_GEOMETRY, DB_DEFAULT_PRECISION, DB_DEFAULT_SCALE);
+  if (error != NO_ERROR)
+    {
+      if (serialized_copy != NULL)
+	{
+	  db_private_free_and_init (NULL, serialized_copy);
+	}
+      return error;
+    }
+
+  dest->data.spatial.subtype = src_spatial->subtype;
+  dest->data.spatial.srid = src_spatial->srid;
+  return db_make_geometry_ex (dest, copy ? serialized_copy : src_spatial->serialized, src_spatial->length,
+			      src_spatial->subtype, src_spatial->srid, copy);
+}
+
+static int
+mr_setval_geography (DB_VALUE * dest, const DB_VALUE * src, bool copy)
+{
+  int error = NO_ERROR;
+  const DB_SPATIAL *src_spatial = NULL;
+  char *serialized_copy = NULL;
+
+  if (src == NULL || DB_IS_NULL (src))
+    {
+      return db_value_domain_init (dest, DB_TYPE_GEOGRAPHY, DB_DEFAULT_PRECISION, DB_DEFAULT_SCALE);
+    }
+
+  src_spatial = db_get_spatial (src);
+  if (copy)
+    {
+      serialized_copy = (char *) db_private_alloc (NULL, src_spatial->length + 1);
+      if (serialized_copy == NULL)
+	{
+	  return ER_OUT_OF_VIRTUAL_MEMORY;
+	}
+      memcpy (serialized_copy, src_spatial->serialized, src_spatial->length);
+      serialized_copy[src_spatial->length] = '\0';
+    }
+
+  error = db_value_domain_init (dest, DB_TYPE_GEOGRAPHY, DB_DEFAULT_PRECISION, DB_DEFAULT_SCALE);
+  if (error != NO_ERROR)
+    {
+      if (serialized_copy != NULL)
+	{
+	  db_private_free_and_init (NULL, serialized_copy);
+	}
+      return error;
+    }
+
+  dest->data.spatial.subtype = src_spatial->subtype;
+  dest->data.spatial.srid = src_spatial->srid;
+  return db_make_geography_ex (dest, copy ? serialized_copy : src_spatial->serialized, src_spatial->length,
+			       src_spatial->subtype, src_spatial->srid, copy);
+}
+
+static int
+mr_data_lengthval_spatial (DB_VALUE * value, int disk)
+{
+  if (!disk)
+    {
+      return sizeof (DB_SPATIAL);
+    }
+
+  if (DB_IS_NULL (value) || value->data.spatial.serialized == NULL)
+    {
+      return 0;
+    }
+
+  return OR_INT_SIZE * 2 + value->data.spatial.length;
+}
+
+static int
+mr_data_writeval_spatial (OR_BUF * buf, DB_VALUE * value)
+{
+  if (DB_IS_NULL (value) || value->data.spatial.serialized == NULL)
+    {
+      return NO_ERROR;
+    }
+
+  or_put_int (buf, value->data.spatial.subtype);
+  or_put_int (buf, value->data.spatial.srid);
+  return or_put_data (buf, (char *) value->data.spatial.serialized, value->data.spatial.length);
+}
+
+static int
+mr_data_readval_geometry (OR_BUF * buf, DB_VALUE * value, TP_DOMAIN * domain, int size, bool copy, char *copy_buf,
+			  int copy_buf_len)
+{
+  char *serialized = NULL;
+  int rc = NO_ERROR;
+  int subtype = DB_SPATIAL_SUBTYPE_ANY;
+  int srid = 0;
+  int payload_size = size;
+
+  db_make_null (value);
+  if (size == 0)
+    {
+      return NO_ERROR;
+    }
+
+  if (size < OR_INT_SIZE * 2)
+    {
+      assert (false);
+      return ER_FAILED;
+    }
+
+  subtype = or_get_int (buf, &rc);
+  if (rc != NO_ERROR)
+    {
+      return rc;
+    }
+
+  srid = or_get_int (buf, &rc);
+  if (rc != NO_ERROR)
+    {
+      return rc;
+    }
+
+  payload_size -= OR_INT_SIZE * 2;
+
+  serialized = (char *) db_private_alloc (NULL, payload_size + 1);
+  if (serialized == NULL)
+    {
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+
+  rc = or_get_data (buf, serialized, payload_size);
+  if (rc != NO_ERROR)
+    {
+      db_private_free_and_init (NULL, serialized);
+      return rc;
+    }
+
+  serialized[payload_size] = '\0';
+  return db_make_geometry_ex (value, serialized, payload_size, subtype, srid, true);
+}
+
+static int
+mr_data_readval_geography (OR_BUF * buf, DB_VALUE * value, TP_DOMAIN * domain, int size, bool copy, char *copy_buf,
+			   int copy_buf_len)
+{
+  char *serialized = NULL;
+  int rc = NO_ERROR;
+  int subtype = DB_SPATIAL_SUBTYPE_ANY;
+  int srid = 0;
+  int payload_size = size;
+
+  db_make_null (value);
+  if (size == 0)
+    {
+      return NO_ERROR;
+    }
+
+  if (size < OR_INT_SIZE * 2)
+    {
+      assert (false);
+      return ER_FAILED;
+    }
+
+  subtype = or_get_int (buf, &rc);
+  if (rc != NO_ERROR)
+    {
+      return rc;
+    }
+
+  srid = or_get_int (buf, &rc);
+  if (rc != NO_ERROR)
+    {
+      return rc;
+    }
+
+  payload_size -= OR_INT_SIZE * 2;
+
+  serialized = (char *) db_private_alloc (NULL, payload_size + 1);
+  if (serialized == NULL)
+    {
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+
+  rc = or_get_data (buf, serialized, payload_size);
+  if (rc != NO_ERROR)
+    {
+      db_private_free_and_init (NULL, serialized);
+      return rc;
+    }
+
+  serialized[payload_size] = '\0';
+  return db_make_geography_ex (value, serialized, payload_size, subtype, srid, true);
+}
+
+static DB_VALUE_COMPARE_RESULT
+mr_data_cmpdisk_spatial (void *mem1, void *mem2, TP_DOMAIN * domain, int do_coercion, int total_order, int *start_colp)
+{
+  assert (false);
+  return DB_UNK;
+}
+
+static DB_VALUE_COMPARE_RESULT
+mr_cmpval_spatial (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int total_order, int *start_colp, int collation)
+{
+  const DB_SPATIAL *spatial1 = db_get_spatial (value1);
+  const DB_SPATIAL *spatial2 = db_get_spatial (value2);
+  int cmp;
+  int min_len;
+
+  if (DB_IS_NULL (value1) || DB_IS_NULL (value2))
+    {
+      if (!total_order)
+	{
+	  return DB_UNK;
+	}
+      if (DB_IS_NULL (value1) && DB_IS_NULL (value2))
+	{
+	  return DB_EQ;
+	}
+      return DB_IS_NULL (value1) ? DB_LT : DB_GT;
+    }
+
+  if (spatial1->subtype != spatial2->subtype)
+    {
+      return MR_CMP_RETURN_CODE (spatial1->subtype - spatial2->subtype);
+    }
+  if (spatial1->srid != spatial2->srid)
+    {
+      return MR_CMP_RETURN_CODE (spatial1->srid - spatial2->srid);
+    }
+
+  min_len = (spatial1->length < spatial2->length) ? spatial1->length : spatial2->length;
+  cmp = memcmp (spatial1->serialized, spatial2->serialized, min_len);
+  if (cmp < 0)
+    {
+      return DB_LT;
+    }
+  if (cmp > 0)
+    {
+      return DB_GT;
+    }
+  if (spatial1->length < spatial2->length)
+    {
+      return DB_LT;
+    }
+  if (spatial1->length > spatial2->length)
+    {
+      return DB_GT;
+    }
+  return DB_EQ;
 }

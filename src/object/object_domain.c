@@ -323,6 +323,8 @@ TP_DOMAIN tp_Char_domain = { NULL, NULL, &tp_Char, TP_FLOATING_PRECISION_VALUE, 
 TP_DOMAIN tp_Json_domain = { NULL, NULL, &tp_Json, 0, 0,
   DOMAIN_INIT2 (INTL_CODESET_UTF8, LANG_COLL_UTF8_BINARY)
 };
+TP_DOMAIN tp_Geometry_domain = { NULL, NULL, &tp_Geometry, DOMAIN_INIT };
+TP_DOMAIN tp_Geography_domain = { NULL, NULL, &tp_Geography, DOMAIN_INIT };
 
 TP_DOMAIN tp_Resultset_domain = { NULL, NULL, &tp_ResultSet, DOMAIN_INIT4 (DB_BIGINT_PRECISION, 0) };
 
@@ -380,8 +382,8 @@ static TP_DOMAIN *tp_Domains[] = {
   &tp_Datetimetz_domain,
   &tp_Datetimeltz_domain,
   &tp_Json_domain,
-  &tp_Null_domain,
-  &tp_Null_domain,
+  &tp_Geometry_domain,
+  &tp_Geography_domain,
   &tp_Null_domain,
   &tp_Null_domain,
   &tp_Null_domain,
@@ -482,6 +484,14 @@ static TP_DOMAIN *tp_VarBit_conv[] = {
   &tp_VarBit_domain, &tp_Bit_domain, NULL
 };
 
+static TP_DOMAIN *tp_Geometry_conv[] = {
+  &tp_Geometry_domain, &tp_String_domain, &tp_Char_domain, NULL
+};
+
+static TP_DOMAIN *tp_Geography_conv[] = {
+  &tp_Geography_domain, &tp_String_domain, &tp_Char_domain, NULL
+};
+
 static TP_DOMAIN *tp_Set_conv[] = {
   &tp_Set_domain, &tp_Multiset_domain, &tp_Sequence_domain, NULL
 };
@@ -548,7 +558,9 @@ TP_DOMAIN **tp_Domain_conversion_matrix[] = {
   NULL,				/* DB_TYPE_TIMESTAMPLTZ */
   NULL,				/* DB_TYPE_DATETIMETZ */
   NULL,				/* DB_TYPE_DATETIMELTZ */
-  NULL				/* DB_TYPE_JSON */
+  NULL,				/* DB_TYPE_JSON */
+  tp_Geometry_conv,		/* DB_TYPE_GEOMETRY */
+  tp_Geography_conv,		/* DB_TYPE_GEOGRAPHY */
 };
 
 #if defined (SERVER_MODE)
@@ -1544,11 +1556,22 @@ tp_domain_match_internal (const TP_DOMAIN * dom1, const TP_DOMAIN * dom2, TP_MAT
     case DB_TYPE_DATE:
     case DB_TYPE_MONETARY:
     case DB_TYPE_SHORT:
+    case DB_TYPE_GEOMETRY:
+    case DB_TYPE_GEOGRAPHY:
       /*
        * these domains have no parameters, they match if the types are the
        * same.
        */
-      match = 1;
+      if (TP_IS_SPATIAL_TYPE (TP_DOMAIN_TYPE (dom1)))
+	{
+	  match = (dom1->precision == DB_SPATIAL_SUBTYPE_ANY
+		   || dom2->precision == DB_SPATIAL_SUBTYPE_ANY
+		   || (dom1->precision == dom2->precision && dom1->scale == dom2->scale));
+	}
+      else
+	{
+	  match = 1;
+	}
       break;
 
     case DB_TYPE_JSON:
@@ -2186,6 +2209,20 @@ tp_is_domain_cached (TP_DOMAIN * dlist, TP_DOMAIN * transient, TP_MATCH exact, T
 	{
 	  match = (int) db_json_are_validators_equal (transient->json_validator, domain->json_validator);
 
+	  if (match)
+	    {
+	      break;
+	    }
+	  *ins_pos = domain;
+	  domain = domain->next_list;
+	}
+      break;
+
+    case DB_TYPE_GEOMETRY:
+    case DB_TYPE_GEOGRAPHY:
+      while (domain)
+	{
+	  match = (domain->precision == transient->precision && domain->scale == transient->scale);
 	  if (match)
 	    {
 	      break;
@@ -3366,6 +3403,11 @@ tp_domain_resolve_value (const DB_VALUE * val, TP_DOMAIN * dbuf)
 	    {
 	      domain = tp_domain_cache (domain);
 	    }
+	  break;
+
+	case DB_TYPE_GEOMETRY:
+	case DB_TYPE_GEOGRAPHY:
+	  domain = tp_domain_resolve_default (value_type);
 	  break;
 
 	  /*
@@ -9501,6 +9543,38 @@ tp_value_cast_internal (const DB_VALUE * src, DB_VALUE * dest, const TP_DOMAIN *
 	  }
 	  break;
 
+	case DB_TYPE_GEOMETRY:
+	case DB_TYPE_GEOGRAPHY:
+	  {
+	    const char *spatial_str;
+	    int len;
+	    char *spatial_copy;
+
+	    spatial_str = db_get_spatial_string (src);
+	    len = db_get_spatial_string_size (src);
+
+	    if (db_value_precision (target) != TP_FLOATING_PRECISION_VALUE && db_value_precision (target) < len)
+	      {
+		status = DOMAIN_OVERFLOW;
+	      }
+	    else
+	      {
+		spatial_copy = (char *) db_private_alloc (NULL, len + 1);
+		if (spatial_copy == NULL)
+		  {
+		    status = DOMAIN_ERROR;
+		  }
+		else
+		  {
+		    memcpy (spatial_copy, spatial_str, len);
+		    spatial_copy[len] = '\0';
+		    make_desired_string_db_value (desired_type, desired_domain, spatial_copy, target, &status, &data_stat);
+		    target->need_clear = true;
+		  }
+	      }
+	  }
+	  break;
+
 	default:
 	  status = DOMAIN_INCOMPATIBLE;
 	  break;
@@ -9978,6 +10052,47 @@ tp_value_cast_internal (const DB_VALUE * src, DB_VALUE * dest, const TP_DOMAIN *
 	      }
 	  }
       }
+      break;
+    case DB_TYPE_GEOMETRY:
+    case DB_TYPE_GEOGRAPHY:
+      switch (original_type)
+	{
+	case DB_TYPE_CHAR:
+	case DB_TYPE_VARCHAR:
+	  {
+	    const char *serialized = db_get_string (src);
+	    int serialized_size = db_get_string_size (src);
+	    char *serialized_copy = (char *) db_private_alloc (NULL, serialized_size + 1);
+
+	    if (serialized_copy == NULL)
+	      {
+		status = DOMAIN_ERROR;
+	      }
+	    else
+	      {
+		memcpy (serialized_copy, serialized, serialized_size);
+		serialized_copy[serialized_size] = '\0';
+		db_value_domain_init (target, desired_type, desired_domain->precision, desired_domain->scale);
+		db_make_spatial_ex (target, desired_type, serialized_copy, serialized_size,
+				    desired_domain->precision, desired_domain->scale, true);
+	      }
+	  }
+	  break;
+	case DB_TYPE_GEOMETRY:
+	case DB_TYPE_GEOGRAPHY:
+	  if (original_type == desired_type)
+	    {
+	      err = db_value_clone ((DB_VALUE *) src, target);
+	    }
+	  else
+	    {
+	      status = DOMAIN_INCOMPATIBLE;
+	    }
+	  break;
+	default:
+	  status = DOMAIN_INCOMPATIBLE;
+	  break;
+	}
       break;
     default:
       status = DOMAIN_INCOMPATIBLE;

@@ -114,7 +114,8 @@ extern int expecting_pl_lang_spec;
 extern int yylex(void);
 
 static void pt_fill_conn_info_container(PARSER_CONTEXT *parser, int buffer_pos, container_10 *ctn, container_2 info);
-static PT_NODE *parser_make_spatial_data_type (PARSER_CONTEXT *parser, const char *type_name);
+static PT_NODE *parser_make_spatial_data_type (PARSER_CONTEXT *parser, const char *type_name, PT_NODE *type_mod);
+static int parser_spatial_subtype_from_name (const char *type_name);
 /*%CODE_END%*/%}
 
 %{
@@ -19225,76 +19226,66 @@ primitive_type
 	| GEOMETRY opt_spatial_type_mod
 		{{
 			container_2 ctn;
-			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1, $2);
 
-			if ($2 != NULL)
-			  {
-			    parser_free_node (this_parser, $2);
-			  }
-
-			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_GEOMETRY), dt);
 			$$ = ctn;
 		}}
 	| GEOGRAPHY opt_spatial_type_mod
 		{{
 			container_2 ctn;
-			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1, $2);
 
-			if ($2 != NULL)
-			  {
-			    parser_free_node (this_parser, $2);
-			  }
-
-			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_GEOGRAPHY), dt);
 			$$ = ctn;
 		}}
 	| POINT
 		{{
 			container_2 ctn;
-			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
-			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1, NULL);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_GEOMETRY), dt);
 			$$ = ctn;
 		}}
 	| LINESTRING
 		{{
 			container_2 ctn;
-			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
-			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1, NULL);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_GEOMETRY), dt);
 			$$ = ctn;
 		}}
 	| POLYGON
 		{{
 			container_2 ctn;
-			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
-			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1, NULL);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_GEOMETRY), dt);
 			$$ = ctn;
 		}}
 	| MULTIPOINT
 		{{
 			container_2 ctn;
-			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
-			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1, NULL);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_GEOMETRY), dt);
 			$$ = ctn;
 		}}
 	| MULTILINESTRING
 		{{
 			container_2 ctn;
-			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
-			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1, NULL);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_GEOMETRY), dt);
 			$$ = ctn;
 		}}
 	| MULTIPOLYGON
 		{{
 			container_2 ctn;
-			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
-			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1, NULL);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_GEOMETRY), dt);
 			$$ = ctn;
 		}}
 	| GEOMETRYCOLLECTION
 		{{
 			container_2 ctn;
-			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1);
-			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_OBJECT), dt);
+			PT_NODE *dt = parser_make_spatial_data_type (this_parser, $1, NULL);
+			SET_CONTAINER_2 (ctn, FROM_NUMBER (PT_TYPE_GEOMETRY), dt);
 			$$ = ctn;
 		}}
 	| class_name opt_identity
@@ -19703,11 +19694,7 @@ opt_spatial_type_mod
 		}}
 	| '(' spatial_type_subtype ',' unsigned_integer ')'
 		{{
-			if ($4 != NULL)
-			  {
-			    parser_free_node (this_parser, $4);
-			  }
-
+			$2->next = $4;
 			$$ = $2;
 		}}
 	;
@@ -22697,11 +22684,51 @@ parser_make_expr_with_func (PARSER_CONTEXT * parser, FUNC_CODE func_code,
   return node;
 }
 
+static int
+parser_spatial_subtype_from_name (const char *type_name)
+{
+  if (type_name == NULL)
+    {
+      return DB_SPATIAL_SUBTYPE_ANY;
+    }
+  if (intl_mbs_casecmp (type_name, "POINT") == 0)
+    {
+      return DB_SPATIAL_SUBTYPE_POINT;
+    }
+  if (intl_mbs_casecmp (type_name, "LINESTRING") == 0)
+    {
+      return DB_SPATIAL_SUBTYPE_LINESTRING;
+    }
+  if (intl_mbs_casecmp (type_name, "POLYGON") == 0)
+    {
+      return DB_SPATIAL_SUBTYPE_POLYGON;
+    }
+  if (intl_mbs_casecmp (type_name, "MULTIPOINT") == 0)
+    {
+      return DB_SPATIAL_SUBTYPE_MULTIPOINT;
+    }
+  if (intl_mbs_casecmp (type_name, "MULTILINESTRING") == 0)
+    {
+      return DB_SPATIAL_SUBTYPE_MULTILINESTRING;
+    }
+  if (intl_mbs_casecmp (type_name, "MULTIPOLYGON") == 0)
+    {
+      return DB_SPATIAL_SUBTYPE_MULTIPOLYGON;
+    }
+  if (intl_mbs_casecmp (type_name, "GEOMETRYCOLLECTION") == 0)
+    {
+      return DB_SPATIAL_SUBTYPE_GEOMETRYCOLLECTION;
+    }
+  return DB_SPATIAL_SUBTYPE_ANY;
+}
+
 static PT_NODE *
-parser_make_spatial_data_type (PARSER_CONTEXT *parser, const char *type_name)
+parser_make_spatial_data_type (PARSER_CONTEXT *parser, const char *type_name, PT_NODE *type_mod)
 {
   PT_NODE *dt = parser_new_node (parser, PT_DATA_TYPE);
   PT_NODE *entity = parser_new_node (parser, PT_NAME);
+  const char *entity_name = type_name;
+  int subtype = DB_SPATIAL_SUBTYPE_ANY;
 
   if (dt == NULL)
     {
@@ -22709,16 +22736,37 @@ parser_make_spatial_data_type (PARSER_CONTEXT *parser, const char *type_name)
 	{
 	  parser_free_node (parser, entity);
 	}
+      if (type_mod != NULL)
+	{
+	  parser_free_tree (parser, type_mod);
+	}
 
       return NULL;
     }
 
-  dt->type_enum = PT_TYPE_OBJECT;
+  dt->type_enum = (strcmp (type_name, "GEOGRAPHY") == 0) ? PT_TYPE_GEOGRAPHY : PT_TYPE_GEOMETRY;
   dt->data_type = NULL;
+
+  if (type_mod != NULL && type_mod->node_type == PT_NAME)
+    {
+      entity_name = type_mod->info.name.original;
+      subtype = parser_spatial_subtype_from_name (entity_name);
+      if (type_mod->next != NULL && type_mod->next->node_type == PT_VALUE)
+	{
+	  dt->info.data_type.dec_precision = type_mod->next->info.value.data_value.i;
+	}
+      parser_free_tree (parser, type_mod);
+    }
+  else
+    {
+      subtype = parser_spatial_subtype_from_name (type_name);
+    }
+
+  dt->info.data_type.precision = subtype;
 
   if (entity != NULL)
     {
-      entity->info.name.original = (char *) type_name;
+      entity->info.name.original = (char *) entity_name;
       dt->info.data_type.entity = entity;
     }
 

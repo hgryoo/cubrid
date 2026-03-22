@@ -1627,6 +1627,14 @@ csql_db_value_as_string (DB_VALUE * value, int *length, const CSQL_ARGUMENT * cs
 	  len = strlen (result);
 	}
       break;
+    case DB_TYPE_GEOMETRY:
+    case DB_TYPE_GEOGRAPHY:
+      result = duplicate_string (db_get_spatial_string (value));
+      if (result)
+	{
+	  len = strlen (result);
+	}
+      break;
     case DB_TYPE_SET:
     case DB_TYPE_MULTISET:
     case DB_TYPE_SEQUENCE:

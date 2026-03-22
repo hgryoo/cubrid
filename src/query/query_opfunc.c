@@ -7021,6 +7021,44 @@ qdata_evaluate_function (THREAD_ENTRY * thread_p, regu_variable_node * function_
       return qdata_regexp_function (thread_p, funcp, val_desc_p, obj_oid_p, tuple);
 
     case F_ST_ASTEXT:
+      return qdata_convert_operands_to_value_and_call (thread_p, funcp, val_desc_p, obj_oid_p, tuple,
+						       db_evaluate_st_astext);
+    case F_ST_GEOMFROMTEXT:
+      return qdata_convert_operands_to_value_and_call (thread_p, funcp, val_desc_p, obj_oid_p, tuple,
+						       db_evaluate_st_geomfromtext);
+    case F_ST_SRID:
+      return qdata_convert_operands_to_value_and_call (thread_p, funcp, val_desc_p, obj_oid_p, tuple,
+						       db_evaluate_st_srid);
+    case F_ST_SETSRID:
+      return qdata_convert_operands_to_value_and_call (thread_p, funcp, val_desc_p, obj_oid_p, tuple,
+						       db_evaluate_st_setsrid);
+    case F_ST_GEOMETRYTYPE:
+      return qdata_convert_operands_to_value_and_call (thread_p, funcp, val_desc_p, obj_oid_p, tuple,
+						       db_evaluate_st_geometrytype);
+    case F_ST_X:
+      return qdata_convert_operands_to_value_and_call (thread_p, funcp, val_desc_p, obj_oid_p, tuple,
+						       db_evaluate_st_x);
+    case F_ST_Y:
+      return qdata_convert_operands_to_value_and_call (thread_p, funcp, val_desc_p, obj_oid_p, tuple,
+						       db_evaluate_st_y);
+    case F_ST_DISTANCE:
+      return qdata_convert_operands_to_value_and_call (thread_p, funcp, val_desc_p, obj_oid_p, tuple,
+						       db_evaluate_st_distance);
+    case F_ST_CONTAINS:
+      return qdata_convert_operands_to_value_and_call (thread_p, funcp, val_desc_p, obj_oid_p, tuple,
+						       db_evaluate_st_contains);
+    case F_ST_INTERSECTS:
+      return qdata_convert_operands_to_value_and_call (thread_p, funcp, val_desc_p, obj_oid_p, tuple,
+						       db_evaluate_st_intersects);
+    case F_ST_AREA:
+      return qdata_convert_operands_to_value_and_call (thread_p, funcp, val_desc_p, obj_oid_p, tuple,
+						       db_evaluate_st_area);
+    case F_ST_LENGTH:
+      return qdata_convert_operands_to_value_and_call (thread_p, funcp, val_desc_p, obj_oid_p, tuple,
+						       db_evaluate_st_length);
+    case F_ST_ENVELOPE:
+      return qdata_convert_operands_to_value_and_call (thread_p, funcp, val_desc_p, obj_oid_p, tuple,
+						       db_evaluate_st_envelope);
     case F_ST_AFFINE:
     case F_ST_AREA_SPHEROID:
     case F_ST_ASGEOJSON:
@@ -7036,20 +7074,14 @@ qdata_evaluate_function (THREAD_ENTRY * thread_p, regu_variable_node * function_
     case F_ST_COLLECT:
     case F_ST_COLLECTIONEXTRACT:
     case F_ST_CONCAVEHULL:
-    case F_ST_GEOMFROMTEXT:
     case F_ST_GEOMFROMWKB:
     case F_ST_GEOMFROMGEOJSON:
     case F_ST_GEOMFROMHEXEWKB:
     case F_ST_GEOMFROMHEXWKB:
-    case F_ST_SRID:
-    case F_ST_SETSRID:
-    case F_ST_GEOMETRYTYPE:
     case F_ST_HASM:
     case F_ST_HASZ:
     case F_ST_HILBERT:
     case F_ST_INTERSECTION:
-    case F_ST_X:
-    case F_ST_Y:
     case F_ST_XMAX:
     case F_ST_XMIN:
     case F_ST_YMAX:
@@ -7058,11 +7090,9 @@ qdata_evaluate_function (THREAD_ENTRY * thread_p, regu_variable_node * function_
     case F_ST_ZMFLAG:
     case F_ST_ZMAX:
     case F_ST_ZMIN:
-    case F_ST_DISTANCE:
     case F_ST_DISTANCE_GEOS:
     case F_ST_DISTANCE_SPHERE:
     case F_ST_DISTANCE_SPHEROID:
-    case F_ST_CONTAINS:
     case F_ST_CONTAINSPROPERLY:
     case F_ST_CONVEXHULL:
     case F_ST_COVERAGEINVALIDEDGES:
@@ -7079,7 +7109,6 @@ qdata_evaluate_function (THREAD_ENTRY * thread_p, regu_variable_node * function_
     case F_ST_DISJOINT:
     case F_ST_DUMP:
     case F_ST_ENDPOINT:
-    case F_ST_ENVELOPE:
     case F_ST_EQUALS:
     case F_ST_EXTENT:
     case F_ST_EXTENT_APPROX:
@@ -7089,15 +7118,12 @@ qdata_evaluate_function (THREAD_ENTRY * thread_p, regu_variable_node * function_
     case F_ST_FORCE3DM:
     case F_ST_FORCE3DZ:
     case F_ST_FORCE4D:
-    case F_ST_INTERSECTS:
     case F_ST_INTERSECTS_EXTENT:
     case F_ST_ISCLOSED:
     case F_ST_ISEMPTY:
     case F_ST_ISRING:
     case F_ST_ISSIMPLE:
     case F_ST_ISVALID:
-    case F_ST_AREA:
-    case F_ST_LENGTH:
     case F_ST_LENGTH_SPHEROID:
     case F_ST_LINEINTERPOLATEPOINT:
     case F_ST_LINEINTERPOLATEPOINTS:

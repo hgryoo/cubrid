@@ -291,6 +291,15 @@ db_value_domain_init (DB_VALUE * value, const DB_TYPE type, const int precision,
       value->data.json.document = NULL;
       value->data.json.schema_raw = NULL;
       break;
+    case DB_TYPE_GEOMETRY:
+    case DB_TYPE_GEOGRAPHY:
+      value->data.spatial.serialized = NULL;
+      value->data.spatial.length = 0;
+      value->data.spatial.geometry = NULL;
+      value->data.spatial.context = NULL;
+      value->data.spatial.subtype = DB_SPATIAL_SUBTYPE_ANY;
+      value->data.spatial.srid = 0;
+      break;
 
     case DB_TYPE_NULL:
     case DB_TYPE_INTEGER:
@@ -500,6 +509,8 @@ db_value_domain_min (DB_VALUE * value, const DB_TYPE type,
       break;
       /* case DB_TYPE_TABLE: internal use only */
     case DB_TYPE_JSON:
+    case DB_TYPE_GEOMETRY:
+    case DB_TYPE_GEOGRAPHY:
     case DB_TYPE_RESULTSET:
       value->domain.general_info.is_null = 1;
       value->need_clear = false;
@@ -676,6 +687,8 @@ db_value_domain_max (DB_VALUE * value, const DB_TYPE type,
       break;
       /* case DB_TYPE_TABLE: internal use only */
     case DB_TYPE_JSON:
+    case DB_TYPE_GEOMETRY:
+    case DB_TYPE_GEOGRAPHY:
     case DB_TYPE_RESULTSET:
       value->domain.general_info.is_null = 1;
       value->need_clear = false;
@@ -1576,6 +1589,8 @@ db_type_to_db_domain (const DB_TYPE type)
     case DB_TYPE_ENUMERATION:
     case DB_TYPE_ELO:
     case DB_TYPE_JSON:
+    case DB_TYPE_GEOMETRY:
+    case DB_TYPE_GEOGRAPHY:
       result = tp_domain_resolve_default (type);
       break;
     case DB_TYPE_SUB:

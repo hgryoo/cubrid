@@ -4197,6 +4197,10 @@ pt_show_type_enum (PT_TYPE_ENUM t)
       return "monetary";
     case PT_TYPE_JSON:
       return "json";
+    case PT_TYPE_GEOMETRY:
+      return "geometry";
+    case PT_TYPE_GEOGRAPHY:
+      return "geography";
     case PT_TYPE_MAYBE:
       return "uncertain";
 
@@ -8649,6 +8653,30 @@ pt_print_datatype (PARSER_CONTEXT * parser, PT_NODE * p)
       else
 	{
 	  q = pt_append_nulstring (parser, q, "object");
+	}
+      break;
+
+    case PT_TYPE_GEOMETRY:
+    case PT_TYPE_GEOGRAPHY:
+      q = pt_append_nulstring (parser, q, pt_show_type_enum (p->type_enum));
+      if (p->info.data_type.precision != DB_SPATIAL_SUBTYPE_ANY || p->info.data_type.dec_precision > 0)
+	{
+	  q = pt_append_nulstring (parser, q, "(");
+	  if (p->info.data_type.precision != DB_SPATIAL_SUBTYPE_ANY && p->info.data_type.entity != NULL)
+	    {
+	      r1 = pt_print_bytes (parser, p->info.data_type.entity);
+	      q = pt_append_varchar (parser, q, r1);
+	    }
+	  if (p->info.data_type.dec_precision > 0)
+	    {
+	      if (p->info.data_type.precision != DB_SPATIAL_SUBTYPE_ANY)
+		{
+		  q = pt_append_nulstring (parser, q, ",");
+		}
+	      sprintf (buf, "%d", p->info.data_type.dec_precision);
+	      q = pt_append_nulstring (parser, q, buf);
+	    }
+	  q = pt_append_nulstring (parser, q, ")");
 	}
       break;
 

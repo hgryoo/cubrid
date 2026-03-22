@@ -224,6 +224,8 @@ extern const PR_TYPE tp_Datetimeltz;
 extern const PR_TYPE tp_Timetz;
 extern const PR_TYPE tp_Timeltz;
 extern const PR_TYPE tp_Json;
+extern const PR_TYPE tp_Geometry;
+extern const PR_TYPE tp_Geography;
 
 extern const PR_TYPE *tp_Type_null;
 extern const PR_TYPE *tp_Type_integer;
@@ -257,6 +259,8 @@ extern const PR_TYPE *tp_Type_midxkey;
 extern const PR_TYPE *tp_Type_bigint;
 extern const PR_TYPE *tp_Type_datetime;
 extern const PR_TYPE *tp_Type_json;
+extern const PR_TYPE *tp_Type_geometry;
+extern const PR_TYPE *tp_Type_geography;
 
 
 extern const PR_TYPE *tp_Type_id_map[];
