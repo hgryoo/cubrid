@@ -46,6 +46,7 @@
 #include "parse_type.hpp"
 #include "set_object.h"
 #include "arithmetic.h"
+#include "spatial_opfunc.h"
 #include "string_opfunc.h"
 #include "object_domain.h"
 #include "object_primitive.h"

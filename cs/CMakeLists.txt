@@ -44,6 +44,7 @@ set(COMPAT_SOURCES
   ${COMPAT_DIR}/db_date.c
   ${COMPAT_DIR}/db_elo.c
   ${COMPAT_DIR}/db_function.cpp
+  ${COMPAT_DIR}/db_geometry.cpp
   ${COMPAT_DIR}/db_info.c
   ${COMPAT_DIR}/db_json.cpp
   ${COMPAT_DIR}/db_json_allocator.cpp
@@ -267,6 +268,7 @@ set(QUERY_SOURCES
   ${QUERY_DIR}/query_cl.c
   ${QUERY_DIR}/query_dump.c
   ${QUERY_DIR}/regu_var.cpp
+  ${QUERY_DIR}/spatial_opfunc.cpp
   ${QUERY_DIR}/string_opfunc.c
   ${QUERY_DIR}/string_regex.cpp
   ${QUERY_DIR}/string_regex_std.cpp

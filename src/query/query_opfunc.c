@@ -52,6 +52,7 @@
 #include "query_list.h"
 #include "db_json.hpp"
 #include "arithmetic.h"
+#include "spatial_opfunc.h"
 #include "xasl.h"
 #include "xasl_aggregate.hpp"
 #include "xasl_analytic.hpp"

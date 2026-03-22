@@ -33,6 +33,7 @@
 #include "object_primitive.h"
 
 #include "area_alloc.h"
+#include "db_geometry.hpp"
 #include "db_value_printer.hpp"
 #include "db_json.hpp"
 #include "elo.h"
@@ -46,8 +47,6 @@
 #include "string_opfunc.h"
 #include "system_parameter.h"
 #include "tz_support.h"
-
-#include <geos_c.h>
 
 #include <utility>
 
@@ -121,11 +120,7 @@ extern unsigned int db_on_server;
 #define OR_NUMERIC_SIZE(precision) DB_NUMERIC_BUF_SIZE
 #define MR_NUMERIC_SIZE(precision) DB_NUMERIC_BUF_SIZE
 
-static GEOSContextHandle_t spatial_create_context (void);
-static int spatial_geos_type_to_subtype (int geos_type);
 static int spatial_copy_serialized (char **copy, const char *serialized, int length);
-static void spatial_clear_internal (DB_SPATIAL * spatial);
-static int spatial_build_internal_from_serialized (DB_TYPE type, DB_SPATIAL * spatial, int declared_subtype, int srid);
 
 #define STR_SIZE(prec, codeset)                                             \
      (((codeset) == INTL_CODESET_RAW_BITS) ? ((prec+7)/8) :		    \
@@ -14858,37 +14853,6 @@ mr_cmpval_json (DB_VALUE * value1, DB_VALUE * value2, int do_coercion, int total
   return cmp_result;
 }
 
-static GEOSContextHandle_t
-spatial_create_context (void)
-{
-  return GEOS_init_r ();
-}
-
-static int
-spatial_geos_type_to_subtype (int geos_type)
-{
-  switch (geos_type)
-    {
-    case GEOS_POINT:
-      return DB_SPATIAL_SUBTYPE_POINT;
-    case GEOS_LINESTRING:
-    case GEOS_LINEARRING:
-      return DB_SPATIAL_SUBTYPE_LINESTRING;
-    case GEOS_POLYGON:
-      return DB_SPATIAL_SUBTYPE_POLYGON;
-    case GEOS_MULTIPOINT:
-      return DB_SPATIAL_SUBTYPE_MULTIPOINT;
-    case GEOS_MULTILINESTRING:
-      return DB_SPATIAL_SUBTYPE_MULTILINESTRING;
-    case GEOS_MULTIPOLYGON:
-      return DB_SPATIAL_SUBTYPE_MULTIPOLYGON;
-    case GEOS_GEOMETRYCOLLECTION:
-      return DB_SPATIAL_SUBTYPE_GEOMETRYCOLLECTION;
-    default:
-      return DB_SPATIAL_SUBTYPE_ANY;
-    }
-}
-
 static int
 spatial_copy_serialized (char **copy, const char *serialized, int length)
 {
@@ -14912,120 +14876,6 @@ spatial_copy_serialized (char **copy, const char *serialized, int length)
   new_copy[length] = '\0';
   *copy = new_copy;
   return NO_ERROR;
-}
-
-static void
-spatial_clear_internal (DB_SPATIAL * spatial)
-{
-  if (spatial == NULL)
-    {
-      return;
-    }
-
-  if (spatial->geometry != NULL && spatial->context != NULL)
-    {
-      GEOSGeom_destroy_r ((GEOSContextHandle_t) spatial->context, (GEOSGeometry *) spatial->geometry);
-    }
-
-  if (spatial->context != NULL)
-    {
-      GEOS_finish_r ((GEOSContextHandle_t) spatial->context);
-    }
-
-  spatial->geometry = NULL;
-  spatial->context = NULL;
-  spatial->subtype = DB_SPATIAL_SUBTYPE_ANY;
-  spatial->srid = 0;
-}
-
-static int
-spatial_build_internal_from_serialized (DB_TYPE type, DB_SPATIAL * spatial, int declared_subtype, int srid)
-{
-  GEOSContextHandle_t context = NULL;
-  GEOSWKTReader *reader = NULL;
-  GEOSGeometry *geometry = NULL;
-  int actual_subtype = DB_SPATIAL_SUBTYPE_ANY;
-  int geos_type = -1;
-
-  assert (type == DB_TYPE_GEOMETRY || type == DB_TYPE_GEOGRAPHY);
-
-  if (spatial == NULL || spatial->serialized == NULL)
-    {
-      return NO_ERROR;
-    }
-
-  spatial_clear_internal (spatial);
-
-  context = spatial_create_context ();
-  if (context == NULL)
-    {
-      return ER_FAILED;
-    }
-
-  reader = GEOSWKTReader_create_r (context);
-  if (reader == NULL)
-    {
-      GEOS_finish_r (context);
-      return ER_FAILED;
-    }
-
-  geometry = GEOSWKTReader_read_r (context, reader, spatial->serialized);
-  GEOSWKTReader_destroy_r (context, reader);
-  reader = NULL;
-
-  if (geometry == NULL)
-    {
-      GEOS_finish_r (context);
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OBJ_INVALID_ARGUMENTS, 0);
-      return ER_OBJ_INVALID_ARGUMENTS;
-    }
-
-  geos_type = GEOSGeomTypeId_r (context, geometry);
-  actual_subtype = spatial_geos_type_to_subtype (geos_type);
-  if (declared_subtype != DB_SPATIAL_SUBTYPE_ANY && actual_subtype != declared_subtype)
-    {
-      GEOSGeom_destroy_r (context, geometry);
-      GEOS_finish_r (context);
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OBJ_INVALID_ARGUMENTS, 0);
-      return ER_OBJ_INVALID_ARGUMENTS;
-    }
-
-  if (srid != 0)
-    {
-      GEOSSetSRID_r (context, geometry, srid);
-    }
-  else
-    {
-      srid = GEOSGetSRID_r (context, geometry);
-    }
-
-  spatial->context = context;
-  spatial->geometry = geometry;
-  spatial->subtype = actual_subtype;
-  spatial->srid = srid;
-  return NO_ERROR;
-}
-
-int
-db_spatial_build_internal (DB_VALUE * value)
-{
-  DB_SPATIAL *spatial = NULL;
-  DB_TYPE type;
-
-  if (value == NULL || DB_IS_NULL (value))
-    {
-      return NO_ERROR;
-    }
-
-  type = DB_VALUE_DOMAIN_TYPE (value);
-  if (type != DB_TYPE_GEOMETRY && type != DB_TYPE_GEOGRAPHY)
-    {
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OBJ_INVALID_ARGUMENTS, 0);
-      return ER_OBJ_INVALID_ARGUMENTS;
-    }
-
-  spatial = &value->data.spatial;
-  return spatial_build_internal_from_serialized (type, spatial, spatial->subtype, spatial->srid);
 }
 
 const PR_TYPE tp_Geometry = {
@@ -15107,7 +14957,7 @@ mr_freemem_spatial (void *memptr)
       return;
     }
 
-  spatial_clear_internal (spatial);
+  db_spatial_free (spatial);
 
   if (spatial->serialized != NULL)
     {
@@ -15151,7 +15001,7 @@ mr_setmem_spatial (void *memptr, TP_DOMAIN * domain, DB_VALUE * value)
   spatial->subtype = src_spatial->subtype;
   spatial->srid = src_spatial->srid;
 
-  return spatial_build_internal_from_serialized (DB_VALUE_DOMAIN_TYPE (value), spatial, spatial->subtype, spatial->srid);
+  return db_spatial_build_memory (domain->type->id, spatial, spatial->subtype, spatial->srid);
 }
 
 static int
@@ -15287,7 +15137,7 @@ mr_data_readmem_spatial (OR_BUF * buf, void *memptr, TP_DOMAIN * domain, int siz
   spatial->length = payload_size;
   spatial->subtype = subtype;
   spatial->srid = srid;
-  rc = spatial_build_internal_from_serialized (domain->type->id, spatial, subtype, srid);
+  rc = db_spatial_build_memory (domain->type->id, spatial, subtype, srid);
   if (rc != NO_ERROR)
     {
       mr_freemem_spatial (memptr);
