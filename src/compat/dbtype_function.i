@@ -977,7 +977,7 @@ db_get_json_document (const DB_VALUE * value)
   return value->data.json.document;
 }
 
-STATIC_INLINE const DB_SPATIAL *
+const DB_SPATIAL *
 db_get_spatial (const DB_VALUE * value)
 {
 #if defined (API_ACTIVE_CHECKS)
@@ -989,7 +989,7 @@ db_get_spatial (const DB_VALUE * value)
   return &value->data.spatial;
 }
 
-STATIC_INLINE const char *
+const char *
 db_get_spatial_string (const DB_VALUE * value)
 {
   const DB_SPATIAL *spatial = db_get_spatial (value);
@@ -997,7 +997,7 @@ db_get_spatial_string (const DB_VALUE * value)
   return spatial != NULL ? spatial->serialized : NULL;
 }
 
-STATIC_INLINE int
+int
 db_get_spatial_string_size (const DB_VALUE * value)
 {
   const DB_SPATIAL *spatial = db_get_spatial (value);
@@ -2099,9 +2099,11 @@ db_make_json (DB_VALUE * value, JSON_DOC * json_document, bool need_clear)
   return NO_ERROR;
 }
 
+#if !defined (_NO_INLINE_DBTYPE_FUNCTION_)
 extern int db_spatial_build_internal (DB_VALUE * value);
+#endif
 
-STATIC_INLINE int
+int
 db_make_spatial_ex (DB_VALUE * value, DB_TYPE type, const char *serialized, int length, int subtype, int srid,
 		    bool need_clear)
 {
@@ -2135,31 +2137,31 @@ db_make_spatial_ex (DB_VALUE * value, DB_TYPE type, const char *serialized, int 
   return NO_ERROR;
 }
 
-STATIC_INLINE int
+int
 db_make_spatial (DB_VALUE * value, DB_TYPE type, const char *serialized, int length, bool need_clear)
 {
   return db_make_spatial_ex (value, type, serialized, length, DB_SPATIAL_SUBTYPE_ANY, 0, need_clear);
 }
 
-STATIC_INLINE int
+int
 db_make_geometry_ex (DB_VALUE * value, const char *serialized, int length, int subtype, int srid, bool need_clear)
 {
   return db_make_spatial_ex (value, DB_TYPE_GEOMETRY, serialized, length, subtype, srid, need_clear);
 }
 
-STATIC_INLINE int
+int
 db_make_geometry (DB_VALUE * value, const char *serialized, int length, bool need_clear)
 {
   return db_make_geometry_ex (value, serialized, length, DB_SPATIAL_SUBTYPE_ANY, 0, need_clear);
 }
 
-STATIC_INLINE int
+int
 db_make_geography_ex (DB_VALUE * value, const char *serialized, int length, int subtype, int srid, bool need_clear)
 {
   return db_make_spatial_ex (value, DB_TYPE_GEOGRAPHY, serialized, length, subtype, srid, need_clear);
 }
 
-STATIC_INLINE int
+int
 db_make_geography (DB_VALUE * value, const char *serialized, int length, bool need_clear)
 {
   return db_make_geography_ex (value, serialized, length, DB_SPATIAL_SUBTYPE_ANY, 0, need_clear);

@@ -12,3 +12,18 @@ from db_root;
 
 select st_area(st_geomfromtext('POLYGON ((0 0, 0 2, 2 2, 2 0, 0 0))')) as polygon_area
 from db_root;
+
+select st_distance(
+         st_setsrid(st_geomfromtext('POINT (126.97 37.56)'), 4326),
+         st_setsrid(st_geomfromtext('POINT (127.02 37.50)'), 4326)
+       ) as srid_tagged_distance
+from db_root;
+
+select st_length(st_envelope(st_geomfromtext('LINESTRING (0 0, 2 3)'))) as envelope_perimeter_length
+from db_root;
+
+select st_area(st_envelope(st_geomfromtext('POINT (3 7)'))) as point_envelope_area
+from db_root;
+
+select st_area(cast('POLYGON ((0 0, 0 3, 4 3, 4 0, 0 0))' as geography(polygon))) as geography_polygon_area
+from db_root;
