@@ -24,6 +24,7 @@ set(WITH_RAPIDJSON_URL "https://github.com/CUBRID/3rdparty/raw/develop/rapidjson
 set(WITH_LIBOPENSSL_URL "https://github.com/CUBRID/3rdparty/raw/develop/openssl/openssl-1.1.1w.tar.gz")       # openssl library sources URL
 set(WITH_LIBUNIXODBC_URL "https://github.com/CUBRID/3rdparty/raw/develop/unixODBC/unixODBC-2.3.9.tar.gz")     # unixODBC library sources URL
 set(WITH_LIBTBB_URL "https://github.com/CUBRID/3rdparty/raw/develop/tbb/v2021.11.0.tar.gz")                   # intel oneTBB library sources URL
+set(WITH_LIBGEOS_URL "https://github.com/libgeos/geos/archive/refs/tags/3.14.1.tar.gz")                       # GEOS
 set(WITH_RE2_URL "https://github.com/CUBRID/3rdparty/raw/develop/re2/2022-06-01.tar.gz")                      # RE2
 set(WITH_LZ4_URL "https://github.com/CUBRID/3rdparty/raw/develop/lz4/v1.9.4.tar.gz")                          # LZ4
 set(WIN_FLEX_BISON_URL "https://github.com/CUBRID/3rdparty/raw/develop/win_flex_bison/win_flex_bison-2.5.22.zip") # Windows
@@ -69,6 +70,7 @@ set(WITH_LIBJANSSON   "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with jansson
 set(WITH_LIBEDIT      "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with editline library (default: EXTERNAL)")
 set(WITH_LIBOPENSSL   "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with openssl library (default: EXTERNAL)")
 set(WITH_LIBUNIXODBC  "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with unixODBC library (default: EXTERNAL)")
+set(WITH_LIBGEOS      "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with GEOS library (default: EXTERNAL)")
 set(WITH_RE2          "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with re2 library (default: EXTERNAL)")
 set(WITH_LZ4          "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with lz4 library (default: EXTERNAL)")
 set(WITH_LIBTBB       "${WITH_EXTERNAL_PREFIX}" CACHE STRING "Build with TBB library (default: EXTERNAL)")
@@ -79,6 +81,7 @@ message(STATUS "Build with jansson library: ${WITH_LIBJANSSON}")
 message(STATUS "Build with editline library: ${WITH_LIBEDIT}")
 message(STATUS "Build with openssl library: ${WITH_LIBOPENSSL}")
 message(STATUS "Build with unixODBC library: ${WITH_LIBUNIXODBC}")
+message(STATUS "Build with GEOS library: ${WITH_LIBGEOS}")
 message(STATUS "Build with RE2 library: ${WITH_RE2}")
 message(STATUS "Build with LZ4 library: ${WITH_LZ4}")
 message(STATUS "Build with TBB library: ${WITH_LIBTBB}")
@@ -492,6 +495,51 @@ list(APPEND EP_TARGETS ${RE2_TARGET})
 list(APPEND EP_LIBS ${RE2_LIBS})
 list(APPEND EP_INCLUDES ${RE2_INCLUDES})
 
+# GEOS
+set(LIBGEOS_TARGET libgeos)
+if(WITH_LIBGEOS STREQUAL "EXTERNAL")
+  if(UNIX)
+    set(LIBGEOS_INCLUDES ${3RDPARTY_LIBS_DIR}/include)
+    set(LIBGEOS_LIBS ${3RDPARTY_LIBS_DIR}/lib/libgeos_c.so)
+    ADD_BY_PRODUCTS_VARIABLE ("LIBGEOS" ${3RDPARTY_LIBS_DIR}/lib/libgeos.so ${LIBGEOS_LIBS})
+    externalproject_add(${LIBGEOS_TARGET}
+      URL                  ${WITH_LIBGEOS_URL}
+      LOG_CONFIGURE        TRUE
+      LOG_BUILD            TRUE
+      LOG_INSTALL          TRUE
+      TIMEOUT              600
+      DOWNLOAD_NO_PROGRESS 1
+      CMAKE_ARGS           -DCMAKE_INSTALL_PREFIX=${3RDPARTY_LIBS_DIR}
+                           -DCMAKE_INSTALL_LIBDIR=lib
+                           -DBUILD_SHARED_LIBS=ON
+                           -DBUILD_TESTING=OFF
+                           -DCMAKE_BUILD_TYPE=Release
+      BUILD_COMMAND        ${CMAKE_COMMAND} --build <BINARY_DIR> --parallel
+      INSTALL_COMMAND      ${CMAKE_COMMAND} --build <BINARY_DIR> --target install
+      "${LIBGEOS_BYPRODUCTS}"
+    )
+    list(APPEND EP_TARGETS ${LIBGEOS_TARGET})
+  else()
+    message(FATAL_ERROR "WITH_LIBGEOS=EXTERNAL is not supported on Windows yet")
+  endif()
+elseif(WITH_LIBGEOS STREQUAL "SYSTEM")
+  if(UNIX)
+    find_library(LIBGEOS_LIBS NAMES geos_c libgeos_c.so PATHS ${WITH_EXTERNAL_LIBS_PATH} ${WITH_LIBGEOS_ROOT_PATH}/lib REQUIRED)
+    find_path(LIBGEOS_INCLUDES NAMES geos_c.h PATHS ${WITH_EXTERNAL_HEADERS_PATH} ${WITH_LIBGEOS_ROOT_PATH}/include REQUIRED)
+
+    message(STATUS "Found GEOS library: ${LIBGEOS_LIBS}")
+    message(STATUS "Found GEOS headers: ${LIBGEOS_INCLUDES}")
+  endif()
+else()
+  message(FATAL_ERROR "Invalid WITH_LIBGEOS option value ${WITH_LIBGEOS}")
+endif()
+
+if(UNIX AND WITH_LIBGEOS STREQUAL "EXTERNAL")
+  install(DIRECTORY ${3RDPARTY_LIBS_DIR}/lib/
+    DESTINATION lib
+    FILES_MATCHING PATTERN "libgeos*.so*")
+endif()
+
 # libTBB
 set(LIBTBB_TARGET libtbb)
 if(WITH_LIBTBB STREQUAL "EXTERNAL")
@@ -550,6 +598,7 @@ expose_3rdparty_variable(LIBJANSSON)
 expose_3rdparty_variable(LZ4)
 expose_3rdparty_variable(LIBOPENSSL)
 expose_3rdparty_variable(LIBUNIXODBC)
+expose_3rdparty_variable(LIBGEOS)
 expose_3rdparty_variable(RAPIDJSON)
 expose_3rdparty_variable(RE2)
 expose_3rdparty_variable(LIBTBB)

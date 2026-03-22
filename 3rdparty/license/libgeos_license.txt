@@ -1,0 +1,13 @@
+GEOS (Geometry Engine, Open Source)
+
+Homepage:
+https://libgeos.org/
+
+Upstream source:
+https://github.com/libgeos/geos
+
+License:
+LGPL-2.1-or-later
+
+This project links GEOS as a shared library.
+See the upstream GEOS source distribution for the full license text.
