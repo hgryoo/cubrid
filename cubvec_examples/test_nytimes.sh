@@ -9,6 +9,7 @@ DB_USER="${DB_USER:-dba}"
 TOPK="${TOPK:-10}"
 QUERY_LIMIT="${QUERY_LIMIT:-0}"
 PROGRESS_EVERY="${PROGRESS_EVERY:-100}"
+QUERY_BATCH_SIZE="${QUERY_BATCH_SIZE:-250}"
 
 HNSW_M="${HNSW_M:-24}"
 HNSW_EF_CONSTRUCTION="${HNSW_EF_CONSTRUCTION:-200}"
@@ -27,6 +28,8 @@ OBJECT_LOAD_MARKER="${OBJECT_LOAD_MARKER:-${OBJECT_FILE}.load_sanitized}"
 RESULT_CSV="${RESULT_CSV:-$SCRIPT_DIR/nytimes_ef_search_results.csv}"
 RESULT_SVG="${RESULT_SVG:-$SCRIPT_DIR/nytimes_ef_search_results.svg}"
 EXCLUDED_QUERY_FILE="${EXCLUDED_QUERY_FILE:-$SCRIPT_DIR/nytimes_excluded_queries.txt}"
+QUERY_ID_FILE="${QUERY_ID_FILE:-$SCRIPT_DIR/nytimes_query_ids.txt}"
+QUERY_ID_CACHE_MARKER="${QUERY_ID_CACHE_MARKER:-$SCRIPT_DIR/nytimes_query_ids.cache_ready}"
 
 log() {
   printf '[%s] %s\n' "$(date '+%F %T')" "$*"
@@ -156,62 +159,77 @@ build_index() {
 }
 
 prepare_query_ids() {
-  local ids
-  local excluded_ids
+  local tmp_status_file
+
+  if [[ -s "$QUERY_ID_FILE" && -s "$EXCLUDED_QUERY_FILE" && -f "$QUERY_ID_CACHE_MARKER" ]]; then
+    EXCLUDED_QUERY_COUNT="$(grep -vc '^#' "$EXCLUDED_QUERY_FILE" || true)"
+    mapfile -t QUERY_IDS < <(grep -E '^-?[0-9]+$' "$QUERY_ID_FILE")
+
+    if (( QUERY_LIMIT > 0 )); then
+      mapfile -t QUERY_IDS < <(printf '%s\n' "${QUERY_IDS[@]}" | head -n "$QUERY_LIMIT")
+    fi
+
+    if (( ${#QUERY_IDS[@]} > 0 )); then
+      log "reusing cached query ids: ${#QUERY_IDS[@]} valid queries, ${EXCLUDED_QUERY_COUNT} excluded"
+      return
+    fi
+  fi
+
+  log "building query id cache from nytimes_256_angular_test/answer"
 
   # Queries whose vector is effectively invalid/null must be excluded.
   # They do not participate in vector indexing, and they should not be used
   # as ANN queries either. In this dataset, those cases appear as answer rows
   # with NULL neighbor_distance, so we keep only ids with at least one valid
   # ground-truth distance and record the excluded ids separately.
-  excluded_ids="$(
-    sql_capture "
-      SELECT t.id
-        FROM nytimes_256_angular_test t
-       WHERE NOT EXISTS (
-             SELECT 1
-               FROM nytimes_256_angular_answer a
-              WHERE a.id = t.id
-                AND a.neighbor_distance IS NOT NULL
-       )
-       ORDER BY t.id;
-    " \
-      | awk -F'|' '/^-?[0-9]+([|].*)?$/ {print $1}'
-  )"
+  tmp_status_file="$(mktemp /tmp/nytimes_query_status.XXXXXX)"
+
+  log "scanning ground-truth availability for all test queries"
+  sql_capture "
+    SELECT t.id,
+           CASE
+             WHEN MAX(CASE WHEN a.neighbor_distance IS NOT NULL THEN 1 ELSE 0 END) = 1
+             THEN 1
+             ELSE 0
+           END AS has_valid_gt
+      FROM nytimes_256_angular_test t
+      LEFT JOIN nytimes_256_angular_answer a
+        ON a.id = t.id
+     GROUP BY t.id
+     ORDER BY t.id;
+  " \
+    | awk -F'|' '/^-?[0-9]+\|[01]([|].*)?$/ {print $1 "|" $2}' > "$tmp_status_file"
+
+  if [[ ! -s "$tmp_status_file" ]]; then
+    rm -f "$tmp_status_file"
+    printf 'failed to build query id cache from nytimes_256_angular_test\n' >&2
+    exit 1
+  fi
+
+  log "writing cached valid/excluded query id lists"
 
   {
     printf '# Excluded nytimes queries\n'
     printf '# reason: null/invalid vector queries are excluded from indexing and should also be excluded from ANN recall evaluation.\n'
     printf '# criterion: no non-NULL ground-truth neighbor_distance exists in nytimes_256_angular_answer.\n'
-    if [[ -n "$excluded_ids" ]]; then
-      printf '%s\n' "$excluded_ids"
-    fi
+    awk -F'|' '$2 == 0 {print $1}' "$tmp_status_file"
   } > "$EXCLUDED_QUERY_FILE"
 
-  ids="$(
-    sql_capture "
-      SELECT t.id
-        FROM nytimes_256_angular_test t
-       WHERE EXISTS (
-             SELECT 1
-               FROM nytimes_256_angular_answer a
-              WHERE a.id = t.id
-                AND a.neighbor_distance IS NOT NULL
-       )
-       ORDER BY t.id;
-    " \
-      | awk -F'|' '/^-?[0-9]+([|].*)?$/ {print $1}'
-  )"
+  awk -F'|' '$2 == 1 {print $1}' "$tmp_status_file" > "$QUERY_ID_FILE"
+  rm -f "$tmp_status_file"
 
-  if [[ -z "$ids" ]]; then
-    printf 'failed to fetch query ids from nytimes_256_angular_test\n' >&2
+  if [[ ! -s "$QUERY_ID_FILE" ]]; then
+    printf 'failed to fetch valid query ids from nytimes_256_angular_test\n' >&2
     exit 1
   fi
 
+  touch "$QUERY_ID_CACHE_MARKER"
+
   EXCLUDED_QUERY_COUNT="$(grep -vc '^#' "$EXCLUDED_QUERY_FILE" || true)"
   log "excluded queries: ${EXCLUDED_QUERY_COUNT} (saved to $EXCLUDED_QUERY_FILE)"
+  log "cached valid query ids to $QUERY_ID_FILE"
 
-  mapfile -t QUERY_IDS < <(printf '%s\n' "$ids")
+  mapfile -t QUERY_IDS < "$QUERY_ID_FILE"
 
   if (( QUERY_LIMIT > 0 )); then
     mapfile -t QUERY_IDS < <(printf '%s\n' "${QUERY_IDS[@]}" | head -n "$QUERY_LIMIT")
@@ -228,6 +246,10 @@ prepare_query_ids() {
 measure_recall() {
   local total_hits=0
   local processed=0
+  local batch_start=0
+  local batch_end=0
+  local batch_count=0
+  local next_progress=0
   local start_ns
   local end_ns
   local elapsed_ns
@@ -237,16 +259,29 @@ measure_recall() {
   local sql_file
   local out_file
   local summary
+  local qid
+  local partial
+  local total_queries
 
-  log "measuring recall@${TOPK} for ${#QUERY_IDS[@]} queries (hnsw_ef_search=$HNSW_EF_SEARCH)"
+  total_queries="${#QUERY_IDS[@]}"
+  log "measuring recall@${TOPK} for ${total_queries} queries (hnsw_ef_search=$HNSW_EF_SEARCH, batch_size=$QUERY_BATCH_SIZE)"
   start_ns="$(date +%s%N)"
-  sql_file="$(mktemp /tmp/nytimes_measure_sql.XXXXXX)"
-  out_file="$(mktemp /tmp/nytimes_measure_out.XXXXXX)"
+  next_progress="$PROGRESS_EVERY"
 
-  {
-    printf "SET SYSTEM PARAMETERS 'hnsw_ef_search=%s';\n" "$HNSW_EF_SEARCH"
-    printf "SET @k = %s;\n" "$TOPK"
-    cat <<'EOF'
+  while (( batch_start < total_queries )); do
+    batch_end=$((batch_start + QUERY_BATCH_SIZE))
+    if (( batch_end > total_queries )); then
+      batch_end=$total_queries
+    fi
+    batch_count=$((batch_end - batch_start))
+
+    sql_file="$(mktemp /tmp/nytimes_measure_sql.XXXXXX)"
+    out_file="$(mktemp /tmp/nytimes_measure_out.XXXXXX)"
+
+    {
+      printf "SET SYSTEM PARAMETERS 'hnsw_ef_search=%s';\n" "$HNSW_EF_SEARCH"
+      printf "SET @k = %s;\n" "$TOPK"
+      cat <<'EOF'
 PREPARE ann FROM '
   SELECT 1, ?:0, id
     FROM (
@@ -268,22 +303,23 @@ PREPARE gt FROM '
 ';
 EOF
 
-    for qid in "${QUERY_IDS[@]}"; do
-      printf "SET @qid = %s;\n" "$qid"
-      printf "SET @v = (SELECT vec FROM nytimes_256_angular_test WHERE id = @qid);\n"
-      printf "EXECUTE ann USING @qid, @v, @k;\n"
-      printf "EXECUTE gt USING @qid, @k;\n"
-    done
-  } > "$sql_file"
+      for ((i = batch_start; i < batch_end; i++)); do
+        qid="${QUERY_IDS[i]}"
+        printf "SET @qid = %s;\n" "$qid"
+        printf "SET @v = (SELECT vec FROM nytimes_256_angular_test WHERE id = @qid);\n"
+        printf "EXECUTE ann USING @qid, @v, @k;\n"
+        printf "EXECUTE gt USING @qid, @k;\n"
+      done
+    } > "$sql_file"
 
-  csql -u "$DB_USER" -q -N --delimiter='|' "$DB_NAME" -i "$sql_file" > "$out_file"
+    csql -u "$DB_USER" -q -N --delimiter='|' "$DB_NAME" -i "$sql_file" > "$out_file"
 
-  summary="$(
-    awk -F'|' -v topk="$TOPK" -v progress_every="$PROGRESS_EVERY" -v total_queries="${#QUERY_IDS[@]}" '
-      function flush_query(   hits, i, n, partial, now, cmd) {
-        if (curr_qid == "") {
-          return
-        }
+    summary="$(
+      awk -F'|' -v topk="$TOPK" '
+        function flush_query(   hits, i, n) {
+          if (curr_qid == "") {
+            return
+          }
 
         hits = 0
         n = split(ann_list, ann_arr, " ")
@@ -293,52 +329,59 @@ EOF
           }
         }
 
-        total_hits += hits
-        processed++
+          total_hits += hits
+          processed++
 
-        if (progress_every > 0 && processed % progress_every == 0) {
-          partial = total_hits / (processed * topk)
-          cmd = "date \"+%F %T\""
-          cmd | getline now
-          close(cmd)
-          printf "[%s] progress: %d/%d queries, partial recall@%d=%.6f\n", now, processed, total_queries, topk, partial > "/dev/stderr"
+          delete gt_set
+          ann_list = ""
+          curr_qid = ""
         }
 
-        delete gt_set
-        ann_list = ""
-        curr_qid = ""
-      }
+        $1 ~ /^[12]$/ && $2 ~ /^-?[0-9]+$/ && $3 ~ /^-?[0-9]+$/ {
+          qid = $2 + 0
+          rid = $3 + 0
 
-      $1 ~ /^[12]$/ && $2 ~ /^-?[0-9]+$/ && $3 ~ /^-?[0-9]+$/ {
-        qid = $2 + 0
-        rid = $3 + 0
+          if (curr_qid != "" && qid != curr_qid) {
+            flush_query()
+          }
 
-        if (curr_qid != "" && qid != curr_qid) {
+          if (curr_qid == "") {
+            curr_qid = qid
+          }
+
+          if ($1 == 1) {
+            ann_list = ann_list " " rid
+          } else {
+            gt_set[rid] = 1
+          }
+        }
+
+        END {
           flush_query()
+          printf "%d|%d\n", processed, total_hits
         }
+      ' "$out_file"
+    )"
 
-        if (curr_qid == "") {
-          curr_qid = qid
-        }
+    batch_count="${summary%%|*}"
+    summary="${summary##*|}"
+    processed=$((processed + batch_count))
+    total_hits=$((total_hits + summary))
 
-        if ($1 == 1) {
-          ann_list = ann_list " " rid
-        } else {
-          gt_set[rid] = 1
-        }
-      }
+    rm -f "$sql_file" "$out_file"
 
-      END {
-        flush_query()
-        printf "%d|%d\n", processed, total_hits
-      }
-    ' "$out_file"
-  )"
+    if (( PROGRESS_EVERY > 0 && processed > 0 )); then
+      if (( processed >= next_progress || batch_end == total_queries )); then
+        partial="$(awk -v hits="$total_hits" -v total="$((processed * TOPK))" 'BEGIN { printf "%.6f", hits / total }')"
+        log "progress: ${processed}/${total_queries} queries, partial recall@${TOPK}=${partial}"
+        while (( next_progress <= processed )); do
+          next_progress=$((next_progress + PROGRESS_EVERY))
+        done
+      fi
+    fi
 
-  processed="${summary%%|*}"
-  total_hits="${summary##*|}"
-
-  rm -f "$sql_file" "$out_file"
+    batch_start=$batch_end
+  done
 
   end_ns="$(date +%s%N)"
   elapsed_ns=$((end_ns - start_ns))
