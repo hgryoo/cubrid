@@ -763,8 +763,14 @@ namespace cubhnsw
 	old_computed_distances = context.m_stats.computed_distances;
       }
 
+    // Follow the common HNSW heuristic more closely:
+    // keep pruned candidates around and reuse them if the diversity filter
+    // leaves us with fewer than the requested number of neighbors.
+    std::vector<candidate_t> pruned;
+    pruned.reserve (top_count);
+
     std::size_t submitted_count = 1;
-    std::size_t consumed_count = 1; /// Always equal or greater than `submitted_count`.
+    std::size_t consumed_count = 1;
     while (submitted_count < needed && consumed_count < top_count)
       {
 	candidate_t candidate = top_data[consumed_count];
@@ -787,7 +793,17 @@ namespace cubhnsw
 	    top_data[submitted_count] = top_data[consumed_count];
 	    submitted_count++;
 	  }
+	else
+	  {
+	    pruned.push_back (candidate);
+	  }
 	consumed_count++;
+      }
+
+    for (std::size_t i = 0; submitted_count < needed && i < pruned.size (); ++i)
+      {
+	top_data[submitted_count] = pruned[i];
+	submitted_count++;
       }
 
     if (context.m_is_perf_tracking)
