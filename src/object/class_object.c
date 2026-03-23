@@ -76,6 +76,7 @@ static SM_CONSTRAINT_TYPE Constraint_types[] = {
   SM_CONSTRAINT_INDEX,
   SM_CONSTRAINT_REVERSE_INDEX,
   SM_CONSTRAINT_FOREIGN_KEY,
+  SM_CONSTRAINT_RTREE_INDEX,
 };
 
 static const char *Constraint_properties[] = {
@@ -85,6 +86,7 @@ static const char *Constraint_properties[] = {
   SM_PROPERTY_INDEX,
   SM_PROPERTY_REVERSE_INDEX,
   SM_PROPERTY_FOREIGN_KEY,
+  SM_PROPERTY_RTREE_INDEX,
 };
 
 #define NUM_CONSTRAINT_TYPES            \
@@ -525,6 +527,9 @@ classobj_map_constraint_to_property (SM_CONSTRAINT_TYPE constraint)
     case SM_CONSTRAINT_FOREIGN_KEY:
       property_type = SM_PROPERTY_FOREIGN_KEY;
       break;
+    case SM_CONSTRAINT_RTREE_INDEX:
+      property_type = SM_PROPERTY_RTREE_INDEX;
+      break;
     default:
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SM_INVALID_CONSTRAINT, 0);
       break;
@@ -586,6 +591,7 @@ classobj_copy_props (DB_SEQ * properties, MOP filter_class, DB_SEQ ** new_proper
       (void) classobj_drop_prop (*new_properties, SM_PROPERTY_REVERSE_INDEX);
       (void) classobj_drop_prop (*new_properties, SM_PROPERTY_PRIMARY_KEY);
       (void) classobj_drop_prop (*new_properties, SM_PROPERTY_FOREIGN_KEY);
+      (void) classobj_drop_prop (*new_properties, SM_PROPERTY_RTREE_INDEX);
 
       error = classobj_make_class_constraints (properties, class_->attributes, &constraints);
       if (error != NO_ERROR)
@@ -602,7 +608,8 @@ classobj_copy_props (DB_SEQ * properties, MOP filter_class, DB_SEQ ** new_proper
 	    }
 
 	  if (c->type == SM_CONSTRAINT_INDEX || c->type == SM_CONSTRAINT_REVERSE_INDEX
-	      || c->type == SM_CONSTRAINT_FOREIGN_KEY || c->attributes[0]->class_mop == filter_class)
+	      || c->type == SM_CONSTRAINT_FOREIGN_KEY || c->type == SM_CONSTRAINT_RTREE_INDEX
+	      || c->attributes[0]->class_mop == filter_class)
 	    {
 	      is_global = 0;
 	    }
@@ -3989,6 +3996,8 @@ classobj_is_possible_constraint (SM_CONSTRAINT_TYPE existed, DB_CONSTRAINT_TYPE 
 	  return true;
 	case DB_CONSTRAINT_FOREIGN_KEY:
 	  return false;
+	case DB_CONSTRAINT_RTREE_INDEX:
+	  return true;
 	default:
 	  return true;
 	}
@@ -4023,6 +4032,8 @@ classobj_is_possible_constraint (SM_CONSTRAINT_TYPE existed, DB_CONSTRAINT_TYPE 
 	  return false;
 	case DB_CONSTRAINT_FOREIGN_KEY:
 	  return true;
+	case DB_CONSTRAINT_RTREE_INDEX:
+	  return true;
 	default:
 	  return true;
 	}
@@ -4039,6 +4050,16 @@ classobj_is_possible_constraint (SM_CONSTRAINT_TYPE existed, DB_CONSTRAINT_TYPE 
 	case DB_CONSTRAINT_REVERSE_INDEX:
 	  return true;
 	case DB_CONSTRAINT_FOREIGN_KEY:
+	  return false;
+	case DB_CONSTRAINT_RTREE_INDEX:
+	  return true;
+	default:
+	  return true;
+	}
+    case SM_CONSTRAINT_RTREE_INDEX:
+      switch (new_)
+	{
+	case DB_CONSTRAINT_RTREE_INDEX:
 	  return false;
 	default:
 	  return true;

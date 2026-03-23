@@ -566,6 +566,7 @@ BEGIN_SUPPRESS_WARNING_BISON_FLEX
 %type <boolean> opt_unique
 %type <boolean> opt_cascade
 %type <boolean> opt_cascade_constraints
+%type <number> opt_index_method_clause
 %type <number> plcsql_text
 %type <number> opt_replace
 %type <number> opt_of_inner_left_right
@@ -1444,6 +1445,7 @@ BEGIN_SUPPRESS_WARNING_BISON_FLEX
 %token USE
 %token USER
 %token USING
+%token RTREE
 %token Utime
 %token VACUUM
 %token VALUE
@@ -2675,17 +2677,18 @@ create_stmt
 	  identifier					/* 8 */
 	  ON_						/* 9 */
 	  only_class_name				/* 10 */
-	  index_column_name_list			/* 11 */
-	  opt_where_clause				/* 12 */
-          opt_index_with_clause                         /* 13 */
-	  opt_invisible					/* 14 */
-	  opt_comment_spec				/* 15 */          
+	  opt_index_method_clause			/* 11 */
+	  index_column_name_list			/* 12 */
+	  opt_where_clause				/* 13 */
+          opt_index_with_clause                         /* 14 */
+	  opt_invisible					/* 15 */
+	  opt_comment_spec				/* 16 */
 		{{
 			PT_NODE *node = parser_pop_hint_node ();
 			PT_NODE *ocs = parser_new_node(this_parser, PT_SPEC);
 			PARSER_SAVE_ERR_CONTEXT (node, @$.buffer_pos)
 
-		        if ($5 && $12)
+		        if ($5 && $13)
 			  {
 			    /* Currently, not allowed unique with filter/function index.
 			       However, may be introduced later, if it will be usefull.
@@ -2710,6 +2713,7 @@ create_stmt
 			    PARSER_SAVE_ERR_CONTEXT (ocs, @10.buffer_pos)
 
 			    node->info.index.indexed_class = ocs;
+			    node->info.index.index_method = (PT_INDEX_METHOD) $11;
 			    node->info.index.reverse = $4;
 			    node->info.index.unique = $5;
 			    node->info.index.index_name = $8;
@@ -2718,7 +2722,7 @@ create_stmt
 				node->info.index.index_name->info.name.meta_class = PT_INDEX_NAME;
 			      }
 
-			    col = $11;
+			    col = $12;
 			    if (node->info.index.unique)
 			      {
 			        for (temp = col; temp != NULL; temp = temp->next)
@@ -2803,21 +2807,21 @@ create_stmt
 				  }
 			      }
                        
-			    node->info.index.where = $12;
+			    node->info.index.where = $13;
 			    node->info.index.column_names = col;
 
-                            node->info.index.deduplicate_level =  TO_NUMBER(CONTAINER_AT_1($13));
+                            node->info.index.deduplicate_level =  TO_NUMBER(CONTAINER_AT_1($14));
                              if ($5 && (node->info.index.deduplicate_level >= DEDUPLICATE_KEY_LEVEL_OFF && node->info.index.deduplicate_level <= DEDUPLICATE_KEY_LEVEL_MAX))
                               {
                                   PT_ERRORf (this_parser, node, "%s", "UNIQUE and DEDUPLICATE cannot be specified together.");
                               }
 
-			    node->info.index.comment = $15;
+			    node->info.index.comment = $16;
 
-                            int with_online_ret = TO_NUMBER(CONTAINER_AT_0($13));  // 0 for normal, 1 for online no parallel,
+                            int with_online_ret = TO_NUMBER(CONTAINER_AT_0($14));  // 0 for normal, 1 for online no parallel,
                                                         // thread_count + 1 for parallel
                             bool is_online = with_online_ret > 0;
-                            bool is_invisible = $14;
+                            bool is_invisible = $15;
 
                             if (is_online && is_invisible)
                               {
@@ -4644,6 +4648,13 @@ drop_stmt
 			$$ = node;
 			PARSER_SAVE_ERR_CONTEXT ($$, @$.buffer_pos)
 		}}
+	;
+
+opt_index_method_clause
+	: /* empty */
+		{ $$ = PT_IDX_METHOD_BTREE; }
+	| USING RTREE
+		{ $$ = PT_IDX_METHOD_RTREE; }
 	;
 
 deallocate_or_drop

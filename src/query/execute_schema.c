@@ -3064,7 +3064,8 @@ create_or_drop_index_helper (PARSER_CONTEXT * parser, const char *const constrai
       return ER_NOT_ALLOWED_ACCESS_TO_PARTITION;
     }
 
-  ctype = get_reverse_unique_index_type (is_reverse, is_unique);
+  ctype = (idx_info != NULL && idx_info->index_method == PT_IDX_METHOD_RTREE)
+    ? DB_CONSTRAINT_RTREE_INDEX : get_reverse_unique_index_type (is_reverse, is_unique);
 
   char *attname_tmp = NULL;
   if (do_index != DO_INDEX_CREATE)
@@ -3078,6 +3079,13 @@ create_or_drop_index_helper (PARSER_CONTEXT * parser, const char *const constrai
     {
       assert (idx_info);
       nnames = pt_length_of_list (idx_info->column_names);
+
+      if (idx_info->index_method == PT_IDX_METHOD_RTREE
+	  && (nnames != 1 || idx_info->prefix_length != NULL || idx_info->function_expr != NULL || idx_info->where != NULL))
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_SM_INVALID_INDEX_TYPE, 1, "rtree");
+	  return ER_SM_INVALID_INDEX_TYPE;
+	}
 
       if (nnames == 1 && idx_info->prefix_length)
 	{
@@ -3425,11 +3433,23 @@ do_drop_index (PARSER_CONTEXT * parser, const PT_NODE * statement)
 	{
 	  return error_code;
 	}
+
+      SM_CLASS_CONSTRAINT *constraints = sm_class_constraints (obj);
+      SM_CLASS_CONSTRAINT *constraint = classobj_find_constraint_by_name (constraints, index_name);
+      if (constraint != NULL && constraint->type == SM_CONSTRAINT_RTREE_INDEX)
+	{
+	  index_type = DB_CONSTRAINT_RTREE_INDEX;
+	}
     }
   else
     {
       is_reverse = statement->info.index.reverse;
       is_unique = statement->info.index.unique;
+    }
+
+  if (index_type == DB_CONSTRAINT_RTREE_INDEX)
+    {
+      return sm_drop_constraint (obj, DB_CONSTRAINT_RTREE_INDEX, index_name, NULL, false, false);
     }
 
   error_code = create_or_drop_index_helper (parser, index_name, is_reverse, is_unique, NULL, obj, DO_INDEX_DROP);
@@ -15366,6 +15386,10 @@ get_index_type_qualifiers (MOP obj, bool * is_reverse, bool * is_unique, const c
     case SM_CONSTRAINT_REVERSE_UNIQUE:
       *is_reverse = true;
       *is_unique = true;
+      break;
+    case SM_CONSTRAINT_RTREE_INDEX:
+      *is_reverse = false;
+      *is_unique = false;
       break;
     default:
       break;

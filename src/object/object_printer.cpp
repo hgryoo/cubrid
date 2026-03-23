@@ -651,6 +651,9 @@ void object_printer::describe_constraint (const sm_class &cls, const sm_class_co
 	case SM_CONSTRAINT_INDEX:
 	  m_buf ("INDEX ");
 	  break;
+	case SM_CONSTRAINT_RTREE_INDEX:
+	  m_buf ("INDEX ");
+	  break;
 	case SM_CONSTRAINT_UNIQUE:
 	  m_buf ("UNIQUE ");
 	  break;
@@ -671,7 +674,14 @@ void object_printer::describe_constraint (const sm_class &cls, const sm_class_co
 	  break;
 	}
 
-      m_buf ("%s ON %s (", constraint.name, sm_ch_name ((MOBJ) (&cls)));
+      if (constraint.type == SM_CONSTRAINT_RTREE_INDEX)
+	{
+	  m_buf ("%s ON %s USING RTREE (", constraint.name, sm_ch_name ((MOBJ) (&cls)));
+	}
+      else
+	{
+	  m_buf ("%s ON %s (", constraint.name, sm_ch_name ((MOBJ) (&cls)));
+	}
       asc_desc = NULL;		/* init */
       if (!SM_IS_CONSTRAINT_REVERSE_INDEX_FAMILY (constraint.type))
 	{
@@ -685,6 +695,10 @@ void object_printer::describe_constraint (const sm_class &cls, const sm_class_co
 	{
 	case SM_CONSTRAINT_INDEX:
 	case SM_CONSTRAINT_REVERSE_INDEX:
+	  m_buf (" INDEX ");
+	  describe_identifier (constraint.name, prt_type);
+	  break;
+	case SM_CONSTRAINT_RTREE_INDEX:
 	  m_buf (" INDEX ");
 	  describe_identifier (constraint.name, prt_type);
 	  break;
@@ -709,7 +723,14 @@ void object_printer::describe_constraint (const sm_class &cls, const sm_class_co
 	  break;
 	}
 
-      m_buf (" (");
+      if (constraint.type == SM_CONSTRAINT_RTREE_INDEX)
+	{
+	  m_buf (" USING RTREE (");
+	}
+      else
+	{
+	  m_buf (" (");
+	}
       asc_desc = constraint.asc_desc;
     }
 

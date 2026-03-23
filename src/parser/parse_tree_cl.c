@@ -7401,6 +7401,11 @@ pt_print_create_index (PARSER_CONTEXT * parser, PT_NODE * p)
       b = pt_append_varchar (parser, b, r1);
     }
 
+  if (p->info.index.index_method == PT_IDX_METHOD_RTREE)
+    {
+      b = pt_append_nulstring (parser, b, " using rtree");
+    }
+
   /* if use prefix_length, the length of sort_spec must be 1 */
   prefix_length = p->info.index.prefix_length;
   if (prefix_length != NULL)

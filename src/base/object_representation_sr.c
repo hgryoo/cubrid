@@ -2301,7 +2301,8 @@ or_install_btids (OR_CLASSREP * rep, DB_SEQ * props)
     {SM_PROPERTY_UNIQUE, NULL, BTREE_UNIQUE, 0},
     {SM_PROPERTY_REVERSE_UNIQUE, NULL, BTREE_REVERSE_UNIQUE, 0},
     {SM_PROPERTY_INDEX, NULL, BTREE_INDEX, 0},
-    {SM_PROPERTY_REVERSE_INDEX, NULL, BTREE_REVERSE_INDEX, 0}
+    {SM_PROPERTY_REVERSE_INDEX, NULL, BTREE_REVERSE_INDEX, 0},
+    {SM_PROPERTY_RTREE_INDEX, NULL, RTREE_INDEX, 0}
   };
 
   DB_VALUE vals[SM_PROPERTY_NUM_INDEX_FAMILY];
@@ -3548,7 +3549,8 @@ or_get_constraint_comment (RECDES * record, const char *constraint_name)
 
       if (strcmp (prop_name, SM_PROPERTY_PRIMARY_KEY) != 0 && strcmp (prop_name, SM_PROPERTY_UNIQUE) != 0
 	  && strcmp (prop_name, SM_PROPERTY_REVERSE_UNIQUE) != 0 && strcmp (prop_name, SM_PROPERTY_INDEX) != 0
-	  && strcmp (prop_name, SM_PROPERTY_REVERSE_INDEX) != 0 && strcmp (prop_name, SM_PROPERTY_FOREIGN_KEY) != 0)
+	  && strcmp (prop_name, SM_PROPERTY_REVERSE_INDEX) != 0 && strcmp (prop_name, SM_PROPERTY_FOREIGN_KEY) != 0
+	  && strcmp (prop_name, SM_PROPERTY_RTREE_INDEX) != 0)
 	{
 	  continue;
 	}

@@ -1583,6 +1583,10 @@ smt_add_constraint_to_property (SM_TEMPLATE * template_, SM_CONSTRAINT_TYPE type
   con.fk_info = NULL;
   con.shared_cons_name = NULL;
   con.index_type = SM_BTREE_TYPE;
+  if (type == SM_CONSTRAINT_RTREE_INDEX)
+    {
+      con.index_type = SM_RTREE_TYPE;
+    }
   con.options = options;
 
   if (classobj_put_index (&template_->properties, &con, NULL, fk_info, shared_cons_name, true) != NO_ERROR)
@@ -2014,7 +2018,8 @@ smt_add_constraint (SM_TEMPLATE * template_, DB_CONSTRAINT_TYPE constraint_type,
     }
 
   constraint = SM_MAP_CONSTRAINT_TO_ATTFLAG (constraint_type);
-  is_secondary_index = (constraint_type == DB_CONSTRAINT_INDEX || constraint_type == DB_CONSTRAINT_REVERSE_INDEX);
+  is_secondary_index = (constraint_type == DB_CONSTRAINT_INDEX || constraint_type == DB_CONSTRAINT_REVERSE_INDEX
+			|| constraint_type == DB_CONSTRAINT_RTREE_INDEX);
 
   n_atts = 0;
   if (att_names != NULL)

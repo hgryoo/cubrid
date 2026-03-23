@@ -1978,8 +1978,15 @@ struct pt_create_entity_info
 };
 
 /* CREATE/DROP INDEX INFO */
+typedef enum pt_index_method
+{
+  PT_IDX_METHOD_BTREE = 0,
+  PT_IDX_METHOD_RTREE = 1
+} PT_INDEX_METHOD;
+
 struct pt_index_info
 {
+  PT_INDEX_METHOD index_method;
   PT_NODE *indexed_class;	/* PT_SPEC */
   PT_NODE *column_names;	/* PT_SORT_SPEC (list) */
   PT_NODE *index_name;		/* PT_NAME */

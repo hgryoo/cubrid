@@ -8972,6 +8972,21 @@ pt_check_create_index (PARSER_CONTEXT * parser, PT_NODE * node)
 	  return;
 	}
 
+      if (node->info.index.index_method == PT_IDX_METHOD_RTREE)
+	{
+	  if (node->info.index.function_expr != NULL || node->info.index.prefix_length != NULL || node->info.index.where != NULL)
+	    {
+	      PT_ERRORm (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_INVALID_CREATE_INDEX);
+	      return;
+	    }
+
+	  if (pt_length_of_list (node->info.index.column_names) != 1)
+	    {
+	      PT_ERRORm (parser, node, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_INVALID_CREATE_INDEX);
+	      return;
+	    }
+	}
+
       if (node->info.index.function_expr)
 	{
 	  if (node->info.index.prefix_length || node->info.index.where)

@@ -3681,7 +3681,8 @@ emit_index_def (extract_context & ctxt, print_output & output_ctx, DB_OBJECT * c
     {
       ctype = db_constraint_type (constraint);
       if ((constraint->index_status != SM_ONLINE_INDEX_BUILDING_IN_PROGRESS)
-	  && (ctype != DB_CONSTRAINT_INDEX && ctype != DB_CONSTRAINT_REVERSE_INDEX))
+	  && (ctype != DB_CONSTRAINT_INDEX && ctype != DB_CONSTRAINT_REVERSE_INDEX
+	      && ctype != DB_CONSTRAINT_RTREE_INDEX))
 	{
 	  continue;
 	}
@@ -3697,30 +3698,31 @@ emit_index_def (extract_context & ctxt, print_output & output_ctx, DB_OBJECT * c
 	  PRINT_OWNER_NAME (owner_name, (ctxt.is_dba_user || ctxt.is_dba_group_member), output_owner,
 			    sizeof (output_owner));
 
-	  output_ctx ("CREATE %s%sINDEX %s%s%s ON %s%s%s%s (",
+	  output_ctx ("CREATE %s%sINDEX %s%s%s ON %s%s%s%s%s (",
 		      (ctype == DB_CONSTRAINT_REVERSE_INDEX
 		       || ctype == DB_CONSTRAINT_REVERSE_UNIQUE) ? "REVERSE " : "", (ctype == DB_CONSTRAINT_UNIQUE
 										     || ctype ==
 										     DB_CONSTRAINT_REVERSE_UNIQUE) ?
 		      "UNIQUE " : "", PRINT_FUNCTION_INDEX_NAME (constraint->name), output_owner,
-		      PRINT_IDENTIFIER (class_name));
+		      PRINT_IDENTIFIER (class_name), (ctype == DB_CONSTRAINT_RTREE_INDEX) ? " USING RTREE" : "");
 	}
       else
 	{
 	  PRINT_OWNER_NAME (owner_name, (ctxt.is_dba_user || ctxt.is_dba_group_member), output_owner,
 			    sizeof (output_owner));
 
-	  output_ctx ("CREATE %s%sINDEX %s%s%s ON %s%s%s%s (",
+	  output_ctx ("CREATE %s%sINDEX %s%s%s ON %s%s%s%s%s (",
 		      (ctype == DB_CONSTRAINT_REVERSE_INDEX
 		       || ctype == DB_CONSTRAINT_REVERSE_UNIQUE) ? "REVERSE " : "", (ctype == DB_CONSTRAINT_UNIQUE
 										     || ctype ==
 										     DB_CONSTRAINT_REVERSE_UNIQUE) ?
-		      "UNIQUE " : "", PRINT_IDENTIFIER (constraint->name), output_owner, PRINT_IDENTIFIER (class_name));
+		      "UNIQUE " : "", PRINT_IDENTIFIER (constraint->name), output_owner,
+		      PRINT_IDENTIFIER (class_name), (ctype == DB_CONSTRAINT_RTREE_INDEX) ? " USING RTREE" : "");
 	}
 
       asc_desc = NULL;		/* init */
       prefix_length = NULL;
-      if (ctype == DB_CONSTRAINT_INDEX)
+      if (ctype == DB_CONSTRAINT_INDEX || ctype == DB_CONSTRAINT_RTREE_INDEX)
 	{			/* is not reverse index */
 	  /* need to get asc/desc info */
 	  asc_desc = db_constraint_asc_desc (constraint);

@@ -10662,14 +10662,23 @@ allocate_index (MOP classop, SM_CLASS * class_, DB_OBJLIST * subclasses, SM_CLAS
     }
   else				/* if (con->type == SM_CONSTRAINT_INDEX || con->type == SM_CONSTRAINT_REVERSE_INDEX) */
     {
-      reverse = (con->type == SM_CONSTRAINT_INDEX) ? false : true;
+      reverse = (con->type == SM_CONSTRAINT_REVERSE_INDEX) ? true : false;
     }
 
   /* Count the attributes */
   for (i = 0, n_attrs = 0; attrs[i] != NULL; i++, n_attrs++)
     {
       type = attrs[i]->type->id;
-      if (!tp_valid_indextype (type))
+      if (con->type == SM_CONSTRAINT_RTREE_INDEX)
+	{
+	  if (n_attrs > 0 || type != DB_TYPE_GEOMETRY)
+	    {
+	      error = ER_SM_INVALID_INDEX_TYPE;
+	      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, error, 1,
+		      (type == DB_TYPE_GEOMETRY) ? "multi-column rtree" : pr_type_name (type));
+	    }
+	}
+      else if (!tp_valid_indextype (type))
 	{
 	  error = ER_SM_INVALID_INDEX_TYPE;
 	  er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, error, 1, pr_type_name (type));
@@ -10792,7 +10801,18 @@ allocate_index (MOP classop, SM_CLASS * class_, DB_OBJLIST * subclasses, SM_CLAS
   /* If there are no instances, then call btree_add_index() to create an empty index, otherwise call
    * btree_load_index () to load all of the instances (including applicable subclasses) into a new B-tree */
   // TODO: optimize has_instances case
-  if (!class_->load_index_from_heap || !has_instances || index_status == SM_ONLINE_INDEX_BUILDING_IN_PROGRESS)
+  if (con->type == SM_CONSTRAINT_RTREE_INDEX)
+    {
+      if (!class_->load_index_from_heap || !has_instances || index_status == SM_ONLINE_INDEX_BUILDING_IN_PROGRESS)
+	{
+	  error = rtree_add_index (index, domain, WS_OID (classop), attrs[0]->id);
+	}
+      else
+	{
+	  error = rtree_load_index (index, constraint_name, domain, oids, n_classes, n_attrs, attr_ids, hfids);
+	}
+    }
+  else if (!class_->load_index_from_heap || !has_instances || index_status == SM_ONLINE_INDEX_BUILDING_IN_PROGRESS)
     {
       error =
 	btree_add_index (index, domain, WS_OID (classop), attrs[0]->id, unique_pk,
@@ -10871,6 +10891,14 @@ deallocate_index (SM_CLASS_CONSTRAINT * cons, BTID * index)
   if (ref_count == 1)
     {
       error = btree_delete_index (index);
+      for (con = cons; con != NULL; con = con->next)
+	{
+	  if (BTID_IS_EQUAL (index, &con->index_btid) && con->type == SM_CONSTRAINT_RTREE_INDEX)
+	    {
+	      error = rtree_delete_index (index);
+	      break;
+	    }
+	}
     }
 
   return error;
@@ -14259,10 +14287,13 @@ sm_default_constraint_name (const char *class_name, DB_CONSTRAINT_TYPE type, con
       char md5_str[32 + 1] = { '\0' };
       bool is_fk = false;
 
-      switch (type)
+	switch (type)
 	{
 	case DB_CONSTRAINT_INDEX:
 	  prefix = "i_";
+	  break;
+	case DB_CONSTRAINT_RTREE_INDEX:
+	  prefix = "rt_";
 	  break;
 	case DB_CONSTRAINT_UNIQUE:
 	  prefix = "u_";
@@ -14804,6 +14835,7 @@ sm_add_constraint (MOP classop, DB_CONSTRAINT_TYPE constraint_type, const char *
     case DB_CONSTRAINT_UNIQUE:
     case DB_CONSTRAINT_REVERSE_UNIQUE:
     case DB_CONSTRAINT_PRIMARY_KEY:
+    case DB_CONSTRAINT_RTREE_INDEX:
       DB_AUTH auth;
       bool is_secondary_index;
 
@@ -14814,7 +14846,8 @@ sm_add_constraint (MOP classop, DB_CONSTRAINT_TYPE constraint_type, const char *
 	}
       set_savepoint = true;
 
-      is_secondary_index = (constraint_type == DB_CONSTRAINT_INDEX || constraint_type == DB_CONSTRAINT_REVERSE_INDEX);
+      is_secondary_index = (constraint_type == DB_CONSTRAINT_INDEX || constraint_type == DB_CONSTRAINT_REVERSE_INDEX
+			    || constraint_type == DB_CONSTRAINT_RTREE_INDEX);
 
       if (is_secondary_index)
 	{
@@ -15070,7 +15103,7 @@ sm_drop_constraint (MOP classop, DB_CONSTRAINT_TYPE constraint_type, const char 
   int error = NO_ERROR;
   SM_TEMPLATE *def = NULL;
 
-  if (mysql_index_name && constraint_type == DB_CONSTRAINT_INDEX)
+  if (mysql_index_name && (constraint_type == DB_CONSTRAINT_INDEX || constraint_type == DB_CONSTRAINT_RTREE_INDEX))
     {
       SM_CLASS *smcls = NULL;
 
@@ -15085,7 +15118,8 @@ sm_drop_constraint (MOP classop, DB_CONSTRAINT_TYPE constraint_type, const char 
 
 	  if (constraint != NULL
 	      && (constraint->type == SM_CONSTRAINT_INDEX || constraint->type == SM_CONSTRAINT_REVERSE_INDEX
-		  || constraint->type == SM_CONSTRAINT_UNIQUE || constraint->type == SM_CONSTRAINT_REVERSE_UNIQUE))
+		  || constraint->type == SM_CONSTRAINT_UNIQUE || constraint->type == SM_CONSTRAINT_REVERSE_UNIQUE
+		  || constraint->type == SM_CONSTRAINT_RTREE_INDEX))
 	    {
 	      constraint_type = db_constraint_type (constraint);
 	    }
@@ -15096,6 +15130,7 @@ sm_drop_constraint (MOP classop, DB_CONSTRAINT_TYPE constraint_type, const char 
     {
     case DB_CONSTRAINT_INDEX:
     case DB_CONSTRAINT_REVERSE_INDEX:
+    case DB_CONSTRAINT_RTREE_INDEX:
       error = sm_drop_index (classop, constraint_name);
       break;
 
@@ -16093,6 +16128,7 @@ sm_is_global_only_constraint (MOP classmop, SM_CLASS_CONSTRAINT * constraint, in
       break;
     case SM_CONSTRAINT_INDEX:
     case SM_CONSTRAINT_REVERSE_INDEX:
+    case SM_CONSTRAINT_RTREE_INDEX:
     case SM_CONSTRAINT_FOREIGN_KEY:
     case SM_CONSTRAINT_NOT_NULL:
       /* always local */
@@ -16438,7 +16474,16 @@ sm_load_online_index (MOP classmop, const char *constraint_name)
   for (i = 0, n_attrs = 0; con->attributes[i] != NULL; i++, n_attrs++)
     {
       type = con->attributes[i]->type->id;
-      if (!tp_valid_indextype (type))
+      if (con->type == SM_CONSTRAINT_RTREE_INDEX)
+	{
+	  if (i > 0 || type != DB_TYPE_GEOMETRY)
+	    {
+	      error = ER_SM_INVALID_INDEX_TYPE;
+	      er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, error, 1,
+		      (type == DB_TYPE_GEOMETRY) ? "multi-column rtree" : pr_type_name (type));
+	    }
+	}
+      else if (!tp_valid_indextype (type))
 	{
 	  error = ER_SM_INVALID_INDEX_TYPE;
 	  er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, error, 1, pr_type_name (type));
@@ -16463,7 +16508,13 @@ sm_load_online_index (MOP classmop, const char *constraint_name)
       goto error_return;
     }
 
-  if (con->func_index_info)
+  if (con->type == SM_CONSTRAINT_RTREE_INDEX)
+    {
+      error = ER_INTERFACE_NOT_SUPPORTED_OPERATION;
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, error, 0);
+      goto error_return;
+    }
+  else if (con->func_index_info)
     {
       if (con->func_index_info->attr_index_start == 0)
 	{

@@ -2029,6 +2029,10 @@ db_constraint_type (const DB_CONSTRAINT * constraint)
 	{
 	  type = DB_CONSTRAINT_REVERSE_INDEX;
 	}
+      else if (constraint->type == SM_CONSTRAINT_RTREE_INDEX)
+	{
+	  type = DB_CONSTRAINT_RTREE_INDEX;
+	}
       else if (constraint->type == SM_CONSTRAINT_PRIMARY_KEY)
 	{
 	  if (prm_get_bool_value (PRM_ID_COMPAT_PRIMARY_KEY))

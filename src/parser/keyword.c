@@ -592,6 +592,7 @@ static KEYWORD_RECORD keywords[] = {
   {USE, "USE", 0},
   {USER, "USER", 0},
   {USING, "USING", 0},
+  {RTREE, "RTREE", 0},
   {Utime, "UTIME", 0},
   {VACUUM, "VACUUM", 0},
   {VALUE, "VALUE", 0},

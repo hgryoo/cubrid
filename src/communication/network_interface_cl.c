@@ -6264,6 +6264,75 @@ btree_delete_index (BTID * btid)
 #endif /* !CS_MODE */
 }
 
+int
+rtree_add_index (BTID * btid, TP_DOMAIN * key_type, OID * class_oid, int attr_id)
+{
+#if defined(CS_MODE)
+  (void) btid;
+  (void) key_type;
+  (void) class_oid;
+  (void) attr_id;
+  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_SUPPORTED_OPERATION, 0);
+  return ER_INTERFACE_NOT_SUPPORTED_OPERATION;
+#else /* CS_MODE */
+  int error = NO_ERROR;
+  THREAD_ENTRY *thread_p = enter_server ();
+  btid = xrtree_add_index (thread_p, btid, key_type, class_oid, attr_id);
+  if (btid == NULL)
+    {
+      assert (er_errid () != NO_ERROR);
+      error = er_errid ();
+    }
+  exit_server (*thread_p);
+  return error;
+#endif /* !CS_MODE */
+}
+
+int
+rtree_load_index (BTID * btid, const char *constraint_name, TP_DOMAIN * key_type, OID * class_oids, int n_classes,
+		  int n_attrs, int *attr_ids, HFID * hfids)
+{
+#if defined(CS_MODE)
+  (void) btid;
+  (void) constraint_name;
+  (void) key_type;
+  (void) class_oids;
+  (void) n_classes;
+  (void) n_attrs;
+  (void) attr_ids;
+  (void) hfids;
+  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_SUPPORTED_OPERATION, 0);
+  return ER_INTERFACE_NOT_SUPPORTED_OPERATION;
+#else /* CS_MODE */
+  int error = NO_ERROR;
+  THREAD_ENTRY *thread_p = enter_server ();
+  btid = xrtree_load_index (thread_p, btid, constraint_name, key_type, class_oids, n_classes, n_attrs, attr_ids, hfids);
+  if (btid == NULL)
+    {
+      assert (er_errid () != NO_ERROR);
+      error = er_errid ();
+    }
+  exit_server (*thread_p);
+  return error;
+#endif /* !CS_MODE */
+}
+
+int
+rtree_delete_index (BTID * btid)
+{
+#if defined(CS_MODE)
+  (void) btid;
+  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_SUPPORTED_OPERATION, 0);
+  return ER_INTERFACE_NOT_SUPPORTED_OPERATION;
+#else /* CS_MODE */
+  int error = NO_ERROR;
+  THREAD_ENTRY *thread_p = enter_server ();
+  error = xrtree_delete_index (thread_p, btid);
+  exit_server (*thread_p);
+  return error;
+#endif /* !CS_MODE */
+}
+
 /*
  * locator_log_force_nologging -
  *

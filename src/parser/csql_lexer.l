@@ -1124,6 +1124,7 @@ IDL       [a-zA-Z0-9_]
 [uU][sS][eE]								{ begin_token(yytext);   return USE; }
 [uU][sS][eE][rR]							{ begin_token(yytext);   return USER; }
 [uU][sS][iI][nN][gG]							{ begin_token(yytext);   return USING; }
+[rR][tT][rR][eE][eE]							{ begin_token(yytext);   return RTREE; }
 [uU][nN][iI][oO][nN]							{ begin_token(yytext);   return Union; }
 [uU][tT][iI][mM][eE]							{ begin_token(yytext);   return Utime; }
 [vV][aA][cC][uU][uU][mM]						{ begin_token(yytext);   return VACUUM; }

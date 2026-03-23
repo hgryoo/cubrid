@@ -501,6 +501,7 @@ set(TRANSACTION_HEADERS
 
 set(STORAGE_SOURCES
   ${STORAGE_DIR}/btree.c
+  ${STORAGE_DIR}/rtree.c
   ${STORAGE_DIR}/btree_load.c
   ${STORAGE_DIR}/btree_unique.cpp
   ${STORAGE_DIR}/byte_order.c

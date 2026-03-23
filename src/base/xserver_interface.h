@@ -188,6 +188,11 @@ extern BTID *xbtree_load_online_index (THREAD_ENTRY * thread_p, BTID * btid, con
 				       int func_col_id, int func_attr_index_start, int ib_thread_count);
 
 extern int xbtree_delete_index (THREAD_ENTRY * thread_p, BTID * btid);
+extern BTID *xrtree_add_index (THREAD_ENTRY * thread_p, BTID * btid, TP_DOMAIN * key_type, OID * class_oid,
+			       int attr_id);
+extern BTID *xrtree_load_index (THREAD_ENTRY * thread_p, BTID * btid, const char *constraint_name, TP_DOMAIN * key_type,
+				OID * class_oids, int n_classes, int n_attrs, int *attr_ids, HFID * hfids);
+extern int xrtree_delete_index (THREAD_ENTRY * thread_p, BTID * btid);
 extern BTREE_SEARCH xbtree_find_unique (THREAD_ENTRY * thread_p, BTID * btid, SCAN_OPERATION_TYPE scan_op_type,
 					DB_VALUE * key, OID * class_oid, OID * oid, bool is_all_class_srch);
 extern int xbtree_class_test_unique (THREAD_ENTRY * thread_p, char *buf, int buf_size);

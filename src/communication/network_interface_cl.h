@@ -248,6 +248,10 @@ extern int btree_load_index (BTID * btid, const char *bt_name, TP_DOMAIN * key_t
 			     char *pred_stream, int pred_stream_size, char *expr_stream, int expr_stream_size,
 			     int func_col_id, int func_attr_index_start, SM_INDEX_STATUS index_status);
 extern int btree_delete_index (BTID * btid);
+extern int rtree_add_index (BTID * btid, TP_DOMAIN * key_type, OID * class_oid, int attr_id);
+extern int rtree_load_index (BTID * btid, const char *constraint_name, TP_DOMAIN * key_type, OID * class_oids,
+			     int n_classes, int n_attrs, int *attr_ids, HFID * hfids);
+extern int rtree_delete_index (BTID * btid);
 extern int locator_log_force_nologging (void);
 extern int locator_remove_class_from_index (OID * oid, BTID * btid, HFID * hfid);
 extern BTREE_SEARCH btree_find_unique (BTID * btid, DB_VALUE * key, OID * class_oid, OID * oid);
