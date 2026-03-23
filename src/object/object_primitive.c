@@ -121,6 +121,7 @@ extern unsigned int db_on_server;
 #define MR_NUMERIC_SIZE(precision) DB_NUMERIC_BUF_SIZE
 
 static int spatial_copy_serialized (char **copy, const char *serialized, int length);
+static int spatial_read_serialized_payload (OR_BUF * buf, int size, char **serialized, int *length, int *subtype, int *srid);
 
 #define STR_SIZE(prec, codeset)                                             \
      (((codeset) == INTL_CODESET_RAW_BITS) ? ((prec+7)/8) :		    \
@@ -14878,6 +14879,97 @@ spatial_copy_serialized (char **copy, const char *serialized, int length)
   return NO_ERROR;
 }
 
+static int
+spatial_put_int_unaligned (OR_BUF * buf, int value)
+{
+  int encoded = 0;
+
+  OR_PUT_INT (&encoded, value);
+  return or_put_data (buf, (char *) &encoded, OR_INT_SIZE);
+}
+
+static int
+spatial_get_int_unaligned (OR_BUF * buf, int *value)
+{
+  int rc = NO_ERROR;
+  int encoded = 0;
+
+  assert (value != NULL);
+
+  rc = or_get_data (buf, (char *) &encoded, OR_INT_SIZE);
+  if (rc != NO_ERROR)
+    {
+      return rc;
+    }
+
+  *value = OR_GET_INT (&encoded);
+  return NO_ERROR;
+}
+
+static int
+spatial_read_serialized_payload (OR_BUF * buf, int size, char **serialized, int *length, int *subtype, int *srid)
+{
+  int rc = NO_ERROR;
+  int payload_size = size;
+  char *copy = NULL;
+
+  assert (serialized != NULL);
+  assert (length != NULL);
+  assert (subtype != NULL);
+  assert (srid != NULL);
+
+  *serialized = NULL;
+  *length = 0;
+  *subtype = DB_SPATIAL_SUBTYPE_ANY;
+  *srid = 0;
+
+  if (size < 0)
+    {
+      payload_size = (int) (buf->endptr - buf->ptr);
+    }
+
+  if (payload_size <= 0)
+    {
+      return NO_ERROR;
+    }
+
+  if (payload_size >= OR_INT_SIZE * 2)
+    {
+      rc = spatial_get_int_unaligned (buf, subtype);
+      if (rc != NO_ERROR)
+	{
+	  return rc;
+	}
+
+      rc = spatial_get_int_unaligned (buf, srid);
+      if (rc != NO_ERROR)
+	{
+	  return rc;
+	}
+
+      payload_size -= OR_INT_SIZE * 2;
+    }
+
+  copy = (char *) db_private_alloc (NULL, payload_size + 1);
+  if (copy == NULL)
+    {
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+
+  rc = or_get_data (buf, copy, payload_size);
+  if (rc != NO_ERROR)
+    {
+      db_private_free_and_init (NULL, copy);
+      return rc;
+    }
+
+  copy[payload_size] = '\0';
+
+  *serialized = copy;
+  *length = payload_size;
+  return NO_ERROR;
+}
+
 const PR_TYPE tp_Geometry = {
   "geometry", DB_TYPE_GEOMETRY, 1, sizeof (DB_SPATIAL), 0, 1,
   mr_initmem_spatial,
@@ -15062,8 +15154,16 @@ mr_data_writemem_spatial (OR_BUF * buf, void *memptr, TP_DOMAIN * domain)
       return;
     }
 
-  or_put_int (buf, spatial->subtype);
-  or_put_int (buf, spatial->srid);
+  if (spatial_put_int_unaligned (buf, spatial->subtype) != NO_ERROR)
+    {
+      return;
+    }
+
+  if (spatial_put_int_unaligned (buf, spatial->srid) != NO_ERROR)
+    {
+      return;
+    }
+
   or_put_data (buf, (char *) spatial->serialized, spatial->length);
 }
 
@@ -15075,7 +15175,7 @@ mr_data_readmem_spatial (OR_BUF * buf, void *memptr, TP_DOMAIN * domain, int siz
   int rc = NO_ERROR;
   int subtype = DB_SPATIAL_SUBTYPE_ANY;
   int srid = 0;
-  int payload_size = size;
+  int payload_size = 0;
 
   if (size == 0)
     {
@@ -15094,45 +15194,13 @@ mr_data_readmem_spatial (OR_BUF * buf, void *memptr, TP_DOMAIN * domain, int siz
 
   mr_freemem_spatial (memptr);
 
-  if (size < OR_INT_SIZE * 2)
-    {
-      or_advance (buf, size);
-      assert (false);
-      return;
-    }
-
-  subtype = or_get_int (buf, &rc);
+  rc = spatial_read_serialized_payload (buf, size, &copy, &payload_size, &subtype, &srid);
   if (rc != NO_ERROR)
     {
-      assert (false);
+      mr_initmem_spatial (memptr, domain);
       return;
     }
 
-  srid = or_get_int (buf, &rc);
-  if (rc != NO_ERROR)
-    {
-      assert (false);
-      return;
-    }
-
-  payload_size -= OR_INT_SIZE * 2;
-
-  copy = (char *) db_private_alloc (NULL, payload_size + 1);
-  if (copy == NULL)
-    {
-      or_advance (buf, payload_size);
-      return;
-    }
-
-  rc = or_get_data (buf, copy, payload_size);
-  if (rc != NO_ERROR)
-    {
-      db_private_free_and_init (NULL, copy);
-      assert (false);
-      return;
-    }
-
-  copy[payload_size] = '\0';
   spatial->serialized = copy;
   spatial->length = payload_size;
   spatial->subtype = subtype;
@@ -15141,7 +15209,7 @@ mr_data_readmem_spatial (OR_BUF * buf, void *memptr, TP_DOMAIN * domain, int siz
   if (rc != NO_ERROR)
     {
       mr_freemem_spatial (memptr);
-      assert (false);
+      mr_initmem_spatial (memptr, domain);
     }
 }
 
@@ -15172,7 +15240,7 @@ mr_setval_geometry (DB_VALUE * dest, const DB_VALUE * src, bool copy)
     }
 
   src_spatial = db_get_spatial (src);
-  if (copy)
+  if (src_spatial->serialized != NULL)
     {
       serialized_copy = (char *) db_private_alloc (NULL, src_spatial->length + 1);
       if (serialized_copy == NULL)
@@ -15195,8 +15263,7 @@ mr_setval_geometry (DB_VALUE * dest, const DB_VALUE * src, bool copy)
 
   dest->data.spatial.subtype = src_spatial->subtype;
   dest->data.spatial.srid = src_spatial->srid;
-  return db_make_geometry_ex (dest, copy ? serialized_copy : src_spatial->serialized, src_spatial->length,
-			      src_spatial->subtype, src_spatial->srid, copy);
+  return db_make_geometry_ex (dest, serialized_copy, src_spatial->length, src_spatial->subtype, src_spatial->srid, true);
 }
 
 static int
@@ -15212,7 +15279,7 @@ mr_setval_geography (DB_VALUE * dest, const DB_VALUE * src, bool copy)
     }
 
   src_spatial = db_get_spatial (src);
-  if (copy)
+  if (src_spatial->serialized != NULL)
     {
       serialized_copy = (char *) db_private_alloc (NULL, src_spatial->length + 1);
       if (serialized_copy == NULL)
@@ -15235,8 +15302,7 @@ mr_setval_geography (DB_VALUE * dest, const DB_VALUE * src, bool copy)
 
   dest->data.spatial.subtype = src_spatial->subtype;
   dest->data.spatial.srid = src_spatial->srid;
-  return db_make_geography_ex (dest, copy ? serialized_copy : src_spatial->serialized, src_spatial->length,
-			       src_spatial->subtype, src_spatial->srid, copy);
+  return db_make_geography_ex (dest, serialized_copy, src_spatial->length, src_spatial->subtype, src_spatial->srid, true);
 }
 
 static int
@@ -15263,8 +15329,16 @@ mr_data_writeval_spatial (OR_BUF * buf, DB_VALUE * value)
       return NO_ERROR;
     }
 
-  or_put_int (buf, value->data.spatial.subtype);
-  or_put_int (buf, value->data.spatial.srid);
+  if (spatial_put_int_unaligned (buf, value->data.spatial.subtype) != NO_ERROR)
+    {
+      return ER_TF_BUFFER_OVERFLOW;
+    }
+
+  if (spatial_put_int_unaligned (buf, value->data.spatial.srid) != NO_ERROR)
+    {
+      return ER_TF_BUFFER_OVERFLOW;
+    }
+
   return or_put_data (buf, (char *) value->data.spatial.serialized, value->data.spatial.length);
 }
 
@@ -15276,7 +15350,7 @@ mr_data_readval_geometry (OR_BUF * buf, DB_VALUE * value, TP_DOMAIN * domain, in
   int rc = NO_ERROR;
   int subtype = DB_SPATIAL_SUBTYPE_ANY;
   int srid = 0;
-  int payload_size = size;
+  int payload_size = 0;
 
   db_make_null (value);
   if (size == 0)
@@ -15284,40 +15358,12 @@ mr_data_readval_geometry (OR_BUF * buf, DB_VALUE * value, TP_DOMAIN * domain, in
       return NO_ERROR;
     }
 
-  if (size < OR_INT_SIZE * 2)
-    {
-      assert (false);
-      return ER_FAILED;
-    }
-
-  subtype = or_get_int (buf, &rc);
+  rc = spatial_read_serialized_payload (buf, size, &serialized, &payload_size, &subtype, &srid);
   if (rc != NO_ERROR)
     {
       return rc;
     }
 
-  srid = or_get_int (buf, &rc);
-  if (rc != NO_ERROR)
-    {
-      return rc;
-    }
-
-  payload_size -= OR_INT_SIZE * 2;
-
-  serialized = (char *) db_private_alloc (NULL, payload_size + 1);
-  if (serialized == NULL)
-    {
-      return ER_OUT_OF_VIRTUAL_MEMORY;
-    }
-
-  rc = or_get_data (buf, serialized, payload_size);
-  if (rc != NO_ERROR)
-    {
-      db_private_free_and_init (NULL, serialized);
-      return rc;
-    }
-
-  serialized[payload_size] = '\0';
   return db_make_geometry_ex (value, serialized, payload_size, subtype, srid, true);
 }
 
@@ -15329,7 +15375,7 @@ mr_data_readval_geography (OR_BUF * buf, DB_VALUE * value, TP_DOMAIN * domain, i
   int rc = NO_ERROR;
   int subtype = DB_SPATIAL_SUBTYPE_ANY;
   int srid = 0;
-  int payload_size = size;
+  int payload_size = 0;
 
   db_make_null (value);
   if (size == 0)
@@ -15337,40 +15383,12 @@ mr_data_readval_geography (OR_BUF * buf, DB_VALUE * value, TP_DOMAIN * domain, i
       return NO_ERROR;
     }
 
-  if (size < OR_INT_SIZE * 2)
-    {
-      assert (false);
-      return ER_FAILED;
-    }
-
-  subtype = or_get_int (buf, &rc);
+  rc = spatial_read_serialized_payload (buf, size, &serialized, &payload_size, &subtype, &srid);
   if (rc != NO_ERROR)
     {
       return rc;
     }
 
-  srid = or_get_int (buf, &rc);
-  if (rc != NO_ERROR)
-    {
-      return rc;
-    }
-
-  payload_size -= OR_INT_SIZE * 2;
-
-  serialized = (char *) db_private_alloc (NULL, payload_size + 1);
-  if (serialized == NULL)
-    {
-      return ER_OUT_OF_VIRTUAL_MEMORY;
-    }
-
-  rc = or_get_data (buf, serialized, payload_size);
-  if (rc != NO_ERROR)
-    {
-      db_private_free_and_init (NULL, serialized);
-      return rc;
-    }
-
-  serialized[payload_size] = '\0';
   return db_make_geography_ex (value, serialized, payload_size, subtype, srid, true);
 }
 

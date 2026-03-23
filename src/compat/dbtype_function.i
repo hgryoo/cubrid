@@ -2119,6 +2119,7 @@ db_make_spatial_ex (DB_VALUE * value, DB_TYPE type, const char *serialized, int 
 
   assert (type == DB_TYPE_GEOMETRY || type == DB_TYPE_GEOGRAPHY);
 
+  db_value_domain_init (value, type, subtype, srid);
   value->domain.general_info.type = type;
   value->domain.general_info.is_null = (serialized == NULL) ? 1 : 0;
   value->data.spatial.serialized = serialized;

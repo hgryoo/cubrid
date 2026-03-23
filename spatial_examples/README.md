@@ -26,6 +26,7 @@ Current example groups:
 - `03_predicates.sql`: contains/intersects checks across geometry and geography
 - `04_nulls_and_metadata.sql`: NULL propagation and metadata retention
 - `05_table_roundtrip.sql`: table DDL/DML with geometry/geography columns
+- `06_processing_queries.sql`: inline datasets, joins, and nested envelope/distance processing queries
 
 Batch execution is available through [`run_examples.sh`](/home/hgryoo/dev/cubrid_spatial/spatial_examples/run_examples.sh).
 

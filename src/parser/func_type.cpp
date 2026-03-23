@@ -80,9 +80,21 @@ func_all_signatures sig_ret_string_arg_object =
   {PT_TYPE_VARCHAR, {PT_TYPE_OBJECT}, {}},
 };
 
+func_all_signatures sig_ret_string_arg_spatial =
+{
+  {PT_TYPE_VARCHAR, {PT_TYPE_GEOMETRY}, {}},
+  {PT_TYPE_VARCHAR, {PT_TYPE_GEOGRAPHY}, {}},
+};
+
 func_all_signatures sig_ret_varbit_arg_object =
 {
   {PT_TYPE_VARBIT, {PT_TYPE_OBJECT}, {}},
+};
+
+func_all_signatures sig_ret_varbit_arg_spatial =
+{
+  {PT_TYPE_VARBIT, {PT_TYPE_GEOMETRY}, {}},
+  {PT_TYPE_VARBIT, {PT_TYPE_GEOGRAPHY}, {}},
 };
 
 func_all_signatures sig_ret_double_arg_object =
@@ -90,9 +102,23 @@ func_all_signatures sig_ret_double_arg_object =
   {PT_TYPE_DOUBLE, {PT_TYPE_OBJECT}, {}},
 };
 
+func_all_signatures sig_ret_double_arg_spatial =
+{
+  {PT_TYPE_DOUBLE, {PT_TYPE_GEOMETRY}, {}},
+  {PT_TYPE_DOUBLE, {PT_TYPE_GEOGRAPHY}, {}},
+};
+
 func_all_signatures sig_ret_double_arg_object_object =
 {
   {PT_TYPE_DOUBLE, {PT_TYPE_OBJECT, PT_TYPE_OBJECT}, {}},
+};
+
+func_all_signatures sig_ret_double_arg_spatial_spatial =
+{
+  {PT_TYPE_DOUBLE, {PT_TYPE_GEOMETRY, PT_TYPE_GEOMETRY}, {}},
+  {PT_TYPE_DOUBLE, {PT_TYPE_GEOGRAPHY, PT_TYPE_GEOGRAPHY}, {}},
+  {PT_TYPE_DOUBLE, {PT_TYPE_GEOMETRY, PT_TYPE_GEOGRAPHY}, {}},
+  {PT_TYPE_DOUBLE, {PT_TYPE_GEOGRAPHY, PT_TYPE_GEOMETRY}, {}},
 };
 
 func_all_signatures sig_ret_int_arg_object =
@@ -100,9 +126,23 @@ func_all_signatures sig_ret_int_arg_object =
   {PT_TYPE_INTEGER, {PT_TYPE_OBJECT}, {}},
 };
 
+func_all_signatures sig_ret_int_arg_spatial =
+{
+  {PT_TYPE_INTEGER, {PT_TYPE_GEOMETRY}, {}},
+  {PT_TYPE_INTEGER, {PT_TYPE_GEOGRAPHY}, {}},
+};
+
 func_all_signatures sig_ret_int_arg_object_object =
 {
   {PT_TYPE_INTEGER, {PT_TYPE_OBJECT, PT_TYPE_OBJECT}, {}},
+};
+
+func_all_signatures sig_ret_int_arg_spatial_spatial =
+{
+  {PT_TYPE_INTEGER, {PT_TYPE_GEOMETRY, PT_TYPE_GEOMETRY}, {}},
+  {PT_TYPE_INTEGER, {PT_TYPE_GEOGRAPHY, PT_TYPE_GEOGRAPHY}, {}},
+  {PT_TYPE_INTEGER, {PT_TYPE_GEOMETRY, PT_TYPE_GEOGRAPHY}, {}},
+  {PT_TYPE_INTEGER, {PT_TYPE_GEOGRAPHY, PT_TYPE_GEOMETRY}, {}},
 };
 
 func_all_signatures sig_ret_object_arg_str_or_str_int =
@@ -111,10 +151,22 @@ func_all_signatures sig_ret_object_arg_str_or_str_int =
   {PT_TYPE_OBJECT, {PT_GENERIC_TYPE_STRING, PT_TYPE_INTEGER}, {}},
 };
 
+func_all_signatures sig_ret_geometry_arg_str_or_str_int =
+{
+  {PT_TYPE_GEOMETRY, {PT_GENERIC_TYPE_STRING}, {}},
+  {PT_TYPE_GEOMETRY, {PT_GENERIC_TYPE_STRING, PT_TYPE_INTEGER}, {}},
+};
+
 func_all_signatures sig_ret_object_arg_any_or_any_int =
 {
   {PT_TYPE_OBJECT, {PT_GENERIC_TYPE_ANY}, {}},
   {PT_TYPE_OBJECT, {PT_GENERIC_TYPE_ANY, PT_TYPE_INTEGER}, {}},
+};
+
+func_all_signatures sig_ret_geometry_arg_any_or_any_int =
+{
+  {PT_TYPE_GEOMETRY, {PT_GENERIC_TYPE_ANY}, {}},
+  {PT_TYPE_GEOMETRY, {PT_GENERIC_TYPE_ANY, PT_TYPE_INTEGER}, {}},
 };
 
 func_all_signatures sig_ret_object_arg_str =
@@ -122,14 +174,30 @@ func_all_signatures sig_ret_object_arg_str =
   {PT_TYPE_OBJECT, {PT_GENERIC_TYPE_STRING}, {}},
 };
 
+func_all_signatures sig_ret_geometry_arg_str =
+{
+  {PT_TYPE_GEOMETRY, {PT_GENERIC_TYPE_STRING}, {}},
+};
+
 func_all_signatures sig_ret_object_arg_object_int =
 {
   {PT_TYPE_OBJECT, {PT_TYPE_OBJECT, PT_TYPE_INTEGER}, {}},
 };
 
+func_all_signatures sig_ret_spatial_arg_spatial_int =
+{
+  {PT_TYPE_GEOMETRY, {PT_TYPE_GEOMETRY, PT_TYPE_INTEGER}, {}},
+  {PT_TYPE_GEOGRAPHY, {PT_TYPE_GEOGRAPHY, PT_TYPE_INTEGER}, {}},
+};
+
 func_all_signatures sig_ret_object_arg_r_any =
 {
   {PT_TYPE_OBJECT, {}, {PT_GENERIC_TYPE_ANY}},
+};
+
+func_all_signatures sig_ret_geometry_arg_r_any =
+{
+  {PT_TYPE_GEOMETRY, {}, {PT_GENERIC_TYPE_ANY}},
 };
 
 func_all_signatures sig_ret_bigint =
@@ -585,29 +653,29 @@ get_signatures (FUNC_CODE ft)
       return &sig_of_regexp_substr;
     case F_ST_ASTEXT:
     case F_ST_GEOMETRYTYPE:
-      return &sig_ret_string_arg_object;
+      return &sig_ret_string_arg_spatial;
     case F_ST_ASBINARY:
-      return &sig_ret_varbit_arg_object;
+      return &sig_ret_varbit_arg_spatial;
     case F_ST_GEOMFROMTEXT:
-      return &sig_ret_object_arg_str_or_str_int;
+      return &sig_ret_geometry_arg_str_or_str_int;
     case F_ST_GEOMFROMWKB:
-      return &sig_ret_object_arg_any_or_any_int;
+      return &sig_ret_geometry_arg_any_or_any_int;
     case F_ST_GEOMFROMGEOJSON:
-      return &sig_ret_object_arg_str;
+      return &sig_ret_geometry_arg_str;
     case F_ST_SRID:
-      return &sig_ret_int_arg_object;
+      return &sig_ret_int_arg_spatial;
     case F_ST_SETSRID:
-      return &sig_ret_object_arg_object_int;
+      return &sig_ret_spatial_arg_spatial_int;
     case F_ST_X:
     case F_ST_Y:
     case F_ST_AREA:
     case F_ST_LENGTH:
-      return &sig_ret_double_arg_object;
+      return &sig_ret_double_arg_spatial;
     case F_ST_DISTANCE:
-      return &sig_ret_double_arg_object_object;
+      return &sig_ret_double_arg_spatial_spatial;
     case F_ST_CONTAINS:
     case F_ST_INTERSECTS:
-      return &sig_ret_int_arg_object_object;
+      return &sig_ret_int_arg_spatial_spatial;
     case F_ST_AFFINE:
     case F_ST_BOUNDARY:
     case F_ST_BUFFER:
@@ -670,7 +738,7 @@ get_signatures (FUNC_CODE ft)
     case F_ST_TRANSFORM:
     case F_ST_UNION:
     case F_ST_VORONOIDIAGRAM:
-      return &sig_ret_object_arg_r_any;
+      return &sig_ret_geometry_arg_r_any;
     case F_ST_ASWKB:
       return &sig_ret_varbit_arg_r_any;
     case F_ST_AZIMUTH:

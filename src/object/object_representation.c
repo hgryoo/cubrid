@@ -2643,6 +2643,11 @@ or_packed_domain_size (TP_DOMAIN * domain, int include_classoids)
 	case DB_TYPE_JSON:
 	  size += or_packed_json_validator_length (d->json_validator);
 	  break;
+	case DB_TYPE_GEOMETRY:
+	case DB_TYPE_GEOGRAPHY:
+	  precision = d->precision;
+	  scale = d->scale;
+	  break;
 
 	default:
 	  break;
@@ -2872,6 +2877,11 @@ or_put_domain (OR_BUF * buf, TP_DOMAIN * domain, int include_classoids, int is_n
 	      carrier |= OR_DOMAIN_SCHEMA_FLAG;
 	      has_schema = true;
 	    }
+	  break;
+	case DB_TYPE_GEOMETRY:
+	case DB_TYPE_GEOGRAPHY:
+	  precision = d->precision;
+	  scale = d->scale;
 	  break;
 
 	default:
@@ -3135,6 +3145,11 @@ unpack_domain_2 (OR_BUF * buf, int *is_null)
 
 	    case DB_TYPE_JSON:
 	      has_schema = (carrier & OR_DOMAIN_SCHEMA_FLAG) != 0;
+	      break;
+	    case DB_TYPE_GEOMETRY:
+	    case DB_TYPE_GEOGRAPHY:
+	      precision = (carrier & OR_DOMAIN_PRECISION_MASK) >> OR_DOMAIN_PRECISION_SHIFT;
+	      scale = (carrier & OR_DOMAIN_SCALE_MASK) >> OR_DOMAIN_SCALE_SHIFT;
 	      break;
 
 	    default:
@@ -3616,6 +3631,27 @@ unpack_domain (OR_BUF * buf, int *is_null)
 		    }
 		  or_align (buf, OR_INT_SIZE);
 		  assert (er_errid () == NO_ERROR);
+		}
+	      break;
+	    case DB_TYPE_GEOMETRY:
+	    case DB_TYPE_GEOGRAPHY:
+	      precision = (carrier & OR_DOMAIN_PRECISION_MASK) >> OR_DOMAIN_PRECISION_SHIFT;
+	      scale = (carrier & OR_DOMAIN_SCALE_MASK) >> OR_DOMAIN_SCALE_SHIFT;
+	      if (precision == OR_DOMAIN_PRECISION_MAX)
+		{
+		  precision = or_get_int (buf, &rc);
+		  if (rc != NO_ERROR)
+		    {
+		      goto error;
+		    }
+		}
+	      if (scale == OR_DOMAIN_SCALE_MAX)
+		{
+		  scale = or_get_int (buf, &rc);
+		  if (rc != NO_ERROR)
+		    {
+		      goto error;
+		    }
 		}
 	      break;
 

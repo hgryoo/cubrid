@@ -3407,7 +3407,36 @@ tp_domain_resolve_value (const DB_VALUE * val, TP_DOMAIN * dbuf)
 
 	case DB_TYPE_GEOMETRY:
 	case DB_TYPE_GEOGRAPHY:
-	  domain = tp_domain_resolve_default (value_type);
+	  if (dbuf == NULL)
+	    {
+	      domain = tp_domain_new (value_type);
+	      if (domain == NULL)
+		{
+		  return NULL;
+		}
+	    }
+	  else
+	    {
+	      domain = dbuf;
+	      tp_domain_init (domain, value_type);
+	    }
+
+	  if (DB_IS_NULL (val))
+	    {
+	      domain->precision = DB_SPATIAL_SUBTYPE_ANY;
+	      domain->scale = 0;
+	    }
+	  else
+	    {
+	      const DB_SPATIAL *spatial = db_get_spatial (val);
+	      domain->precision = spatial != NULL ? spatial->subtype : DB_SPATIAL_SUBTYPE_ANY;
+	      domain->scale = spatial != NULL ? spatial->srid : 0;
+	    }
+
+	  if (dbuf == NULL)
+	    {
+	      domain = tp_domain_cache (domain);
+	    }
 	  break;
 
 	  /*

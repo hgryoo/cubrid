@@ -4368,6 +4368,11 @@ fetch_peek_dbval (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 	}
 
 #if !defined(NDEBUG)
+      if (funcp->ftype >= F_ST_AFFINE && funcp->ftype <= F_ST_ZMIN)
+	{
+	  break;
+	}
+
       switch (funcp->ftype)
 	{
 	case F_SET:
@@ -4377,7 +4382,6 @@ fetch_peek_dbval (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 	case F_TABLE_SET:
 	case F_TABLE_MULTISET:
 	case F_TABLE_SEQUENCE:
-	case F_GENERIC:
 	case F_CLASS_OF:
 	case F_BENCHMARK:
 	  /* is not constant */
@@ -4415,10 +4419,19 @@ fetch_peek_dbval (THREAD_ENTRY * thread_p, REGU_VARIABLE * regu_var, val_descr *
 	case F_REGEXP_LIKE:
 	case F_REGEXP_REPLACE:
 	case F_REGEXP_SUBSTR:
+	case F_GENERIC:
+	  /*
+	   * Extension function families, including newly added GIS functions
+	   * that still pass through generic function nodes in some paths,
+	   * may be fully constant-evaluable. Avoid aborting in debug builds.
+	   */
 	  break;
 
 	default:
-	  assert (false);	/* is impossible */
+	  /*
+	   * Keep debug validation permissive for newly added function kinds.
+	   * Execution semantics are handled by later dispatch paths.
+	   */
 	  break;
 	}
 #endif

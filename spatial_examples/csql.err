@@ -1,0 +1,571 @@
+
+Time: 03/23/26 11:23:01.298 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 11:23:01.298 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 11:23:01.298 - ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_cl.c, line 3546 ERROR CODE = -191, Tran = -1, EID = 1
+Cannot connect to server "demodb" on "localhost".
+
+Time: 03/23/26 11:23:01.298 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1711
+error -191. try to connect to next host
+
+Time: 03/23/26 11:23:01.298 - ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1743 ERROR CODE = -677, Tran = -1, EID = 2
+Failed to connect to database server, 'demodb', on the following host(s): localhost
+
+Time: 03/23/26 11:23:01.298 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1084
+boot_restart_client: boot_client_initialize_css () error -191
+
+Time: 03/23/26 11:23:01.305 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 11:23:01.305 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 11:23:01.305 - ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_cl.c, line 3546 ERROR CODE = -191, Tran = -1, EID = 1
+Cannot connect to server "demodb" on "localhost".
+
+Time: 03/23/26 11:23:01.305 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1711
+error -191. try to connect to next host
+
+Time: 03/23/26 11:23:01.305 - ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1743 ERROR CODE = -677, Tran = -1, EID = 2
+Failed to connect to database server, 'demodb', on the following host(s): localhost
+
+Time: 03/23/26 11:23:01.305 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1084
+boot_restart_client: boot_client_initialize_css () error -191
+
+Time: 03/23/26 11:23:01.313 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 11:23:01.313 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 11:23:01.313 - ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_cl.c, line 3546 ERROR CODE = -191, Tran = -1, EID = 1
+Cannot connect to server "demodb" on "localhost".
+
+Time: 03/23/26 11:23:01.313 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1711
+error -191. try to connect to next host
+
+Time: 03/23/26 11:23:01.313 - ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1743 ERROR CODE = -677, Tran = -1, EID = 2
+Failed to connect to database server, 'demodb', on the following host(s): localhost
+
+Time: 03/23/26 11:23:01.313 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1084
+boot_restart_client: boot_client_initialize_css () error -191
+
+Time: 03/23/26 11:23:01.320 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 11:23:01.320 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 11:23:01.320 - ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_cl.c, line 3546 ERROR CODE = -191, Tran = -1, EID = 1
+Cannot connect to server "demodb" on "localhost".
+
+Time: 03/23/26 11:23:01.320 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1711
+error -191. try to connect to next host
+
+Time: 03/23/26 11:23:01.320 - ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1743 ERROR CODE = -677, Tran = -1, EID = 2
+Failed to connect to database server, 'demodb', on the following host(s): localhost
+
+Time: 03/23/26 11:23:01.320 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1084
+boot_restart_client: boot_client_initialize_css () error -191
+
+Time: 03/23/26 11:23:01.327 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 11:23:01.327 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 11:23:01.327 - ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_cl.c, line 3546 ERROR CODE = -191, Tran = -1, EID = 1
+Cannot connect to server "demodb" on "localhost".
+
+Time: 03/23/26 11:23:01.327 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1711
+error -191. try to connect to next host
+
+Time: 03/23/26 11:23:01.327 - ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1743 ERROR CODE = -677, Tran = -1, EID = 2
+Failed to connect to database server, 'demodb', on the following host(s): localhost
+
+Time: 03/23/26 11:23:01.327 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1084
+boot_restart_client: boot_client_initialize_css () error -191
+
+Time: 03/23/26 11:23:01.334 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 11:23:01.334 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 11:23:01.334 - ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_cl.c, line 3546 ERROR CODE = -191, Tran = -1, EID = 1
+Cannot connect to server "demodb" on "localhost".
+
+Time: 03/23/26 11:23:01.334 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1711
+error -191. try to connect to next host
+
+Time: 03/23/26 11:23:01.334 - ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1743 ERROR CODE = -677, Tran = -1, EID = 2
+Failed to connect to database server, 'demodb', on the following host(s): localhost
+
+Time: 03/23/26 11:23:01.334 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1084
+boot_restart_client: boot_client_initialize_css () error -191
+
+Time: 03/23/26 11:23:26.511 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 11:23:26.512 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 11:23:26.512 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 865291) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 11:23:26.512 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 865291 }
+
+Time: 03/23/26 11:23:26.519 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 11:23:29.425 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 11:23:29.425 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 11:23:29.426 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 865588) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 11:23:29.427 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 865588 }
+
+Time: 03/23/26 11:23:33.439 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 11:23:33.439 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 11:23:33.440 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 865703) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 11:23:33.440 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 865703 }
+
+Time: 03/23/26 11:23:37.484 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 11:23:37.484 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 11:23:37.484 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 865916) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 11:23:37.485 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 865916 }
+
+Time: 03/23/26 11:23:41.558 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 11:23:41.558 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 11:23:41.559 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 866036) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 11:23:41.559 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 866036 }
+
+Time: 03/23/26 11:23:41.563 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 2
+invalid use of cast
+  CAST ( expression AS data_type )
+
+Time: 03/23/26 11:23:41.563 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 3
+invalid use of cast
+  CAST ( expression AS data_type )
+
+*** The previous error message is the last one. ***
+
+
+Time: 03/23/26 11:23:45.788 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 11:23:45.788 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 11:23:45.789 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 866579) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 11:23:45.789 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 866579 }
+
+Time: 03/23/26 11:23:45.797 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 2
+syntax is ambiguous
+
+*** The previous error message is the last one. ***
+
+
+Time: 03/23/26 15:25:42.831 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 15:25:42.831 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 15:25:42.832 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 1416798) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 15:25:42.833 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 1416798 }
+
+Time: 03/23/26 15:25:42.856 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 15:25:42.860 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 15:25:42.860 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 15:25:42.861 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 15:25:42.862 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 15:25:42.862 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 15:25:42.863 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 15:25:42.871 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 15:25:42.871 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 15:25:42.871 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 1416800) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 15:25:42.871 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 1416800 }
+
+Time: 03/23/26 15:25:46.954 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 15:25:46.954 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 15:25:46.954 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 1416924) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 15:25:46.954 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 1416924 }
+
+Time: 03/23/26 15:25:50.920 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 15:25:50.920 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 15:25:50.920 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 1417022) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 15:25:50.921 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 1417022 }
+
+Time: 03/23/26 15:25:54.922 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 15:25:54.922 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 15:25:54.922 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 1417111) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 15:25:54.922 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 1417111 }
+
+Time: 03/23/26 15:25:58.911 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 15:25:58.911 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 15:25:58.912 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 1417325) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 15:25:58.912 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 1417325 }
+
+Time: 03/23/26 16:06:33.594 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 16:06:33.595 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 16:06:33.595 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 1590700) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 16:06:33.595 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 1590700 }
+
+Time: 03/23/26 16:06:33.601 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.602 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.603 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.604 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.604 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.605 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.606 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.615 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 16:06:33.615 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 16:06:33.615 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 1590703) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 16:06:33.615 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 1590703 }
+
+Time: 03/23/26 16:06:33.620 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.620 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.621 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.622 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.623 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.623 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.623 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/parser/query_result.c, line 376 ERROR CODE = -494, Tran = 1, EID = 2
+Semantic: before ' ) as geography_default_srid
+from db_root; '
+Incompatible argument type geometry, expected type is: object. select st_srid( cast('POINT (126.97 37.56)' as geometry([poi...
+
+Time: 03/23/26 16:06:33.623 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 3
+before ' ) as geography_default_srid
+from db_root; '
+Incompatible argument type geometry, expected type is: object.
+
+Time: 03/23/26 16:06:33.623 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 4
+Signature object -> integer is not compatible with function arguments.
+
+Time: 03/23/26 16:06:33.624 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/parser/query_result.c, line 376 ERROR CODE = -494, Tran = 1, EID = 5
+Semantic: before ' ) as multi_geom_type
+from db_root; '
+Incompatible argument type geometry, expected type is: object. select st_geometrytype( cast('MULTIPOINT ((0 0), (5 5))' as ...
+
+Time: 03/23/26 16:06:33.624 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 6
+before ' ) as multi_geom_type
+from db_root; '
+Incompatible argument type geometry, expected type is: object.
+
+Time: 03/23/26 16:06:33.624 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 7
+Signature object -> varchar is not compatible with function arguments.
+
+*** The previous error message is the last one. ***
+
+
+Time: 03/23/26 16:06:33.632 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 16:06:33.632 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 16:06:33.632 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 1590705) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 16:06:33.632 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 1590705 }
+
+Time: 03/23/26 16:06:33.638 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.639 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.639 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.640 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.640 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.641 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.641 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.642 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/parser/query_result.c, line 376 ERROR CODE = -494, Tran = 1, EID = 2
+Semantic: before ' ) as geography_polygon_area
+from db_root; '
+Incompatible argument type geometry, expected type is: object. select st_area( cast('POLYGON ((0 0, 0 3, 4 3, 4 0, 0 0))' a...
+
+Time: 03/23/26 16:06:33.642 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 3
+before ' ) as geography_polygon_area
+from db_root; '
+Incompatible argument type geometry, expected type is: object.
+
+Time: 03/23/26 16:06:33.642 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 4
+Signature object -> double is not compatible with function arguments.
+
+*** The previous error message is the last one. ***
+
+
+Time: 03/23/26 16:06:33.650 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 16:06:33.650 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 16:06:33.650 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 1590707) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 16:06:33.651 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 1590707 }
+
+Time: 03/23/26 16:06:33.655 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.656 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.656 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.657 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.657 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.658 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/parser/query_result.c, line 376 ERROR CODE = -494, Tran = 1, EID = 2
+Semantic: before ' ,
+         cast('LINESTRING (0 2, 2 0)' as geography(linestri...'
+Incompatible argument type geometry, expected type is: object. select st_intersects( cast('LINESTRING (0 0, 2 2)' as geomet...
+
+Time: 03/23/26 16:06:33.658 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 3
+before ' ,
+         cast('LINESTRING (0 2, 2 0)' as geography(linestri...'
+Incompatible argument type geometry, expected type is: object.
+
+Time: 03/23/26 16:06:33.658 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 4
+Signature object, object -> integer is not compatible with function arguments.
+
+*** The previous error message is the last one. ***
+
+
+Time: 03/23/26 16:06:33.665 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 16:06:33.665 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 16:06:33.666 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 1590709) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 16:06:33.666 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 1590709 }
+
+Time: 03/23/26 16:06:33.670 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.671 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:33.671 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/parser/query_result.c, line 376 ERROR CODE = -494, Tran = 1, EID = 2
+Semantic: before ' ) as point_type_name,
+       st_geometrytype(cast('GEOMETRYCO...'
+Incompatible argument type geometry, expected type is: object. select st_geometrytype( cast('POINT (9 8)' as geometry([poin...
+
+Time: 03/23/26 16:06:33.671 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 3
+before ' ) as point_type_name,
+       st_geometrytype(cast('GEOMETRYCO...'
+Incompatible argument type geometry, expected type is: object.
+
+Time: 03/23/26 16:06:33.672 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 4
+Signature object -> varchar is not compatible with function arguments.
+
+Time: 03/23/26 16:06:33.672 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/parser/query_result.c, line 376 ERROR CODE = -494, Tran = 1, EID = 5
+Semantic: before ' , 4326)) as geography_srid
+from db_root; '
+Incompatible argument type geometry, expected type is: object. select st_srid(st_setsrid( cast('POINT (1 2)' as geometry([p...
+
+Time: 03/23/26 16:06:33.672 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 6
+before ' , 4326)) as geography_srid
+from db_root; '
+Incompatible argument type geometry, expected type is: object.
+
+Time: 03/23/26 16:06:33.672 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 7
+Signature object, integer -> object is not compatible with function arguments.
+
+Time: 03/23/26 16:06:33.673 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/parser/query_result.c, line 376 ERROR CODE = -494, Tran = 1, EID = 8
+Semantic: before ' , 3857)) as x_after_setsrid,
+       st_y(st_setsrid(cast('POI...'
+Incompatible argument type geometry, expected type is: object. select st_x(st_setsrid( cast('POINT (5 6)' as geometry([poin...
+
+Time: 03/23/26 16:06:33.673 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 9
+before ' , 3857)) as x_after_setsrid,
+       st_y(st_setsrid(cast('POI...'
+Incompatible argument type geometry, expected type is: object.
+
+Time: 03/23/26 16:06:33.673 - SYNTAX ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_vdb.c, line 1052 ERROR CODE = -492, Tran = 1, EID = 10
+Signature object, integer -> object is not compatible with function arguments.
+
+*** The previous error message is the last one. ***
+
+
+Time: 03/23/26 16:06:33.681 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1659
+trying to connect 'demodb@localhost'
+
+Time: 03/23/26 16:06:33.681 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1681
+ping server with handshake
+
+Time: 03/23/26 16:06:33.681 - NOTIFICATION *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1088  CODE = -971, Tran = -1, EID = 1
+Program 'csql' (pid 1590712) connected to database server 'demodb' on the host 'localhost' (port 1555).
+
+Time: 03/23/26 16:06:33.681 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/boot_cl.c, line 1131
+boot_restart_client: register client { type 2 db demodb user PUBLIC password (null) program csql login hgryoo host hgryoo-desktop pid 1590712 }
+
+Time: 03/23/26 16:06:33.732 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_interface_cl.c, line 6978
+qmgr_execute_query requested: EXECUTION_WITH_AUTOCOMMIT
+
+Time: 03/23/26 16:06:41.588 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/connection/tcp.c, line 1484
+The css_peer_alive() is calling.
+Time: 03/23/26 16:06:46.593 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/connection/tcp.c, line 1484
+The css_peer_alive() is calling.
+Time: 03/23/26 16:06:48.097 - ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_cl.c, line 161 ERROR CODE = -199, Tran = 1, EID = 2
+Server no longer responding.... Connection timed out
+
+Time: 03/23/26 16:06:48.097 - DEBUG *** file /home/hgryoo/dev/cubrid_spatial/src/communication/network_cl.c, line 165
+set_server_error(7) server_error -199
+
+Time: 03/23/26 16:06:48.097 - ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/transaction/transaction_cl.c, line 600 ERROR CODE = -111, Tran = 1, EID = 3
+Your transaction has been aborted by the system due to server failure or mode change.
+
+Time: 03/23/26 16:06:48.097 - ERROR *** file /home/hgryoo/dev/cubrid_spatial/src/compat/db_admin.c, line 1090 ERROR CODE = -224, Tran = -1, EID = 4
+A database has not been restarted.
+
+*** The previous error message is the last one. ***
+

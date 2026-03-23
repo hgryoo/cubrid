@@ -75,7 +75,7 @@ catcls_add_data_type (DB_OBJECT *class_mop)
   DB_VALUE val;
   int i;
 
-  const char *names[DB_TYPE_LAST] =
+  const char *names[DB_TYPE_LAST + 1] =
   {
     "INTEGER", "FLOAT", "DOUBLE", "STRING", "OBJECT",
     "SET", "MULTISET", "SEQUENCE", "ELO", "TIME",
@@ -95,10 +95,10 @@ catcls_add_data_type (DB_OBJECT *class_mop)
     "BIGINT", "DATETIME",
     "BLOB", "CLOB", "ENUM",
     "TIMESTAMPTZ", "TIMESTAMPLTZ", "DATETIMETZ", "DATETIMELTZ",
-    "JSON"
+    "JSON", "GEOMETRY", "GEOGRAPHY"
   };
 
-  for (i = 0; i < DB_TYPE_LAST; i++)
+  for (i = 0; i <= DB_TYPE_LAST; i++)
     {
       if (names[i] != NULL)
 	{

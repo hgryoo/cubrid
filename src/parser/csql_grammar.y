@@ -20722,11 +20722,9 @@ identifier
 	| EXPLAIN                {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| FIRST_VALUE            {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| FULLSCAN               {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
-	| GEOGRAPHY              {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| GE_INF_                {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| GE_LE_                 {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| GE_LT_                 {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
-	| GEOMETRY               {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| GRANTS                 {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| GROUPS                 {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}
 	| GROUP_CONCAT           {{ SET_CPTR_2_PTNAME($$, $1, @$.buffer_pos);  }}

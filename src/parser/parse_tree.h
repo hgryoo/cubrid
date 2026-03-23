@@ -3719,8 +3719,8 @@ struct execution_state_values
 				 * modify any rows. */
 };
 
-/* 20 (for the LOCAL_TRANSACTION_ID keyword) + null char + 3 for expansion */
-#define MAX_KEYWORD_SIZE (20 + 1 + 3)
+/* Spatial functions such as ST_SIMPLIFYPRESERVETOPOLOGY exceed the legacy 20-char limit. */
+#define MAX_KEYWORD_SIZE (32 + 1 + 3)
 
 typedef struct keyword_record KEYWORD_RECORD;
 struct keyword_record
