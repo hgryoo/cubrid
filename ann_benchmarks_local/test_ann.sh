@@ -38,6 +38,7 @@ PERF_ENABLE="${PERF_ENABLE:-0}"
 PERF_STAT_ENABLE="${PERF_STAT_ENABLE:-1}"
 PERF_TARGETS="${PERF_TARGETS:-csql cub_server}"
 PERF_STAT_EVENTS="${PERF_STAT_EVENTS:-task-clock,cycles,instructions,branches,branch-misses,cache-references,cache-misses}"
+DEFAULT_PERF_STAT_EVENTS="task-clock,cycles,instructions,branches,branch-misses,cache-references,cache-misses"
 PERF_RECORD_TARGETS="${PERF_RECORD_TARGETS:-}"
 PERF_RECORD_PROFILE="${PERF_RECORD_PROFILE:-hot}"
 PERF_RECORD_EVENT="${PERF_RECORD_EVENT:-}"
@@ -152,7 +153,7 @@ append_perf_record_profile_suffix() {
 
   case "$PERF_RECORD_PROFILE" in
     hot)
-      printf '%s\n' "$label"
+      printf '%s.%s\n' "$label" "$PERF_RECORD_PROFILE"
       ;;
     instructions|branch|cache|custom)
       printf '%s.%s\n' "$label" "$PERF_RECORD_PROFILE"
@@ -161,6 +162,19 @@ append_perf_record_profile_suffix() {
       printf '%s\n' "$label"
       ;;
   esac
+}
+
+append_perf_stat_suffix() {
+  local label="$1"
+  local stat_suffix
+
+  if [[ "$PERF_STAT_EVENTS" == "$DEFAULT_PERF_STAT_EVENTS" ]]; then
+    stat_suffix="default"
+  else
+    stat_suffix="$(printf '%s' "$PERF_STAT_EVENTS" | tr ',/' '__' | tr -c '[:alnum:]_.-' '_')"
+  fi
+
+  printf '%s.stat-%s\n' "$label" "$stat_suffix"
 }
 
 get_cub_server_pid() {
@@ -216,6 +230,39 @@ start_perf_stat_attach() {
     -p "$pid" \
     -o "$output_file" >"$log_file" 2>&1 &
   echo $!
+}
+
+write_perf_metadata() {
+  local base_path="$1"
+  local target="$2"
+  local mode="$3"
+
+  cat > "${base_path}.meta" <<EOF
+target=$target
+mode=$mode
+record_profile=$PERF_RECORD_PROFILE
+record_event=$(get_perf_record_event)
+stat_events=$PERF_STAT_EVENTS
+call_graph=$PERF_CALL_GRAPH
+dataset=$DATASET_NAME
+hnsw_m=$HNSW_M
+hnsw_ef_construction=$HNSW_EF_CONSTRUCTION
+hnsw_ef_search=${HNSW_EF_SEARCH:-}
+topk=$TOPK
+timestamp=$(date '+%F %T')
+EOF
+}
+
+rotate_perf_output_dir() {
+  local perf_output_old_dir="${PERF_OUTPUT_DIR}.old"
+
+  if [[ ! -d "$PERF_OUTPUT_DIR" ]]; then
+    return
+  fi
+
+  log "rotating existing perf output: $PERF_OUTPUT_DIR -> $perf_output_old_dir"
+  rm -rf "$perf_output_old_dir"
+  mv "$PERF_OUTPUT_DIR" "$perf_output_old_dir"
 }
 
 start_perf_record_attach() {
@@ -450,11 +497,13 @@ run_csql_input_with_perf() {
   local enable_csql_record=1
   local csql_pid=""
   local csql_status=0
-  local csql_stat_pid=""
   local csql_record_pid=""
   local server_pid=""
   local server_stat_pid=""
   local server_record_pid=""
+  local csql_log_file
+  local -a csql_cmd
+  local -a perf_stat_cmd
 
   if (( PERF_ENABLE != 1 )); then
     ensure_db_access
@@ -463,29 +512,38 @@ run_csql_input_with_perf() {
   fi
 
   mkdir -p "$PERF_OUTPUT_DIR"
-  stat_label="$label"
+  stat_label="$(append_perf_stat_suffix "$label")"
   record_label="$(append_perf_record_profile_suffix "$label")"
   safe_stat_label="$(sanitize_perf_label "$stat_label")"
   safe_record_label="$(sanitize_perf_label "$record_label")"
   ensure_db_access
+  csql_log_file="$PERF_OUTPUT_DIR/${safe_stat_label}.csql.stat.csv.log"
+  csql_cmd=(csql -u "$DB_USER" -q -N --delimiter='|' "$DB_NAME" -i "$sql_file")
 
   if [[ "$safe_stat_label" == build_index_* ]]; then
     enable_csql_record=0
   fi
 
-  csql -u "$DB_USER" -q -N --delimiter='|' "$DB_NAME" -i "$sql_file" > "$out_file" &
-  csql_pid=$!
-
   if perf_enabled_for_target csql; then
-    csql_stat_pid="$(
-      start_perf_stat_attach "$csql_pid" "$PERF_OUTPUT_DIR/${safe_stat_label}.csql.stat.csv" || true
-    )"
+    perf_stat_cmd=(
+      perf stat
+      -x,
+      -e "$PERF_STAT_EVENTS"
+      -o "$PERF_OUTPUT_DIR/${safe_stat_label}.csql.stat.csv"
+      --
+    )
+    "${perf_stat_cmd[@]}" "${csql_cmd[@]}" >"$out_file" 2>"$csql_log_file" &
+    write_perf_metadata "$PERF_OUTPUT_DIR/${safe_stat_label}.csql.stat.csv" csql stat
+  else
+    "${csql_cmd[@]}" >"$out_file" &
   fi
+  csql_pid=$!
 
   if (( enable_csql_record == 1 )) && perf_record_enabled_for_target csql; then
     csql_record_pid="$(
       start_perf_record_attach "$csql_pid" "$PERF_OUTPUT_DIR/${safe_record_label}.csql.data" || true
     )"
+    write_perf_metadata "$PERF_OUTPUT_DIR/${safe_record_label}.csql.data" csql record
   fi
 
   if perf_enabled_for_target cub_server || perf_record_enabled_for_target cub_server; then
@@ -496,12 +554,14 @@ run_csql_input_with_perf() {
         server_stat_pid="$(
           start_perf_stat_attach "$server_pid" "$PERF_OUTPUT_DIR/${safe_stat_label}.cub_server.stat.csv" || true
         )"
+        write_perf_metadata "$PERF_OUTPUT_DIR/${safe_stat_label}.cub_server.stat.csv" cub_server stat
       fi
 
       if perf_record_enabled_for_target cub_server; then
         server_record_pid="$(
           start_perf_record_attach "$server_pid" "$PERF_OUTPUT_DIR/${safe_record_label}.cub_server.data" || true
         )"
+        write_perf_metadata "$PERF_OUTPUT_DIR/${safe_record_label}.cub_server.data" cub_server record
       fi
     else
       log "perf requested for cub_server, but no PID was found for $DB_NAME"
@@ -513,7 +573,6 @@ run_csql_input_with_perf() {
   csql_status=$?
   set -e
 
-  stop_perf_background_job "$csql_stat_pid"
   stop_perf_background_job "$csql_record_pid"
   stop_perf_background_job "$server_stat_pid"
   stop_perf_background_job "$server_record_pid"
@@ -666,6 +725,49 @@ sql_exec() {
   local query="$1"
   ensure_db_access
   csql -u "$DB_USER" "$DB_NAME" -c "$query"
+}
+
+validate_required_classes() {
+  local missing_classes=""
+  local required_classes=(
+    nytimes_256_angular_train
+    nytimes_256_angular_test
+    nytimes_256_angular_answer
+  )
+  local class_name
+  local found
+
+  for class_name in "${required_classes[@]}"; do
+    found="$(
+      sql_capture "
+        SELECT class_name
+          FROM db_class
+         WHERE class_name = '${class_name}';
+      " | awk -F'|' 'NF > 0 {print $1; exit}'
+    )"
+
+    if [[ "$found" != "$class_name" ]]; then
+      missing_classes+=" $class_name"
+    fi
+  done
+
+  if [[ -n "$missing_classes" ]]; then
+    printf 'required dataset classes are missing in %s:%s\n' \
+      "$DB_NAME" \
+      "$missing_classes" >&2
+    printf 'expected classes: nytimes_256_angular_train, nytimes_256_angular_test, nytimes_256_angular_answer\n' >&2
+    return 1
+  fi
+}
+
+invalidate_dataset_cache() {
+  log "invalidating cached query/results artifacts for $DATASET_NAME"
+  rm -f \
+    "$QUERY_ID_FILE" \
+    "$EXCLUDED_QUERY_FILE" \
+    "$QUERY_ID_CACHE_MARKER" \
+    "$RESULT_CSV" \
+    "$RESULT_SVG"
 }
 
 setup_demo_db() {
@@ -840,17 +942,25 @@ measure_recall() {
   local elapsed_sec
   local recall
   local qps
-  local sql_file
-  local out_file
+  local ann_sql_file
+  local ann_out_file
+  local gt_sql_file
+  local gt_out_file
   local summary
   local qid
   local total_queries
+  local line_type
+  local line_processed
+  local line_hits
+  local partial
 
   total_queries="${#QUERY_IDS[@]}"
   log "measuring recall@${TOPK} for ${total_queries} queries (hnsw_ef_search=$HNSW_EF_SEARCH)"
   start_ns="$(date +%s%N)"
-  sql_file="$(mktemp /tmp/nytimes_measure_sql.XXXXXX)"
-  out_file="$(mktemp /tmp/nytimes_measure_out.XXXXXX)"
+  ann_sql_file="$(mktemp /tmp/nytimes_measure_ann_sql.XXXXXX)"
+  ann_out_file="$(mktemp /tmp/nytimes_measure_ann_out.XXXXXX)"
+  gt_sql_file="$(mktemp /tmp/nytimes_measure_gt_sql.XXXXXX)"
+  gt_out_file="$(mktemp /tmp/nytimes_measure_gt_out.XXXXXX)"
 
   {
     printf "SET SYSTEM PARAMETERS 'hnsw_ef_search=%s';\n" "$HNSW_EF_SEARCH"
@@ -864,6 +974,23 @@ PREPARE ann FROM '
        LIMIT ${TOPK}
     ) ann
 ';
+EOF
+
+    for ((i = 0; i < total_queries; i++)); do
+      qid="${QUERY_IDS[i]}"
+      printf "SET @qid = %s;\n" "$qid"
+      printf "SET @v = (SELECT vec FROM nytimes_256_angular_test WHERE id = @qid);\n"
+      printf "EXECUTE ann;\n"
+    done
+  } > "$ann_sql_file"
+
+  run_csql_input_with_perf \
+    "$ann_sql_file" \
+    "$ann_out_file" \
+    "query_ann_ef${HNSW_EF_SEARCH}_topk${TOPK}_q${total_queries}"
+
+  {
+    cat <<EOF
 PREPARE gt FROM '
   SELECT 2, @qid, neighbor_id
     FROM (
@@ -879,19 +1006,26 @@ EOF
     for ((i = 0; i < total_queries; i++)); do
       qid="${QUERY_IDS[i]}"
       printf "SET @qid = %s;\n" "$qid"
-      printf "SET @v = (SELECT vec FROM nytimes_256_angular_test WHERE id = @qid);\n"
-      printf "EXECUTE ann;\n"
       printf "EXECUTE gt;\n"
     done
-  } > "$sql_file"
+  } > "$gt_sql_file"
 
-  run_csql_input_with_perf \
-    "$sql_file" \
-    "$out_file" \
-    "query_ef${HNSW_EF_SEARCH}_topk${TOPK}_q${total_queries}"
+  ensure_db_access
+  csql -u "$DB_USER" -q -N --delimiter='|' "$DB_NAME" -i "$gt_sql_file" > "$gt_out_file"
 
-  summary="$(
-    awk -F'|' -v topk="$TOPK" '
+  while IFS='|' read -r line_type line_processed line_hits; do
+    case "$line_type" in
+      P)
+        partial="$(awk -v hits="$line_hits" -v total="$((line_processed * TOPK))" 'BEGIN { printf "%.6f", hits / total }')"
+        log "progress: ${line_processed}/${total_queries} queries, partial recall@${TOPK}=${partial}"
+        ;;
+      S)
+        processed="$line_processed"
+        total_hits="$line_hits"
+        ;;
+    esac
+  done < <(
+    awk -F'|' -v topk="$TOPK" -v progress_every="$PROGRESS_EVERY" '
       function flush_query(   hits, i, n) {
         if (curr_qid == "") {
           return
@@ -908,12 +1042,16 @@ EOF
         total_hits += hits
         processed++
 
+        if (progress_every > 0 && (processed % progress_every) == 0) {
+          printf "P|%d|%d\n", processed, total_hits
+        }
+
         delete gt_set
         ann_list = ""
         curr_qid = ""
       }
 
-      $1 ~ /^[12]$/ && $2 ~ /^-?[0-9]+$/ && $3 ~ /^-?[0-9]+$/ {
+      FILENAME == ann_file && $1 == 1 && $2 ~ /^-?[0-9]+$/ && $3 ~ /^-?[0-9]+$/ {
         qid = $2 + 0
         rid = $3 + 0
 
@@ -925,24 +1063,32 @@ EOF
           curr_qid = qid
         }
 
-        if ($1 == 1) {
-          ann_list = ann_list " " rid
-        } else {
-          gt_set[rid] = 1
+        ann_list = ann_list " " rid
+      }
+
+      FILENAME == gt_file && $1 == 2 && $2 ~ /^-?[0-9]+$/ && $3 ~ /^-?[0-9]+$/ {
+        qid = $2 + 0
+        rid = $3 + 0
+
+        if (curr_qid != "" && qid != curr_qid) {
+          flush_query()
         }
+
+        if (curr_qid == "") {
+          curr_qid = qid
+        }
+
+        gt_set[rid] = 1
       }
 
       END {
         flush_query()
-        printf "%d|%d\n", processed, total_hits
+        printf "S|%d|%d\n", processed, total_hits
       }
-    ' "$out_file"
-  )"
+    ' ann_file="$ann_out_file" gt_file="$gt_out_file" "$ann_out_file" "$gt_out_file"
+  )
 
-  processed="${summary%%|*}"
-  total_hits="${summary##*|}"
-
-  rm -f "$sql_file" "$out_file"
+  rm -f "$ann_sql_file" "$ann_out_file" "$gt_sql_file" "$gt_out_file"
 
   end_ns="$(date +%s%N)"
   elapsed_ns=$((end_ns - start_ns))
@@ -1150,11 +1296,23 @@ main() {
   if (( PERF_ENABLE == 1 )); then
     require_cmd perf
     require_cmd ps
+    rotate_perf_output_dir
     log "perf capture enabled: output_dir=$PERF_OUTPUT_DIR, stat_enable=$PERF_STAT_ENABLE, targets=[$PERF_TARGETS], record_targets=[$PERF_RECORD_TARGETS], record_profile=$PERF_RECORD_PROFILE"
   fi
 
   run_stage "reset db" setup_demo_db
   run_stage "bulk load" load_dataset
+
+  if run_stage "validate dataset classes" validate_required_classes; then
+    :
+  else
+    log "dataset validation failed; clearing caches and retrying bulk load once"
+    invalidate_dataset_cache
+    run_stage "reset db (retry)" setup_demo_db
+    run_stage "bulk load (retry)" load_dataset
+    run_stage "validate dataset classes (retry)" validate_required_classes
+  fi
+
   run_stage "build index" build_index
   run_stage "prepare query ids" prepare_query_ids
   run_stage "ef_search sweep" run_ef_search_experiments
