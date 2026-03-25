@@ -12,3 +12,4 @@ flame_graph
 *_schema
 *.hdf5
 perf_*/
+*.cache_ready
