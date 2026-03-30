@@ -48,13 +48,15 @@ If you are just running the benchmark:
 If you also want perf:
 
 - set `PERF_ENABLE=1`
-- set `PERF_STAT_ENABLE=0` if you want only `perf record` attribution without `perf stat`
-- keep `PERF_RECORD_TARGETS="cub_server"` unless you specifically need `csql`
-- choose one `PERF_RECORD_PROFILE` per run:
+- choose a profile with `PERF_PROFILES` or `PERF_RECORD_PROFILE`
+  - `stat`
   - `hot`
   - `instructions`
   - `branch`
   - `cache`
+  - `all`
+- when `PERF_RECORD_TARGETS` is not set, `perf record` uses `PERF_TARGETS`
+- previous perf output is archived to `perf_<dataset>.old.<timestamp>` before a new run starts
 
 ## Common Commands
 
@@ -68,6 +70,12 @@ Run only `ef_search=200,400` explicitly:
 
 ```bash
 HNSW_EF_SEARCH_VALUES="200 400" ./ann_benchmarks_local/test_ann.sh
+```
+
+Run the single-core experiment variant that forces `max_clients=1` and reduces background activity:
+
+```bash
+ANN_SINGLE_CORE_EXPERIMENT=1 ./ann_benchmarks_local/test_ann.sh
 ```
 
 Use a different dataset `.hdf5` base name. The script derives the matching schema/object files and output file names automatically:
@@ -90,49 +98,40 @@ Tune build/search parameters:
 HNSW_M=24 HNSW_EF_CONSTRUCTION=200 HNSW_EF_SEARCH_VALUES="200 400 800" ./ann_benchmarks_local/test_ann.sh
 ```
 
-Collect `perf stat` for both `csql` and `cub_server` during the full build/query flow:
+Collect only `perf stat` for both `csql` and `cub_server` during the full build/query flow:
 
 ```bash
-PERF_ENABLE=1 HNSW_EF_SEARCH_VALUES="200" ./ann_benchmarks_local/test_ann.sh
+PERF_ENABLE=1 PERF_PROFILES="stat" HNSW_EF_SEARCH_VALUES="200" ./ann_benchmarks_local/test_ann.sh
 ```
 
-Collect `perf stat` plus call-graph samples for `cub_server`:
+Collect hot-function attribution for both `csql` and `cub_server`:
 
 ```bash
-PERF_ENABLE=1 PERF_RECORD_TARGETS="cub_server" HNSW_EF_SEARCH_VALUES="200" ./ann_benchmarks_local/test_ann.sh
-```
-
-Collect hot-function attribution:
-
-```bash
-PERF_ENABLE=1 PERF_RECORD_TARGETS="cub_server" PERF_RECORD_PROFILE=hot HNSW_EF_SEARCH_VALUES="200" ./ann_benchmarks_local/test_ann.sh
+PERF_ENABLE=1 PERF_RECORD_PROFILE=hot HNSW_EF_SEARCH_VALUES="200" ./ann_benchmarks_local/test_ann.sh
 ```
 
 Collect instruction-count attribution:
 
 ```bash
-PERF_ENABLE=1 PERF_RECORD_TARGETS="cub_server" PERF_RECORD_PROFILE=instructions HNSW_EF_SEARCH_VALUES="200" ./ann_benchmarks_local/test_ann.sh
+PERF_ENABLE=1 PERF_RECORD_PROFILE=instructions HNSW_EF_SEARCH_VALUES="200" ./ann_benchmarks_local/test_ann.sh
 ```
 
 Collect branch-miss attribution:
 
 ```bash
-PERF_ENABLE=1 PERF_RECORD_TARGETS="cub_server" PERF_RECORD_PROFILE=branch HNSW_EF_SEARCH_VALUES="200" ./ann_benchmarks_local/test_ann.sh
+PERF_ENABLE=1 PERF_RECORD_PROFILE=branch HNSW_EF_SEARCH_VALUES="200" ./ann_benchmarks_local/test_ann.sh
 ```
 
 Collect cache-miss attribution:
 
 ```bash
-PERF_ENABLE=1 PERF_STAT_ENABLE=0 PERF_RECORD_TARGETS="cub_server" PERF_RECORD_PROFILE=cache HNSW_EF_SEARCH_VALUES="200" ./ann_benchmarks_local/test_ann.sh
+PERF_ENABLE=1 PERF_RECORD_PROFILE=cache HNSW_EF_SEARCH_VALUES="200" ./ann_benchmarks_local/test_ann.sh
 ```
 
-Generate flame graphs from `perf record` data. If `ann_benchmarks_local/flame_graph` is missing, the script downloads FlameGraph tools automatically:
+Collect everything in one run. This includes `stat` plus all record profiles and can be expensive:
 
 ```bash
-PERF_ENABLE=1 \
-PERF_RECORD_TARGETS="cub_server csql" \
-HNSW_EF_SEARCH_VALUES="200" \
-./ann_benchmarks_local/test_ann.sh
+PERF_ENABLE=1 PERF_PROFILES=all HNSW_EF_SEARCH_VALUES="200" ./ann_benchmarks_local/test_ann.sh
 ```
 
 ## Environment Variables
@@ -180,6 +179,12 @@ Sometimes important:
 - `PROGRESS_EVERY`
   Progress log interval during query evaluation.
   Default: `100`
+- `ANN_SINGLE_CORE_EXPERIMENT`
+  When set to `1`, the script rewrites `cubrid.conf` for a low-background single-core comparison run.
+  It forces `max_clients=1`, `thread_core_count=1`, `parallelism=0`, `max_parallel_workers=0`,
+  `log_background_archiving=no`, `auto_restart_server=no`, `vacuum_disable=yes`, `ha_mode=off`,
+  and keeps `stored_procedure=no`.
+  Default: `0`
 
 ### Perf settings
 
@@ -188,20 +193,18 @@ Usually important:
 - `PERF_ENABLE`
   Turns on perf collection.
   Default: `0`
+- `PERF_PROFILES`
+  Space-separated collection profiles.
+  Values:
+  `stat`, `hot`, `instructions`, `branch`, `cache`, `custom`, `all`
+- `PERF_RECORD_PROFILE`
+  Backward-compatible alias for selecting one record profile when `PERF_PROFILES` is not set
 - `PERF_STAT_ENABLE`
-  Turns `perf stat` on or off.
+  Turns `stat` collection on or off when that profile is selected.
   Default: `1`
 - `PERF_RECORD_TARGETS`
-  Which processes also get `perf record`.
-  Common choice: `cub_server`
-- `PERF_RECORD_PROFILE`
-  What kind of attribution to collect with `perf record`.
-  Values:
-  `hot` for CPU hot functions
-  `instructions` for instruction-count attribution
-  `branch` for branch-miss attribution
-  `cache` for cache-miss attribution
-  `custom` when using `PERF_RECORD_EVENT`
+  Optional override for which processes get `perf record`.
+  If unset, `perf record` uses `PERF_TARGETS`
 
 Sometimes important:
 

@@ -18,6 +18,14 @@ TRAIN_ROW_LIMIT="${TRAIN_ROW_LIMIT:-}"
 HNSW_M="${HNSW_M:-24}"
 HNSW_EF_CONSTRUCTION="${HNSW_EF_CONSTRUCTION:-200}"
 HNSW_EF_SEARCH_VALUES="${HNSW_EF_SEARCH_VALUES:-200 400}"
+ANN_SINGLE_CORE_EXPERIMENT="${ANN_SINGLE_CORE_EXPERIMENT:-0}"
+ANN_EXPERIMENT_MAX_CLIENTS="${ANN_EXPERIMENT_MAX_CLIENTS:-1}"
+ANN_EXPERIMENT_THREAD_CORE_COUNT="${ANN_EXPERIMENT_THREAD_CORE_COUNT:-1}"
+ANN_EXPERIMENT_PARALLELISM="${ANN_EXPERIMENT_PARALLELISM:-0}"
+ANN_EXPERIMENT_MAX_PARALLEL_WORKERS="${ANN_EXPERIMENT_MAX_PARALLEL_WORKERS:-0}"
+ANN_PREPARE_ONLY="${ANN_PREPARE_ONLY:-0}"
+ANN_TASKSET_ENABLE="${ANN_TASKSET_ENABLE:-0}"
+ANN_TASKSET_CPU="${ANN_TASKSET_CPU:-0}"
 
 # Internal derived paths and per-run state
 DATASET_FILENAME="$(basename -- "$DATASET_HDF5")"
@@ -42,12 +50,15 @@ PERF_STAT_ENABLE="${PERF_STAT_ENABLE:-1}"
 PERF_TARGETS="${PERF_TARGETS:-csql cub_server}"
 PERF_STAT_EVENTS="${PERF_STAT_EVENTS:-task-clock,cycles,instructions,branches,branch-misses,cache-references,cache-misses}"
 PERF_RECORD_TARGETS="${PERF_RECORD_TARGETS:-}"
-PERF_RECORD_PROFILE="${PERF_RECORD_PROFILE:-hot}"
+PERF_RECORD_PROFILE="${PERF_RECORD_PROFILE:-}"
+PERF_PROFILES="${PERF_PROFILES:-}"
 PERF_RECORD_EVENT="${PERF_RECORD_EVENT:-}"
 PERF_RECORD_FREQ="${PERF_RECORD_FREQ:-99}"
 PERF_RECORD_PERIOD="${PERF_RECORD_PERIOD:-}"
 PERF_CALL_GRAPH="${PERF_CALL_GRAPH:-fp}"
 PERF_FLAMEGRAPH="${PERF_FLAMEGRAPH:-1}"
+SEGMENT_PROFILE_ENABLE="${SEGMENT_PROFILE_ENABLE:-0}"
+SEGMENT_PROFILE_DIR="${SEGMENT_PROFILE_DIR:-$SCRIPT_DIR/segment_profiles_${DATASET_FILE_STEM}}"
 FLAMEGRAPH_DIR="${FLAMEGRAPH_DIR:-$SCRIPT_DIR/flame_graph}"
 STACKCOLLAPSE_PERF="${STACKCOLLAPSE_PERF:-}"
 FLAMEGRAPH_PL="${FLAMEGRAPH_PL:-}"
@@ -87,6 +98,338 @@ require_cmd() {
     printf 'missing command: %s\n' "$1" >&2
     exit 1
   }
+}
+
+run_with_optional_taskset() {
+  if (( ANN_TASKSET_ENABLE == 1 )); then
+    taskset -c "$ANN_TASKSET_CPU" "$@"
+    return
+  fi
+
+  "$@"
+}
+
+run_cubrid() {
+  run_with_optional_taskset cubrid "$@"
+}
+
+run_csql() {
+  run_with_optional_taskset csql "$@"
+}
+
+run_make_cubrid_demo() {
+  run_with_optional_taskset ./make_cubrid_demo.sh
+}
+
+run_csql_timed_to_file() {
+  local time_file="$1"
+  local out_file="$2"
+  shift 2
+
+  run_with_optional_taskset \
+    /usr/bin/time \
+    -f 'wall_sec=%e\nuser_sec=%U\nsys_sec=%S\nmax_rss_kb=%M\nvol_cs=%w\ninvol_cs=%c' \
+    -o "$time_file" \
+    csql "$@" > "$out_file"
+}
+
+set_cubrid_conf_param() {
+  local key="$1"
+  local value="$2"
+  local conf_file="$3"
+  local tmp_file
+
+  tmp_file="$(mktemp "${conf_file}.XXXXXX")"
+  awk -v key="$key" -v value="$value" '
+    BEGIN {
+      pattern = "^[[:space:]]*" key "[[:space:]]*="
+      replaced = 0
+    }
+    $0 ~ pattern {
+      if (replaced == 0) {
+        print key "=" value
+        replaced = 1
+      }
+      next
+    }
+    {
+      print
+    }
+    END {
+      if (replaced == 0) {
+        print key "=" value
+      }
+    }
+  ' "$conf_file" > "$tmp_file"
+  mv "$tmp_file" "$conf_file"
+}
+
+remove_cubrid_conf_param() {
+  local key="$1"
+  local conf_file="$2"
+  local tmp_file
+
+  tmp_file="$(mktemp "${conf_file}.XXXXXX")"
+  awk -v key="$key" '
+    BEGIN {
+      pattern = "^[[:space:]]*" key "[[:space:]]*="
+    }
+    $0 ~ pattern {
+      next
+    }
+    {
+      print
+    }
+  ' "$conf_file" > "$tmp_file"
+  mv "$tmp_file" "$conf_file"
+}
+
+ensure_segment_profile_dir() {
+  if (( SEGMENT_PROFILE_ENABLE != 1 )); then
+    return
+  fi
+
+  mkdir -p "$SEGMENT_PROFILE_DIR"
+}
+
+snapshot_process_group_stats() {
+  local group_name="$1"
+  local out_file="$2"
+
+  python3 - "$group_name" "$DB_NAME" "$out_file" <<'PY'
+import json
+import os
+import sys
+
+group_name, db_name, out_file = sys.argv[1:4]
+
+def parse_status_file(status_path):
+    values = {}
+    try:
+        with open(status_path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                values[key.strip()] = value.strip()
+    except OSError:
+        return {}
+    return values
+
+def status_int(status_map, key):
+    raw = status_map.get(key, "0").split()[0]
+    try:
+        return int(raw)
+    except ValueError:
+        return 0
+
+stats = {
+    "group_name": group_name,
+    "pid_count": 0,
+    "pids": [],
+    "utime_ticks": 0,
+    "stime_ticks": 0,
+    "rss_kb": 0,
+    "vol_cs": 0,
+    "invol_cs": 0,
+    "clk_tck": os.sysconf(os.sysconf_names["SC_CLK_TCK"]),
+}
+
+for entry in os.listdir("/proc"):
+    if not entry.isdigit():
+        continue
+
+    pid = int(entry)
+    proc_dir = os.path.join("/proc", entry)
+    try:
+        with open(os.path.join(proc_dir, "comm"), encoding="utf-8", errors="replace") as f:
+            comm = f.read().strip()
+        with open(os.path.join(proc_dir, "cmdline"), "rb") as f:
+            cmdline = f.read().replace(b"\0", b" ").decode("utf-8", errors="replace").strip()
+        with open(os.path.join(proc_dir, "stat"), encoding="utf-8", errors="replace") as f:
+            stat_line = f.read().strip()
+    except OSError:
+        continue
+
+    include = False
+    if group_name == "cub_server":
+      include = comm == "cub_server" and db_name in cmdline
+    elif group_name == "cub_cas":
+      include = comm == "cub_cas"
+
+    if not include:
+        continue
+
+    status_map = parse_status_file(os.path.join(proc_dir, "status"))
+    fields = stat_line.split()
+    if len(fields) < 24:
+        continue
+
+    stats["pid_count"] += 1
+    stats["pids"].append(pid)
+    stats["utime_ticks"] += int(fields[13])
+    stats["stime_ticks"] += int(fields[14])
+    stats["rss_kb"] += status_int(status_map, "VmRSS")
+    stats["vol_cs"] += status_int(status_map, "voluntary_ctxt_switches")
+    stats["invol_cs"] += status_int(status_map, "nonvoluntary_ctxt_switches")
+
+with open(out_file, "w", encoding="utf-8") as f:
+    json.dump(stats, f, sort_keys=True)
+PY
+}
+
+write_segment_profile_summary() {
+  local label="$1"
+  local csql_time_file="$2"
+  local server_before_file="$3"
+  local server_after_file="$4"
+  local cas_before_file="$5"
+  local cas_after_file="$6"
+
+  python3 - \
+    "$label" \
+    "$csql_time_file" \
+    "$server_before_file" \
+    "$server_after_file" \
+    "$cas_before_file" \
+    "$cas_after_file" \
+    "$SEGMENT_PROFILE_DIR" <<'PY'
+import csv
+import json
+import sys
+from pathlib import Path
+
+label, csql_time_file, server_before_file, server_after_file, cas_before_file, cas_after_file, out_dir = sys.argv[1:8]
+out_dir = Path(out_dir)
+per_label_csv = out_dir / f"{label}.csv"
+summary_csv = out_dir / "segment_profile_summary.csv"
+
+def read_kv_file(path):
+    values = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key] = value
+    return values
+
+def read_json(path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+def process_delta(before_stats, after_stats):
+    clk_tck = after_stats.get("clk_tck") or before_stats.get("clk_tck") or 100
+    return {
+        "pid_count_before": before_stats.get("pid_count", 0),
+        "pid_count_after": after_stats.get("pid_count", 0),
+        "cpu_sec": (
+            (after_stats.get("utime_ticks", 0) - before_stats.get("utime_ticks", 0))
+            + (after_stats.get("stime_ticks", 0) - before_stats.get("stime_ticks", 0))
+        ) / clk_tck,
+        "user_sec": (after_stats.get("utime_ticks", 0) - before_stats.get("utime_ticks", 0)) / clk_tck,
+        "sys_sec": (after_stats.get("stime_ticks", 0) - before_stats.get("stime_ticks", 0)) / clk_tck,
+        "vol_cs_delta": after_stats.get("vol_cs", 0) - before_stats.get("vol_cs", 0),
+        "invol_cs_delta": after_stats.get("invol_cs", 0) - before_stats.get("invol_cs", 0),
+        "rss_kb_after": after_stats.get("rss_kb", 0),
+        "pids_after": " ".join(str(pid) for pid in after_stats.get("pids", [])),
+    }
+
+csql_stats = read_kv_file(csql_time_file)
+server_delta = process_delta(read_json(server_before_file), read_json(server_after_file))
+cas_delta = process_delta(read_json(cas_before_file), read_json(cas_after_file))
+
+rows = [
+    {
+        "label": label,
+        "component": "csql",
+        "wall_sec": float(csql_stats.get("wall_sec", "0")),
+        "user_sec": float(csql_stats.get("user_sec", "0")),
+        "sys_sec": float(csql_stats.get("sys_sec", "0")),
+        "cpu_sec": float(csql_stats.get("user_sec", "0")) + float(csql_stats.get("sys_sec", "0")),
+        "vol_cs_delta": int(csql_stats.get("vol_cs", "0")),
+        "invol_cs_delta": int(csql_stats.get("invol_cs", "0")),
+        "rss_kb_after": int(csql_stats.get("max_rss_kb", "0")),
+        "pid_count_before": 1,
+        "pid_count_after": 1,
+        "pids_after": "timed-csql",
+    },
+    {
+        "label": label,
+        "component": "cub_server",
+        "wall_sec": "",
+        **server_delta,
+    },
+    {
+        "label": label,
+        "component": "cub_cas",
+        "wall_sec": "",
+        **cas_delta,
+    },
+]
+
+fieldnames = [
+    "label",
+    "component",
+    "wall_sec",
+    "user_sec",
+    "sys_sec",
+    "cpu_sec",
+    "vol_cs_delta",
+    "invol_cs_delta",
+    "rss_kb_after",
+    "pid_count_before",
+    "pid_count_after",
+    "pids_after",
+]
+
+with open(per_label_csv, "w", newline="", encoding="utf-8") as f:
+    writer = csv.DictWriter(f, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
+
+write_header = not summary_csv.exists()
+with open(summary_csv, "a", newline="", encoding="utf-8") as f:
+    writer = csv.DictWriter(f, fieldnames=fieldnames)
+    if write_header:
+        writer.writeheader()
+    writer.writerows(rows)
+PY
+
+  log "saved segment profile to $SEGMENT_PROFILE_DIR/${label}.csv"
+}
+
+configure_cubrid_base_conf() {
+  local conf_file="$1"
+
+  remove_cubrid_conf_param "max_clients" "$conf_file"
+  remove_cubrid_conf_param "thread_core_count" "$conf_file"
+  remove_cubrid_conf_param "parallelism" "$conf_file"
+  remove_cubrid_conf_param "max_parallel_workers" "$conf_file"
+  remove_cubrid_conf_param "auto_restart_server" "$conf_file"
+  remove_cubrid_conf_param "vacuum_disable" "$conf_file"
+  remove_cubrid_conf_param "ha_mode" "$conf_file"
+  set_cubrid_conf_param "stored_procedure" "no" "$conf_file"
+}
+
+configure_ann_experiment_conf() {
+  local conf_file="$1"
+
+  configure_cubrid_base_conf "$conf_file"
+
+  if (( ANN_SINGLE_CORE_EXPERIMENT != 1 )); then
+    return
+  fi
+
+  log "applying single-core ANN experiment overrides to $conf_file"
+  set_cubrid_conf_param "max_clients" "$ANN_EXPERIMENT_MAX_CLIENTS" "$conf_file"
+  set_cubrid_conf_param "thread_core_count" "$ANN_EXPERIMENT_THREAD_CORE_COUNT" "$conf_file"
+  set_cubrid_conf_param "parallelism" "$ANN_EXPERIMENT_PARALLELISM" "$conf_file"
+  set_cubrid_conf_param "max_parallel_workers" "$ANN_EXPERIMENT_MAX_PARALLEL_WORKERS" "$conf_file"
+  set_cubrid_conf_param "auto_restart_server" "0" "$conf_file"
+  set_cubrid_conf_param "vacuum_disable" "1" "$conf_file"
+  set_cubrid_conf_param "ha_mode" "off" "$conf_file"
 }
 
 download_file_with_python() {
@@ -174,20 +517,76 @@ perf_enabled_for_target() {
 
 perf_record_enabled_for_target() {
   local target="$1"
-  has_word "$target" $PERF_RECORD_TARGETS
+
+  if [[ -n "$PERF_RECORD_TARGETS" ]]; then
+    has_word "$target" $PERF_RECORD_TARGETS
+    return
+  fi
+
+  has_word "$target" $PERF_TARGETS
 }
 
 sanitize_perf_label() {
   printf '%s' "$1" | tr -c '[:alnum:]_.-' '_'
 }
 
+is_stat_profile() {
+  [[ "$1" == "stat" || "$1" == "stat-default" ]]
+}
+
+is_record_profile() {
+  case "$1" in
+    hot|instructions|branch|cache|custom)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+expand_perf_profiles() {
+  local raw_profiles
+  local profile
+
+  if [[ -n "$PERF_PROFILES" ]]; then
+    raw_profiles="$PERF_PROFILES"
+  elif [[ -n "$PERF_RECORD_PROFILE" ]]; then
+    raw_profiles="$PERF_RECORD_PROFILE"
+  elif (( PERF_STAT_ENABLE == 1 )); then
+    raw_profiles="stat"
+  else
+    raw_profiles="hot"
+  fi
+
+  for profile in $raw_profiles; do
+    case "$profile" in
+      all)
+        printf '%s\n' stat hot instructions branch cache
+        ;;
+      stat-default)
+        printf '%s\n' stat
+        ;;
+      stat|hot|instructions|branch|cache|custom)
+        printf '%s\n' "$profile"
+        ;;
+      *)
+        printf 'unknown perf profile: %s\n' "$profile" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
 get_perf_record_event() {
-  if [[ -n "$PERF_RECORD_EVENT" ]]; then
+  local profile="$1"
+
+  if [[ "$profile" == "custom" && -n "$PERF_RECORD_EVENT" ]]; then
     printf '%s\n' "$PERF_RECORD_EVENT"
     return
   fi
 
-  case "$PERF_RECORD_PROFILE" in
+  case "$profile" in
     hot)
       printf 'cycles\n'
       ;;
@@ -201,29 +600,25 @@ get_perf_record_event() {
       printf 'cache-misses\n'
       ;;
     custom)
-      printf 'cycles\n'
+      if [[ -n "$PERF_RECORD_EVENT" ]]; then
+        printf '%s\n' "$PERF_RECORD_EVENT"
+      else
+        printf 'PERF_RECORD_EVENT must be set when PERF profile is custom\n' >&2
+        exit 1
+      fi
       ;;
     *)
-      printf 'unknown PERF_RECORD_PROFILE: %s\n' "$PERF_RECORD_PROFILE" >&2
+      printf 'unknown PERF_RECORD_PROFILE: %s\n' "$profile" >&2
       exit 1
       ;;
   esac
 }
 
-append_perf_record_profile_suffix() {
+append_perf_profile_suffix() {
   local label="$1"
+  local profile="$2"
 
-  case "$PERF_RECORD_PROFILE" in
-    hot)
-      printf '%s\n' "$label"
-      ;;
-    instructions|branch|cache|custom)
-      printf '%s.%s\n' "$label" "$PERF_RECORD_PROFILE"
-      ;;
-    *)
-      printf '%s\n' "$label"
-      ;;
-  esac
+  printf '%s.%s\n' "$label" "$profile"
 }
 
 get_cub_server_pid() {
@@ -235,17 +630,33 @@ get_cub_server_pid() {
   '
 }
 
+log_server_cpu_affinity() {
+  local server_pid=""
+
+  if (( ANN_TASKSET_ENABLE != 1 )); then
+    return
+  fi
+
+  server_pid="$(get_cub_server_pid || true)"
+  if [[ -z "$server_pid" ]]; then
+    log "could not find cub_server pid to verify cpu affinity"
+    return
+  fi
+
+  log "cub_server cpu affinity: $(taskset -pc "$server_pid" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g; s/ $//')"
+}
+
 ensure_db_access() {
   local server_pid=""
 
-  if csql -u "$DB_USER" -q -N "$DB_NAME" -c "SELECT 1;" >/dev/null 2>&1; then
+  if run_csql -u "$DB_USER" -q -N "$DB_NAME" -c "SELECT 1;" >/dev/null 2>&1; then
     return
   fi
 
   log "database access check failed for $DB_NAME; attempting to restore cub_master/server access"
-  cubrid server start "$DB_NAME" >/dev/null 2>&1 || true
+  run_cubrid server start "$DB_NAME" >/dev/null 2>&1 || true
 
-  if csql -u "$DB_USER" -q -N "$DB_NAME" -c "SELECT 1;" >/dev/null 2>&1; then
+  if run_csql -u "$DB_USER" -q -N "$DB_NAME" -c "SELECT 1;" >/dev/null 2>&1; then
     return
   fi
 
@@ -256,9 +667,9 @@ ensure_db_access() {
     sleep 2
   fi
 
-  cubrid server start "$DB_NAME" >/dev/null 2>&1 || true
+  run_cubrid server start "$DB_NAME" >/dev/null 2>&1 || true
 
-  if ! csql -u "$DB_USER" -q -N "$DB_NAME" -c "SELECT 1;" >/dev/null 2>&1; then
+  if ! run_csql -u "$DB_USER" -q -N "$DB_NAME" -c "SELECT 1;" >/dev/null 2>&1; then
     printf 'failed to restore database access for %s\n' "$DB_NAME" >&2
     exit 1
   fi
@@ -284,6 +695,7 @@ start_perf_stat_attach() {
 start_perf_record_attach() {
   local pid="$1"
   local output_file="$2"
+  local profile="$3"
   local log_file="${output_file}.log"
   local record_event
   local -a perf_cmd
@@ -292,7 +704,7 @@ start_perf_record_attach() {
     return 1
   fi
 
-  record_event="$(get_perf_record_event)"
+  record_event="$(get_perf_record_event "$profile")"
   perf_cmd=(
     perf record
     -g
@@ -310,6 +722,24 @@ start_perf_record_attach() {
 
   "${perf_cmd[@]}" >"$log_file" 2>&1 &
   echo $!
+}
+
+prepare_perf_output_dir() {
+  local archive_dir
+  local ts
+
+  if [[ ! -d "$PERF_OUTPUT_DIR" ]]; then
+    return
+  fi
+
+  if [[ -z "$(find "$PERF_OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
+    return
+  fi
+
+  ts="$(date '+%Y%m%d_%H%M%S')"
+  archive_dir="${PERF_OUTPUT_DIR}.old.${ts}"
+  mv "$PERF_OUTPUT_DIR" "$archive_dir"
+  log "archived previous perf output to $archive_dir"
 }
 
 stop_perf_background_job() {
@@ -464,15 +894,21 @@ generate_flamegraph() {
   local svg_file="$2"
   local stackcollapse_perf
   local flamegraph_pl
+  local tmp_folded_file
   local tmp_svg_file
+  local perf_report_output
 
   if (( PERF_FLAMEGRAPH != 1 )); then
+    log "skipping flame graph for $perf_data_file: PERF_FLAMEGRAPH=0"
     return
   fi
 
   if [[ ! -s "$perf_data_file" ]]; then
+    log "skipping flame graph for $perf_data_file: perf data file is missing or empty"
     return
   fi
+
+  log "generating flame graph from $perf_data_file -> $svg_file"
 
   ensure_flamegraph_tools
 
@@ -484,88 +920,170 @@ generate_flamegraph() {
     return
   fi
 
+  perf_report_output="$(perf report --stdio -i "$perf_data_file" 2>&1 | sed -n '1,20p' || true)"
+  if grep -q 'data has no samples' <<<"$perf_report_output"; then
+    log "skipping flame graph for $perf_data_file: perf data has no samples"
+    return
+  fi
+
+  tmp_folded_file="$(mktemp /tmp/nytimes_flamegraph_folded.XXXXXX)"
   tmp_svg_file="$(mktemp /tmp/nytimes_flamegraph.XXXXXX.svg)"
   if ! perf script -i "$perf_data_file" \
-    | perl "$stackcollapse_perf" \
-    | perl "$flamegraph_pl" --title "$(basename "$svg_file" .svg)" > "$tmp_svg_file"; then
+    | perl "$stackcollapse_perf" > "$tmp_folded_file"; then
+    rm -f "$tmp_folded_file" "$tmp_svg_file"
+    log "failed to collapse perf stacks for $perf_data_file"
+    return
+  fi
+
+  if [[ ! -s "$tmp_folded_file" ]]; then
+    rm -f "$tmp_folded_file" "$tmp_svg_file"
+    log "skipping flame graph for $perf_data_file: collapsed stack output is empty"
+    return
+  fi
+
+  if ! perl "$flamegraph_pl" --title "$(basename "$svg_file" .svg)" < "$tmp_folded_file" > "$tmp_svg_file"; then
+    rm -f "$tmp_folded_file" "$tmp_svg_file"
+    log "failed to generate flame graph from collapsed stacks for $perf_data_file"
+    return
+  fi
+
+  rm -f "$tmp_folded_file"
+
+  if [[ ! -s "$tmp_svg_file" ]]; then
     rm -f "$tmp_svg_file"
-    log "failed to generate flame graph from $perf_data_file"
+    log "failed to generate flame graph from $perf_data_file: svg output is empty"
     return
   fi
 
   if grep -q 'ERROR: No valid input provided to flamegraph.pl' "$tmp_svg_file"; then
     rm -f "$tmp_svg_file"
-    log "flame graph input was empty for $perf_data_file"
+    log "skipping flame graph for $perf_data_file: flamegraph input was empty"
     return
   fi
 
   mv "$tmp_svg_file" "$svg_file"
+  log "saved flame graph to $svg_file"
 }
 
 run_csql_input_with_perf() {
   local sql_file="$1"
   local out_file="$2"
   local label="$3"
-  local stat_label
-  local record_label
-  local safe_stat_label
-  local safe_record_label
-  local enable_csql_record=1
+  local profile
+  local output_label
+  local safe_output_label
   local csql_pid=""
   local csql_status=0
-  local csql_stat_pid=""
-  local csql_record_pid=""
   local server_pid=""
-  local server_stat_pid=""
-  local server_record_pid=""
+  local perf_pid=""
+  local perf_data_file=""
+  local flamegraph_file=""
+  local -a perf_job_pids=()
+  local -a flamegraph_data_files=()
+  local -a flamegraph_svg_files=()
+  local safe_label=""
+  local csql_time_file=""
+  local server_before_file=""
+  local server_after_file=""
+  local cas_before_file=""
+  local cas_after_file=""
+
+  safe_label="$(sanitize_perf_label "$label")"
+
+  if (( SEGMENT_PROFILE_ENABLE == 1 )); then
+    ensure_segment_profile_dir
+    csql_time_file="$SEGMENT_PROFILE_DIR/${safe_label}.csql.time"
+    server_before_file="$SEGMENT_PROFILE_DIR/${safe_label}.cub_server.before.json"
+    server_after_file="$SEGMENT_PROFILE_DIR/${safe_label}.cub_server.after.json"
+    cas_before_file="$SEGMENT_PROFILE_DIR/${safe_label}.cub_cas.before.json"
+    cas_after_file="$SEGMENT_PROFILE_DIR/${safe_label}.cub_cas.after.json"
+    snapshot_process_group_stats "cub_server" "$server_before_file"
+    snapshot_process_group_stats "cub_cas" "$cas_before_file"
+  fi
 
   if (( PERF_ENABLE != 1 )); then
     ensure_db_access
-    csql -u "$DB_USER" -q -N --delimiter='|' "$DB_NAME" -i "$sql_file" > "$out_file"
+
+    if (( SEGMENT_PROFILE_ENABLE == 1 )); then
+      run_csql_timed_to_file \
+        "$csql_time_file" \
+        "$out_file" \
+        -u "$DB_USER" -q -N --delimiter='|' "$DB_NAME" -i "$sql_file"
+      snapshot_process_group_stats "cub_server" "$server_after_file"
+      snapshot_process_group_stats "cub_cas" "$cas_after_file"
+      write_segment_profile_summary \
+        "$safe_label" \
+        "$csql_time_file" \
+        "$server_before_file" \
+        "$server_after_file" \
+        "$cas_before_file" \
+        "$cas_after_file"
+      return
+    fi
+
+    run_csql -u "$DB_USER" -q -N --delimiter='|' "$DB_NAME" -i "$sql_file" > "$out_file"
     return
   fi
 
   mkdir -p "$PERF_OUTPUT_DIR"
-  stat_label="$label"
-  record_label="$(append_perf_record_profile_suffix "$label")"
-  safe_stat_label="$(sanitize_perf_label "$stat_label")"
-  safe_record_label="$(sanitize_perf_label "$record_label")"
   ensure_db_access
 
-  if [[ "$safe_stat_label" == build_index_* ]]; then
-    enable_csql_record=0
-  fi
-
-  csql -u "$DB_USER" -q -N --delimiter='|' "$DB_NAME" -i "$sql_file" > "$out_file" &
+  run_csql -u "$DB_USER" -q -N --delimiter='|' "$DB_NAME" -i "$sql_file" > "$out_file" &
   csql_pid=$!
 
-  if perf_enabled_for_target csql; then
-    csql_stat_pid="$(
-      start_perf_stat_attach "$csql_pid" "$PERF_OUTPUT_DIR/${safe_stat_label}.csql.stat.csv" || true
-    )"
-  fi
-
-  if (( enable_csql_record == 1 )) && perf_record_enabled_for_target csql; then
-    csql_record_pid="$(
-      start_perf_record_attach "$csql_pid" "$PERF_OUTPUT_DIR/${safe_record_label}.csql.data" || true
-    )"
-  fi
+  while IFS= read -r profile; do
+    if is_stat_profile "$profile" && perf_enabled_for_target csql; then
+      output_label="$(append_perf_profile_suffix "$label" "$profile")"
+      safe_output_label="$(sanitize_perf_label "$output_label")"
+      perf_pid="$(
+        start_perf_stat_attach "$csql_pid" "$PERF_OUTPUT_DIR/${safe_output_label}.csql.stat.csv" || true
+      )"
+      if [[ -n "$perf_pid" ]]; then
+        perf_job_pids+=("$perf_pid")
+      fi
+    elif is_record_profile "$profile" && perf_record_enabled_for_target csql; then
+      output_label="$(append_perf_profile_suffix "$label" "$profile")"
+      safe_output_label="$(sanitize_perf_label "$output_label")"
+      perf_data_file="$PERF_OUTPUT_DIR/${safe_output_label}.csql.data"
+      perf_pid="$(
+        start_perf_record_attach "$csql_pid" "$perf_data_file" "$profile" || true
+      )"
+      if [[ -n "$perf_pid" ]]; then
+        perf_job_pids+=("$perf_pid")
+        flamegraph_data_files+=("$perf_data_file")
+        flamegraph_svg_files+=("$PERF_OUTPUT_DIR/${safe_output_label}.csql.flamegraph.svg")
+      fi
+    fi
+  done < <(expand_perf_profiles)
 
   if perf_enabled_for_target cub_server || perf_record_enabled_for_target cub_server; then
     server_pid="$(get_cub_server_pid || true)"
 
     if [[ -n "$server_pid" ]]; then
-      if perf_enabled_for_target cub_server; then
-        server_stat_pid="$(
-          start_perf_stat_attach "$server_pid" "$PERF_OUTPUT_DIR/${safe_stat_label}.cub_server.stat.csv" || true
-        )"
-      fi
-
-      if perf_record_enabled_for_target cub_server; then
-        server_record_pid="$(
-          start_perf_record_attach "$server_pid" "$PERF_OUTPUT_DIR/${safe_record_label}.cub_server.data" || true
-        )"
-      fi
+      while IFS= read -r profile; do
+        if is_stat_profile "$profile" && perf_enabled_for_target cub_server; then
+          output_label="$(append_perf_profile_suffix "$label" "$profile")"
+          safe_output_label="$(sanitize_perf_label "$output_label")"
+          perf_pid="$(
+            start_perf_stat_attach "$server_pid" "$PERF_OUTPUT_DIR/${safe_output_label}.cub_server.stat.csv" || true
+          )"
+          if [[ -n "$perf_pid" ]]; then
+            perf_job_pids+=("$perf_pid")
+          fi
+        elif is_record_profile "$profile" && perf_record_enabled_for_target cub_server; then
+          output_label="$(append_perf_profile_suffix "$label" "$profile")"
+          safe_output_label="$(sanitize_perf_label "$output_label")"
+          perf_data_file="$PERF_OUTPUT_DIR/${safe_output_label}.cub_server.data"
+          perf_pid="$(
+            start_perf_record_attach "$server_pid" "$perf_data_file" "$profile" || true
+          )"
+          if [[ -n "$perf_pid" ]]; then
+            perf_job_pids+=("$perf_pid")
+            flamegraph_data_files+=("$perf_data_file")
+            flamegraph_svg_files+=("$PERF_OUTPUT_DIR/${safe_output_label}.cub_server.flamegraph.svg")
+          fi
+        fi
+      done < <(expand_perf_profiles)
     else
       log "perf requested for cub_server, but no PID was found for $DB_NAME"
     fi
@@ -576,25 +1094,22 @@ run_csql_input_with_perf() {
   csql_status=$?
   set -e
 
-  stop_perf_background_job "$csql_stat_pid"
-  stop_perf_background_job "$csql_record_pid"
-  stop_perf_background_job "$server_stat_pid"
-  stop_perf_background_job "$server_record_pid"
+  for perf_pid in "${perf_job_pids[@]}"; do
+    stop_perf_background_job "$perf_pid"
+  done
 
-  if (( enable_csql_record == 1 )) && perf_record_enabled_for_target csql; then
+  for ((i = 0; i < ${#flamegraph_data_files[@]}; i++)); do
     generate_flamegraph \
-      "$PERF_OUTPUT_DIR/${safe_record_label}.csql.data" \
-      "$PERF_OUTPUT_DIR/${safe_record_label}.csql.flamegraph.svg"
-  fi
-
-  if perf_record_enabled_for_target cub_server; then
-    generate_flamegraph \
-      "$PERF_OUTPUT_DIR/${safe_record_label}.cub_server.data" \
-      "$PERF_OUTPUT_DIR/${safe_record_label}.cub_server.flamegraph.svg"
-  fi
+      "${flamegraph_data_files[i]}" \
+      "${flamegraph_svg_files[i]}"
+  done
 
   if (( csql_status != 0 )); then
     return "$csql_status"
+  fi
+
+  if (( SEGMENT_PROFILE_ENABLE == 1 )); then
+    log "segment profiling summary is only collected when PERF_ENABLE=0"
   fi
 }
 
@@ -722,13 +1237,13 @@ write_load_object_file() {
 sql_capture() {
   local query="$1"
   ensure_db_access
-  csql -u "$DB_USER" -q -N --delimiter='|' "$DB_NAME" -c "$query"
+  run_csql -u "$DB_USER" -q -N --delimiter='|' "$DB_NAME" -c "$query"
 }
 
 sql_exec() {
   local query="$1"
   ensure_db_access
-  csql -u "$DB_USER" "$DB_NAME" -c "$query"
+  run_csql -u "$DB_USER" "$DB_NAME" -c "$query"
 }
 
 validate_required_classes() {
@@ -810,24 +1325,43 @@ prepare_ground_truth_cache() {
 }
 
 setup_demo_db() {
+  local cubrid_conf
+
   if [[ -z "${CUBRID:-}" ]]; then
     printf 'CUBRID environment variable is not set.\n' >&2
     exit 1
   fi
 
-  if ! grep -qx 'stored_procedure=no' "$CUBRID/conf/cubrid.conf"; then
-    echo 'stored_procedure=no' >> "$CUBRID/conf/cubrid.conf"
-  fi
+  cubrid_conf="$CUBRID/conf/cubrid.conf"
+  configure_cubrid_base_conf "$cubrid_conf"
 
-  cubrid server stop "$DB_NAME" || true
-  cubrid deletedb "$DB_NAME" || true
+  run_cubrid server stop "$DB_NAME" || true
+  run_cubrid deletedb "$DB_NAME" || true
 
   (
     cd "$CUBRID/demo"
-    ./make_cubrid_demo.sh
+    run_make_cubrid_demo
   )
 
-  cubrid server start "$DB_NAME"
+  configure_cubrid_base_conf "$cubrid_conf"
+  run_cubrid server start "$DB_NAME"
+  log_server_cpu_affinity
+}
+
+restart_db_for_ann_experiment() {
+  local cubrid_conf
+
+  if (( ANN_SINGLE_CORE_EXPERIMENT != 1 )); then
+    return
+  fi
+
+  cubrid_conf="$CUBRID/conf/cubrid.conf"
+  configure_ann_experiment_conf "$cubrid_conf"
+
+  log "restarting $DB_NAME with single-core ANN experiment configuration"
+  run_cubrid server stop "$DB_NAME"
+  run_cubrid server start "$DB_NAME"
+  log_server_cpu_affinity
 }
 
 load_dataset() {
@@ -843,7 +1377,7 @@ load_dataset() {
     write_load_schema_file "$load_schema_file"
     object_input_file="$(write_load_object_file "$load_object_file")"
     log "loading dataset from $SCHEMA_FILE / $OBJECT_FILE"
-    cubrid loaddb -s "$load_schema_file" -d "$object_input_file" -C -u "$DB_USER" "$DB_NAME" -v --no-statistics
+    run_cubrid loaddb -s "$load_schema_file" -d "$object_input_file" -C -u "$DB_USER" "$DB_NAME" -v --no-statistics
     rm -f "$load_schema_file"
     if [[ "$object_input_file" == "$load_object_file" ]]; then
       rm -f "$load_object_file"
@@ -858,7 +1392,7 @@ load_dataset() {
 
   if ensure_dataset_hdf5; then
     log "converting hdf5 dataset to loaddb files from $DATASET_HDF5"
-    cubrid loaddb -h "$DATASET_HDF5" -C -u "$DB_USER" "$DB_NAME" --no-statistics
+    run_cubrid loaddb -h "$DATASET_HDF5" -C -u "$DB_USER" "$DB_NAME" --no-statistics
 
     if [[ -f "$SCHEMA_FILE" && -f "$OBJECT_FILE" ]]; then
       load_schema_and_object_files
@@ -1297,6 +1831,7 @@ run_ef_search_experiments() {
 main() {
   require_cmd cubrid
   require_cmd csql
+  require_cmd taskset
   require_cmd awk
   require_cmd perl
   require_cmd rg
@@ -1305,7 +1840,8 @@ main() {
   if (( PERF_ENABLE == 1 )); then
     require_cmd perf
     require_cmd ps
-    log "perf capture enabled: output_dir=$PERF_OUTPUT_DIR, stat_enable=$PERF_STAT_ENABLE, targets=[$PERF_TARGETS], record_targets=[$PERF_RECORD_TARGETS], record_profile=$PERF_RECORD_PROFILE"
+    prepare_perf_output_dir
+    log "perf capture enabled: output_dir=$PERF_OUTPUT_DIR, profiles=[$(expand_perf_profiles | tr '\n' ' ' | sed 's/ $//')], stat_enable=$PERF_STAT_ENABLE, targets=[$PERF_TARGETS], record_targets=[${PERF_RECORD_TARGETS:-$PERF_TARGETS}]"
   fi
 
   run_stage "reset db" setup_demo_db
@@ -1323,8 +1859,18 @@ main() {
 
   run_stage "prepare query ids" prepare_query_ids
   run_stage "prepare ground truth" prepare_ground_truth_cache
+
+  if (( ANN_PREPARE_ONLY == 1 )); then
+    log "prepare-only mode enabled; stopping before restart/build/query stages"
+    return
+  fi
+
+  run_stage "restart db for ann experiment" restart_db_for_ann_experiment
   run_stage "build index" build_index
   run_stage "ef_search sweep" run_ef_search_experiments
 }
 
 main "$@"
+  if (( ANN_TASKSET_ENABLE == 1 )); then
+    log "taskset enabled: cpu=$ANN_TASKSET_CPU"
+  fi
