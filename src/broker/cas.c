@@ -57,6 +57,7 @@
 #include "ddl_log.h"
 
 #include "cas.h"
+#include "cas_handle.h"
 #include "cas_network.h"
 #include "cas_function.h"
 #include "cas_net_buf.h"
@@ -68,6 +69,89 @@
 static char cas_db_name[MAX_HA_DBINFO_LENGTH];
 static char cas_db_user[SRV_CON_DBUSER_SIZE];
 static char cas_db_passwd[SRV_CON_DBPASSWD_SIZE];
+
+static const char *
+cas_timestamp_profile_dir (void)
+{
+  static bool initialized = false;
+  static const char *dir = NULL;
+
+  if (!initialized)
+    {
+      dir = getenv ("CUBRID_CAS_PROFILE_DIR");
+      initialized = true;
+    }
+
+  return dir;
+}
+
+static const char *
+cas_timestamp_stmt_label_from_sql (const char *sql_stmt)
+{
+  if (sql_stmt == NULL)
+    {
+      return "unknown";
+    }
+
+  if (strstr (sql_stmt, "profile:vector_lookup") != NULL)
+    {
+      return "vector_lookup";
+    }
+
+  if (strstr (sql_stmt, "profile:ann_query") != NULL)
+    {
+      return "ann_query";
+    }
+
+  return "other";
+}
+
+static void
+cas_timestamp_profile_log_request (const char *op, const char *phase, int srv_h_id, unsigned int query_seq,
+				   const char *stmt_label, long long detail0, long long detail1, long long duration_us,
+				   int err_code)
+{
+  const char *dir = cas_timestamp_profile_dir ();
+  char path[PATH_MAX];
+  bool write_header = false;
+  FILE *fp = NULL;
+  struct timeval now;
+  long long ts_epoch_us;
+
+  if (dir == NULL || dir[0] == '\0')
+    {
+      return;
+    }
+
+  if (snprintf (path, sizeof (path), "%s/cub_cas.%ld.csv", dir, (long) getpid ()) <= 0)
+    {
+      return;
+    }
+
+  if (access (path, F_OK) != 0)
+    {
+      write_header = true;
+    }
+
+  fp = fopen (path, "a");
+  if (fp == NULL)
+    {
+      return;
+    }
+
+  if (write_header)
+    {
+      fprintf (fp, "ts_epoch_us,pid,op,phase,srv_h_id,query_seq,stmt_label,detail0,detail1,duration_us,err_code\n");
+    }
+
+  gettimeofday (&now, NULL);
+  ts_epoch_us = (long long) now.tv_sec * 1000000LL + (long long) now.tv_usec;
+
+  fprintf (fp, "%lld,%ld,%s,%s,%d,%u,%s,%lld,%lld,%lld,%d\n",
+	   ts_epoch_us, (long) getpid (), op, phase, srv_h_id, query_seq,
+	   stmt_label != NULL ? stmt_label : "unknown", detail0, detail1, duration_us, err_code);
+  fclose (fp);
+}
 
 /* ========================================================================
  * Function Tables
@@ -846,6 +930,15 @@ process_request (SOCKET sock_fd, T_NET_BUF * net_buf, T_REQ_INFO * req_info, SOC
   int con_status_to_restore, old_con_status;
   T_SERVER_FUNC server_fn;
   FN_RETURN fn_ret = FN_KEEP_CONN;
+  struct timeval request_read_begin, request_read_end;
+  struct timeval request_handler_begin, request_handler_end;
+  struct timeval request_write_begin, request_write_end;
+  struct timeval request_total_begin, request_total_end;
+  int request_elapsed_sec = 0, request_elapsed_msec = 0;
+  int request_srv_h_id = -1;
+  unsigned int request_query_seq = 0;
+  const char *request_stmt_label = "unknown";
+  T_SRV_HANDLE *request_srv_handle = NULL;
 
   error_info_clear ();
   init_msg_header (&client_msg_header);
@@ -1009,6 +1102,7 @@ process_request (SOCKET sock_fd, T_NET_BUF * net_buf, T_REQ_INFO * req_info, SOC
 		       CAS_ERROR_INDICATOR, CAS_ER_NO_MORE_MEMORY, NULL);
       return FN_CLOSE_CONN;
     }
+  gettimeofday (&request_read_begin, NULL);
   if (net_read_stream (sock_fd, read_msg, *(client_msg_header.msg_body_size_ptr)) < 0)
     {
       FREE_MEM (read_msg);
@@ -1019,6 +1113,7 @@ process_request (SOCKET sock_fd, T_NET_BUF * net_buf, T_REQ_INFO * req_info, SOC
     }
 
   argc = net_decode_str (read_msg, *(client_msg_header.msg_body_size_ptr), &func_code, &argv);
+  gettimeofday (&request_read_end, NULL);
   if (argc < 0)
     {
       FREE_MEM (read_msg);
@@ -1082,6 +1177,28 @@ process_request (SOCKET sock_fd, T_NET_BUF * net_buf, T_REQ_INFO * req_info, SOC
       con_status_before_check_cas = -1;
     }
 
+  if (func_code == CAS_FC_EXECUTE && argc > 0)
+    {
+      net_arg_get_int (&request_srv_h_id, argv[0]);
+      request_srv_handle = hm_find_srv_handle (request_srv_h_id);
+      if (request_srv_handle != NULL)
+	{
+	  request_query_seq = SRV_HANDLE_QUERY_SEQ_NUM (request_srv_handle);
+	  request_stmt_label = cas_timestamp_stmt_label_from_sql (request_srv_handle->sql_stmt);
+	}
+      gettimeofday (&request_total_begin, NULL);
+      ut_timeval_diff (&request_read_begin, &request_read_end, &request_elapsed_sec, &request_elapsed_msec);
+      cas_timestamp_profile_log_request ("request_read_body", "end", request_srv_h_id, request_query_seq,
+					 request_stmt_label, *(client_msg_header.msg_body_size_ptr), func_code,
+					 (long long) request_elapsed_sec * 1000000LL +
+					 (long long) request_elapsed_msec * 1000LL, 0);
+      cas_timestamp_profile_log_request ("request_total", "begin", request_srv_h_id, request_query_seq,
+					 request_stmt_label, *(client_msg_header.msg_body_size_ptr), func_code, 0, 0);
+      gettimeofday (&request_handler_begin, NULL);
+      cas_timestamp_profile_log_request ("request_handler", "begin", request_srv_h_id, request_query_seq,
+					 request_stmt_label, argc, func_code, 0, 0);
+    }
+
   strcpy (as_info->log_msg, server_func_name[func_code - 1]);
 
   server_fn = server_fn_table[func_code - 1];
@@ -1134,6 +1251,15 @@ process_request (SOCKET sock_fd, T_NET_BUF * net_buf, T_REQ_INFO * req_info, SOC
   set_hang_check_time ();
   fn_ret = (*server_fn) (sock_fd, argc, argv, net_buf, req_info);
   set_hang_check_time ();
+  if (func_code == CAS_FC_EXECUTE)
+    {
+      gettimeofday (&request_handler_end, NULL);
+      ut_timeval_diff (&request_handler_begin, &request_handler_end, &request_elapsed_sec, &request_elapsed_msec);
+      cas_timestamp_profile_log_request ("request_handler", "end", request_srv_h_id, request_query_seq,
+					 request_stmt_label, net_buf->data_size, err_info.err_number,
+					 (long long) request_elapsed_sec * 1000000LL +
+					 (long long) request_elapsed_msec * 1000LL, err_info.err_number);
+    }
 
   /* set back original utype for enum, date-time, JSON */
   if (DOES_CLIENT_MATCH_THE_PROTOCOL (req_info->client_version, PROTOCOL_V2))
@@ -1260,6 +1386,12 @@ process_request (SOCKET sock_fd, T_NET_BUF * net_buf, T_REQ_INFO * req_info, SOC
 
   if (cas_send_result_flag && net_buf->data != NULL)
     {
+      if (func_code == CAS_FC_EXECUTE)
+	{
+	  gettimeofday (&request_write_begin, NULL);
+	  cas_timestamp_profile_log_request ("request_write", "begin", request_srv_h_id, request_query_seq,
+					 request_stmt_label, NET_BUF_CURR_SIZE (net_buf), 0, 0, 0);
+	}
 
       cas_msg_header.info_ptr[CAS_INFO_ADDITIONAL_FLAG] &= ~CAS_INFO_FLAG_MASK_AUTOCOMMIT;
       cas_msg_header.info_ptr[CAS_INFO_ADDITIONAL_FLAG] |=
@@ -1291,6 +1423,21 @@ process_request (SOCKET sock_fd, T_NET_BUF * net_buf, T_REQ_INFO * req_info, SOC
       if (net_write_stream (sock_fd, net_buf->data, NET_BUF_CURR_SIZE (net_buf)) < 0)
 	{
 	  cas_log_write_and_end (0, true, "COMMUNICATION ERROR net_write_stream()");
+	}
+      if (func_code == CAS_FC_EXECUTE)
+	{
+	  gettimeofday (&request_write_end, NULL);
+	  ut_timeval_diff (&request_write_begin, &request_write_end, &request_elapsed_sec, &request_elapsed_msec);
+	  cas_timestamp_profile_log_request ("request_write", "end", request_srv_h_id, request_query_seq,
+					 request_stmt_label, NET_BUF_CURR_SIZE (net_buf), err_info.err_number,
+					 (long long) request_elapsed_sec * 1000000LL +
+					 (long long) request_elapsed_msec * 1000LL, err_info.err_number);
+	  gettimeofday (&request_total_end, NULL);
+	  ut_timeval_diff (&request_total_begin, &request_total_end, &request_elapsed_sec, &request_elapsed_msec);
+	  cas_timestamp_profile_log_request ("request_total", "end", request_srv_h_id, request_query_seq,
+					 request_stmt_label, NET_BUF_CURR_SIZE (net_buf), err_info.err_number,
+					 (long long) request_elapsed_sec * 1000000LL +
+					 (long long) request_elapsed_msec * 1000LL, err_info.err_number);
 	}
     }
 

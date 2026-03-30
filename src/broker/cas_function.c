@@ -25,6 +25,8 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <limits.h>
 
 #if defined(WINDOWS)
 #include <winsock2.h>
@@ -70,6 +72,95 @@ void set_query_timeout (T_SRV_HANDLE * srv_handle, int query_timeout);
 
 extern void tran_set_query_timeout (int);
 extern bool tran_is_in_libcas (void);
+
+static const char *
+cas_timestamp_profile_dir (void)
+{
+  static bool initialized = false;
+  static const char *dir = NULL;
+
+  if (!initialized)
+    {
+      dir = getenv ("CUBRID_CAS_PROFILE_DIR");
+      initialized = true;
+    }
+
+  return dir;
+}
+
+static const char *
+cas_timestamp_stmt_label (T_SRV_HANDLE * srv_handle)
+{
+  if (srv_handle == NULL || srv_handle->sql_stmt == NULL)
+    {
+      return "unknown";
+    }
+
+  if (strstr (srv_handle->sql_stmt, "profile:vector_lookup") != NULL)
+    {
+      return "vector_lookup";
+    }
+
+  if (strstr (srv_handle->sql_stmt, "profile:ann_query") != NULL)
+    {
+      return "ann_query";
+    }
+
+  return "other";
+}
+
+static void
+cas_timestamp_profile_log (const char *op, const char *phase, T_SRV_HANDLE * srv_handle, int srv_h_id,
+			   long long detail0, long long detail1, long long duration_us, int err_code)
+{
+  const char *dir = cas_timestamp_profile_dir ();
+  char path[PATH_MAX];
+  bool write_header = false;
+  FILE *fp = NULL;
+  struct timeval now;
+  long long ts_epoch_us;
+  int query_seq = -1;
+  const char *stmt_label = "unknown";
+
+  if (dir == NULL || dir[0] == '\0')
+    {
+      return;
+    }
+
+  if (snprintf (path, sizeof (path), "%s/cub_cas.%ld.csv", dir, (long) getpid ()) <= 0)
+    {
+      return;
+    }
+
+  if (access (path, F_OK) != 0)
+    {
+      write_header = true;
+    }
+
+  fp = fopen (path, "a");
+  if (fp == NULL)
+    {
+      return;
+    }
+
+  if (write_header)
+    {
+      fprintf (fp, "ts_epoch_us,pid,op,phase,srv_h_id,query_seq,stmt_label,detail0,detail1,duration_us,err_code\n");
+    }
+
+  gettimeofday (&now, NULL);
+  ts_epoch_us = (long long) now.tv_sec * 1000000LL + (long long) now.tv_usec;
+  if (srv_handle != NULL)
+    {
+      query_seq = SRV_HANDLE_QUERY_SEQ_NUM (srv_handle);
+      stmt_label = cas_timestamp_stmt_label (srv_handle);
+    }
+
+  fprintf (fp, "%lld,%ld,%s,%s,%d,%d,%s,%lld,%lld,%lld,%d\n",
+	   ts_epoch_us, (long) getpid (), op, phase, srv_h_id, query_seq, stmt_label, detail0, detail1, duration_us,
+	   err_code);
+  fclose (fp);
+}
 
 FN_RETURN
 fn_end_tran (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf, T_REQ_INFO * req_info)
@@ -371,7 +462,9 @@ fn_execute_internal (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf,
   CACHE_TIME clt_cache_time, *clt_cache_time_ptr;
   int client_cache_reusable = FALSE;
   int elapsed_sec = 0, elapsed_msec = 0;
-  struct timeval exec_begin, exec_end;
+  int exec_ux_elapsed_sec = 0, exec_ux_elapsed_msec = 0;
+  struct timeval exec_total_begin, exec_total_end;
+  struct timeval exec_ux_begin, exec_ux_end;
   int app_query_timeout;
   bool client_supports_query_timeout = false;
   char *eid_string;
@@ -572,13 +665,25 @@ fn_execute_internal (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf,
       *s = '\0';
     }
 
-  gettimeofday (&exec_begin, NULL);
+  gettimeofday (&exec_total_begin, NULL);
+  cas_timestamp_profile_log ("execute_total", "begin", srv_handle, srv_h_id, max_row, argc - bind_value_index, 0, 0);
 
+  gettimeofday (&exec_ux_begin, NULL);
+  cas_timestamp_profile_log ("execute_ux", "begin", srv_handle, srv_h_id, max_row, argc - bind_value_index, 0, 0);
   ret_code =
     (*ux_exec_func) (srv_handle, flag, max_col_size, max_row, argc - bind_value_index, argv + bind_value_index, net_buf,
 		     req_info, clt_cache_time_ptr, &client_cache_reusable);
-  gettimeofday (&exec_end, NULL);
-  ut_timeval_diff (&exec_begin, &exec_end, &elapsed_sec, &elapsed_msec);
+  gettimeofday (&exec_ux_end, NULL);
+  ut_timeval_diff (&exec_ux_begin, &exec_ux_end, &exec_ux_elapsed_sec, &exec_ux_elapsed_msec);
+  cas_timestamp_profile_log ("execute_ux", "end", srv_handle, srv_h_id, get_tuple_count (srv_handle),
+			     client_cache_reusable,
+			     (long long) exec_ux_elapsed_sec * 1000000LL + (long long) exec_ux_elapsed_msec * 1000LL,
+			     ret_code);
+  gettimeofday (&exec_total_end, NULL);
+  ut_timeval_diff (&exec_total_begin, &exec_total_end, &elapsed_sec, &elapsed_msec);
+  cas_timestamp_profile_log ("execute_total", "end", srv_handle, srv_h_id, get_tuple_count (srv_handle),
+			     client_cache_reusable, (long long) elapsed_sec * 1000000LL + (long long) elapsed_msec * 1000LL,
+			     ret_code);
   eid_string = get_error_log_eids (err_info.err_number);
   err_number_execute = err_info.err_number;
   logddl_set_err_code (err_info.err_number);
@@ -596,7 +701,7 @@ fn_execute_internal (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf,
   plan = db_get_execution_plan ();
 
   query_timeout =
-    ut_check_timeout (&query_start_time, &exec_end, shm_appl->long_query_time, &elapsed_sec, &elapsed_msec);
+    ut_check_timeout (&query_start_time, &exec_total_end, shm_appl->long_query_time, &elapsed_sec, &elapsed_msec);
   if (query_timeout >= 0 || ret_code < 0)
     {
       if (query_timeout >= 0)
@@ -901,6 +1006,8 @@ fn_close_req_handle (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf,
   int srv_h_id;
   T_SRV_HANDLE *srv_handle;
   char auto_commit_mode = FALSE;
+  struct timeval close_begin, close_end;
+  int elapsed_sec = 0, elapsed_msec = 0;
 
   if (argc < 1)
     {
@@ -925,7 +1032,13 @@ fn_close_req_handle (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf,
 
   cas_log_write (SRV_HANDLE_QUERY_SEQ_NUM (srv_handle), false, "close_req_handle srv_h_id %d", srv_h_id);
 
+  gettimeofday (&close_begin, NULL);
+  cas_timestamp_profile_log ("close_req_handle", "begin", srv_handle, srv_h_id, auto_commit_mode, 0, 0, 0);
   hm_srv_handle_free (srv_h_id);
+  gettimeofday (&close_end, NULL);
+  ut_timeval_diff (&close_begin, &close_end, &elapsed_sec, &elapsed_msec);
+  cas_timestamp_profile_log ("close_req_handle", "end", srv_handle, srv_h_id, auto_commit_mode, 0,
+			     (long long) elapsed_sec * 1000000LL + (long long) elapsed_msec * 1000LL, 0);
 
   net_buf_cp_int (net_buf, 0, NULL);	/* res code */
 
@@ -938,6 +1051,9 @@ fn_cursor (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf, T_REQ_INF
   int srv_h_id;
   int offset;
   char origin;
+  T_SRV_HANDLE *srv_handle;
+  struct timeval cursor_begin, cursor_end;
+  int elapsed_sec = 0, elapsed_msec = 0;
 
   if (argc < 3)
     {
@@ -949,8 +1065,15 @@ fn_cursor (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf, T_REQ_INF
   net_arg_get_int (&srv_h_id, argv[0]);
   net_arg_get_int (&offset, argv[1]);
   net_arg_get_char (origin, argv[2]);
+  srv_handle = hm_find_srv_handle (srv_h_id);
 
+  gettimeofday (&cursor_begin, NULL);
+  cas_timestamp_profile_log ("cursor", "begin", srv_handle, srv_h_id, offset, origin, 0, 0);
   ux_cursor (srv_h_id, offset, origin, net_buf);
+  gettimeofday (&cursor_end, NULL);
+  ut_timeval_diff (&cursor_begin, &cursor_end, &elapsed_sec, &elapsed_msec);
+  cas_timestamp_profile_log ("cursor", "end", srv_handle, srv_h_id, offset, origin,
+			     (long long) elapsed_sec * 1000000LL + (long long) elapsed_msec * 1000LL, 0);
 
   return FN_KEEP_CONN;
 }
@@ -965,6 +1088,8 @@ fn_fetch (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf, T_REQ_INFO
   char fetch_flag;
   int result_set_index;
   T_SRV_HANDLE *srv_handle;
+  struct timeval fetch_begin, fetch_end;
+  int elapsed_sec = 0, elapsed_msec = 0;
 
   func_args = 5;
 
@@ -997,7 +1122,13 @@ fn_fetch (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf, T_REQ_INFO
   cas_log_write (SRV_HANDLE_QUERY_SEQ_NUM (srv_handle), false, "fetch srv_h_id %d cursor_pos %d fetch_count %d",
 		 srv_h_id, cursor_pos, fetch_count);
 
+  gettimeofday (&fetch_begin, NULL);
+  cas_timestamp_profile_log ("fetch", "begin", srv_handle, srv_h_id, cursor_pos, fetch_count, 0, 0);
   ux_fetch (srv_handle, cursor_pos, fetch_count, fetch_flag, result_set_index, net_buf, req_info);
+  gettimeofday (&fetch_end, NULL);
+  ut_timeval_diff (&fetch_begin, &fetch_end, &elapsed_sec, &elapsed_msec);
+  cas_timestamp_profile_log ("fetch", "end", srv_handle, srv_h_id, cursor_pos, fetch_count,
+			     (long long) elapsed_sec * 1000000LL + (long long) elapsed_msec * 1000LL, 0);
 
   return FN_KEEP_CONN;
 }
