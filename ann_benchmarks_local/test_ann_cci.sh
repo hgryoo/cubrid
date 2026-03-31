@@ -30,6 +30,7 @@ ANN_TASKSET_CPU="${ANN_TASKSET_CPU:-0}"
 BROKER_NAME="${BROKER_NAME:-broker1}"
 BROKER_PORT="${BROKER_PORT:-33000}"
 BROKER_SINGLE_CAS_ENABLE="${BROKER_SINGLE_CAS_ENABLE:-1}"
+ANN_HNSW_DEBUG_ENABLE="${ANN_HNSW_DEBUG_ENABLE:-1}"
 
 # Internal derived paths and per-run state
 DATASET_FILENAME="$(basename -- "$DATASET_HDF5")"
@@ -55,7 +56,7 @@ LAST_QUERY_LABEL=""
 PERF_ENABLE="${PERF_ENABLE:-0}"
 PERF_STAT_ENABLE="${PERF_STAT_ENABLE:-1}"
 PERF_TARGETS="${PERF_TARGETS:-cci cub_cas cub_server}"
-PERF_STAT_EVENTS="${PERF_STAT_EVENTS:-task-clock,cycles,instructions,branches,branch-misses,cache-references,cache-misses}"
+PERF_STAT_EVENTS="${PERF_STAT_EVENTS:-task-clock,cycles,instructions,topdown-fe-bound,branches,branch-misses,L1-dcache-loads,L1-dcache-load-misses,L1-icache-loads,L1-icache-load-misses,dTLB-loads,dTLB-load-misses,iTLB-loads,iTLB-load-misses,context-switches,cpu-migrations,page-faults}"
 PERF_RECORD_TARGETS="${PERF_RECORD_TARGETS:-}"
 PERF_RECORD_PROFILE="${PERF_RECORD_PROFILE:-}"
 PERF_PROFILES="${PERF_PROFILES:-}"
@@ -76,9 +77,31 @@ STACKCOLLAPSE_PERF="${STACKCOLLAPSE_PERF:-}"
 FLAMEGRAPH_PL="${FLAMEGRAPH_PL:-}"
 FLAMEGRAPH_REPO_URL="${FLAMEGRAPH_REPO_URL:-https://github.com/brendangregg/FlameGraph.git}"
 FLAMEGRAPH_TARBALL_URL="${FLAMEGRAPH_TARBALL_URL:-https://github.com/brendangregg/FlameGraph/archive/refs/heads/master.tar.gz}"
+PERF_STAT_EVENTS_RESOLVED=""
 
 log() {
   printf '[%s] %s\n' "$(date '+%F %T')" "$*"
+}
+
+is_hnsw_debug_enabled_in_conf() {
+  local conf_file="${CUBRID}/conf/cubrid.conf"
+
+  if [[ ! -f "$conf_file" ]]; then
+    return 1
+  fi
+
+  awk -F'=' '
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]*hnsw_debug[[:space:]]*=/ {
+      value=$2
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      value=tolower(value)
+      if (value == "yes" || value == "on" || value == "true" || value == "1") {
+        found=1
+      }
+    }
+    END { exit found ? 0 : 1 }
+  ' "$conf_file"
 }
 
 shell_quote() {
@@ -149,10 +172,11 @@ build_reproduction_command() {
   append_repro_assignment_if_changed parts "BROKER_NAME" "$BROKER_NAME" "broker1"
   append_repro_assignment_if_changed parts "BROKER_PORT" "$BROKER_PORT" "33000"
   append_repro_assignment_if_changed parts "BROKER_SINGLE_CAS_ENABLE" "$BROKER_SINGLE_CAS_ENABLE" "1"
-  append_repro_assignment_if_changed parts "PERF_ENABLE" "$PERF_ENABLE" "0"
+  append_repro_assignment_if_changed parts "ANN_HNSW_DEBUG_ENABLE" "$ANN_HNSW_DEBUG_ENABLE" "1"
+append_repro_assignment_if_changed parts "PERF_ENABLE" "$PERF_ENABLE" "0"
   append_repro_assignment_if_changed parts "PERF_STAT_ENABLE" "$PERF_STAT_ENABLE" "1"
   append_repro_assignment_if_changed parts "PERF_TARGETS" "$PERF_TARGETS" "cci cub_cas cub_server"
-  append_repro_assignment_if_changed parts "PERF_STAT_EVENTS" "$PERF_STAT_EVENTS" "task-clock,cycles,instructions,branches,branch-misses,cache-references,cache-misses"
+  append_repro_assignment_if_changed parts "PERF_STAT_EVENTS" "$PERF_STAT_EVENTS" "task-clock,cycles,instructions,topdown-fe-bound,branches,branch-misses,L1-dcache-loads,L1-dcache-load-misses,L1-icache-loads,L1-icache-load-misses,dTLB-loads,dTLB-load-misses,iTLB-loads,iTLB-load-misses,context-switches,cpu-migrations,page-faults"
   append_repro_assignment_if_changed parts "PERF_RECORD_TARGETS" "$PERF_RECORD_TARGETS" ""
   append_repro_assignment_if_changed parts "PERF_RECORD_PROFILE" "$PERF_RECORD_PROFILE" ""
   append_repro_assignment_if_changed parts "PERF_PROFILES" "$PERF_PROFILES" ""
@@ -206,10 +230,11 @@ ANN_TASKSET_CPU	0	$ANN_TASKSET_CPU	CPU core used by taskset
 BROKER_NAME	broker1	$BROKER_NAME	CCI broker name
 BROKER_PORT	33000	$BROKER_PORT	CCI broker port
 BROKER_SINGLE_CAS_ENABLE	1	$BROKER_SINGLE_CAS_ENABLE	Force broker1 to use exactly one CAS for profiling
+ANN_HNSW_DEBUG_ENABLE	1	$ANN_HNSW_DEBUG_ENABLE	Set hnsw_debug=1 for profiling runs when enabled
 PERF_ENABLE	0	$PERF_ENABLE	Enable perf collection
 PERF_STAT_ENABLE	1	$PERF_STAT_ENABLE	Enable perf stat collection
 PERF_TARGETS	cci cub_cas cub_server	$PERF_TARGETS	Targets for perf stat collection
-PERF_STAT_EVENTS	task-clock,cycles,instructions,branches,branch-misses,cache-references,cache-misses	$PERF_STAT_EVENTS	perf stat event list
+PERF_STAT_EVENTS	task-clock,cycles,instructions,topdown-fe-bound,branches,branch-misses,L1-dcache-loads,L1-dcache-load-misses,L1-icache-loads,L1-icache-load-misses,dTLB-loads,dTLB-load-misses,iTLB-loads,iTLB-load-misses,context-switches,cpu-migrations,page-faults	$PERF_STAT_EVENTS	perf stat event list
 PERF_RECORD_TARGETS		$PERF_RECORD_TARGETS	Targets for perf record collection
 PERF_RECORD_PROFILE		$PERF_RECORD_PROFILE	Single perf record profile selector
 PERF_PROFILES		$PERF_PROFILES	Space-separated perf record profiles
@@ -298,6 +323,15 @@ run_with_optional_taskset() {
 
 run_cubrid() {
   run_with_optional_taskset cubrid "$@"
+}
+
+run_cubrid_server_start() {
+  if (( CAS_TIMESTAMP_PROFILE_ENABLE == 1 )); then
+    CUBRID_CAS_PROFILE_DIR="$CAS_TIMESTAMP_PROFILE_DIR" run_cubrid server start "$1"
+    return
+  fi
+
+  run_cubrid server start "$1"
 }
 
 run_csql() {
@@ -648,6 +682,31 @@ out_file.write_text(json.dumps(offsets, sort_keys=True), encoding="utf-8")
 PY
 }
 
+snapshot_server_timestamp_offsets() {
+  local out_file="$1"
+
+  python3 - "$CAS_TIMESTAMP_PROFILE_DIR" "$out_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+profile_dir = Path(sys.argv[1])
+out_file = Path(sys.argv[2])
+offsets = {}
+
+if profile_dir.exists():
+    for path in sorted(profile_dir.glob("cub_server.*.csv")):
+        try:
+            with path.open(encoding="utf-8", errors="replace") as f:
+                line_count = sum(1 for _ in f)
+        except OSError:
+            continue
+        offsets[str(path)] = line_count
+
+out_file.write_text(json.dumps(offsets, sort_keys=True), encoding="utf-8")
+PY
+}
+
 extract_cas_timestamp_delta() {
   local before_file="$1"
   local after_file="$2"
@@ -669,6 +728,59 @@ fieldnames = [
     "phase",
     "srv_h_id",
     "query_seq",
+    "stmt_label",
+    "detail0",
+    "detail1",
+    "duration_us",
+    "err_code",
+]
+
+with out_file.open("w", newline="", encoding="utf-8") as f_out:
+    writer = csv.DictWriter(f_out, fieldnames=fieldnames)
+    writer.writeheader()
+
+    for path_str in sorted(after):
+        path = Path(path_str)
+        start_line = before.get(path_str, 0)
+        try:
+            with path.open(encoding="utf-8", errors="replace") as f_in:
+                for idx, line in enumerate(f_in):
+                    if idx == 0:
+                        continue
+                    if idx < start_line:
+                        continue
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split(",")
+                    if len(parts) != len(fieldnames):
+                        continue
+                    writer.writerow(dict(zip(fieldnames, parts)))
+        except OSError:
+            continue
+PY
+}
+
+extract_server_timestamp_delta() {
+  local before_file="$1"
+  local after_file="$2"
+  local out_file="$3"
+
+  python3 - "$before_file" "$after_file" "$out_file" <<'PY'
+import csv
+import json
+import sys
+from pathlib import Path
+
+before = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+after = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+out_file = Path(sys.argv[3])
+fieldnames = [
+    "ts_epoch_us",
+    "pid",
+    "op",
+    "phase",
+    "rid",
     "stmt_label",
     "detail0",
     "detail1",
@@ -756,6 +868,284 @@ with summary.open("w", newline="", encoding="utf-8") as f:
 PY
 
   log "saved cub_cas timestamp summary to $summary_file"
+}
+
+summarize_server_timestamp_delta() {
+  local src_file="$1"
+  local summary_file="$2"
+
+  python3 - "$src_file" "$summary_file" <<'PY'
+import csv
+import math
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1])
+summary = Path(sys.argv[2])
+rows = list(csv.DictReader(src.open()))
+if not rows:
+    raise SystemExit(0)
+
+def percentile(sorted_values, pct):
+    if not sorted_values:
+        return 0.0
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    pos = (len(sorted_values) - 1) * pct
+    lower = math.floor(pos)
+    upper = math.ceil(pos)
+    if lower == upper:
+        return sorted_values[lower]
+    weight = pos - lower
+    return sorted_values[lower] * (1.0 - weight) + sorted_values[upper] * weight
+
+ops = {}
+for row in rows:
+    if row["phase"] != "end":
+        continue
+    op_key = (row["op"], row.get("stmt_label", "unknown"))
+    ops.setdefault(op_key, []).append(float(row["duration_us"]) / 1000000.0)
+
+with summary.open("w", newline="", encoding="utf-8") as f:
+    writer = csv.writer(f)
+    writer.writerow(["op", "stmt_label", "count", "avg_sec", "p50_sec", "p95_sec", "p99_sec", "max_sec"])
+    for op, stmt_label in sorted(ops):
+        values = sorted(ops[(op, stmt_label)])
+        writer.writerow([
+            op,
+            stmt_label,
+            len(values),
+            f"{sum(values) / len(values):.9f}",
+            f"{percentile(values, 0.50):.9f}",
+            f"{percentile(values, 0.95):.9f}",
+            f"{percentile(values, 0.99):.9f}",
+            f"{values[-1]:.9f}",
+        ])
+PY
+
+  log "saved cub_server timestamp summary to $summary_file"
+}
+
+write_cub_server_perf_stat_summary() {
+  local build_stat_file="$1"
+  local query_stat_file="$2"
+  local build_segment_file="$3"
+  local query_segment_file="$4"
+  local out_csv="$5"
+  local out_svg="$6"
+
+  python3 - "$build_stat_file" "$query_stat_file" "$build_segment_file" "$query_segment_file" "$out_csv" "$out_svg" <<'PY'
+import csv
+import math
+import sys
+from pathlib import Path
+
+build_stat_path = Path(sys.argv[1])
+query_stat_path = Path(sys.argv[2])
+build_segment_path = Path(sys.argv[3])
+query_segment_path = Path(sys.argv[4])
+out_csv = Path(sys.argv[5])
+out_svg = Path(sys.argv[6])
+
+def parse_perf_stat(path: Path):
+    metrics = {}
+    if not path.is_file():
+        return metrics
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(",")
+        if len(parts) < 7:
+            continue
+        value_str, unit, event, runtime, pct, metric_value, metric_unit = parts[:7]
+        try:
+            value = float(value_str)
+        except ValueError:
+            continue
+        metrics[event] = {
+            "value": value,
+            "unit": unit,
+            "runtime": float(runtime) if runtime else 0.0,
+            "pct": pct,
+            "metric_value": float(metric_value) if metric_value else None,
+            "metric_unit": metric_unit,
+        }
+    return metrics
+
+def parse_segment_wall(path: Path):
+    if not path.is_file():
+        return 0.0
+    with path.open(newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            if row.get("component") == "cci":
+                try:
+                    return float(row.get("wall_sec") or 0.0)
+                except ValueError:
+                    return 0.0
+    return 0.0
+
+def fmt_num(value):
+    if value is None:
+        return "N/A"
+    if abs(value) >= 1_000_000_000:
+        return f"{value/1_000_000_000:.3f} B"
+    if abs(value) >= 1_000_000:
+        return f"{value/1_000_000:.3f} M"
+    if abs(value) >= 1_000:
+        return f"{value/1_000:.3f} K"
+    if float(value).is_integer():
+        return f"{int(value)}"
+    return f"{value:.3f}"
+
+def metric_value(metrics, name):
+    item = metrics.get(name)
+    return None if item is None else item["value"]
+
+def derived(metrics, elapsed):
+    task_clock_ns = metric_value(metrics, "task-clock")
+    cycles = metric_value(metrics, "cycles")
+    instructions = metric_value(metrics, "instructions")
+    branches = metric_value(metrics, "branches")
+    branch_misses = metric_value(metrics, "branch-misses")
+    l1d_loads = metric_value(metrics, "L1-dcache-loads")
+    l1d_misses = metric_value(metrics, "L1-dcache-load-misses")
+    l1i_loads = metric_value(metrics, "L1-icache-loads")
+    l1i_misses = metric_value(metrics, "L1-icache-load-misses")
+    dtlb_loads = metric_value(metrics, "dTLB-loads")
+    dtlb_misses = metric_value(metrics, "dTLB-load-misses")
+    itlb_loads = metric_value(metrics, "iTLB-loads")
+    itlb_misses = metric_value(metrics, "iTLB-load-misses")
+    topdown_fe = metric_value(metrics, "topdown-fe-bound")
+    slots = metric_value(metrics, "slots")
+    context_switches = metric_value(metrics, "context-switches")
+    cpu_migrations = metric_value(metrics, "cpu-migrations")
+    page_faults = metric_value(metrics, "page-faults")
+
+    task_clock_sec = task_clock_ns / 1_000_000_000 if task_clock_ns is not None else None
+    cpus_utilized = (task_clock_sec / elapsed) if task_clock_sec is not None and elapsed > 0 else None
+    ipc = (instructions / cycles) if instructions is not None and cycles not in (None, 0) else None
+    fe_bound_pct = (topdown_fe / slots * 100.0) if topdown_fe is not None and slots not in (None, 0) else None
+    branch_miss_rate = (branch_misses / branches * 100.0) if branch_misses is not None and branches not in (None, 0) else None
+    l1d_miss_rate = (l1d_misses / l1d_loads * 100.0) if l1d_misses is not None and l1d_loads not in (None, 0) else None
+    l1i_miss_rate = (l1i_misses / l1i_loads * 100.0) if l1i_misses is not None and l1i_loads not in (None, 0) else None
+    dtlb_miss_rate = (dtlb_misses / dtlb_loads * 100.0) if dtlb_misses is not None and dtlb_loads not in (None, 0) else None
+    itlb_miss_rate = (itlb_misses / itlb_loads * 100.0) if itlb_misses is not None and itlb_loads not in (None, 0) else None
+
+    return {
+        "elapsed_s": elapsed,
+        "task_clock_s": task_clock_sec,
+        "cpus_utilized": cpus_utilized,
+        "cycles": cycles,
+        "instructions": instructions,
+        "ipc": ipc,
+        "frontend_stalled_pct": fe_bound_pct,
+        "branches": branches,
+        "branch_misses": branch_misses,
+        "branch_miss_rate_pct": branch_miss_rate,
+        "L1_dcache_loads": l1d_loads,
+        "L1_dcache_load_misses": l1d_misses,
+        "L1_dcache_miss_rate_pct": l1d_miss_rate,
+        "L1_icache_loads": l1i_loads,
+        "L1_icache_load_misses": l1i_misses,
+        "L1_icache_miss_rate_pct": l1i_miss_rate,
+        "dTLB_loads": dtlb_loads,
+        "dTLB_load_misses": dtlb_misses,
+        "dTLB_miss_rate_pct": dtlb_miss_rate,
+        "iTLB_loads": itlb_loads,
+        "iTLB_load_misses": itlb_misses,
+        "iTLB_miss_rate_pct": itlb_miss_rate,
+        "context_switches": context_switches,
+        "cpu_migrations": cpu_migrations,
+        "page_faults": page_faults,
+    }
+
+build = derived(parse_perf_stat(build_stat_path), parse_segment_wall(build_segment_path))
+query = derived(parse_perf_stat(query_stat_path), parse_segment_wall(query_segment_path))
+
+rows = []
+metrics_order = [
+    ("elapsed_s", "elapsed"),
+    ("task_clock_s", "task-clock"),
+    ("cpus_utilized", "CPUs utilized"),
+    ("cycles", "cycles"),
+    ("instructions", "instructions"),
+    ("ipc", "IPC"),
+    ("frontend_stalled_pct", "frontend stalled %"),
+    ("branches", "branches"),
+    ("branch_misses", "branch-misses"),
+    ("branch_miss_rate_pct", "branch-miss rate %"),
+    ("L1_dcache_loads", "L1-dcache-loads"),
+    ("L1_dcache_load_misses", "L1-dcache-load-misses"),
+    ("L1_dcache_miss_rate_pct", "L1-dcache miss rate %"),
+    ("L1_icache_loads", "L1-icache-loads"),
+    ("L1_icache_load_misses", "L1-icache-load-misses"),
+    ("L1_icache_miss_rate_pct", "L1-icache miss rate %"),
+    ("dTLB_loads", "dTLB-loads"),
+    ("dTLB_load_misses", "dTLB-load-misses"),
+    ("dTLB_miss_rate_pct", "dTLB miss rate %"),
+    ("iTLB_loads", "iTLB-loads"),
+    ("iTLB_load_misses", "iTLB-load-misses"),
+    ("iTLB_miss_rate_pct", "iTLB miss rate %"),
+    ("context_switches", "context-switches"),
+    ("cpu_migrations", "cpu-migrations"),
+    ("page_faults", "page-faults"),
+]
+
+with out_csv.open("w", newline="", encoding="utf-8") as f:
+    writer = csv.writer(f)
+    writer.writerow(["metric", "build_index", "query"])
+    for key, label in metrics_order:
+        writer.writerow([label, build.get(key), query.get(key)])
+
+focus = [
+    ("elapsed", build["elapsed_s"], query["elapsed_s"], "#2f6fed"),
+    ("task-clock", build["task_clock_s"], query["task_clock_s"], "#2c9a5f"),
+    ("IPC", build["ipc"], query["ipc"], "#b55d00"),
+    ("frontend stalled %", build["frontend_stalled_pct"], query["frontend_stalled_pct"], "#c43d4b"),
+    ("branch-miss rate %", build["branch_miss_rate_pct"], query["branch_miss_rate_pct"], "#7b61ff"),
+    ("L1-d miss rate %", build["L1_dcache_miss_rate_pct"], query["L1_dcache_miss_rate_pct"], "#0097a7"),
+    ("dTLB miss rate %", build["dTLB_miss_rate_pct"], query["dTLB_miss_rate_pct"], "#8d6e63"),
+]
+
+available = [max(v1 or 0.0, v2 or 0.0) for _, v1, v2, _ in focus]
+max_value = max(available) if available else 1.0
+if max_value <= 0:
+    max_value = 1.0
+
+width, height = 1180, 620
+left, top = 190, 70
+plot_w = width - left - 70
+group_h = 58
+bar_h = 16
+gap = 18
+parts = [
+    f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+    '<rect width="100%" height="100%" fill="#fcfcfb"/>',
+    '<text x="36" y="34" font-size="24" font-weight="700" fill="#111">cub_server perf stat: build index vs query</text>',
+    '<text x="36" y="54" font-size="13" fill="#555">Phase-separated perf stat summary for cub_server</text>',
+    '<rect x="820" y="24" width="14" height="14" fill="#2f6fed"/>',
+    '<text x="842" y="36" font-size="13" fill="#222">build index</text>',
+    '<rect x="940" y="24" width="14" height="14" fill="#6aa9ff"/>',
+    '<text x="962" y="36" font-size="13" fill="#222">query</text>',
+    f'<line x1="{left}" y1="{height-50}" x2="{width-40}" y2="{height-50}" stroke="#333" stroke-width="1.2"/>',
+]
+
+for i, (label, build_val, query_val, color) in enumerate(focus):
+    y = top + i * group_h
+    b = build_val or 0.0
+    q = query_val or 0.0
+    bw = plot_w * (b / max_value)
+    qw = plot_w * (q / max_value)
+    parts.append(f'<text x="{left-14}" y="{y+18}" text-anchor="end" font-size="14" fill="#222">{label}</text>')
+    parts.append(f'<rect x="{left}" y="{y}" width="{bw:.2f}" height="{bar_h}" rx="6" fill="{color}"/>')
+    parts.append(f'<rect x="{left}" y="{y+bar_h+6}" width="{qw:.2f}" height="{bar_h}" rx="6" fill="#6aa9ff"/>')
+    parts.append(f'<text x="{left + bw + 8:.2f}" y="{y+13}" font-size="12" fill="#222">{fmt_num(b)}</text>')
+    parts.append(f'<text x="{left + qw + 8:.2f}" y="{y+bar_h+19}" font-size="12" fill="#222">{fmt_num(q)}</text>')
+
+parts.append('</svg>')
+out_svg.write_text("\n".join(parts), encoding="utf-8")
+PY
 }
 
 summarize_cci_query_profile() {
@@ -1004,6 +1394,10 @@ run_cci_runner_with_profile() {
   local cas_ts_after_offsets=""
   local cas_ts_delta_file=""
   local cas_ts_summary_file=""
+  local server_ts_before_offsets=""
+  local server_ts_after_offsets=""
+  local server_ts_delta_file=""
+  local server_ts_summary_file=""
   local server_pid=""
   local cas_pids=""
   local perf_pid=""
@@ -1011,6 +1405,7 @@ run_cci_runner_with_profile() {
   local profile=""
   local output_label=""
   local safe_output_label=""
+  local hnsw_debug_collect_enabled=0
   local -a perf_job_pids=()
   local -a flamegraph_data_files=()
   local -a flamegraph_svg_files=()
@@ -1032,13 +1427,27 @@ run_cci_runner_with_profile() {
     cas_ts_after_offsets="$SEGMENT_PROFILE_DIR/${safe_label}.cub_cas_ts.after.json"
     cas_ts_delta_file="$SEGMENT_PROFILE_DIR/${safe_label}.cub_cas_ts.delta.csv"
     cas_ts_summary_file="$SEGMENT_PROFILE_DIR/${safe_label}.cub_cas_ts.summary.csv"
+    server_ts_before_offsets="$SEGMENT_PROFILE_DIR/${safe_label}.cub_server_ts.before.json"
+    server_ts_after_offsets="$SEGMENT_PROFILE_DIR/${safe_label}.cub_server_ts.after.json"
+    server_ts_delta_file="$SEGMENT_PROFILE_DIR/${safe_label}.cub_server_ts.delta.csv"
+    server_ts_summary_file="$SEGMENT_PROFILE_DIR/${safe_label}.cub_server_ts.summary.csv"
+  fi
+
+  if is_hnsw_debug_enabled_in_conf; then
+    hnsw_debug_collect_enabled=1
+  elif (( PERF_ENABLE == 1 || CAS_TIMESTAMP_PROFILE_ENABLE == 1 )); then
+    log "hnsw_debug is disabled in cubrid.conf; skipping cub_server/cub_cas profiling for $label"
+  fi
+
+  if (( CAS_TIMESTAMP_PROFILE_ENABLE == 1 && hnsw_debug_collect_enabled == 1 )); then
     snapshot_cas_timestamp_offsets "$cas_ts_before_offsets"
+    snapshot_server_timestamp_offsets "$server_ts_before_offsets"
   fi
 
   snapshot_process_group_stats "cub_server" "$server_before_file"
   snapshot_process_group_stats "cub_cas" "$cas_before_file"
 
-  if (( PERF_ENABLE == 1 )); then
+  if (( PERF_ENABLE == 1 && hnsw_debug_collect_enabled == 1 )); then
     mkdir -p "$PERF_OUTPUT_DIR"
     if perf_enabled_for_target cub_server || perf_record_enabled_for_target cub_server; then
       server_pid="$(get_cub_server_pid || true)"
@@ -1141,11 +1550,16 @@ run_cci_runner_with_profile() {
     "$server_after_file" \
     "$cas_before_file" \
     "$cas_after_file"
-  if (( CAS_TIMESTAMP_PROFILE_ENABLE == 1 )); then
+  if (( CAS_TIMESTAMP_PROFILE_ENABLE == 1 && hnsw_debug_collect_enabled == 1 )); then
     snapshot_cas_timestamp_offsets "$cas_ts_after_offsets"
     extract_cas_timestamp_delta "$cas_ts_before_offsets" "$cas_ts_after_offsets" "$cas_ts_delta_file"
     if [[ -s "$cas_ts_delta_file" ]]; then
       summarize_cas_timestamp_delta "$cas_ts_delta_file" "$cas_ts_summary_file"
+    fi
+    snapshot_server_timestamp_offsets "$server_ts_after_offsets"
+    extract_server_timestamp_delta "$server_ts_before_offsets" "$server_ts_after_offsets" "$server_ts_delta_file"
+    if [[ -s "$server_ts_delta_file" ]]; then
+      summarize_server_timestamp_delta "$server_ts_delta_file" "$server_ts_summary_file"
     fi
   fi
   if [[ -n "$query_profile_file" && -s "$query_profile_file" ]]; then
@@ -1163,7 +1577,12 @@ configure_cubrid_base_conf() {
   remove_cubrid_conf_param "auto_restart_server" "$conf_file"
   remove_cubrid_conf_param "vacuum_disable" "$conf_file"
   remove_cubrid_conf_param "ha_mode" "$conf_file"
+  remove_cubrid_conf_param "hnsw_debug" "$conf_file"
   set_cubrid_conf_param "stored_procedure" "no" "$conf_file"
+
+  if (( ANN_HNSW_DEBUG_ENABLE == 1 )) && (( PERF_ENABLE == 1 || SEGMENT_PROFILE_ENABLE == 1 || CAS_TIMESTAMP_PROFILE_ENABLE == 1 )); then
+    set_cubrid_conf_param "hnsw_debug" "1" "$conf_file"
+  fi
 }
 
 configure_ann_experiment_conf() {
@@ -1277,6 +1696,50 @@ perf_record_enabled_for_target() {
   fi
 
   has_word "$target" $PERF_TARGETS
+}
+
+resolve_perf_stat_events() {
+  local raw_events="$PERF_STAT_EVENTS"
+  local event=""
+  local test_log=""
+  local -a supported=()
+  local -a skipped=()
+  local old_ifs="$IFS"
+
+  if [[ -n "$PERF_STAT_EVENTS_RESOLVED" ]]; then
+    printf '%s\n' "$PERF_STAT_EVENTS_RESOLVED"
+    return
+  fi
+
+  IFS=','
+  for event in $raw_events; do
+    event="${event#"${event%%[![:space:]]*}"}"
+    event="${event%"${event##*[![:space:]]}"}"
+    if [[ -z "$event" ]]; then
+      continue
+    fi
+
+    test_log="$(mktemp /tmp/perf_stat_event.XXXXXX)"
+    if perf stat -x, -e "$event" -- true >/dev/null 2>"$test_log"; then
+      supported+=("$event")
+    else
+      skipped+=("$event")
+    fi
+    rm -f "$test_log"
+  done
+  IFS="$old_ifs"
+
+  if ((${#supported[@]} == 0)); then
+    printf 'no supported perf stat events were resolved from: %s\n' "$raw_events" >&2
+    exit 1
+  fi
+
+  PERF_STAT_EVENTS_RESOLVED="$(IFS=,; printf '%s' "${supported[*]}")"
+  if ((${#skipped[@]} > 0)); then
+    printf '[%s] %s\n' "$(date '+%F %T')" "skipping unsupported perf stat events: ${skipped[*]}" >&2
+  fi
+  printf '[%s] %s\n' "$(date '+%F %T')" "resolved perf stat events: $PERF_STAT_EVENTS_RESOLVED" >&2
+  printf '%s\n' "$PERF_STAT_EVENTS_RESOLVED"
 }
 
 sanitize_perf_label() {
@@ -1433,14 +1896,16 @@ start_perf_stat_attach() {
   local output_file="$2"
   local log_file="${output_file}.log"
   local first_pid="${pid%%,*}"
+  local resolved_events=""
 
   if ! kill -0 "$first_pid" 2>/dev/null; then
     return 1
   fi
 
+  resolved_events="$(resolve_perf_stat_events)"
   perf stat \
     -x, \
-    -e "$PERF_STAT_EVENTS" \
+    -e "$resolved_events" \
     -p "$pid" \
     -o "$output_file" >"$log_file" 2>&1 &
   echo $!
@@ -2233,23 +2698,37 @@ setup_demo_db() {
   )
 
   configure_cubrid_base_conf "$cubrid_conf"
-  run_cubrid server start "$DB_NAME"
+  run_cubrid_server_start "$DB_NAME"
   log_server_cpu_affinity
 }
 
 restart_db_for_ann_experiment() {
   local cubrid_conf
+  local need_restart=0
 
-  if (( ANN_SINGLE_CORE_EXPERIMENT != 1 )); then
+  if (( ANN_SINGLE_CORE_EXPERIMENT == 1 )); then
+    need_restart=1
+  fi
+
+  if (( ANN_HNSW_DEBUG_ENABLE == 1 )) && (( PERF_ENABLE == 1 || SEGMENT_PROFILE_ENABLE == 1 || CAS_TIMESTAMP_PROFILE_ENABLE == 1 )); then
+    need_restart=1
+  fi
+
+  if (( need_restart != 1 )); then
     return
   fi
 
   cubrid_conf="$CUBRID/conf/cubrid.conf"
-  configure_ann_experiment_conf "$cubrid_conf"
+  if (( ANN_SINGLE_CORE_EXPERIMENT == 1 )); then
+    configure_ann_experiment_conf "$cubrid_conf"
+    log "restarting $DB_NAME with single-core ANN experiment configuration"
+  else
+    configure_cubrid_base_conf "$cubrid_conf"
+    log "restarting $DB_NAME with profiling configuration"
+  fi
 
-  log "restarting $DB_NAME with single-core ANN experiment configuration"
   run_cubrid server stop "$DB_NAME"
-  run_cubrid server start "$DB_NAME"
+  run_cubrid_server_start "$DB_NAME"
   log_server_cpu_affinity
 }
 
@@ -2727,11 +3206,18 @@ build_final_results_bundle() {
   local query_time_file=""
   local query_summary_file=""
   local cas_summary_file=""
+  local server_ts_summary_file=""
   local server_report_file=""
   local cas_report_file=""
   local server_flamegraph_file=""
   local cas_flamegraph_file=""
   local cas_active_flamegraph_file=""
+  local build_server_stat_file=""
+  local query_server_stat_file=""
+  local build_segment_file=""
+  local query_segment_file=""
+  local cub_server_perf_summary_csv=""
+  local cub_server_perf_summary_svg=""
   local env_manifest_file=""
   local git_manifest_file=""
   local command_file=""
@@ -2749,13 +3235,27 @@ build_final_results_bundle() {
   query_time_file="$SEGMENT_PROFILE_DIR/${safe_label}.cci.time"
   query_summary_file="$SEGMENT_PROFILE_DIR/${safe_label}.query_stage_breakdown.summary.csv"
   cas_summary_file="$SEGMENT_PROFILE_DIR/${safe_label}.cub_cas_ts.summary.csv"
+  server_ts_summary_file="$SEGMENT_PROFILE_DIR/${safe_label}.cub_server_ts.summary.csv"
   server_report_file="$PERF_OUTPUT_DIR/${safe_label}.hot.cub_server.report.txt"
   cas_report_file="$PERF_OUTPUT_DIR/${safe_label}.hot.cub_cas.report.txt"
   server_flamegraph_file="$PERF_OUTPUT_DIR/${safe_label}.hot.cub_server.flamegraph.svg"
   cas_flamegraph_file="$PERF_OUTPUT_DIR/${safe_label}.hot.cub_cas.flamegraph.svg"
   cas_active_flamegraph_file="$PERF_OUTPUT_DIR/${safe_label}.hot.cub_cas.active.flamegraph.svg"
+  build_server_stat_file="$PERF_OUTPUT_DIR/build_index_m24_efc200.stat.cub_server.stat.csv"
+  query_server_stat_file="$PERF_OUTPUT_DIR/${safe_label}.stat.cub_server.stat.csv"
+  build_segment_file="$SEGMENT_PROFILE_DIR/build_index_m24_efc200.csv"
+  query_segment_file="$SEGMENT_PROFILE_DIR/${safe_label}.csv"
+  cub_server_perf_summary_csv="$FINAL_RESULTS_DIR/cub_server_perf_stat_summary.csv"
+  cub_server_perf_summary_svg="$FINAL_RESULTS_DIR/cub_server_perf_stat_summary.svg"
 
   prepare_final_results_dir
+  write_cub_server_perf_stat_summary \
+    "$build_server_stat_file" \
+    "$query_server_stat_file" \
+    "$build_segment_file" \
+    "$query_segment_file" \
+    "$cub_server_perf_summary_csv" \
+    "$cub_server_perf_summary_svg"
 
   env_manifest_file="$(mktemp)"
   git_manifest_file="$(mktemp)"
@@ -2774,6 +3274,7 @@ build_final_results_bundle() {
     "$query_time_file" \
     "$query_summary_file" \
     "$cas_summary_file" \
+    "$server_ts_summary_file" \
     "$server_report_file" \
     "$cas_report_file" \
     "$server_flamegraph_file" \
@@ -2798,6 +3299,7 @@ from pathlib import Path
     query_time_arg,
     query_summary_arg,
     cas_summary_arg,
+    server_ts_summary_arg,
     server_report_arg,
     cas_report_arg,
     server_flamegraph_arg,
@@ -2816,6 +3318,7 @@ ef_search = int(ef_search_arg)
 query_time_path = Path(query_time_arg)
 query_summary_path = Path(query_summary_arg)
 cas_summary_path = Path(cas_summary_arg)
+server_ts_summary_path = Path(server_ts_summary_arg)
 server_report_path = Path(server_report_arg)
 cas_report_path = Path(cas_report_arg)
 server_flamegraph_path = Path(server_flamegraph_arg)
@@ -2829,6 +3332,7 @@ required = [
     query_time_path,
     query_summary_path,
     cas_summary_path,
+    server_ts_summary_path,
     server_report_path,
     cas_report_path,
 ]
@@ -2887,6 +3391,7 @@ def find_pct(report_text: str, symbol: str):
 time_values = read_kv(query_time_path)
 query_metrics = read_csv_by_key(query_summary_path, "metric")
 cas_metrics = read_csv_by_two_keys(cas_summary_path, "op", "stmt_label")
+server_ts_metrics = read_csv_by_two_keys(server_ts_summary_path, "op", "stmt_label")
 server_report = server_report_path.read_text(encoding="utf-8", errors="replace")
 cas_report = cas_report_path.read_text(encoding="utf-8", errors="replace")
 env_manifest_rows = read_tsv(env_manifest_path)
@@ -2914,6 +3419,13 @@ cas_ann_request_total = cas_metrics.get(("request_total", "ann_query"), {})
 cas_ann_execute_total = cas_metrics.get(("execute_total", "ann_query"), {})
 cas_ann_execute_ux = cas_metrics.get(("execute_ux", "ann_query"), {})
 cas_vector_execute_total = cas_metrics.get(("execute_total", "vector_lookup"), {})
+cas_ann_request_read = cas_metrics.get(("request_read_body", "ann_query"), {})
+cas_ann_request_write = cas_metrics.get(("request_write", "ann_query"), {})
+cas_ann_server_send = cas_metrics.get(("server_send", "ann_query"), {})
+cas_ann_server_receive = cas_metrics.get(("server_receive", "ann_query"), {})
+server_ann_execute_total = server_ts_metrics.get(("execute_total", "ann_query"), {})
+server_ann_reply_send = server_ts_metrics.get(("reply_send", "ann_query"), {})
+server_vector_execute_total = server_ts_metrics.get(("execute_total", "vector_lookup"), {})
 
 cas_ann_request_total_avg = float(cas_ann_request_total.get("avg_sec", "0") or 0.0)
 cas_ann_request_total_p95 = float(cas_ann_request_total.get("p95_sec", "0") or 0.0)
@@ -2925,6 +3437,23 @@ cas_ann_execute_ux_avg = float(cas_ann_execute_ux.get("avg_sec", "0") or 0.0)
 cas_ann_execute_ux_p95 = float(cas_ann_execute_ux.get("p95_sec", "0") or 0.0)
 cas_ann_execute_ux_p99 = float(cas_ann_execute_ux.get("p99_sec", "0") or 0.0)
 cas_vector_execute_total_avg = float(cas_vector_execute_total.get("avg_sec", "0") or 0.0)
+cas_ann_request_read_avg = float(cas_ann_request_read.get("avg_sec", "0") or 0.0)
+cas_ann_request_write_avg = float(cas_ann_request_write.get("avg_sec", "0") or 0.0)
+cas_ann_server_send_avg = float(cas_ann_server_send.get("avg_sec", "0") or 0.0)
+cas_ann_server_receive_avg = float(cas_ann_server_receive.get("avg_sec", "0") or 0.0)
+cas_ann_request_total_count = int(cas_ann_request_total.get("count", "0") or 0)
+cas_ann_server_receive_count = int(cas_ann_server_receive.get("count", "0") or 0)
+server_ann_execute_total_avg = float(server_ann_execute_total.get("avg_sec", "0") or 0.0)
+server_ann_reply_send_avg = float(server_ann_reply_send.get("avg_sec", "0") or 0.0)
+server_vector_execute_total_avg = float(server_vector_execute_total.get("avg_sec", "0") or 0.0)
+
+cci_cas_outer_avg = max(0.0, execute_avg - cas_ann_request_total_avg)
+cas_overhead_before_server_avg = max(0.0, cas_ann_execute_total_avg - cas_ann_server_send_avg - cas_ann_server_receive_avg)
+cas_request_other_avg = max(0.0, cas_ann_request_total_avg - cas_ann_request_read_avg - cas_ann_execute_total_avg - cas_ann_request_write_avg)
+cas_ann_server_receive_per_query_avg = 0.0
+if cas_ann_request_total_count > 0:
+    cas_ann_server_receive_per_query_avg = cas_ann_server_receive_avg * cas_ann_server_receive_count / cas_ann_request_total_count
+server_transport_gap_avg = max(0.0, cas_ann_server_receive_per_query_avg - server_ann_execute_total_avg - server_ann_reply_send_avg)
 
 server_metrics = [
     ("sqmgr_execute_query -> xqmgr_execute_query", find_pct(server_report, "sqmgr_execute_query")),
@@ -2977,7 +3506,19 @@ write_csv(
         ("cas", "ann_query.execute_ux.avg_sec", f"{cas_ann_execute_ux_avg:.9f}"),
         ("cas", "ann_query.execute_ux.p95_sec", f"{cas_ann_execute_ux_p95:.9f}"),
         ("cas", "ann_query.execute_ux.p99_sec", f"{cas_ann_execute_ux_p99:.9f}"),
+        ("cas", "ann_query.request_read_body.avg_sec", f"{cas_ann_request_read_avg:.9f}"),
+        ("cas", "ann_query.request_write.avg_sec", f"{cas_ann_request_write_avg:.9f}"),
+        ("cas", "ann_query.server_send.avg_sec", f"{cas_ann_server_send_avg:.9f}"),
+        ("cas", "ann_query.server_receive.avg_sec", f"{cas_ann_server_receive_avg:.9f}"),
+        ("cas", "ann_query.server_receive_per_query_avg_sec", f"{cas_ann_server_receive_per_query_avg:.9f}"),
         ("cas", "vector_lookup.execute_total.avg_sec", f"{cas_vector_execute_total_avg:.9f}"),
+        ("server", "ann_query.execute_total.avg_sec", f"{server_ann_execute_total_avg:.9f}"),
+        ("server", "ann_query.reply_send.avg_sec", f"{server_ann_reply_send_avg:.9f}"),
+        ("server", "vector_lookup.execute_total.avg_sec", f"{server_vector_execute_total_avg:.9f}"),
+        ("derived", "cci_minus_cas_request_total.avg_sec", f"{cci_cas_outer_avg:.9f}"),
+        ("derived", "cas_request_other.avg_sec", f"{cas_request_other_avg:.9f}"),
+        ("derived", "cas_before_server_overhead.avg_sec", f"{cas_overhead_before_server_avg:.9f}"),
+        ("derived", "cas_server_transport_gap.avg_sec", f"{server_transport_gap_avg:.9f}"),
     ],
 )
 
@@ -2997,7 +3538,19 @@ write_csv(
         ("cas", "ann_request_total_avg_sec", f"{cas_ann_request_total_avg:.9f}"),
         ("cas", "ann_execute_total_avg_sec", f"{cas_ann_execute_total_avg:.9f}"),
         ("cas", "ann_execute_ux_avg_sec", f"{cas_ann_execute_ux_avg:.9f}"),
+        ("cas", "ann_request_read_avg_sec", f"{cas_ann_request_read_avg:.9f}"),
+        ("cas", "ann_request_write_avg_sec", f"{cas_ann_request_write_avg:.9f}"),
+        ("cas", "ann_server_send_avg_sec", f"{cas_ann_server_send_avg:.9f}"),
+        ("cas", "ann_server_receive_avg_sec", f"{cas_ann_server_receive_avg:.9f}"),
+        ("cas", "ann_server_receive_per_query_avg_sec", f"{cas_ann_server_receive_per_query_avg:.9f}"),
+        ("derived", "cci_minus_cas_request_total_avg_sec", f"{cci_cas_outer_avg:.9f}"),
+        ("derived", "cas_request_other_avg_sec", f"{cas_request_other_avg:.9f}"),
+        ("derived", "cas_before_server_overhead_avg_sec", f"{cas_overhead_before_server_avg:.9f}"),
+        ("derived", "cas_server_transport_gap_avg_sec", f"{server_transport_gap_avg:.9f}"),
         ("cas", "vector_lookup_execute_total_avg_sec", f"{cas_vector_execute_total_avg:.9f}"),
+        ("cub_server_ts", "ann_execute_total_avg_sec", f"{server_ann_execute_total_avg:.9f}"),
+        ("cub_server_ts", "ann_reply_send_avg_sec", f"{server_ann_reply_send_avg:.9f}"),
+        ("cub_server_ts", "vector_lookup_execute_total_avg_sec", f"{server_vector_execute_total_avg:.9f}"),
         ("cub_server_perf", "hnsw_search_element", f"{server_metrics[2][1]:.2f}"),
         ("cub_server_perf", "seek_on_layer_", f"{server_metrics[3][1]:.2f}"),
         ("cub_server_perf", "cosine_distance", f"{server_metrics[4][1]:.2f}"),
@@ -3012,21 +3565,38 @@ readout_rows.extend([
     ("cub_cas", "ann_query.request_total.avg_sec", f"{cas_ann_request_total_avg:.9f}"),
     ("cub_cas", "ann_query.execute_total.avg_sec", f"{cas_ann_execute_total_avg:.9f}"),
     ("cub_cas", "ann_query.execute_ux.avg_sec", f"{cas_ann_execute_ux_avg:.9f}"),
+    ("cub_cas", "ann_query.request_read_body.avg_sec", f"{cas_ann_request_read_avg:.9f}"),
+    ("cub_cas", "ann_query.request_write.avg_sec", f"{cas_ann_request_write_avg:.9f}"),
+    ("cub_cas", "ann_query.server_send.avg_sec", f"{cas_ann_server_send_avg:.9f}"),
+    ("cub_cas", "ann_query.server_receive.avg_sec", f"{cas_ann_server_receive_avg:.9f}"),
+    ("cub_cas", "ann_query.server_receive_per_query_avg_sec", f"{cas_ann_server_receive_per_query_avg:.9f}"),
     ("cub_cas", "vector_lookup.execute_total.avg_sec", f"{cas_vector_execute_total_avg:.9f}"),
+    ("cub_server_ts", "ann_query.execute_total.avg_sec", f"{server_ann_execute_total_avg:.9f}"),
+    ("cub_server_ts", "ann_query.reply_send.avg_sec", f"{server_ann_reply_send_avg:.9f}"),
+    ("derived", "cci_minus_cas_request_total.avg_sec", f"{cci_cas_outer_avg:.9f}"),
+    ("derived", "cas_request_other.avg_sec", f"{cas_request_other_avg:.9f}"),
+    ("derived", "cas_before_server_overhead.avg_sec", f"{cas_overhead_before_server_avg:.9f}"),
+    ("derived", "cas_server_transport_gap.avg_sec", f"{server_transport_gap_avg:.9f}"),
 ])
 write_csv(readout_csv, ("component", "metric", "value"), readout_rows)
+perf_stat_summary_csv = final_dir / "cub_server_perf_stat_summary.csv"
+perf_stat_rows = read_csv_by_key(perf_stat_summary_csv, "metric") if perf_stat_summary_csv.is_file() else {}
 
 def draw_oneline_svg(path: Path):
     rows = [
         ("CCI total", total_avg, "#156f4a"),
         ("CCI execute", execute_avg, "#2f9e74"),
-        ("CCI vector lookup", vector_lookup_avg, "#88c8ad"),
+        ("CCI-CAS outer", cci_cas_outer_avg, "#88c8ad"),
         ("CAS ann request total", cas_ann_request_total_avg, "#b36a00"),
-        ("CAS ann execute total", cas_ann_execute_total_avg, "#cf8a1a"),
-        ("CAS ann execute ux", cas_ann_execute_ux_avg, "#e6b85c"),
+        ("CAS request read", cas_ann_request_read_avg, "#cf8a1a"),
+        ("CAS-server send", cas_ann_server_send_avg, "#e6b85c"),
+        ("CAS-server receive/q", cas_ann_server_receive_per_query_avg, "#f5d48e"),
+        ("Server execute", server_ann_execute_total_avg, "#8b5cf6"),
+        ("Server reply send", server_ann_reply_send_avg, "#c4b5fd"),
+        ("CAS-CCI write", cas_ann_request_write_avg, "#f2e7c6"),
     ]
     max_v = max(v for _, v, _ in rows) or 1.0
-    width, height = 920, 430
+    width, height = 920, 500
     left, top, bottom = 220, 60, 80
     plot_w = width - left - 70
     bar_h = 40
@@ -3035,7 +3605,7 @@ def draw_oneline_svg(path: Path):
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         '<rect width="100%" height="100%" fill="#fcfcfb"/>',
         '<text x="40" y="34" font-size="24" font-weight="700" fill="#111">CCI / CAS / cub_server one-line summary</text>',
-        '<text x="40" y="54" font-size="13" fill="#555">Average query-stage times and cub_server hotspots</text>',
+        '<text x="40" y="54" font-size="13" fill="#555">Average query-stage times and CAS/server transport-visible costs</text>',
     ]
     for idx, (label, value, color) in enumerate(rows):
         y = top + idx * (bar_h + gap)
@@ -3076,7 +3646,9 @@ def draw_readout_svg(path: Path):
         parts.append(f'<text x="{left + col_gap}" y="{y}" font-size="13" fill="#222">{metric}</text>')
         parts.append(f'<rect x="{left + col_gap}" y="{y + 10}" width="{value * scale:.2f}" height="18" rx="6" fill="#b36a00"/>')
         parts.append(f'<text x="{left + col_gap + value * scale + 10:.2f}" y="{y + 24}" font-size="13" fill="#222">{value:.2f}%</text>')
-    parts.append(f'<text x="{left + col_gap}" y="{height - 54}" font-size="14" fill="#222">CAS ann request_total {cas_ann_request_total_avg:.6f}s, execute_total {cas_ann_execute_total_avg:.6f}s, execute_ux {cas_ann_execute_ux_avg:.6f}s</text>')
+    parts.append(f'<text x="{left + col_gap}" y="{height - 78}" font-size="14" fill="#222">CAS ann request_total {cas_ann_request_total_avg:.6f}s, execute_total {cas_ann_execute_total_avg:.6f}s, execute_ux {cas_ann_execute_ux_avg:.6f}s</text>')
+    parts.append(f'<text x="{left + col_gap}" y="{height - 54}" font-size="14" fill="#222">request_read {cas_ann_request_read_avg:.6f}s, server_send {cas_ann_server_send_avg:.6f}s, server_receive/q {cas_ann_server_receive_per_query_avg:.6f}s, request_write {cas_ann_request_write_avg:.6f}s</text>')
+    parts.append(f'<text x="{left}" y="{height - 30}" font-size="14" fill="#222">server execute {server_ann_execute_total_avg:.6f}s, server reply_send {server_ann_reply_send_avg:.6f}s, receive-execute gap {server_transport_gap_avg:.6f}s</text>')
     parts.append('</svg>')
     path.write_text("\n".join(parts), encoding="utf-8")
 
@@ -3098,6 +3670,8 @@ if cas_active_flamegraph_path.is_file():
     shutil.copy2(cas_active_flamegraph_path, cas_active_bundle_flamegraph)
 else:
     write_placeholder_flamegraph(cas_active_bundle_flamegraph, "cub_cas active flamegraph unavailable", f"Expected file: {cas_active_flamegraph_path.name}")
+
+shutil.copy2(server_ts_summary_path, final_dir / server_ts_summary_path.name)
 
 readme = f"""# Final Results Bundle
 
@@ -3132,6 +3706,7 @@ readme += f"""
 - ANN query 형태: `ORDER BY vec <c> CAST(? AS vector)`
 - 우항 벡터 값: `nytimes_256_angular_test`에서 `CAST(vec AS STRING)`으로 읽어와 `run_query_ann` 파라미터로 바인딩
 - 인덱스 검증: 실행 전 trace에서 `VECTOR INDEX SCAN` 확인 후 측정
+- CAS/cub_server 수집 조건: `hnsw_debug=1`일 때만 CAS timestamp와 CAS/cub_server perf를 수집
 
 ## 환경변수
 
@@ -3146,46 +3721,126 @@ for row in env_manifest_rows:
 
 readme += f"""
 
-## 비교 설명
+## Profiling Analysis (ANN query, `ef_search={ef_search}`)
 
-### CCI
+### End-to-End Summary
 
-- 전체 wall time: `{wall_sec:.2f}s`
-- 전체 QPS: `{qps:.3f}`
-- query 1건 평균 total: `{total_avg:.6f}s`
-- query 1건 평균 vector lookup: `{vector_lookup_avg:.6f}s`
-- query 1건 평균 execute: `{execute_avg:.6f}s`
+| Metric | Value | Assessment |
+|---|---:|---|
+| Query count | `{queries:,}` | Full query set |
+| Query wall time | `{wall_sec:.2f}s` | End-to-end CCI measurement |
+| QPS | `{qps:.3f}` | Final throughput |
+| Recall@10 | see result CSV | Quality check |
+| CCI total / query | `{total_avg:.6f}s` | End-to-end per query |
+| CCI execute / query | `{execute_avg:.6f}s` | Dominant client-visible phase |
+| CAS ann request_total / query | `{cas_ann_request_total_avg:.6f}s` | CAS request lifecycle |
+| cub_server execute_total / query | `{server_ann_execute_total_avg:.6f}s` | Main server execution cost |
 
-CCI에서 보이는 시간의 대부분은 `execute` 대기 시간이다. `bind`, `fetch`, `close`는 매우 작고, test 테이블에서 query vector를 읽어오는 비용도 execute보다 훨씬 작다.
+Finding: `CCI execute` and `CAS request_total` are almost identical, and `cub_server execute_total` explains most of that time. The dominant cost is server-side ANN execution, not client/protocol overhead.
 
-### cub_cas
+### Phase Breakdown
 
-- ann_query request_total 평균: `{cas_ann_request_total_avg:.6f}s`
-- ann_query execute_total 평균: `{cas_ann_execute_total_avg:.6f}s`
-- ann_query execute_ux 평균: `{cas_ann_execute_ux_avg:.6f}s`
-- vector_lookup execute_total 평균: `{cas_vector_execute_total_avg:.6f}s`
+| Layer | Phase | Avg (s) | Interpretation |
+|---|---|---:|---|
+| CCI | `vector_lookup` | `{vector_lookup_avg:.6f}` | Read query vector string from test table |
+| CCI | `execute` | `{execute_avg:.6f}` | ANN execute wait seen by client |
+| CCI | `fetch + close` | `{(fetch_avg + close_avg):.6f}` | Very small |
+| CAS | `request_read_body` | `{cas_ann_request_read_avg:.6f}` | `CCI -> CAS` request read |
+| CAS | `server_send` | `{cas_ann_server_send_avg:.6f}` | `CAS -> cub_server` send |
+| CAS | `server_receive` per call | `{cas_ann_server_receive_avg:.6f}` | Low-level receive call average |
+| CAS | `server_receive` per query | `{cas_ann_server_receive_per_query_avg:.6f}` | Query-normalized receive wait |
+| CAS | `request_write` | `{cas_ann_request_write_avg:.6f}` | `CAS -> CCI` reply write |
+| cub_server | `execute_total` | `{server_ann_execute_total_avg:.6f}` | Actual ANN execution |
+| cub_server | `reply_send` | `{server_ann_reply_send_avg:.6f}` | Server reply send cost |
+| Derived | `CCI execute - CAS request_total` | `{cci_cas_outer_avg:.6f}` | Client/protocol outer overhead |
+| Derived | `CAS receive/query - server execute/reply` | `{server_transport_gap_avg:.6f}` | Residual transport/wait gap |
 
-이제 CAS는 `vector_lookup`와 `ann_query`를 분리해서 본다. 특히 `ann_query request_total`은 CAS가 요청을 받아 응답을 쓰기까지의 전체 구간이고, `ann_query execute_total`은 `fn_execute_internal`, `ann_query execute_ux`는 실제 `ux_execute` 본체에 더 가깝다. CAS raw flamegraph에서는 여전히 `process_request`, `fn_execute_internal`, `ux_execute` 아래로 `css_receive_data_from_server_with_timeout`, `poll`, `recv`가 보이므로, 최종 결과에는 대기 스택을 걷어낸 `cub_cas.active.flamegraph.svg`도 같이 포함한다.
+### Hot Path
 
-### cub_server
+Top server hotspots from perf/flamegraph:
 
-- `hnsw_search_element`: `{server_metrics[2][1]:.2f}%`
-- `seek_on_layer_`: `{server_metrics[3][1]:.2f}%`
-- `cosine_distance`: `{server_metrics[4][1]:.2f}%`
-- `get_vector_by_slot_id`: `{server_metrics[5][1]:.2f}%`
+| Rank | Function | Share |
+|---|---|---:|
+| 1 | `hnsw_search_element` | `{server_metrics[2][1]:.2f}%` |
+| 2 | `seek_on_layer_` | `{server_metrics[3][1]:.2f}%` |
+| 3 | `cosine_distance` | `{server_metrics[4][1]:.2f}%` |
+| 4 | `get_vector_by_slot_id` | `{server_metrics[5][1]:.2f}%` |
 
-server flamegraph에서는 HNSW search 경로가 중심이다. 즉 현재 조건에서는 실제 계산 병목의 중심이 `cub_server`의 ANN search 경로에 있다.
+Hot path: `sqmgr_execute_query` → `xqmgr_execute_query` → `hnsw_search_element` → `seek_on_layer_` → `cosine_distance` / `get_vector_by_slot_id`
+
+These functions dominate server CPU time. The flamegraph shows a compute-heavy HNSW search path rather than a broker-side bottleneck.
+
+### CAS vs Server Interpretation
+
+CAS-side readout:
+
+| Metric | Value |
+|---|---:|
+| `ann_query request_total` | `{cas_ann_request_total_avg:.6f}s` |
+| `ann_query execute_total` | `{cas_ann_execute_total_avg:.6f}s` |
+| `ann_query execute_ux` | `{cas_ann_execute_ux_avg:.6f}s` |
+| `ann_query request_other` | `{cas_request_other_avg:.6f}s` |
+
+Server-side readout:
+
+| Metric | Value |
+|---|---:|
+| `ann_query execute_total` | `{server_ann_execute_total_avg:.6f}s` |
+| `ann_query reply_send` | `{server_ann_reply_send_avg:.6f}s` |
+
+Interpretation:
+
+- `server_receive` looked large at first because CAS measures low-level receive waits, not a pure network transfer.
+- After normalizing to per-query and adding server timestamps, most of `CAS server_receive` is explained by `cub_server execute_total`.
+- The remaining gap is only `{server_transport_gap_avg:.6f}s`, which is much smaller than server execution time.
+- `CCI execute - CAS request_total` is only `{cci_cas_outer_avg:.6f}s`, so client-side overhead outside CAS is also small.
+
+Conclusion: the apparent CAS “receive time” is mostly server execution wait. The main bottleneck remains `cub_server` HNSW execution.
+
+### Optimization Targets
+
+| Priority | Target | Evidence |
+|---|---|---|
+| P0 | `hnsw_search_element` / `seek_on_layer_` | Largest shares in server flamegraph |
+| P0 | `cosine_distance` | Large compute fraction inside search loop |
+| P1 | `get_vector_by_slot_id` | Meaningful storage access share in hot path |
+| P2 | CAS request wrappers | Small but measurable (`request_other`, transport gap) |
+
+The profiling result does not support “CAS/network is the main bottleneck.” If optimization effort is limited, server-side HNSW execution should be the first target.
+
+### cub_server Perf Stat (build vs query)
+
+| Metric | build index | query |
+|---|---:|---:|
+| elapsed | `{perf_stat_rows.get("elapsed", {}).get("build_index", "N/A")}` | `{perf_stat_rows.get("elapsed", {}).get("query", "N/A")}` |
+| task-clock | `{perf_stat_rows.get("task-clock", {}).get("build_index", "N/A")}` | `{perf_stat_rows.get("task-clock", {}).get("query", "N/A")}` |
+| CPUs utilized | `{perf_stat_rows.get("CPUs utilized", {}).get("build_index", "N/A")}` | `{perf_stat_rows.get("CPUs utilized", {}).get("query", "N/A")}` |
+| cycles | `{perf_stat_rows.get("cycles", {}).get("build_index", "N/A")}` | `{perf_stat_rows.get("cycles", {}).get("query", "N/A")}` |
+| instructions | `{perf_stat_rows.get("instructions", {}).get("build_index", "N/A")}` | `{perf_stat_rows.get("instructions", {}).get("query", "N/A")}` |
+| IPC | `{perf_stat_rows.get("IPC", {}).get("build_index", "N/A")}` | `{perf_stat_rows.get("IPC", {}).get("query", "N/A")}` |
+| frontend stalled % | `{perf_stat_rows.get("frontend stalled %", {}).get("build_index", "N/A")}` | `{perf_stat_rows.get("frontend stalled %", {}).get("query", "N/A")}` |
+| branch-miss rate % | `{perf_stat_rows.get("branch-miss rate %", {}).get("build_index", "N/A")}` | `{perf_stat_rows.get("branch-miss rate %", {}).get("query", "N/A")}` |
+| L1-dcache miss rate % | `{perf_stat_rows.get("L1-dcache miss rate %", {}).get("build_index", "N/A")}` | `{perf_stat_rows.get("L1-dcache miss rate %", {}).get("query", "N/A")}` |
+| dTLB miss rate % | `{perf_stat_rows.get("dTLB miss rate %", {}).get("build_index", "N/A")}` | `{perf_stat_rows.get("dTLB miss rate %", {}).get("query", "N/A")}` |
+| context-switches | `{perf_stat_rows.get("context-switches", {}).get("build_index", "N/A")}` | `{perf_stat_rows.get("context-switches", {}).get("query", "N/A")}` |
+| cpu-migrations | `{perf_stat_rows.get("cpu-migrations", {}).get("build_index", "N/A")}` | `{perf_stat_rows.get("cpu-migrations", {}).get("query", "N/A")}` |
+| page-faults | `{perf_stat_rows.get("page-faults", {}).get("build_index", "N/A")}` | `{perf_stat_rows.get("page-faults", {}).get("query", "N/A")}` |
+
+This table is `cub_server`-only and is phase-separated into index build and ANN query execution. Unsupported PMU events on the current host are left as `N/A`.
 
 ## 포함된 파일
 
 - `cub_server.full.flamegraph.svg`
 - `cub_cas.full.flamegraph.svg`
 - `cub_cas.active.flamegraph.svg`
+- `cub_server_perf_stat_summary.csv`
+- `cub_server_perf_stat_summary.svg`
 - `cci_cas_server_oneline_summary.svg`
 - `cci_cas_server_oneline_summary.csv`
 - `cas_vs_server_flamegraph_readout.svg`
 - `cas_vs_server_flamegraph_readout.csv`
 - `profile_summary.csv`
+- `query_ann_ef400_topk10_q9991.cub_server_ts.summary.csv`
 """
 (final_dir / "README.md").write_text(readme, encoding="utf-8")
 PY
