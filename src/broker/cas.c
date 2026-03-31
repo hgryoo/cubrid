@@ -55,6 +55,7 @@
 #include "cas_sql_log2.h"
 #include "error_manager.h"
 #include "ddl_log.h"
+#include "system_parameter.h"
 
 #include "cas.h"
 #include "cas_handle.h"
@@ -80,6 +81,11 @@ cas_timestamp_profile_dir (void)
     {
       dir = getenv ("CUBRID_CAS_PROFILE_DIR");
       initialized = true;
+    }
+
+  if (!prm_get_bool_value (PRM_ID_VECTOR_INDEX_DEBUG))
+    {
+      return NULL;
     }
 
   return dir;

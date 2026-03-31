@@ -48,16 +48,111 @@
 #include "client_support.h"
 #include "network_interface_cl.h"
 #include "network.h"
+#include "system_parameter.h"
 
 static void (*css_Previous_sigpipe_handler) (int sig_no) = NULL;
 /* TODO: M2 - remove css_Errno */
 int css_Errno = 0;
 CSS_MAP_ENTRY *css_Client_anchor;
+static int css_cas_profile_active = 0;
+static int css_cas_profile_srv_h_id = -1;
+static unsigned int css_cas_profile_query_seq = 0;
+static char css_cas_profile_stmt_label[32] = "";
 
 static void css_internal_server_shutdown (void);
 static void css_handle_pipe_shutdown (int sig);
 static void css_set_pipe_signal (void);
 static int css_test_for_server_errors (CSS_MAP_ENTRY * entry, unsigned int eid);
+
+static long long
+css_elapsed_us (const struct timeval *begin, const struct timeval *end)
+{
+  return ((long long) end->tv_sec - (long long) begin->tv_sec) * 1000000LL
+    + ((long long) end->tv_usec - (long long) begin->tv_usec);
+}
+
+static const char *
+css_cas_profile_dir (void)
+{
+  static int initialized = 0;
+  static const char *dir = NULL;
+
+  if (!initialized)
+    {
+      dir = getenv ("CUBRID_CAS_PROFILE_DIR");
+      initialized = 1;
+    }
+
+  if (!prm_get_bool_value (PRM_ID_VECTOR_INDEX_DEBUG))
+    {
+      return NULL;
+    }
+
+  return dir;
+}
+
+static void
+css_cas_profile_log (const char *op, const char *phase, long long detail0, long long detail1, long long duration_us,
+		     int err_code)
+{
+  const char *dir = css_cas_profile_dir ();
+  char path[PATH_MAX];
+  FILE *fp;
+  struct timeval now;
+  long long ts_epoch_us;
+  int write_header = 0;
+
+  if (dir == NULL || dir[0] == '\0' || css_cas_profile_active == 0)
+    {
+      return;
+    }
+
+  if (snprintf (path, sizeof (path), "%s/cub_cas.%ld.csv", dir, (long) getpid ()) <= 0)
+    {
+      return;
+    }
+
+  if (access (path, F_OK) != 0)
+    {
+      write_header = 1;
+    }
+
+  fp = fopen (path, "a");
+  if (fp == NULL)
+    {
+      return;
+    }
+
+  if (write_header)
+    {
+      fprintf (fp, "ts_epoch_us,pid,op,phase,srv_h_id,query_seq,stmt_label,detail0,detail1,duration_us,err_code\n");
+    }
+
+  gettimeofday (&now, NULL);
+  ts_epoch_us = (long long) now.tv_sec * 1000000LL + (long long) now.tv_usec;
+
+  fprintf (fp, "%lld,%ld,%s,%s,%d,%u,%s,%lld,%lld,%lld,%d\n",
+	   ts_epoch_us, (long) getpid (), op, phase, css_cas_profile_srv_h_id, css_cas_profile_query_seq,
+	   css_cas_profile_stmt_label[0] != '\0' ? css_cas_profile_stmt_label : "unknown",
+	   detail0, detail1, duration_us, err_code);
+  fclose (fp);
+}
+
+void
+css_set_cas_profile_context (int active, int srv_h_id, unsigned int query_seq, const char *stmt_label)
+{
+  css_cas_profile_active = active;
+  css_cas_profile_srv_h_id = srv_h_id;
+  css_cas_profile_query_seq = query_seq;
+
+  if (stmt_label == NULL)
+    {
+      css_cas_profile_stmt_label[0] = '\0';
+      return;
+    }
+
+  snprintf (css_cas_profile_stmt_label, sizeof (css_cas_profile_stmt_label), "%s", stmt_label);
+}
 
 /*
  * css_internal_server_shutdown() -
@@ -263,6 +358,8 @@ css_send_req_to_server (char *host, int request, char *arg_buffer, int arg_buffe
 {
   CSS_MAP_ENTRY *entry;
   unsigned short rid;
+  struct timeval send_begin, send_end;
+  long long elapsed_us = 0;
 
   entry = css_return_open_entry (host, &css_Client_anchor);
   if (entry == NULL)
@@ -278,8 +375,13 @@ css_send_req_to_server (char *host, int request, char *arg_buffer, int arg_buffe
   /* if the latest query status is committed, fetch won't be issued. */
   assert (!tran_was_latest_query_committed () || request != NET_SERVER_LS_GET_LIST_FILE_PAGE);
 
+  gettimeofday (&send_begin, NULL);
+  css_cas_profile_log ("server_send", "begin", request, arg_buffer_size + data_buffer_size, 0, 0);
   css_Errno = css_send_req_with_2_buffers (entry->conn, request, &rid, arg_buffer, arg_buffer_size, data_buffer,
 					   data_buffer_size, reply_buffer, reply_size);
+  gettimeofday (&send_end, NULL);
+  elapsed_us = css_elapsed_us (&send_begin, &send_end);
+  css_cas_profile_log ("server_send", "end", request, arg_buffer_size + data_buffer_size, elapsed_us, css_Errno);
   if (css_Errno != NO_ERRORS)
     {
       css_remove_queued_connection_by_entry (entry, &css_Client_anchor);
@@ -364,6 +466,8 @@ css_send_req_to_server_2_data (char *host, int request, char *arg_buffer, int ar
 {
   CSS_MAP_ENTRY *entry;
   unsigned short rid;
+  struct timeval send_begin, send_end;
+  long long elapsed_us = 0;
 
   entry = css_return_open_entry (host, &css_Client_anchor);
   if (entry == NULL)
@@ -376,9 +480,15 @@ css_send_req_to_server_2_data (char *host, int request, char *arg_buffer, int ar
   entry->conn->invalidate_snapshot = tm_Tran_invalidate_snapshot;
   entry->conn->in_method = tran_is_in_libcas ();
 
+  gettimeofday (&send_begin, NULL);
+  css_cas_profile_log ("server_send", "begin", request, arg_buffer_size + data1_buffer_size + data2_buffer_size, 0, 0);
   css_Errno = css_send_req_with_3_buffers (entry->conn, request, &rid, arg_buffer, arg_buffer_size, data1_buffer,
 					   data1_buffer_size, data2_buffer, data2_buffer_size, reply_buffer,
 					   reply_size);
+  gettimeofday (&send_end, NULL);
+  elapsed_us = css_elapsed_us (&send_begin, &send_end);
+  css_cas_profile_log ("server_send", "end", request, arg_buffer_size + data1_buffer_size + data2_buffer_size,
+		       elapsed_us, css_Errno);
   if (css_Errno != NO_ERRORS)
     {
       css_remove_queued_connection_by_entry (entry, &css_Client_anchor);
@@ -579,6 +689,8 @@ css_receive_data_from_server_with_timeout (unsigned int eid, char **buffer, int 
 {
   CSS_MAP_ENTRY *entry;
   int rid;
+  struct timeval recv_begin, recv_end;
+  long long elapsed_us = 0;
 
   entry = css_return_entry_from_eid (eid, css_Client_anchor);
   if (entry == NULL)
@@ -588,7 +700,12 @@ css_receive_data_from_server_with_timeout (unsigned int eid, char **buffer, int 
     }
 
   rid = CSS_RID_FROM_EID (eid);
+  gettimeofday (&recv_begin, NULL);
+  css_cas_profile_log ("server_receive", "begin", rid, timeout, 0, 0);
   css_Errno = css_receive_data (entry->conn, rid, buffer, size, timeout);
+  gettimeofday (&recv_end, NULL);
+  elapsed_us = css_elapsed_us (&recv_begin, &recv_end);
+  css_cas_profile_log ("server_receive", "end", rid, (size != NULL ? *size : 0), elapsed_us, css_Errno);
   if (css_Errno == NO_ERRORS || css_Errno == SERVER_ABORTED)
     {
       css_test_for_server_errors (entry, eid);

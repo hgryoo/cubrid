@@ -59,6 +59,7 @@ extern unsigned int css_receive_error_from_server (unsigned int eid, char **buff
 #endif
 extern unsigned int css_receive_data_from_server (unsigned int eid, char **buffer, int *size);
 extern unsigned int css_receive_data_from_server_with_timeout (unsigned int eid, char **buffer, int *size, int timeout);
+extern void css_set_cas_profile_context (int active, int srv_h_id, unsigned int query_seq, const char *stmt_label);
 extern void css_terminate (bool server_error);
 extern void css_cleanup_client_queues (char *host_name);
 extern HA_SERVER_STATE css_ha_server_state (void);

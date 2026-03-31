@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <sys/time.h>
 
 #include "filesys.hpp"
 #include "filesys_temp.hpp"
@@ -95,6 +96,7 @@
 #include "pl_session.hpp"
 #include "pl_executor.hpp"
 #include "hnsw.hpp"
+#include "system_parameter.h"
 // XXX: SHOULD BE THE LAST INCLUDE HEADER
 #include "memory_wrapper.hpp"
 
@@ -117,6 +119,100 @@
 
 /* This file is only included in the server.  So set the on_server flag on */
 unsigned int db_on_server = 1;
+
+static long long
+server_profile_elapsed_us (const struct timeval *begin, const struct timeval *end)
+{
+  return ((long long) end->tv_sec - (long long) begin->tv_sec) * 1000000LL
+    + ((long long) end->tv_usec - (long long) begin->tv_usec);
+}
+
+static const char *
+server_profile_dir (void)
+{
+  static int initialized = 0;
+  static const char *dir = NULL;
+
+  if (!initialized)
+    {
+      dir = getenv ("CUBRID_CAS_PROFILE_DIR");
+      initialized = 1;
+    }
+
+  if (!prm_get_bool_value (PRM_ID_VECTOR_INDEX_DEBUG))
+    {
+      return NULL;
+    }
+
+  return dir;
+}
+
+static const char *
+server_stmt_label_from_sql (const char *sql_text)
+{
+  if (sql_text == NULL)
+    {
+      return "unknown";
+    }
+
+  if (strstr (sql_text, "profile:vector_lookup") != NULL)
+    {
+      return "vector_lookup";
+    }
+
+  if (strstr (sql_text, "profile:ann_query") != NULL)
+    {
+      return "ann_query";
+    }
+
+  return "other";
+}
+
+static void
+server_profile_log (const char *op, const char *phase, unsigned int rid, const char *stmt_label,
+		    long long detail0, long long detail1, long long duration_us, int err_code)
+{
+  const char *dir = server_profile_dir ();
+  char path[PATH_MAX];
+  FILE *fp;
+  struct timeval now;
+  long long ts_epoch_us;
+  int write_header = 0;
+
+  if (dir == NULL || dir[0] == '\0')
+    {
+      return;
+    }
+
+  if (snprintf (path, sizeof (path), "%s/cub_server.%ld.csv", dir, (long) getpid ()) <= 0)
+    {
+      return;
+    }
+
+  if (access (path, F_OK) != 0)
+    {
+      write_header = 1;
+    }
+
+  fp = fopen (path, "a");
+  if (fp == NULL)
+    {
+      return;
+    }
+
+  if (write_header)
+    {
+      fprintf (fp, "ts_epoch_us,pid,op,phase,rid,stmt_label,detail0,detail1,duration_us,err_code\n");
+    }
+
+  gettimeofday (&now, NULL);
+  ts_epoch_us = (long long) now.tv_sec * 1000000LL + (long long) now.tv_usec;
+
+  fprintf (fp, "%lld,%ld,%s,%s,%u,%s,%lld,%lld,%lld,%d\n",
+	   ts_epoch_us, (long) getpid (), op, phase, rid, stmt_label != NULL ? stmt_label : "unknown",
+	   detail0, detail1, duration_us, err_code);
+  fclose (fp);
+}
 
 STATIC_INLINE TRAN_STATE stran_server_commit_internal (THREAD_ENTRY * thread_p, unsigned int rid, bool retain_lock,
 						       bool * should_conn_reset) __attribute__ ((ALWAYS_INLINE));
@@ -5280,6 +5376,9 @@ sqmgr_execute_query (THREAD_ENTRY * thread_p, unsigned int rid, char *request, i
   int error_code = NO_ERROR, all_error_code = NO_ERROR;
   int trace_level, trace_slow_msec, trace_ioreads;
   bool tran_abort = false, has_xasl_entry = false;
+  struct timeval execute_begin, execute_end;
+  struct timeval reply_begin, reply_end;
+  const char *stmt_label = "unknown";
 
   EXECUTION_INFO info = { NULL, NULL, NULL };
   QUERY_ID net_Deferred_end_queries[NET_DEFER_END_QUERIES_MAX], *p_net_Deferred_end_queries = net_Deferred_end_queries;
@@ -5384,8 +5483,11 @@ sqmgr_execute_query (THREAD_ENTRY * thread_p, unsigned int rid, char *request, i
   CACHE_TIME_RESET (&srv_cache_time);
 
   /* call the server routine of query execute */
+  gettimeofday (&execute_begin, NULL);
+  server_profile_log ("execute_total", "begin", rid, stmt_label, dbval_cnt, data_size, 0, 0);
   list_id = xqmgr_execute_query (thread_p, &xasl_id, &query_id, dbval_cnt, data, &query_flag, &clt_cache_time,
 				 &srv_cache_time, query_timeout, &xasl_cache_entry_p);
+  gettimeofday (&execute_end, NULL);
 
   if (data != NULL && data != aligned_data_buf)
     {
@@ -5395,7 +5497,11 @@ sqmgr_execute_query (THREAD_ENTRY * thread_p, unsigned int rid, char *request, i
   if (xasl_cache_entry_p != NULL)
     {
       info = xasl_cache_entry_p->sql_info;
+      stmt_label = server_stmt_label_from_sql (info.sql_user_text);
     }
+
+  server_profile_log ("execute_total", "end", rid, stmt_label, query_id, list_id != NULL,
+		      server_profile_elapsed_us (&execute_begin, &execute_end), er_errid ());
 
   end_query_allowed = IS_QUERY_EXECUTE_WITH_COMMIT (query_flag);
   tdes = LOG_FIND_CURRENT_TDES (thread_p);
@@ -5651,8 +5757,14 @@ null_list:
   memset (ptr, 0, OR_ALIGNED_BUF_SIZE (a_reply) - (ptr - reply));
 #endif
 
+  gettimeofday (&reply_begin, NULL);
+  server_profile_log ("reply_send", "begin", rid, stmt_label, replydata_size + page_size + queryinfo_string_length,
+		      OR_ALIGNED_BUF_SIZE (a_reply), 0, 0);
   css_send_reply_and_3_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply), replydata,
 				       replydata_size, page_ptr, page_size, queryinfo_string, queryinfo_string_length);
+  gettimeofday (&reply_end, NULL);
+  server_profile_log ("reply_send", "end", rid, stmt_label, replydata_size + page_size + queryinfo_string_length,
+		      OR_ALIGNED_BUF_SIZE (a_reply), server_profile_elapsed_us (&reply_begin, &reply_end), 0);
 
   /* free QFILE_LIST_ID duplicated by xqmgr_execute_query() */
   if (replydata != NULL)
@@ -5880,6 +5992,9 @@ sqmgr_prepare_and_execute_query (THREAD_ENTRY * thread_p, unsigned int rid, char
   QUERY_FLAG flag;
   int query_timeout;
   bool is_tran_auto_commit;
+  struct timeval execute_begin, execute_end;
+  struct timeval reply_begin, reply_end;
+  const char *stmt_label = "unknown";
 
   aligned_page_buf = PTR_ALIGN (page_buf, MAX_ALIGNMENT);
 
@@ -5924,9 +6039,12 @@ sqmgr_prepare_and_execute_query (THREAD_ENTRY * thread_p, unsigned int rid, char
    * After this point, xqmgr_prepare_and_execute_query has assumed
    * responsibility for freeing xasl_stream...
    */
+  gettimeofday (&execute_begin, NULL);
+  server_profile_log ("prepare_execute_total", "begin", rid, stmt_label, var_count, var_datasize, 0, 0);
   q_result =
     xqmgr_prepare_and_execute_query (thread_p, xasl_stream, xasl_stream_size, &query_id, var_count, var_data, &flag,
 				     query_timeout);
+  gettimeofday (&execute_end, NULL);
   if (var_data)
     {
       free_and_init (var_data);
@@ -5946,6 +6064,9 @@ sqmgr_prepare_and_execute_query (THREAD_ENTRY * thread_p, unsigned int rid, char
     {
       listid_length = or_listid_length (q_result);
     }
+
+  server_profile_log ("prepare_execute_total", "end", rid, stmt_label, query_id, q_result != NULL,
+		      server_profile_elapsed_us (&execute_begin, &execute_end), er_errid ());
 
   /* listid_length can be reset after pb_fetch() return move this after reset statement ptr = or_pack_int(ptr,
    * listid_length); */
@@ -6032,8 +6153,14 @@ sqmgr_prepare_and_execute_query (THREAD_ENTRY * thread_p, unsigned int rid, char
   memset (ptr, 0, OR_ALIGNED_BUF_SIZE (a_reply) - (ptr - reply));
 #endif
 
+  gettimeofday (&reply_begin, NULL);
+  server_profile_log ("reply_send", "begin", rid, stmt_label, listid_length + page_size + dummy_plan_size,
+		      OR_ALIGNED_BUF_SIZE (a_reply), 0, 0);
   css_send_reply_and_3_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply), list_data,
 				       listid_length, aligned_page_buf, page_size, NULL, dummy_plan_size);
+  gettimeofday (&reply_end, NULL);
+  server_profile_log ("reply_send", "end", rid, stmt_label, listid_length + page_size + dummy_plan_size,
+		      OR_ALIGNED_BUF_SIZE (a_reply), server_profile_elapsed_us (&reply_begin, &reply_end), 0);
 
 cleanup:
   if (xasl_stream)

@@ -56,6 +56,8 @@
 #include "cas_function.h"
 #include "cas_execute.h"
 #include "broker_filename.h"
+#include "client_support.h"
+#include "system_parameter.h"
 #include "dbtype.h"
 #include "db_session.h"
 #include "object_primitive.h"
@@ -83,6 +85,11 @@ cas_timestamp_profile_dir (void)
     {
       dir = getenv ("CUBRID_CAS_PROFILE_DIR");
       initialized = true;
+    }
+
+  if (!prm_get_bool_value (PRM_ID_VECTOR_INDEX_DEBUG))
+    {
+      return NULL;
     }
 
   return dir;
@@ -668,6 +675,9 @@ fn_execute_internal (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf,
   gettimeofday (&exec_total_begin, NULL);
   cas_timestamp_profile_log ("execute_total", "begin", srv_handle, srv_h_id, max_row, argc - bind_value_index, 0, 0);
 
+  css_set_cas_profile_context (1, srv_h_id, (unsigned int) SRV_HANDLE_QUERY_SEQ_NUM (srv_handle),
+			       cas_timestamp_stmt_label (srv_handle));
+
   gettimeofday (&exec_ux_begin, NULL);
   cas_timestamp_profile_log ("execute_ux", "begin", srv_handle, srv_h_id, max_row, argc - bind_value_index, 0, 0);
   ret_code =
@@ -684,6 +694,7 @@ fn_execute_internal (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf,
   cas_timestamp_profile_log ("execute_total", "end", srv_handle, srv_h_id, get_tuple_count (srv_handle),
 			     client_cache_reusable, (long long) elapsed_sec * 1000000LL + (long long) elapsed_msec * 1000LL,
 			     ret_code);
+  css_set_cas_profile_context (0, -1, 0, NULL);
   eid_string = get_error_log_eids (err_info.err_number);
   err_number_execute = err_info.err_number;
   logddl_set_err_code (err_info.err_number);

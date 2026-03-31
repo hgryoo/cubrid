@@ -215,7 +215,7 @@ namespace cubhnsw
   {
     context.m_stats.on_vector_access (context.m_is_perf_tracking, context.m_level);
 
-    auto it = m_vector_cache.find (slot);
+    const auto& it = m_vector_cache.find (slot);
     if (it != m_vector_cache.end ())
       {
 	context.m_stats.on_vector_cache_hit (context.m_is_perf_tracking, context.m_level);
