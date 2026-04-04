@@ -36,6 +36,9 @@
 #include "porting_inline.hpp"
 #include "chartype.h"
 
+/* Temporary test-build switch for context-switch cost measurements. */
+#define PRM_TEST_DISABLE_ALL_DAEMONS 1
+
 typedef enum
 {
   PRM_ERR_NO_ERROR = NO_ERROR,
@@ -527,6 +530,7 @@ enum param_id
   PRM_ID_HOSTVAR_PEEKING,
 
   PRM_ID_VECTOR_INDEX_EF_SEARCH,
+  PRM_ID_VECTOR_INDEX_I8_PREFILTER_MULTIPLIER,
   PRM_ID_VECTOR_INDEX_DEBUG,
   /* change PRM_LAST_ID when adding new system parameters */
   PRM_LAST_ID = PRM_ID_VECTOR_INDEX_DEBUG
