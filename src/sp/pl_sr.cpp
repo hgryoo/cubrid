@@ -693,7 +693,7 @@ static cubpl::server_manager *pl_server_manager = nullptr;
 int
 pl_server_init (const char *db_name)
 {
-  if (pl_server_manager != nullptr || prm_get_bool_value (PRM_ID_STORED_PROCEDURE) == false)
+  if (PRM_TEST_DISABLE_ALL_DAEMONS || pl_server_manager != nullptr || prm_get_bool_value (PRM_ID_STORED_PROCEDURE) == false)
     {
       return NO_ERROR;
     }

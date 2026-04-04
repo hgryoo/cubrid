@@ -3735,7 +3735,10 @@ vacuum_finished_block_vacuum (THREAD_ENTRY * thread_p, VACUUM_DATA_ENTRY * data,
   if (vacuum_Finished_job_queue->is_half_full ())
     {
       /* Wakeup master to process finished jobs. */
-      vacuum_Master_daemon->wakeup ();
+      if (vacuum_Master_daemon != NULL)
+	{
+	  vacuum_Master_daemon->wakeup ();
+	}
     }
 #endif /* SERVER_MODE */
 }
