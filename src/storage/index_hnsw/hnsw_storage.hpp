@@ -18,10 +18,11 @@
 
 #pragma once
 
+#include <memory>
+
 #include "hnsw_api.hpp"
 #include "hnsw_graph_base.hpp"
 #include "hnsw_algo_common.hpp"
-
 namespace cubhnsw
 {
   // TODO (refactor) : there are similar objects in page_buffer or lock_manager..
@@ -38,6 +39,7 @@ namespace cubhnsw
     std::byte   *data{};
     std::size_t  size{};
     lock_mode    mode{lock_mode::none};
+    bool         is_dirty{false};
   };
 
   inline void release_pinned_ (cubthread::entry *thread_p, pinned_block_data &blk, PAGE_PTR page_ptr) noexcept
@@ -49,7 +51,14 @@ namespace cubhnsw
 
     if (blk.mode == lock_mode::exclusive)
       {
-	pgbuf_set_dirty (thread_p, page_ptr, FREE);
+	if (!blk.is_dirty)
+	  {
+	    pgbuf_unfix (thread_p, page_ptr);
+	  }
+	else
+	  {
+	    pgbuf_set_dirty (thread_p, page_ptr, FREE);
+	  }
       }
     else
       {
@@ -144,6 +153,16 @@ namespace cubhnsw
 	return m_valid;
       }
 
+      PAGE_PTR page_ptr () const noexcept
+      {
+	return m_page_ptr;
+      }
+
+      void set_dirty () noexcept
+      {
+	m_blk.is_dirty = true;
+      }
+
     private:
       void invalidate_ () noexcept
       {
@@ -159,6 +178,22 @@ namespace cubhnsw
       data_t m_blk{};
       bool m_valid{false};
   };
+
+  inline void mark_hnsw_root_dirty (cubthread::entry *thread_p, const pinned_block &blk) noexcept
+  {
+    if (!blk || thread_p == nullptr || blk.page_ptr () == nullptr)
+      {
+	return;
+      }
+
+    const auto &data = *blk;
+    if (pgbuf_get_page_ptype (thread_p, blk.page_ptr ()) == PAGE_HNSW
+	&& data.id.slotid == 1
+	&& data.size == root_t::get_size ())
+      {
+	const_cast<pinned_block::data_t &> (data).is_dirty = true;
+      }
+  }
 
   struct page_guard
   {
@@ -227,6 +262,8 @@ namespace cubhnsw
 	, m_vfid (giid.vfid)
 	, m_root_vpid (block_id_t { giid.root_pageid, giid.vfid.volid })
 	, m_last_node_vpid (m_root_vpid)
+	, m_vector_cache_vector_stride_bytes (get_aligned_vector_cache_stride_ ())
+	, m_i8_cache_stride_bytes (get_aligned_i8_cache_stride_ ())
       {}
 
       ~storage () = default;
@@ -242,8 +279,6 @@ namespace cubhnsw
       pinned_t get_root (algo_context_t &context, lock_mode mode);
       pinned_t get_node_by_slot_id (algo_context_t &context, const slot_id_t &slot_id,
 				    const lock_mode &mode);
-      const float *get_vector_by_slot_id (algo_context_t &context, const slot_id_t &slot_id,
-					  const lock_mode &mode);
 
       // neighbors cache helpers (single-thread, in-memory)
       const std::vector<slot_id_t> *get_neighbors_cached_ids (
@@ -253,9 +288,22 @@ namespace cubhnsw
       void set_neighbors_cached_ids (algo_context_t &context,
 				     const slot_id_t &slot_id,
 				     level_t level,
-				     const std::vector<slot_id_t> &neighbors);
+				     std::vector<slot_id_t> neighbors);
 
       void promote_root (pinned_t &root);
+
+      const cached_vector *get_cached_vector_by_slot_id (algo_context_t &context,
+							 const slot_id_t &slot_id,
+							 const lock_mode &mode);
+
+      // Fast inline path for neighbors cache lookup: no stats overhead.
+      inline const std::vector<slot_id_t> *try_get_neighbors_cached (const slot_id_t &slot,
+	  level_t level) noexcept
+      {
+	neighbors_key key { slot, level };
+	auto it = m_neighbors_cache.find (key);
+	return (it != m_neighbors_cache.end ()) ? &it->second : nullptr;
+      }
 
       short get_max_level () const
       {
@@ -297,6 +345,32 @@ namespace cubhnsw
 
     protected:
 
+      std::size_t get_aligned_vector_cache_stride_ () const noexcept
+      {
+	const std::size_t vector_bytes = get_dimension () * sizeof (float);
+	return ((vector_bytes + VECTOR_CACHE_ALIGNMENT - 1) / VECTOR_CACHE_ALIGNMENT) * VECTOR_CACHE_ALIGNMENT;
+      }
+
+      std::size_t get_aligned_i8_cache_stride_ () const noexcept
+      {
+	const std::size_t i8_bytes = get_dimension () * sizeof (std::int8_t);
+	return ((i8_bytes + VECTOR_CACHE_ALIGNMENT - 1) / VECTOR_CACHE_ALIGNMENT) * VECTOR_CACHE_ALIGNMENT;
+      }
+
+      std::size_t get_initial_vector_cache_block_capacity_ () const noexcept
+      {
+	return std::max<std::size_t> (1, VECTOR_CACHE_TARGET_BLOCK_BYTES / m_vector_cache_vector_stride_bytes);
+      }
+
+      uint64_t make_vector_cache_key_ (const slot_id_t &slot_id) noexcept
+      {
+	return m_oid_encoder.encode_oid (slot_id);
+      }
+
+      const cached_vector *cache_vector_copy_ (const slot_id_t &slot_id, const float *vector);
+      const float *append_vector_copy_ (const float *vector);
+      const std::int8_t *append_i8_copy_ (const std::int8_t *data);
+
       page_guard get_block_to_insert (algo_context_t &context, block_group_id_t &vfid, block_id_t &last_vpid,
 				      std::size_t bytes);
       PAGE_PTR alloc_new_block (cubthread::entry *thread_p, block_group_id_t &vfid, block_id_t &vpid);
@@ -313,7 +387,15 @@ namespace cubhnsw
       block_id_t m_last_node_vpid;
       bool m_is_empty = true;
 
-      vector_cache_t m_vector_cache;  // (slot_id_t, vector) cache
+      vector_cache_t m_vector_cache;  // (slot_id_t, cached_vector) cache
+      hnsw_oid_encoder_default m_oid_encoder;
+      std::size_t m_vector_cache_vector_stride_bytes {0};
+      std::unique_ptr<vector_cache_block> m_vector_cache_blocks;
+      vector_cache_block *m_vector_cache_tail {nullptr};
+
+      std::size_t m_i8_cache_stride_bytes {0};
+      std::unique_ptr<i8_cache_block> m_i8_cache_blocks;
+      i8_cache_block *m_i8_cache_tail {nullptr};
 
       /* TODO: This is not thread-safe. Currently, we are assuming single-threaded access, but we need to make it thread-safe. */
       neighbors_cache_t m_neighbors_cache;    // (slot_id_t, level) -> neighbors

@@ -18,6 +18,9 @@
 
 #include "hnsw_storage.hpp"
 
+#include <vector>
+
+#include "error_manager.h"
 #include "file_manager.h" // FILE_DESCRIPTORS
 #include "slotted_page.h"
 
@@ -155,6 +158,14 @@ namespace cubhnsw
   pinned_t
   storage::get_node_by_slot_id (algo_context_t &context, const slot_id_t &id, const lock_mode &mode)
   {
+    if (OID_ISNULL (&id) || id.volid < 0 || id.pageid <= 0 || id.slotid < 0 || id.pageid > 100000000)
+      {
+	er_print_callstack (ARG_FILE_LINE,
+			    "HNSW get_node_by_slot_id invalid slot: (%d|%d|%d) level=%d\n",
+			    id.volid, id.pageid, id.slotid, (int) context.m_level);
+	abort ();
+      }
+
     VPID vpid = { id.pageid, id.volid };
 
     PGBUF_LATCH_MODE pgbuf_mode = PGBUF_LATCH_READ;
@@ -204,22 +215,24 @@ namespace cubhnsw
   storage::set_neighbors_cached_ids (algo_context_t &context,
 				     const slot_id_t &slot,
 				     level_t level,
-				     const std::vector<slot_id_t> &neighbors)
+				     std::vector<slot_id_t> neighbors)
   {
     neighbors_key key { slot, level };
-    m_neighbors_cache[key] = neighbors;
+    m_neighbors_cache.insert_or_assign (key, std::move (neighbors));
   }
 
-  const float *
-  storage::get_vector_by_slot_id (algo_context_t &context, const slot_id_t &slot, const lock_mode &mode)
+  const cached_vector *
+  storage::get_cached_vector_by_slot_id (algo_context_t &context, const slot_id_t &slot,
+					  const lock_mode &mode)
   {
     context.m_stats.on_vector_access (context.m_is_perf_tracking, context.m_level);
 
-    auto it = m_vector_cache.find (slot);
+    const uint64_t cache_key = make_vector_cache_key_ (slot);
+    auto it = m_vector_cache.find (cache_key);
     if (it != m_vector_cache.end ())
       {
 	context.m_stats.on_vector_cache_hit (context.m_is_perf_tracking, context.m_level);
-	return it->second.data ();
+	return &it->second;
       }
 
     context.m_stats.on_vector_cache_miss (context.m_is_perf_tracking, context.m_level);
@@ -228,10 +241,96 @@ namespace cubhnsw
     node_t node { reinterpret_cast<byte_t *> (node_blk->data) };
     const float *vec = node.get_vector ();
 
-    std::vector<float> &cached = m_vector_cache[slot];
-    cached.assign (vec, vec + get_dimension ());
+    return cache_vector_copy_ (slot, vec);
+  }
 
-    return cached.data ();
+  const cached_vector *
+  storage::cache_vector_copy_ (const slot_id_t &slot_id, const float *vector)
+  {
+    const uint64_t cache_key = make_vector_cache_key_ (slot_id);
+    auto it = m_vector_cache.find (cache_key);
+    if (it != m_vector_cache.end ())
+      {
+	return &it->second;
+      }
+
+    const std::size_t dim = get_dimension ();
+
+    // Quantize float vector to int8
+    float max_abs = 0.0f;
+    for (std::size_t i = 0; i < dim; ++i)
+      {
+	const float v = vector[i];
+	if (v > max_abs) max_abs = v;
+	else if (-v > max_abs) max_abs = -v;
+      }
+    const float scale = (max_abs > 0.0f) ? max_abs / 127.0f : 1.0f;
+
+    std::vector<std::int8_t> i8_buf (dim);
+    for (std::size_t i = 0; i < dim; ++i)
+      {
+	float s = vector[i] / scale;
+	if (s > 127.0f) s = 127.0f;
+	else if (s < -127.0f) s = -127.0f;
+	i8_buf[i] = static_cast<std::int8_t> (s + (s >= 0.0f ? 0.5f : -0.5f));
+      }
+
+    const float *float_ptr = append_vector_copy_ (vector);
+    const std::int8_t *i8_ptr = append_i8_copy_ (i8_buf.data ());
+
+    cached_vector cv;
+    cv.values = float_ptr;
+    cv.values_i8.values = i8_ptr;
+    cv.values_i8.scale = scale;
+
+    auto [ins_it, ok] = m_vector_cache.emplace (cache_key, cv);
+    return &ins_it->second;
+  }
+
+  const float *
+  storage::append_vector_copy_ (const float *vector)
+  {
+    if (m_vector_cache_tail == nullptr)
+      {
+	m_vector_cache_blocks =
+		std::make_unique<vector_cache_block> (m_vector_cache_vector_stride_bytes,
+		    get_initial_vector_cache_block_capacity_ ());
+	m_vector_cache_tail = m_vector_cache_blocks.get ();
+      }
+
+    if (!m_vector_cache_tail->has_capacity ())
+      {
+	const std::size_t next_capacity = std::max<std::size_t> (m_vector_cache_tail->m_vector_capacity * 2,
+					  get_initial_vector_cache_block_capacity_ ());
+	m_vector_cache_tail->m_next =
+		std::make_unique<vector_cache_block> (m_vector_cache_vector_stride_bytes, next_capacity);
+	m_vector_cache_tail = m_vector_cache_tail->m_next.get ();
+      }
+
+    return m_vector_cache_tail->append (vector, get_dimension ());
+  }
+
+  const std::int8_t *
+  storage::append_i8_copy_ (const std::int8_t *data)
+  {
+    const std::size_t dim = get_dimension ();
+    const std::size_t initial_capacity = get_initial_vector_cache_block_capacity_ ();
+
+    if (m_i8_cache_tail == nullptr)
+      {
+	m_i8_cache_blocks = std::make_unique<i8_cache_block> (m_i8_cache_stride_bytes, initial_capacity);
+	m_i8_cache_tail = m_i8_cache_blocks.get ();
+      }
+
+    if (!m_i8_cache_tail->has_capacity ())
+      {
+	const std::size_t next_capacity = std::max<std::size_t> (m_i8_cache_tail->m_capacity * 2,
+					  initial_capacity);
+	m_i8_cache_tail->m_next = std::make_unique<i8_cache_block> (m_i8_cache_stride_bytes, next_capacity);
+	m_i8_cache_tail = m_i8_cache_tail->m_next.get ();
+      }
+
+    return m_i8_cache_tail->append (data, dim);
   }
 
   // promote lockmode from shared to exclusive

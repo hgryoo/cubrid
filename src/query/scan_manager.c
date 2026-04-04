@@ -6494,7 +6494,6 @@ scan_next_vector_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
       if (visid->curr_oidno < visid->oid_cnt)
 	{
 	  scan_id->qualification = QPROC_QUALIFIED;
-
 	  SCAN_CODE sp_scan =
 	    heap_get_visible_version (thread_p, &visid->oidp[visid->curr_oidno], NULL, &recdes, &visid->scan_cache,
 				      scan_id->fixed,
