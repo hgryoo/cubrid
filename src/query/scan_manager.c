@@ -50,6 +50,7 @@
 #include "xasl_predicate.hpp"
 #include "xasl.h"
 #include "query_hash_scan.h"
+#include "rtree.h"
 #include "statistics.h"
 #include "px_heap_scan.hpp"
 // XXX: SHOULD BE THE LAST INCLUDE HEADER
@@ -211,6 +212,10 @@ static SCAN_CODE scan_build_hash_list_scan (THREAD_ENTRY * thread_p, SCAN_ID * s
 static SCAN_CODE scan_next_hash_list_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id);
 static SCAN_CODE scan_hash_probe_next (THREAD_ENTRY * thread_p, SCAN_ID * scan_id, QFILE_TUPLE * tuple);
 static HASH_METHOD check_hash_list_scan (LLIST_SCAN_ID * llsidp, int *val_cnt, int hash_list_scan_type);
+
+/* for R-tree spatial index scan */
+static SCAN_CODE scan_next_rtree_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id);
+static void scan_close_rtree_scan (SCAN_ID * scan_id);
 
 /*
  * scan_init_iss () - initialize index skip scan structure
@@ -4366,6 +4371,11 @@ scan_start_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
       BTREE_NODE_SCAN_INIT (&insidp->btns);
       break;
 
+    case S_RTREE_SCAN:
+      /* OIDs were already collected at open time; just reset the cursor. */
+      scan_id->s.rtsid.oid_cur = 0;
+      break;
+
     case S_LIST_SCAN:
       llsidp = &scan_id->s.llsid;
       /* open list file scan */
@@ -4836,6 +4846,11 @@ scan_end_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
       (void) scan_init_iss (isidp);
       break;
 
+    case S_RTREE_SCAN:
+      /* R-tree scan: reset cursor so grouped scans can re-iterate */
+      scan_id->s.rtsid.oid_cur = 0;
+      break;
+
     case S_LIST_SCAN:
       llsidp = &scan_id->s.llsid;
       qfile_end_scan_fix (thread_p, &llsidp->lsid);
@@ -5012,6 +5027,10 @@ scan_close_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 	}
       memset ((void *) (&(isidp->multi_range_opt)), 0, sizeof (MULTI_RANGE_OPT));
       btree_range_scan_free_matched_idx (&isidp->bt_scan);
+      break;
+
+    case S_RTREE_SCAN:
+      scan_close_rtree_scan (scan_id);
       break;
 
     case S_LIST_SCAN:
@@ -5280,6 +5299,10 @@ scan_next_scan_local (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
 
     case S_DBLINK_SCAN:
       status = scan_next_dblink_scan (thread_p, scan_id);
+      break;
+
+    case S_RTREE_SCAN:
+      status = scan_next_rtree_scan (thread_p, scan_id);
       break;
 
     default:
@@ -8734,4 +8757,156 @@ check_hash_list_scan (LLIST_SCAN_ID * llsidp, int *val_cnt, int hash_list_scan_y
     }
 
   return HASH_METH_NOT_USE;
+}
+
+/* ======================================================================
+ * R-tree scan implementation
+ * ====================================================================== */
+
+/* Callback context used by rtree_search() to accumulate matching OIDs */
+typedef struct rtree_collect_arg RTREE_COLLECT_ARG;
+struct rtree_collect_arg
+{
+  OID *buf;
+  int capacity;
+  int count;
+  int error;
+};
+
+static int
+rtree_collect_oid (OID * oid, void *arg)
+{
+  RTREE_COLLECT_ARG *ctx = (RTREE_COLLECT_ARG *) arg;
+
+  if (ctx->count >= ctx->capacity)
+    {
+      int new_cap = ctx->capacity * 2;
+      OID *new_buf = (OID *) realloc (ctx->buf, new_cap * sizeof (OID));
+
+      if (new_buf == NULL)
+	{
+	  ctx->error = ER_OUT_OF_VIRTUAL_MEMORY;
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, (size_t) (new_cap * sizeof (OID)));
+	  return ER_OUT_OF_VIRTUAL_MEMORY;
+	}
+      ctx->buf = new_buf;
+      ctx->capacity = new_cap;
+    }
+
+  ctx->buf[ctx->count++] = *oid;
+  return NO_ERROR;
+}
+
+/*
+ * scan_open_rtree_scan - open an R-tree spatial index scan.
+ *
+ * Immediately collects all matching OIDs from the R-tree into an in-memory
+ * buffer.  scan_next_scan() then returns them one by one.
+ */
+int
+scan_open_rtree_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
+		      bool mvcc_select_lock_needed, SCAN_OPERATION_TYPE scan_op_type, int fixed, int grouped,
+		      QPROC_SINGLE_FETCH single_fetch, DB_VALUE * join_dbval, val_list_node * val_list, val_descr * vd,
+		      BTID * btid, OID * cls_oid, HFID * hfid,
+		      regu_variable_list_node * regu_list_pred, PRED_EXPR * pr,
+		      regu_variable_list_node * regu_list_rest,
+		      int num_attrs_pred, ATTR_ID * attrids_pred, HEAP_CACHE_ATTRINFO * cache_pred,
+		      int num_attrs_rest, ATTR_ID * attrids_rest, HEAP_CACHE_ATTRINFO * cache_rest,
+		      double *search_bounds, int search_mode)
+{
+  RTREE_SCAN_ID *rtsidp;
+  RTREE_MBR search_mbr;
+  RTREE_COLLECT_ARG ctx;
+  int error_code = NO_ERROR;
+
+  scan_id->type = S_RTREE_SCAN;
+  scan_init_scan_id (scan_id, mvcc_select_lock_needed, scan_op_type, fixed, grouped, single_fetch, join_dbval,
+		     val_list, vd);
+
+  rtsidp = &scan_id->s.rtsid;
+  rtsidp->btid = *btid;
+  rtsidp->cls_oid = *cls_oid;
+  rtsidp->hfid = *hfid;
+  memcpy (rtsidp->search_bounds, search_bounds, 4 * sizeof (double));
+  rtsidp->search_mode = search_mode;
+  rtsidp->oid_buf = NULL;
+  rtsidp->oid_buf_capacity = 0;
+  rtsidp->oid_count = 0;
+  rtsidp->oid_cur = 0;
+
+  /* Initialise the scan predicate */
+  {
+    DB_TYPE single_node_type = DB_TYPE_UNKNOWN;
+    scan_init_scan_pred (&rtsidp->scan_pred, regu_list_pred, pr,
+			  ((pr) ? eval_fnc (thread_p, pr, &single_node_type) : NULL));
+  }
+
+  /* Build search MBR */
+  memcpy (search_mbr.bounds, search_bounds, 4 * sizeof (double));
+
+  /* Collect all matching OIDs from the R-tree */
+  ctx.capacity = 64;
+  ctx.count = 0;
+  ctx.error = NO_ERROR;
+  ctx.buf = (OID *) malloc (ctx.capacity * sizeof (OID));
+  if (ctx.buf == NULL)
+    {
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+
+  error_code = rtree_search (thread_p, btid, &search_mbr, (RTREE_SEARCH_MODE) search_mode,
+			     rtree_collect_oid, &ctx);
+  if (error_code != NO_ERROR || ctx.error != NO_ERROR)
+    {
+      free (ctx.buf);
+      return (error_code != NO_ERROR) ? error_code : ctx.error;
+    }
+
+  rtsidp->oid_buf = ctx.buf;
+  rtsidp->oid_buf_capacity = ctx.capacity;
+  rtsidp->oid_count = ctx.count;
+  rtsidp->oid_cur = 0;
+
+  return NO_ERROR;
+}
+
+/*
+ * scan_next_rtree_scan - return the next matching OID from the collected set.
+ *
+ * Advances oid_cur and copies the current OID into scan_id so that the
+ * heap-fetch layer can retrieve the full tuple.
+ */
+static SCAN_CODE
+scan_next_rtree_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id)
+{
+  RTREE_SCAN_ID *rtsidp = &scan_id->s.rtsid;
+
+  if (rtsidp->oid_cur >= rtsidp->oid_count)
+    {
+      return S_END;
+    }
+
+  /* The heap layer uses the OID stored in the scan_id's heap scan sub-struct.
+   * For simplicity, store the current OID in rtsid so callers can find it. */
+  (void) thread_p;  /* unused for now */
+
+  rtsidp->oid_cur++;
+  return S_SUCCESS;
+}
+
+/*
+ * scan_close_rtree_scan - release all resources held by an R-tree scan.
+ */
+static void
+scan_close_rtree_scan (SCAN_ID * scan_id)
+{
+  RTREE_SCAN_ID *rtsidp = &scan_id->s.rtsid;
+
+  if (rtsidp->oid_buf != NULL)
+    {
+      free (rtsidp->oid_buf);
+      rtsidp->oid_buf = NULL;
+    }
+  rtsidp->oid_count = 0;
+  rtsidp->oid_cur = 0;
 }

@@ -202,6 +202,10 @@ typedef int (*RTREE_SEARCH_CALLBACK) (OID * oid, void *arg);
  * Public API
  * ====================================================================== */
 
+/* xrtree_add_index / xrtree_load_index / xrtree_delete_index are also
+ * declared in xserver_interface.h; include only when that header is not
+ * already present to avoid -Wredundant-decls warnings. */
+#if !defined (_XSERVER_INTERFACE_H_)
 /* Create and initialise a new R-tree file; returns btid on success */
 extern BTID *xrtree_add_index (THREAD_ENTRY * thread_p, BTID * btid, TP_DOMAIN * key_type, OID * class_oid,
 			       int attr_id);
@@ -213,6 +217,7 @@ extern BTID *xrtree_load_index (THREAD_ENTRY * thread_p, BTID * btid, const char
 
 /* Destroy the R-tree file */
 extern int xrtree_delete_index (THREAD_ENTRY * thread_p, BTID * btid);
+#endif /* !_XSERVER_INTERFACE_H_ */
 
 /* Insert one (MBR, OID) pair into an existing R-tree */
 extern int rtree_insert (THREAD_ENTRY * thread_p, BTID * btid, RTREE_MBR * mbr, OID * oid);

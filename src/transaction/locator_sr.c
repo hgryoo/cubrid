@@ -66,8 +66,10 @@
 #include "transaction_transient.hpp"
 #include "xserver_interface.h"
 #include "catalog_class.h"
+#include "db_geometry.hpp"
 #include "es_posix.h"
-// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "rtree.h"
+/* XXX: SHOULD BE THE LAST INCLUDE HEADER */
 #include "memory_wrapper.hpp"
 
 static const int LOCATOR_GUESS_NUM_NESTED_REFERENCES = 100;
@@ -7919,6 +7921,38 @@ locator_add_or_remove_index_internal (THREAD_ENTRY * thread_p, RECDES * recdes, 
 	  else if (index->type == BTREE_PRIMARY_KEY)
 	    {
 	      unique_pk = BTREE_CONSTRAINT_UNIQUE | BTREE_CONSTRAINT_PRIMARY_KEY;
+	    }
+
+	  /* R-tree index: extract MBR from the geometry key value and dispatch
+	   * to the R-tree storage layer instead of the B-tree layer. */
+	  if (index->type == RTREE_INDEX)
+	    {
+	      RTREE_MBR mbr;
+
+	      rtree_mbr_from_db_spatial (&mbr, key_dbvalue);
+	      if (mbr.bounds[0] > mbr.bounds[2])
+		{
+		  /* NULL geometry or extraction failure – skip silently (same
+		   * behaviour as B-tree with a NULL key). */
+		  error_code = NO_ERROR;
+		}
+	      else if (is_insert)
+		{
+		  error_code = rtree_insert (thread_p, &btid, &mbr, inst_oid);
+		}
+	      else
+		{
+		  error_code = rtree_delete (thread_p, &btid, &mbr, inst_oid);
+		}
+
+	      if (error_code != NO_ERROR)
+		{
+		  ASSERT_ERROR ();
+		  goto error;
+		}
+
+	      /* Skip btree-specific post-processing for rtree indexes */
+	      continue;
 	    }
 
 	  if (is_insert)

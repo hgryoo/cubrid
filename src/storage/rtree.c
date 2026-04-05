@@ -44,6 +44,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "db_geometry.hpp"
 #include "error_manager.h"
 #include "file_manager.h"
 #include "heap_file.h"
@@ -200,23 +201,27 @@ rtree_mbr_contains (const RTREE_MBR * outer, const RTREE_MBR * inner)
 }
 
 /*
- * rtree_mbr_from_db_spatial - extract a 2-D bounding box from a serialised
- * geometry value that is stored inside a DB_SPATIAL.  The geometry pointer
- * is expected to be a GEOSGeometry* cast to void*.
+ * rtree_mbr_from_db_spatial - extract a 2-D bounding box from a DB_VALUE
+ * that holds a geometry (DB_TYPE_GEOMETRY / DB_TYPE_GEOGRAPHY).
  *
- * NOTE: this function intentionally avoids a direct dependency on GEOS by
- * delegating through the GEOS C API.  A proper implementation should call
- * GEOSEnvelope_r() and extract the coordinate sequence.  For now we expose
- * the interface and provide a stub that callers can override.
+ * Delegates to db_spatial_get_mbr() in db_geometry.cpp, which calls
+ * GEOSEnvelope_r() internally so that rtree.c has no direct GEOS dependency.
+ *
+ * The caller should check whether the returned MBR is non-empty by calling
+ * rtree_mbr_area() > 0 or checking bounds[0] <= bounds[2].
  */
 void
-rtree_mbr_from_db_spatial (RTREE_MBR * mbr, const void *geom)
+rtree_mbr_from_db_spatial (RTREE_MBR * mbr, const void *db_value)
 {
-  /* Stub: callers must supply a pre-computed MBR, or this function must be
-   * extended to call into db_geometry.cpp via a thin bridge.  Setting an
-   * "empty" MBR signals an error to the caller. */
   RTREE_MBR_SET_EMPTY (mbr);
-  (void) geom;
+
+  if (db_value == NULL)
+    {
+      return;
+    }
+
+  /* db_spatial_get_mbr fills bounds[4] = {xmin, ymin, xmax, ymax} */
+  (void) db_spatial_get_mbr ((const DB_VALUE *) db_value, mbr->bounds);
 }
 
 

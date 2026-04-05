@@ -48,6 +48,10 @@ int db_spatial_contains (const DB_VALUE *value1, const DB_VALUE *value2, int *re
 int db_spatial_intersects (const DB_VALUE *value1, const DB_VALUE *value2, int *result_out);
 int db_spatial_envelope (const DB_VALUE *value, DB_VALUE *result);
 
+/* Extract a 2-D MBR as bounds[4] = {xmin, ymin, xmax, ymax}.
+ * Used by the R-tree storage layer to avoid a direct GEOS dependency. */
+int db_spatial_get_mbr (const DB_VALUE *value, double *bounds);
+
 #ifdef __cplusplus
 }
 #endif

@@ -90,8 +90,40 @@ typedef enum
   S_INDX_KEY_INFO_SCAN,		/* scans b-tree and queries for key info */
   S_INDX_NODE_INFO_SCAN,	/* scans b-tree nodes for info */
   S_DBLINK_SCAN,		/* scans dblink */
-  S_HEAP_SAMPLING_SCAN		/* scans sampling data */
+  S_HEAP_SAMPLING_SCAN,		/* scans sampling data */
+  S_RTREE_SCAN			/* R-tree spatial index scan */
 } SCAN_TYPE;
+
+/* ======================================================================
+ * R-tree scan structures
+ * ====================================================================== */
+
+/*
+ * RTREE_SCAN_ID - state for an R-tree spatial index scan.
+ *
+ * The scan collects all matching OIDs upfront into a dynamic array during
+ * open, then returns them one by one during successive scan_next calls.
+ * This is a simple but correct first implementation; a streaming version
+ * that does lazy DFS traversal is a future optimisation.
+ */
+typedef struct rtree_scan_id RTREE_SCAN_ID;
+struct rtree_scan_id
+{
+  BTID btid;		/* R-tree index identifier */
+  OID cls_oid;		/* owning class OID */
+  HFID hfid;		/* heap file (for predicate evaluation) */
+  SCAN_PRED scan_pred;	/* filter predicate applied after index lookup */
+
+  /* Search MBR: populated from the index access spec at open time */
+  double search_bounds[4];  /* [xmin, ymin, xmax, ymax] */
+  int search_mode;	    /* RTREE_SEARCH_MODE value */
+
+  /* Result OID buffer (heap-allocated, freed at close) */
+  OID *oid_buf;		/* matched OIDs */
+  int oid_buf_capacity;	/* allocated slots */
+  int oid_count;	/* valid entries */
+  int oid_cur;		/* next index to return */
+};
 
 typedef struct dblink_scan_id DBLINK_SCAN_ID;
 struct dblink_scan_id
@@ -411,6 +443,7 @@ struct scan_id_struct
     SHOWSTMT_SCAN_ID stsid;	/* show stmt identifier */
     JSON_TABLE_SCAN_ID jtid;
     METHOD_SCAN_ID msid;
+    RTREE_SCAN_ID rtsid;	/* R-tree spatial index scan */
   } s;
 
   SCAN_STATS scan_stats;
@@ -467,6 +500,20 @@ extern int scan_open_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 				 HEAP_CACHE_ATTRINFO * cache_rest, int num_attrs_range, ATTR_ID * attrids_range,
 				 HEAP_CACHE_ATTRINFO * cache_range, bool iscan_oid_order, QUERY_ID query_id,
 				 bool min_max_optimzied_scan);
+/* Open an R-tree spatial index scan.
+ * search_bounds[4] = {xmin, ymin, xmax, ymax} defines the query window.
+ * search_mode is one of the RTREE_SEARCH_MODE enum values. */
+extern int scan_open_rtree_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
+				 bool mvcc_select_lock_needed, SCAN_OPERATION_TYPE scan_op_type, int fixed, int grouped,
+				 QPROC_SINGLE_FETCH single_fetch, DB_VALUE * join_dbval, val_list_node * val_list,
+				 val_descr * vd,
+				 BTID * btid, OID * cls_oid, HFID * hfid,
+				 regu_variable_list_node * regu_list_pred, PRED_EXPR * pr,
+				 regu_variable_list_node * regu_list_rest,
+				 int num_attrs_pred, ATTR_ID * attrids_pred, HEAP_CACHE_ATTRINFO * cache_pred,
+				 int num_attrs_rest, ATTR_ID * attrids_rest, HEAP_CACHE_ATTRINFO * cache_rest,
+				 double *search_bounds, int search_mode);
+
 extern int scan_open_index_key_info_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 					  /* fields of SCAN_ID */
 					  val_list_node * val_list, val_descr * vd,

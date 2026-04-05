@@ -634,3 +634,112 @@ db_spatial_envelope (const DB_VALUE *value, DB_VALUE *result)
 
   return db_spatial_make_from_geometry (result, DB_VALUE_DOMAIN_TYPE (value), context, envelope, spatial->srid);
 }
+
+/*
+ * db_spatial_get_mbr - extract the 2-D axis-aligned bounding box of a
+ * geometry value into a flat double array.
+ *
+ * bounds layout: [xmin, ymin, xmax, ymax]  (same as RTREE_MBR.bounds)
+ *
+ * Works by computing the GEOS envelope and reading its coordinate sequence.
+ * For a point the envelope degenerates to a single coordinate, so we set
+ * min == max in both dimensions.
+ */
+int
+db_spatial_get_mbr (const DB_VALUE *value, double *bounds)
+{
+  const DB_SPATIAL *spatial = NULL;
+  GEOSContextHandle_t context = NULL;
+  GEOSGeometry *geom = NULL;
+  GEOSGeometry *envelope = NULL;
+  const GEOSCoordSequence *coord_seq = NULL;
+  unsigned int n_coords = 0;
+  unsigned int i;
+  double x, y;
+  int error;
+
+  if (bounds == NULL)
+    {
+      return ER_FAILED;
+    }
+
+  error = db_spatial_validate_value (value, &spatial);
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  context = GEOS_init_r ();
+  if (context == NULL)
+    {
+      return ER_FAILED;
+    }
+
+  error = db_spatial_make_temp_geometry (spatial, context, &geom);
+  if (error != NO_ERROR)
+    {
+      GEOS_finish_r (context);
+      return error;
+    }
+
+  envelope = GEOSEnvelope_r (context, geom);
+  GEOSGeom_destroy_r (context, geom);
+  if (envelope == NULL)
+    {
+      GEOS_finish_r (context);
+      return ER_FAILED;
+    }
+
+  /* Initialise bounds to impossible extremes */
+  bounds[0] = bounds[1] =  1e300;   /* xmin, ymin */
+  bounds[2] = bounds[3] = -1e300;   /* xmax, ymax */
+
+  {
+    int geom_type = GEOSGeomTypeId_r (context, envelope);
+
+    if (geom_type == GEOS_POINT)
+      {
+        /* Degenerate envelope (input was a point) */
+        coord_seq = GEOSGeom_getCoordSeq_r (context, envelope);
+        if (coord_seq != NULL)
+          {
+            GEOSCoordSeq_getX_r (context, coord_seq, 0, &x);
+            GEOSCoordSeq_getY_r (context, coord_seq, 0, &y);
+            bounds[0] = bounds[2] = x;
+            bounds[1] = bounds[3] = y;
+          }
+      }
+    else
+      {
+        /* Polygon envelope: exterior ring gives us all corners */
+        const GEOSGeometry *ring = GEOSGetExteriorRing_r (context, envelope);
+        if (ring != NULL)
+          {
+            coord_seq = GEOSGeom_getCoordSeq_r (context, ring);
+            if (coord_seq != NULL && GEOSCoordSeq_getSize_r (context, coord_seq, &n_coords) != 0)
+              {
+                for (i = 0; i < n_coords; i++)
+                  {
+                    GEOSCoordSeq_getX_r (context, coord_seq, i, &x);
+                    GEOSCoordSeq_getY_r (context, coord_seq, i, &y);
+                    if (x < bounds[0]) bounds[0] = x;
+                    if (y < bounds[1]) bounds[1] = y;
+                    if (x > bounds[2]) bounds[2] = x;
+                    if (y > bounds[3]) bounds[3] = y;
+                  }
+              }
+          }
+      }
+  }
+
+  GEOSGeom_destroy_r (context, envelope);
+  GEOS_finish_r (context);
+
+  /* Sanity: if we never updated bounds the geometry was invalid */
+  if (bounds[0] > bounds[2] || bounds[1] > bounds[3])
+    {
+      return ER_FAILED;
+    }
+
+  return NO_ERROR;
+}
