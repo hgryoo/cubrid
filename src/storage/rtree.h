@@ -42,6 +42,7 @@
 #include "oid.h"
 #include "object_domain.h"
 #include "recovery.h"
+#include "statistics.h"
 #include "storage_common.h"
 #include "thread_compat.hpp"
 
@@ -243,6 +244,9 @@ extern int rtree_initialize_new_page (THREAD_ENTRY * thread_p, PAGE_PTR page, vo
 
 /* Dump the full R-tree structure for debugging / tracing */
 extern void rtree_dump (THREAD_ENTRY * thread_p, BTID * btid, FILE * fp);
+
+/* Collect index statistics into BTREE_STATS for the optimizer */
+extern int rtree_get_stats (THREAD_ENTRY * thread_p, BTREE_STATS * stat_info_p, bool with_fullscan);
 
 /* ======================================================================
  * WAL recovery functions (called by recovery.c via RV_fun[])

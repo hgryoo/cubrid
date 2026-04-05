@@ -2656,3 +2656,77 @@ rtree_rv_undoredo_root_header (THREAD_ENTRY * thread_p, LOG_RCV * recv)
   pgbuf_set_dirty (thread_p, recv->pgptr, DONT_FREE);
   return NO_ERROR;
 }
+
+/* ======================================================================
+ * R-tree statistics
+ *
+ * Fills BTREE_STATS for the given R-tree file.  The fields are mapped as:
+ *   pages  = total file pages (from file_get_num_user_pages)
+ *   leafs  = total file pages (R-tree has no overflow pages distinct from leaf)
+ *   height = root node_level
+ *   keys   = num_oids stored in the root header
+ *
+ * This stub provides enough information for the optimizer to use the index.
+ * ====================================================================== */
+
+int
+rtree_get_stats (THREAD_ENTRY * thread_p, BTREE_STATS * stat_info_p, bool with_fullscan)
+{
+  VPID root_vpid;
+  PAGE_PTR root_page = NULL;
+  RTREE_ROOT_HEADER *rhdr;
+  int num_pages = 0;
+
+  if (stat_info_p == NULL || BTID_IS_NULL (&stat_info_p->btid))
+    {
+      return ER_FAILED;
+    }
+
+  root_vpid.volid  = stat_info_p->btid.vfid.volid;
+  root_vpid.pageid = stat_info_p->btid.root_pageid;
+
+  if (VPID_ISNULL (&root_vpid))
+    {
+      return NO_ERROR;
+    }
+
+  root_page = pgbuf_fix (thread_p, &root_vpid, OLD_PAGE, PGBUF_LATCH_READ, PGBUF_UNCONDITIONAL_LATCH);
+  if (root_page == NULL)
+    {
+      return ER_FAILED;
+    }
+
+  rhdr = rtree_get_root_header (thread_p, root_page);
+  if (rhdr != NULL)
+    {
+      stat_info_p->keys   = (int) rhdr->num_oids;
+      stat_info_p->height = (int) rhdr->node.node_level;
+    }
+  else
+    {
+      stat_info_p->keys   = 0;
+      stat_info_p->height = 1;
+    }
+
+  pgbuf_unfix (thread_p, root_page);
+
+  /* Approximate page count from the file manager */
+  if (file_get_num_user_pages (thread_p, &stat_info_p->btid.vfid, &num_pages) == NO_ERROR)
+    {
+      stat_info_p->pages = MAX (num_pages, 1);
+      stat_info_p->leafs = stat_info_p->pages;
+    }
+  else
+    {
+      stat_info_p->pages = 1;
+      stat_info_p->leafs = 1;
+    }
+
+  /* R-tree has no partial-key stats */
+  if (stat_info_p->pkeys != NULL && stat_info_p->pkeys_size > 0)
+    {
+      stat_info_p->pkeys[0] = stat_info_p->keys;
+    }
+
+  return NO_ERROR;
+}

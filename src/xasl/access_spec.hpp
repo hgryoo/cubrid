@@ -103,6 +103,16 @@ struct indx_info
   int ils_prefix_len;		/* index loose scan prefix length */
 };				/* index information structure */
 
+/* R-tree (spatial index) specification — used when access == ACCESS_METHOD_INDEX_RTREE */
+typedef struct rtree_spec_info RTREE_SPEC_INFO;
+struct rtree_spec_info
+{
+  BTID btid;			/* R-tree index identifier */
+  OID class_oid;		/* owning class OID */
+  double search_bounds[4];	/* [xmin, ymin, xmax, ymax] of the spatial query MBR */
+  int search_mode;		/* RTREE_SEARCH_MODE value (INTERSECTS / CONTAINED / CONTAINS) */
+};
+
 // TODO - move access specification code here; note - this is supposed to be common to both client and server.
 //        access spec structures are now partly common and partly server/SA only. this requires some redesign &
 //        refactoring

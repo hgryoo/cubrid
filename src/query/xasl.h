@@ -746,12 +746,14 @@ typedef enum
   ACCESS_METHOD_SEQUENTIAL_PAGE_SCAN,	/* sequential scan access that only scans pages without accessing record data */
   ACCESS_METHOD_INDEX_KEY_INFO,	/* indexed access to obtain key information */
   ACCESS_METHOD_INDEX_NODE_INFO,	/* indexed access to obtain b-tree node info */
-  ACCESS_METHOD_SEQUENTIAL_SAMPLING_SCAN	/* sequential sampling scan */
+  ACCESS_METHOD_SEQUENTIAL_SAMPLING_SCAN,	/* sequential sampling scan */
+  ACCESS_METHOD_INDEX_RTREE	/* R-tree spatial index scan */
 } ACCESS_METHOD;
 
 #define IS_ANY_INDEX_ACCESS(access_) \
   ((access_) == ACCESS_METHOD_INDEX || (access_) == ACCESS_METHOD_INDEX_KEY_INFO \
-   || (access_) == ACCESS_METHOD_INDEX_NODE_INFO)
+   || (access_) == ACCESS_METHOD_INDEX_NODE_INFO \
+   || (access_) == ACCESS_METHOD_INDEX_RTREE)
 
 typedef enum
 {
@@ -1041,6 +1043,7 @@ struct access_spec_node
   TARGET_TYPE type;		/* target class or list */
   ACCESS_METHOD access;		/* access method */
   INDX_INFO *indexptr;		/* index info if index accessing */
+  RTREE_SPEC_INFO *rtree_specptr;	/* R-tree spec if ACCESS_METHOD_INDEX_RTREE */
   BTID btid;
   PRED_EXPR *where_key;		/* key filter expression */
   PRED_EXPR *where_pred;	/* predicate expression */

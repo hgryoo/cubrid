@@ -7446,6 +7446,39 @@ qexec_open_scan (THREAD_ENTRY * thread_p, ACCESS_SPEC_TYPE * curr_spec, VAL_LIST
 	    perfmon_inc_stat (thread_p, PSTAT_QM_NUM_ISCANS);
 	    break;
 
+	  case ACCESS_METHOD_INDEX_RTREE:
+	    /* Spatial index (R-tree) scan */
+	    if (curr_spec->rtree_specptr == NULL)
+	      {
+		er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QPROC_INVALID_XASLNODE, 0);
+		goto exit_on_error;
+	      }
+	    error_code = scan_open_rtree_scan (thread_p, s_id, mvcc_select_lock_needed, scan_op_type, fixed, grouped,
+					       curr_spec->single_fetch, curr_spec->s_dbval, val_list, vd,
+					       &curr_spec->rtree_specptr->btid,
+					       &curr_spec->rtree_specptr->class_oid,
+					       &ACCESS_SPEC_HFID (curr_spec),
+					       curr_spec->s.cls_node.cls_regu_list_pred,
+					       curr_spec->where_pred,
+					       curr_spec->s.cls_node.cls_regu_list_rest,
+					       curr_spec->s.cls_node.num_attrs_pred,
+					       curr_spec->s.cls_node.attrids_pred,
+					       curr_spec->s.cls_node.cache_pred,
+					       curr_spec->s.cls_node.num_attrs_rest,
+					       curr_spec->s.cls_node.attrids_rest,
+					       curr_spec->s.cls_node.cache_rest,
+					       curr_spec->rtree_specptr->search_bounds,
+					       curr_spec->rtree_specptr->search_mode);
+	    if (error_code != NO_ERROR)
+	      {
+		ASSERT_ERROR ();
+		goto exit_on_error;
+	      }
+
+	    /* monitor */
+	    perfmon_inc_stat (thread_p, PSTAT_QM_NUM_ISCANS);
+	    break;
+
 	  default:
 	    er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_QPROC_INVALID_XASLNODE, 0);
 	    return ER_QPROC_INVALID_XASLNODE;
