@@ -50,6 +50,7 @@
 #include "heap_file.h"
 #include "log_manager.h"
 #include "page_buffer.h"
+#include "recovery.h"
 #include "slotted_page.h"
 #include "storage_common.h"
 #include "vacuum.h"
@@ -294,6 +295,23 @@ static int
 rtree_set_root_header (THREAD_ENTRY * thread_p, PAGE_PTR page, RTREE_ROOT_HEADER * rhdr)
 {
   RECDES rec;
+  RTREE_ROOT_HEADER old_rhdr;
+  RTREE_ROOT_HEADER *old_p;
+  bool has_old;
+
+  /* Read old header for undo data (NULL on fresh page) */
+  old_p = rtree_get_root_header (thread_p, page);
+  if (old_p != NULL)
+    {
+      old_rhdr = *old_p;
+      has_old = true;
+      /* Replace: delete existing slot 0 first */
+      spage_delete (thread_p, page, RTREE_HEADER_SLOTID);
+    }
+  else
+    {
+      has_old = false;
+    }
 
   rec.area_size = sizeof (RTREE_ROOT_HEADER);
   rec.length    = sizeof (RTREE_ROOT_HEADER);
@@ -304,6 +322,21 @@ rtree_set_root_header (THREAD_ENTRY * thread_p, PAGE_PTR page, RTREE_ROOT_HEADER
     {
       return ER_FAILED;
     }
+
+  /* Log: undo = old header (if any), redo = new header */
+  if (has_old)
+    {
+      log_append_undoredo_data2 (thread_p, RVRT_ROOT_HEADER_UPD, NULL, page, RTREE_HEADER_SLOTID,
+				 (int) sizeof (RTREE_ROOT_HEADER), (int) sizeof (RTREE_ROOT_HEADER),
+				 &old_rhdr, rhdr);
+    }
+  else
+    {
+      log_append_redo_data2 (thread_p, RVRT_ROOT_HEADER_UPD, NULL, page, RTREE_HEADER_SLOTID,
+			     (int) sizeof (RTREE_ROOT_HEADER), rhdr);
+    }
+
+  pgbuf_set_dirty (thread_p, page, DONT_FREE);
   return NO_ERROR;
 }
 
@@ -323,6 +356,10 @@ rtree_initialize_new_page (THREAD_ENTRY * thread_p, PAGE_PTR page, void *args)
 
   pgbuf_set_page_ptype (thread_p, page, PAGE_BTREE);
   spage_initialize (thread_p, page, RTREE_SLOT_TYPE, RTREE_MAX_ALIGN, DONT_SAFEGUARD_RVSPACE);
+
+  /* Log: undo = pgbuf_rv_new_page_undo (registered in RV_fun), redo = re-init page */
+  log_append_undoredo_data2 (thread_p, RVRT_NEW_PAGE, NULL, page, -1, 0, 0, NULL, NULL);
+
   pgbuf_set_dirty (thread_p, page, DONT_FREE);
 
   return NO_ERROR;
@@ -488,6 +525,15 @@ rtree_write_non_leaf_entry (THREAD_ENTRY * thread_p, PAGE_PTR page, PGSLOTID slo
                             const RTREE_NON_LEAF_ENTRY * entry)
 {
   RECDES rec;
+  RTREE_NON_LEAF_ENTRY old_entry;
+  int error_code;
+
+  /* Read old entry for undo data */
+  error_code = rtree_read_non_leaf_entry (thread_p, page, slotid, &old_entry);
+  if (error_code != NO_ERROR)
+    {
+      return error_code;
+    }
 
   rec.area_size = sizeof (RTREE_NON_LEAF_ENTRY);
   rec.length    = sizeof (RTREE_NON_LEAF_ENTRY);
@@ -495,7 +541,17 @@ rtree_write_non_leaf_entry (THREAD_ENTRY * thread_p, PAGE_PTR page, PGSLOTID slo
   rec.data      = (char *) entry;
 
   spage_delete (thread_p, page, slotid);
-  return spage_insert_at (thread_p, page, slotid, &rec);
+  if (spage_insert_at (thread_p, page, slotid, &rec) != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+
+  /* Log RVRT_NONLEAF_UPDATE: offset=slotid, undo=old entry, redo=new entry */
+  log_append_undoredo_data2 (thread_p, RVRT_NONLEAF_UPDATE, NULL, page, slotid,
+			     (int) sizeof (RTREE_NON_LEAF_ENTRY), (int) sizeof (RTREE_NON_LEAF_ENTRY),
+			     &old_entry, entry);
+  pgbuf_set_dirty (thread_p, page, DONT_FREE);
+  return NO_ERROR;
 }
 
 /*
@@ -506,24 +562,39 @@ static int
 rtree_append_leaf_entry (THREAD_ENTRY * thread_p, PAGE_PTR page, const RTREE_LEAF_ENTRY * entry)
 {
   RECDES rec;
-  PGSLOTID dummy;
+  PGSLOTID slotid;
   RTREE_NODE_HEADER *hdr;
+  char redo_buf[sizeof (RTREE_LEAF_ENTRY) + sizeof (PGSLOTID)];
 
   rec.area_size = sizeof (RTREE_LEAF_ENTRY);
   rec.length    = sizeof (RTREE_LEAF_ENTRY);
   rec.type      = RTREE_REC_TYPE;
   rec.data      = (char *) entry;
 
-  if (spage_insert (thread_p, page, &rec, &dummy) != SP_SUCCESS)
+  if (spage_insert (thread_p, page, &rec, &slotid) != SP_SUCCESS)
     {
       return ER_FAILED;
     }
 
+  /* Log RVRT_LEAF_INSERT: undo=slotid, redo=entry+slotid */
+  memcpy (redo_buf, entry, sizeof (RTREE_LEAF_ENTRY));
+  memcpy (redo_buf + sizeof (RTREE_LEAF_ENTRY), &slotid, sizeof (PGSLOTID));
+  log_append_undoredo_data2 (thread_p, RVRT_LEAF_INSERT, NULL, page, slotid,
+			     (int) sizeof (PGSLOTID), (int) sizeof (redo_buf),
+			     &slotid, redo_buf);
+
   hdr = rtree_get_node_header (thread_p, page);
   if (hdr != NULL)
     {
+      RTREE_NODE_HEADER old_hdr = *hdr;
       hdr->num_entries++;
+      /* Log RVRT_NODE_HEADER_UPD: undo=old, redo=new */
+      log_append_undoredo_data2 (thread_p, RVRT_NODE_HEADER_UPD, NULL, page, RTREE_HEADER_SLOTID,
+				 (int) sizeof (RTREE_NODE_HEADER), (int) sizeof (RTREE_NODE_HEADER),
+				 &old_hdr, hdr);
     }
+
+  pgbuf_set_dirty (thread_p, page, DONT_FREE);
   return NO_ERROR;
 }
 
@@ -534,24 +605,39 @@ static int
 rtree_append_non_leaf_entry (THREAD_ENTRY * thread_p, PAGE_PTR page, const RTREE_NON_LEAF_ENTRY * entry)
 {
   RECDES rec;
-  PGSLOTID dummy;
+  PGSLOTID slotid;
   RTREE_NODE_HEADER *hdr;
+  char redo_buf[sizeof (RTREE_NON_LEAF_ENTRY) + sizeof (PGSLOTID)];
 
   rec.area_size = sizeof (RTREE_NON_LEAF_ENTRY);
   rec.length    = sizeof (RTREE_NON_LEAF_ENTRY);
   rec.type      = RTREE_REC_TYPE;
   rec.data      = (char *) entry;
 
-  if (spage_insert (thread_p, page, &rec, &dummy) != SP_SUCCESS)
+  if (spage_insert (thread_p, page, &rec, &slotid) != SP_SUCCESS)
     {
       return ER_FAILED;
     }
 
+  /* Log RVRT_NONLEAF_INSERT: undo=slotid, redo=entry+slotid */
+  memcpy (redo_buf, entry, sizeof (RTREE_NON_LEAF_ENTRY));
+  memcpy (redo_buf + sizeof (RTREE_NON_LEAF_ENTRY), &slotid, sizeof (PGSLOTID));
+  log_append_undoredo_data2 (thread_p, RVRT_NONLEAF_INSERT, NULL, page, slotid,
+			     (int) sizeof (PGSLOTID), (int) sizeof (redo_buf),
+			     &slotid, redo_buf);
+
   hdr = rtree_get_node_header (thread_p, page);
   if (hdr != NULL)
     {
+      RTREE_NODE_HEADER old_hdr = *hdr;
       hdr->num_entries++;
+      /* Log RVRT_NODE_HEADER_UPD: undo=old, redo=new */
+      log_append_undoredo_data2 (thread_p, RVRT_NODE_HEADER_UPD, NULL, page, RTREE_HEADER_SLOTID,
+				 (int) sizeof (RTREE_NODE_HEADER), (int) sizeof (RTREE_NODE_HEADER),
+				 &old_hdr, hdr);
     }
+
+  pgbuf_set_dirty (thread_p, page, DONT_FREE);
   return NO_ERROR;
 }
 
@@ -1484,11 +1570,16 @@ rtree_insert (THREAD_ENTRY * thread_p, BTID * btid, RTREE_MBR * mbr, OID * oid)
 
   VPID_SET_NULL (&split_vpid);
 
+  /* Wrap entire insert in an atomic system operation so all page modifications
+   * (leaf insert + possible splits/grow) are committed or rolled back together. */
+  log_sysop_start (thread_p);
+
   /* I1: choose leaf */
   leaf_page = rtree_choose_leaf (thread_p, btid, mbr, &path);
   if (leaf_page == NULL)
     {
       ASSERT_ERROR_AND_SET (error_code);
+      log_sysop_abort (thread_p);
       return error_code;
     }
 
@@ -1496,6 +1587,7 @@ rtree_insert (THREAD_ENTRY * thread_p, BTID * btid, RTREE_MBR * mbr, OID * oid)
   if (leaf_hdr == NULL)
     {
       pgbuf_unfix (thread_p, leaf_page);
+      log_sysop_abort (thread_p);
       return ER_FAILED;
     }
 
@@ -1512,6 +1604,7 @@ rtree_insert (THREAD_ENTRY * thread_p, BTID * btid, RTREE_MBR * mbr, OID * oid)
       if (error_code != NO_ERROR)
         {
           pgbuf_unfix (thread_p, leaf_page);
+          log_sysop_abort (thread_p);
           return error_code;
         }
       pgbuf_set_dirty (thread_p, leaf_page, DONT_FREE);
@@ -1533,6 +1626,7 @@ rtree_insert (THREAD_ENTRY * thread_p, BTID * btid, RTREE_MBR * mbr, OID * oid)
       if (error_code != NO_ERROR)
         {
           pgbuf_unfix (thread_p, leaf_page);
+          log_sysop_abort (thread_p);
           return error_code;
         }
     }
@@ -1568,6 +1662,14 @@ rtree_insert (THREAD_ENTRY * thread_p, BTID * btid, RTREE_MBR * mbr, OID * oid)
                                         &split_vpid, &split_mbr,
                                         1 /* leaf level */);
         }
+      if (error_code != NO_ERROR)
+        {
+          log_sysop_abort (thread_p);
+        }
+      else
+        {
+          log_sysop_commit (thread_p);
+        }
       return error_code;
     }
 
@@ -1578,6 +1680,7 @@ rtree_insert (THREAD_ENTRY * thread_p, BTID * btid, RTREE_MBR * mbr, OID * oid)
                                   &new_root_sib_vpid, &new_root_sib_mbr);
   if (error_code != NO_ERROR)
     {
+      log_sysop_abort (thread_p);
       return error_code;
     }
 
@@ -1608,6 +1711,15 @@ rtree_insert (THREAD_ENTRY * thread_p, BTID * btid, RTREE_MBR * mbr, OID * oid)
                                     &root_vpid, &old_root_mbr,
                                     &new_root_sib_vpid, &new_root_sib_mbr,
                                     cur_root_level);
+    }
+
+  if (error_code != NO_ERROR)
+    {
+      log_sysop_abort (thread_p);
+    }
+  else
+    {
+      log_sysop_commit (thread_p);
     }
 
   return error_code;
@@ -1795,9 +1907,13 @@ rtree_delete (THREAD_ENTRY * thread_p, BTID * btid, RTREE_MBR * mbr, OID * oid)
 
   path.depth = 0;
 
+  /* Wrap entire delete in an atomic system operation. */
+  log_sysop_start (thread_p);
+
   error_code = rtree_find_and_delete (thread_p, btid, &root_vpid, mbr, oid, &path, 0, &deleted);
   if (error_code != NO_ERROR || !deleted)
     {
+      log_sysop_abort (thread_p);
       return error_code != NO_ERROR ? error_code : ER_FAILED;
     }
 
@@ -1812,6 +1928,7 @@ rtree_delete (THREAD_ENTRY * thread_p, BTID * btid, RTREE_MBR * mbr, OID * oid)
     root_page = pgbuf_fix (thread_p, &root_vpid, OLD_PAGE, PGBUF_LATCH_WRITE, PGBUF_UNCONDITIONAL_LATCH);
     if (root_page == NULL)
       {
+        log_sysop_abort (thread_p);
         return ER_FAILED;
       }
 
@@ -1823,8 +1940,6 @@ rtree_delete (THREAD_ENTRY * thread_p, BTID * btid, RTREE_MBR * mbr, OID * oid)
 
         if (rtree_read_non_leaf_entry (thread_p, root_page, 1, &sole_entry) == NO_ERROR)
           {
-            /* Make the single child the new root by updating BTID.
-             * The old root page could be freed here; deferred for simplicity. */
             btid->root_pageid = sole_entry.child_vpid.pageid;
           }
       }
@@ -1832,6 +1947,7 @@ rtree_delete (THREAD_ENTRY * thread_p, BTID * btid, RTREE_MBR * mbr, OID * oid)
     pgbuf_unfix (thread_p, root_page);
   }
 
+  log_sysop_commit (thread_p);
   return NO_ERROR;
 }
 
@@ -1891,8 +2007,25 @@ rtree_find_and_delete (THREAD_ENTRY * thread_p, const BTID * btid, const VPID * 
 
           if (OID_EQ (&le.oid, oid) && rtree_mbr_intersects (mbr, &le.mbr))
             {
-              spage_delete (thread_p, page, (PGSLOTID) i);
+              PGSLOTID del_slot = (PGSLOTID) i;
+              char undo_buf[sizeof (RTREE_LEAF_ENTRY) + sizeof (PGSLOTID)];
+              RTREE_NODE_HEADER old_hdr = *hdr;
+
+              /* Log RVRT_LEAF_DELETE: undo=entry+slot, redo=slot */
+              memcpy (undo_buf, &le, sizeof (RTREE_LEAF_ENTRY));
+              memcpy (undo_buf + sizeof (RTREE_LEAF_ENTRY), &del_slot, sizeof (PGSLOTID));
+              log_append_undoredo_data2 (thread_p, RVRT_LEAF_DELETE, NULL, page, del_slot,
+					 (int) sizeof (undo_buf), (int) sizeof (PGSLOTID),
+					 undo_buf, &del_slot);
+
+              spage_delete (thread_p, page, del_slot);
               hdr->num_entries--;
+
+              /* Log RVRT_NODE_HEADER_UPD: undo=old, redo=new */
+              log_append_undoredo_data2 (thread_p, RVRT_NODE_HEADER_UPD, NULL, page, RTREE_HEADER_SLOTID,
+					 (int) sizeof (RTREE_NODE_HEADER), (int) sizeof (RTREE_NODE_HEADER),
+					 &old_hdr, hdr);
+
               pgbuf_set_dirty (thread_p, page, DONT_FREE);
               *deleted_out = true;
               break;
@@ -2196,3 +2329,330 @@ xrtree_delete_index (THREAD_ENTRY * thread_p, BTID * btid)
   return error_code;
 }
 
+
+/* ======================================================================
+ * WAL Recovery functions
+ *
+ * Layout conventions:
+ *  RVRT_NEW_PAGE:
+ *    undo : (none — page deallocation handled by pgbuf_rv_new_page_undo)
+ *    redo : (no data) re-initialise the spage
+ *
+ *  RVRT_LEAF_INSERT / RVRT_NONLEAF_INSERT:
+ *    undo : data = PGSLOTID (2 bytes) — the slot to delete on rollback
+ *    redo : data = sizeof(RTREE_LEAF_ENTRY|RTREE_NON_LEAF_ENTRY) record bytes
+ *                  + PGSLOTID (2 bytes) appended at the end
+ *
+ *  RVRT_LEAF_DELETE / RVRT_NONLEAF_DELETE:
+ *    undo : data = record bytes to re-insert (entry) + PGSLOTID to insert at
+ *    redo : data = PGSLOTID (2 bytes) — the slot to delete
+ *
+ *  RVRT_NONLEAF_UPDATE:
+ *    recv->offset = slotid
+ *    undo/redo data = RTREE_NON_LEAF_ENTRY bytes (the new/old entry state)
+ *
+ *  RVRT_NODE_HEADER_UPD:
+ *    undo/redo data = RTREE_NODE_HEADER bytes
+ *
+ *  RVRT_ROOT_HEADER_UPD:
+ *    undo/redo data = RTREE_ROOT_HEADER bytes
+ * ====================================================================== */
+
+/*
+ * rtree_rv_redo_new_page - redo: re-initialise a freshly allocated page.
+ */
+int
+rtree_rv_redo_new_page (THREAD_ENTRY * thread_p, LOG_RCV * recv)
+{
+  pgbuf_set_page_ptype (thread_p, recv->pgptr, PAGE_BTREE);
+  spage_initialize (thread_p, recv->pgptr, RTREE_SLOT_TYPE, RTREE_MAX_ALIGN, DONT_SAFEGUARD_RVSPACE);
+  pgbuf_set_dirty (thread_p, recv->pgptr, DONT_FREE);
+  return NO_ERROR;
+}
+
+/*
+ * rtree_rv_redo_leaf_insert - redo a leaf entry insert.
+ *
+ * Data layout in recv->data:
+ *   [RTREE_LEAF_ENTRY bytes (sizeof)] + [PGSLOTID (2 bytes)]
+ */
+int
+rtree_rv_redo_leaf_insert (THREAD_ENTRY * thread_p, LOG_RCV * recv)
+{
+  RTREE_LEAF_ENTRY entry;
+  PGSLOTID slotid;
+  RECDES rec;
+  const char *ptr = recv->data;
+
+  assert (recv->length == (int) (sizeof (RTREE_LEAF_ENTRY) + sizeof (PGSLOTID)));
+
+  memcpy (&entry, ptr, sizeof (RTREE_LEAF_ENTRY));
+  ptr += sizeof (RTREE_LEAF_ENTRY);
+  memcpy (&slotid, ptr, sizeof (PGSLOTID));
+
+  rec.area_size = sizeof (RTREE_LEAF_ENTRY);
+  rec.length    = sizeof (RTREE_LEAF_ENTRY);
+  rec.type      = RTREE_REC_TYPE;
+  rec.data      = (char *) &entry;
+
+  if (spage_insert_at (thread_p, recv->pgptr, slotid, &rec) != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+  pgbuf_set_dirty (thread_p, recv->pgptr, DONT_FREE);
+  return NO_ERROR;
+}
+
+/*
+ * rtree_rv_undo_leaf_insert - undo a leaf entry insert: delete the slot.
+ *
+ * Data layout: PGSLOTID (2 bytes)
+ */
+int
+rtree_rv_undo_leaf_insert (THREAD_ENTRY * thread_p, LOG_RCV * recv)
+{
+  PGSLOTID slotid;
+
+  assert (recv->length == (int) sizeof (PGSLOTID));
+  memcpy (&slotid, recv->data, sizeof (PGSLOTID));
+
+  spage_delete (thread_p, recv->pgptr, slotid);
+  pgbuf_set_dirty (thread_p, recv->pgptr, DONT_FREE);
+  return NO_ERROR;
+}
+
+/*
+ * rtree_rv_redo_leaf_delete - redo a leaf entry delete: delete the slot.
+ *
+ * Data layout: PGSLOTID (2 bytes)
+ */
+int
+rtree_rv_redo_leaf_delete (THREAD_ENTRY * thread_p, LOG_RCV * recv)
+{
+  PGSLOTID slotid;
+
+  assert (recv->length == (int) sizeof (PGSLOTID));
+  memcpy (&slotid, recv->data, sizeof (PGSLOTID));
+
+  spage_delete (thread_p, recv->pgptr, slotid);
+  pgbuf_set_dirty (thread_p, recv->pgptr, DONT_FREE);
+  return NO_ERROR;
+}
+
+/*
+ * rtree_rv_undo_leaf_delete - undo a leaf entry delete: re-insert the entry.
+ *
+ * Data layout: [RTREE_LEAF_ENTRY] + [PGSLOTID (2 bytes)]
+ */
+int
+rtree_rv_undo_leaf_delete (THREAD_ENTRY * thread_p, LOG_RCV * recv)
+{
+  RTREE_LEAF_ENTRY entry;
+  PGSLOTID slotid;
+  RECDES rec;
+  const char *ptr = recv->data;
+
+  assert (recv->length == (int) (sizeof (RTREE_LEAF_ENTRY) + sizeof (PGSLOTID)));
+
+  memcpy (&entry, ptr, sizeof (RTREE_LEAF_ENTRY));
+  ptr += sizeof (RTREE_LEAF_ENTRY);
+  memcpy (&slotid, ptr, sizeof (PGSLOTID));
+
+  rec.area_size = sizeof (RTREE_LEAF_ENTRY);
+  rec.length    = sizeof (RTREE_LEAF_ENTRY);
+  rec.type      = RTREE_REC_TYPE;
+  rec.data      = (char *) &entry;
+
+  if (spage_insert_at (thread_p, recv->pgptr, slotid, &rec) != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+  pgbuf_set_dirty (thread_p, recv->pgptr, DONT_FREE);
+  return NO_ERROR;
+}
+
+/*
+ * rtree_rv_redo_nonleaf_insert - redo a non-leaf entry insert.
+ *
+ * Data layout: [RTREE_NON_LEAF_ENTRY] + [PGSLOTID (2 bytes)]
+ */
+int
+rtree_rv_redo_nonleaf_insert (THREAD_ENTRY * thread_p, LOG_RCV * recv)
+{
+  RTREE_NON_LEAF_ENTRY entry;
+  PGSLOTID slotid;
+  RECDES rec;
+  const char *ptr = recv->data;
+
+  assert (recv->length == (int) (sizeof (RTREE_NON_LEAF_ENTRY) + sizeof (PGSLOTID)));
+
+  memcpy (&entry, ptr, sizeof (RTREE_NON_LEAF_ENTRY));
+  ptr += sizeof (RTREE_NON_LEAF_ENTRY);
+  memcpy (&slotid, ptr, sizeof (PGSLOTID));
+
+  rec.area_size = sizeof (RTREE_NON_LEAF_ENTRY);
+  rec.length    = sizeof (RTREE_NON_LEAF_ENTRY);
+  rec.type      = RTREE_REC_TYPE;
+  rec.data      = (char *) &entry;
+
+  if (spage_insert_at (thread_p, recv->pgptr, slotid, &rec) != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+  pgbuf_set_dirty (thread_p, recv->pgptr, DONT_FREE);
+  return NO_ERROR;
+}
+
+/*
+ * rtree_rv_undo_nonleaf_insert - undo a non-leaf entry insert: delete slot.
+ *
+ * Data layout: PGSLOTID (2 bytes)
+ */
+int
+rtree_rv_undo_nonleaf_insert (THREAD_ENTRY * thread_p, LOG_RCV * recv)
+{
+  PGSLOTID slotid;
+
+  assert (recv->length == (int) sizeof (PGSLOTID));
+  memcpy (&slotid, recv->data, sizeof (PGSLOTID));
+
+  spage_delete (thread_p, recv->pgptr, slotid);
+  pgbuf_set_dirty (thread_p, recv->pgptr, DONT_FREE);
+  return NO_ERROR;
+}
+
+/*
+ * rtree_rv_redo_nonleaf_delete - redo a non-leaf entry delete.
+ *
+ * Data layout: PGSLOTID (2 bytes)
+ */
+int
+rtree_rv_redo_nonleaf_delete (THREAD_ENTRY * thread_p, LOG_RCV * recv)
+{
+  PGSLOTID slotid;
+
+  assert (recv->length == (int) sizeof (PGSLOTID));
+  memcpy (&slotid, recv->data, sizeof (PGSLOTID));
+
+  spage_delete (thread_p, recv->pgptr, slotid);
+  pgbuf_set_dirty (thread_p, recv->pgptr, DONT_FREE);
+  return NO_ERROR;
+}
+
+/*
+ * rtree_rv_undo_nonleaf_delete - undo a non-leaf entry delete: re-insert.
+ *
+ * Data layout: [RTREE_NON_LEAF_ENTRY] + [PGSLOTID (2 bytes)]
+ */
+int
+rtree_rv_undo_nonleaf_delete (THREAD_ENTRY * thread_p, LOG_RCV * recv)
+{
+  RTREE_NON_LEAF_ENTRY entry;
+  PGSLOTID slotid;
+  RECDES rec;
+  const char *ptr = recv->data;
+
+  assert (recv->length == (int) (sizeof (RTREE_NON_LEAF_ENTRY) + sizeof (PGSLOTID)));
+
+  memcpy (&entry, ptr, sizeof (RTREE_NON_LEAF_ENTRY));
+  ptr += sizeof (RTREE_NON_LEAF_ENTRY);
+  memcpy (&slotid, ptr, sizeof (PGSLOTID));
+
+  rec.area_size = sizeof (RTREE_NON_LEAF_ENTRY);
+  rec.length    = sizeof (RTREE_NON_LEAF_ENTRY);
+  rec.type      = RTREE_REC_TYPE;
+  rec.data      = (char *) &entry;
+
+  if (spage_insert_at (thread_p, recv->pgptr, slotid, &rec) != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+  pgbuf_set_dirty (thread_p, recv->pgptr, DONT_FREE);
+  return NO_ERROR;
+}
+
+/*
+ * rtree_rv_undoredo_nonleaf_update - undo or redo a non-leaf MBR update.
+ *
+ * recv->offset = slotid
+ * Data layout : RTREE_NON_LEAF_ENTRY bytes (the state to restore/apply)
+ */
+int
+rtree_rv_undoredo_nonleaf_update (THREAD_ENTRY * thread_p, LOG_RCV * recv)
+{
+  RTREE_NON_LEAF_ENTRY entry;
+  PGSLOTID slotid = (PGSLOTID) recv->offset;
+  RECDES rec;
+
+  assert (recv->length == (int) sizeof (RTREE_NON_LEAF_ENTRY));
+  memcpy (&entry, recv->data, sizeof (RTREE_NON_LEAF_ENTRY));
+
+  rec.area_size = sizeof (RTREE_NON_LEAF_ENTRY);
+  rec.length    = sizeof (RTREE_NON_LEAF_ENTRY);
+  rec.type      = RTREE_REC_TYPE;
+  rec.data      = (char *) &entry;
+
+  spage_delete (thread_p, recv->pgptr, slotid);
+  if (spage_insert_at (thread_p, recv->pgptr, slotid, &rec) != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+  pgbuf_set_dirty (thread_p, recv->pgptr, DONT_FREE);
+  return NO_ERROR;
+}
+
+/*
+ * rtree_rv_undoredo_node_header - undo or redo a node header update.
+ *
+ * Data layout: RTREE_NODE_HEADER bytes
+ */
+int
+rtree_rv_undoredo_node_header (THREAD_ENTRY * thread_p, LOG_RCV * recv)
+{
+  RTREE_NODE_HEADER hdr;
+  RECDES rec;
+
+  assert (recv->length == (int) sizeof (RTREE_NODE_HEADER));
+  memcpy (&hdr, recv->data, sizeof (RTREE_NODE_HEADER));
+
+  rec.area_size = sizeof (RTREE_NODE_HEADER);
+  rec.length    = sizeof (RTREE_NODE_HEADER);
+  rec.type      = RTREE_REC_TYPE;
+  rec.data      = (char *) &hdr;
+
+  spage_delete (thread_p, recv->pgptr, RTREE_HEADER_SLOTID);
+  if (spage_insert_at (thread_p, recv->pgptr, RTREE_HEADER_SLOTID, &rec) != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+  pgbuf_set_dirty (thread_p, recv->pgptr, DONT_FREE);
+  return NO_ERROR;
+}
+
+/*
+ * rtree_rv_undoredo_root_header - undo or redo a root header update.
+ *
+ * Data layout: RTREE_ROOT_HEADER bytes
+ */
+int
+rtree_rv_undoredo_root_header (THREAD_ENTRY * thread_p, LOG_RCV * recv)
+{
+  RTREE_ROOT_HEADER rhdr;
+  RECDES rec;
+
+  assert (recv->length == (int) sizeof (RTREE_ROOT_HEADER));
+  memcpy (&rhdr, recv->data, sizeof (RTREE_ROOT_HEADER));
+
+  rec.area_size = sizeof (RTREE_ROOT_HEADER);
+  rec.length    = sizeof (RTREE_ROOT_HEADER);
+  rec.type      = RTREE_REC_TYPE;
+  rec.data      = (char *) &rhdr;
+
+  spage_delete (thread_p, recv->pgptr, RTREE_HEADER_SLOTID);
+  if (spage_insert_at (thread_p, recv->pgptr, RTREE_HEADER_SLOTID, &rec) != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+  pgbuf_set_dirty (thread_p, recv->pgptr, DONT_FREE);
+  return NO_ERROR;
+}

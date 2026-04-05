@@ -41,6 +41,7 @@
 
 #include "oid.h"
 #include "object_domain.h"
+#include "recovery.h"
 #include "storage_common.h"
 #include "thread_compat.hpp"
 
@@ -242,5 +243,37 @@ extern int rtree_initialize_new_page (THREAD_ENTRY * thread_p, PAGE_PTR page, vo
 
 /* Dump the full R-tree structure for debugging / tracing */
 extern void rtree_dump (THREAD_ENTRY * thread_p, BTID * btid, FILE * fp);
+
+/* ======================================================================
+ * WAL recovery functions (called by recovery.c via RV_fun[])
+ * ====================================================================== */
+
+/* Redo: re-initialise a freshly allocated page */
+extern int rtree_rv_redo_new_page (THREAD_ENTRY * thread_p, LOG_RCV * recv);
+
+/* Leaf entry: undo insert = delete; redo insert = re-insert */
+extern int rtree_rv_undo_leaf_insert (THREAD_ENTRY * thread_p, LOG_RCV * recv);
+extern int rtree_rv_redo_leaf_insert (THREAD_ENTRY * thread_p, LOG_RCV * recv);
+
+/* Leaf entry: undo delete = re-insert; redo delete = delete again */
+extern int rtree_rv_undo_leaf_delete (THREAD_ENTRY * thread_p, LOG_RCV * recv);
+extern int rtree_rv_redo_leaf_delete (THREAD_ENTRY * thread_p, LOG_RCV * recv);
+
+/* Non-leaf entry insert */
+extern int rtree_rv_undo_nonleaf_insert (THREAD_ENTRY * thread_p, LOG_RCV * recv);
+extern int rtree_rv_redo_nonleaf_insert (THREAD_ENTRY * thread_p, LOG_RCV * recv);
+
+/* Non-leaf entry delete */
+extern int rtree_rv_undo_nonleaf_delete (THREAD_ENTRY * thread_p, LOG_RCV * recv);
+extern int rtree_rv_redo_nonleaf_delete (THREAD_ENTRY * thread_p, LOG_RCV * recv);
+
+/* Non-leaf MBR update (same function for undo and redo — data = full entry) */
+extern int rtree_rv_undoredo_nonleaf_update (THREAD_ENTRY * thread_p, LOG_RCV * recv);
+
+/* Node header update (undo/redo share the same function) */
+extern int rtree_rv_undoredo_node_header (THREAD_ENTRY * thread_p, LOG_RCV * recv);
+
+/* Root header update (undo/redo share the same function) */
+extern int rtree_rv_undoredo_root_header (THREAD_ENTRY * thread_p, LOG_RCV * recv);
 
 #endif /* _RTREE_H_ */

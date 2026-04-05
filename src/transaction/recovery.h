@@ -185,7 +185,17 @@ typedef enum
   RVFL_FHEAD_SET_TDE_ALGORITHM = 128,
   RVHF_LOB_REMOVE_DIR = 129,
 
-  RV_LAST_LOGID = RVHF_LOB_REMOVE_DIR,
+  /* R-tree (spatial index) recovery operations */
+  RVRT_NEW_PAGE = 130,		/* new R-tree page initialization */
+  RVRT_LEAF_INSERT = 131,	/* leaf entry inserted */
+  RVRT_LEAF_DELETE = 132,	/* leaf entry deleted */
+  RVRT_NONLEAF_INSERT = 133,	/* non-leaf entry inserted */
+  RVRT_NONLEAF_DELETE = 134,	/* non-leaf entry deleted */
+  RVRT_NONLEAF_UPDATE = 135,	/* non-leaf MBR updated */
+  RVRT_NODE_HEADER_UPD = 136,	/* node header updated */
+  RVRT_ROOT_HEADER_UPD = 137,	/* root header updated */
+
+  RV_LAST_LOGID = RVRT_ROOT_HEADER_UPD,
 
   RV_NOT_DEFINED = 999
 } LOG_RCVINDEX;
