@@ -94,6 +94,7 @@
 #include "pl_compile_handler.hpp"
 #include "pl_session.hpp"
 #include "pl_executor.hpp"
+#include "rtree.h"
 
 // XXX: SHOULD BE THE LAST INCLUDE HEADER
 #include "memory_wrapper.hpp"
@@ -4570,6 +4571,150 @@ sbtree_delete_index (THREAD_ENTRY *thread_p, unsigned int rid, char *request, in
   (void) or_unpack_btid (request, &btid);
 
   success = (xbtree_delete_index (thread_p, &btid) == NO_ERROR) ? NO_ERROR : ER_FAILED;
+  if (success != NO_ERROR)
+    {
+      (void) return_error_to_client (thread_p, rid);
+    }
+
+  (void) or_pack_int (reply, (int) success);
+  css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
+}
+
+/*
+ * srtree_add_index - server handler for NET_SERVER_RTREE_ADDINDEX.
+ *
+ * Request layout: OR_BTID_ALIGNED_SIZE + domain + OR_OID_SIZE + OR_INT_SIZE(attr_id)
+ * Reply layout:   OR_INT_SIZE(error) + OR_BTID_ALIGNED_SIZE
+ */
+void
+srtree_add_index (THREAD_ENTRY *thread_p, unsigned int rid, char *request, int reqlen)
+{
+  BTID btid;
+  BTID *return_btid = NULL;
+  TP_DOMAIN *key_type;
+  OID class_oid;
+  int attr_id;
+  char *ptr;
+
+  OR_ALIGNED_BUF (OR_INT_SIZE + OR_BTID_ALIGNED_SIZE) a_reply;
+  char *reply = OR_ALIGNED_BUF_START (a_reply);
+
+  ptr = or_unpack_btid (request, &btid);
+  ptr = or_unpack_domain (ptr, &key_type, 0);
+  ptr = or_unpack_oid (ptr, &class_oid);
+  ptr = or_unpack_int (ptr, &attr_id);
+
+  return_btid = xrtree_add_index (thread_p, &btid, key_type, &class_oid, attr_id);
+  if (return_btid == NULL)
+    {
+      (void) return_error_to_client (thread_p, rid);
+      ptr = or_pack_int (reply, er_errid ());
+    }
+  else
+    {
+      ptr = or_pack_int (reply, NO_ERROR);
+    }
+  ptr = or_pack_btid (ptr, &btid);
+  css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
+}
+
+/*
+ * srtree_load_index - server handler for NET_SERVER_RTREE_LOADINDEX.
+ *
+ * Request layout: OR_BTID_ALIGNED_SIZE + constraint_name + domain +
+ *   OR_INT_SIZE(n_classes) + OR_INT_SIZE(n_attrs) +
+ *   n_classes*OR_OID_SIZE + n_classes*n_attrs*OR_INT_SIZE + n_classes*OR_HFID_SIZE
+ * Reply layout: OR_INT_SIZE(error) + OR_BTID_ALIGNED_SIZE
+ */
+void
+srtree_load_index (THREAD_ENTRY *thread_p, unsigned int rid, char *request, int reqlen)
+{
+  BTID btid;
+  BTID *return_btid = NULL;
+  char *constraint_name;
+  TP_DOMAIN *key_type;
+  OID *class_oids = NULL;
+  HFID *hfids = NULL;
+  int n_classes, n_attrs;
+  int *attr_ids = NULL;
+  char *ptr;
+
+  OR_ALIGNED_BUF (OR_INT_SIZE + OR_BTID_ALIGNED_SIZE) a_reply;
+  char *reply = OR_ALIGNED_BUF_START (a_reply);
+
+  ptr = or_unpack_btid (request, &btid);
+  ptr = or_unpack_string_nocopy (ptr, &constraint_name);
+  ptr = or_unpack_domain (ptr, &key_type, 0);
+  ptr = or_unpack_int (ptr, &n_classes);
+  ptr = or_unpack_int (ptr, &n_attrs);
+
+  ptr = or_unpack_oid_array (ptr, n_classes, &class_oids);
+  if (ptr == NULL)
+    {
+      (void) return_error_to_client (thread_p, rid);
+      goto end;
+    }
+
+  ptr = or_unpack_int_array (ptr, n_classes * n_attrs, &attr_ids);
+  if (ptr == NULL)
+    {
+      (void) return_error_to_client (thread_p, rid);
+      goto end;
+    }
+
+  ptr = or_unpack_hfid_array (ptr, n_classes, &hfids);
+  if (ptr == NULL)
+    {
+      (void) return_error_to_client (thread_p, rid);
+      goto end;
+    }
+
+  return_btid =
+    xrtree_load_index (thread_p, &btid, constraint_name, key_type, class_oids, n_classes, n_attrs, attr_ids, hfids);
+  if (return_btid == NULL)
+    {
+      (void) return_error_to_client (thread_p, rid);
+    }
+
+end:
+  {
+    int err = (return_btid != NULL) ? NO_ERROR : ((er_errid () != NO_ERROR) ? er_errid () : ER_FAILED);
+    ptr = or_pack_int (reply, err);
+    ptr = or_pack_btid (ptr, &btid);
+    css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
+  }
+
+  if (class_oids != NULL)
+    {
+      free_and_init (class_oids);
+    }
+  if (attr_ids != NULL)
+    {
+      free_and_init (attr_ids);
+    }
+  if (hfids != NULL)
+    {
+      free_and_init (hfids);
+    }
+}
+
+/*
+ * srtree_delete_index - server handler for NET_SERVER_RTREE_DELINDEX.
+ *
+ * Request layout: OR_BTID_ALIGNED_SIZE
+ * Reply layout:   OR_INT_SIZE(status)
+ */
+void
+srtree_delete_index (THREAD_ENTRY *thread_p, unsigned int rid, char *request, int reqlen)
+{
+  BTID btid;
+  int success;
+  OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
+  char *reply = OR_ALIGNED_BUF_START (a_reply);
+
+  (void) or_unpack_btid (request, &btid);
+
+  success = (xrtree_delete_index (thread_p, &btid) == NO_ERROR) ? NO_ERROR : ER_FAILED;
   if (success != NO_ERROR)
     {
       (void) return_error_to_client (thread_p, rid);

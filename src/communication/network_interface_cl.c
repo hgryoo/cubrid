@@ -6268,12 +6268,50 @@ int
 rtree_add_index (BTID * btid, TP_DOMAIN * key_type, OID * class_oid, int attr_id)
 {
 #if defined(CS_MODE)
-  (void) btid;
-  (void) key_type;
-  (void) class_oid;
-  (void) attr_id;
-  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_SUPPORTED_OPERATION, 0);
-  return ER_INTERFACE_NOT_SUPPORTED_OPERATION;
+  int error = NO_ERROR;
+  int req_error, request_size, domain_size;
+  char *ptr;
+  char *request;
+  OR_ALIGNED_BUF (OR_INT_SIZE + OR_BTID_ALIGNED_SIZE) a_reply;
+  char *reply;
+
+  reply = OR_ALIGNED_BUF_START (a_reply);
+
+  domain_size = or_packed_domain_size (key_type, 0);
+  request_size = OR_BTID_ALIGNED_SIZE + domain_size + OR_OID_SIZE + OR_INT_SIZE;
+
+  request = (char *) malloc (request_size);
+  if (request == NULL)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, (size_t) request_size);
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+
+  ptr = or_pack_btid (request, btid);
+  ptr = or_pack_domain (ptr, key_type, 0, 0);
+  ptr = or_pack_oid (ptr, class_oid);
+  ptr = or_pack_int (ptr, attr_id);
+
+  req_error =
+    net_client_request (NET_SERVER_RTREE_ADDINDEX, request, request_size, reply, OR_ALIGNED_BUF_SIZE (a_reply),
+			NULL, 0, NULL, 0);
+  if (!req_error)
+    {
+      ptr = or_unpack_int (reply, &error);
+      ptr = or_unpack_btid (ptr, btid);
+      if (error != NO_ERROR)
+	{
+	  btid = NULL;
+	}
+    }
+  else
+    {
+      error = req_error;
+    }
+
+  free_and_init (request);
+
+  return error;
 #else /* CS_MODE */
   int error = NO_ERROR;
   THREAD_ENTRY *thread_p = enter_server ();
@@ -6293,16 +6331,71 @@ rtree_load_index (BTID * btid, const char *constraint_name, TP_DOMAIN * key_type
 		  int n_attrs, int *attr_ids, HFID * hfids)
 {
 #if defined(CS_MODE)
-  (void) btid;
-  (void) constraint_name;
-  (void) key_type;
-  (void) class_oids;
-  (void) n_classes;
-  (void) n_attrs;
-  (void) attr_ids;
-  (void) hfids;
-  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_SUPPORTED_OPERATION, 0);
-  return ER_INTERFACE_NOT_SUPPORTED_OPERATION;
+  int error = NO_ERROR;
+  int req_error, request_size, domain_size;
+  char *ptr;
+  char *request;
+  int i;
+  OR_ALIGNED_BUF (OR_INT_SIZE + OR_BTID_ALIGNED_SIZE) a_reply;
+  char *reply;
+
+  reply = OR_ALIGNED_BUF_START (a_reply);
+
+  domain_size = or_packed_domain_size (key_type, 0);
+  request_size = (OR_BTID_ALIGNED_SIZE
+		  + or_packed_string_length (constraint_name, NULL)
+		  + domain_size
+		  + OR_INT_SIZE		/* n_classes */
+		  + OR_INT_SIZE		/* n_attrs */
+		  + OR_OID_SIZE * n_classes
+		  + OR_INT_SIZE * n_classes * n_attrs
+		  + OR_HFID_SIZE * n_classes);
+
+  request = (char *) malloc (request_size);
+  if (request == NULL)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, (size_t) request_size);
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+
+  ptr = or_pack_btid (request, btid);
+  ptr = or_pack_string (ptr, constraint_name);
+  ptr = or_pack_domain (ptr, key_type, 0, 0);
+  ptr = or_pack_int (ptr, n_classes);
+  ptr = or_pack_int (ptr, n_attrs);
+  for (i = 0; i < n_classes; i++)
+    {
+      ptr = or_pack_oid (ptr, &class_oids[i]);
+    }
+  for (i = 0; i < n_classes * n_attrs; i++)
+    {
+      ptr = or_pack_int (ptr, attr_ids[i]);
+    }
+  for (i = 0; i < n_classes; i++)
+    {
+      ptr = or_pack_hfid (ptr, &hfids[i]);
+    }
+
+  req_error =
+    net_client_request (NET_SERVER_RTREE_LOADINDEX, request, request_size, reply, OR_ALIGNED_BUF_SIZE (a_reply),
+			NULL, 0, NULL, 0);
+  if (!req_error)
+    {
+      ptr = or_unpack_int (reply, &error);
+      ptr = or_unpack_btid (ptr, btid);
+      if (error != NO_ERROR)
+	{
+	  btid = NULL;
+	}
+    }
+  else
+    {
+      error = req_error;
+    }
+
+  free_and_init (request);
+
+  return error;
 #else /* CS_MODE */
   int error = NO_ERROR;
   THREAD_ENTRY *thread_p = enter_server ();
@@ -6321,9 +6414,30 @@ int
 rtree_delete_index (BTID * btid)
 {
 #if defined(CS_MODE)
-  (void) btid;
-  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_SUPPORTED_OPERATION, 0);
-  return ER_INTERFACE_NOT_SUPPORTED_OPERATION;
+  int req_error, status = NO_ERROR;
+  OR_ALIGNED_BUF (OR_BTID_ALIGNED_SIZE) a_request;
+  char *request;
+  OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
+  char *reply;
+
+  request = OR_ALIGNED_BUF_START (a_request);
+  reply = OR_ALIGNED_BUF_START (a_reply);
+
+  (void) or_pack_btid (request, btid);
+
+  req_error =
+    net_client_request (NET_SERVER_RTREE_DELINDEX, request, OR_ALIGNED_BUF_SIZE (a_request), reply,
+			OR_ALIGNED_BUF_SIZE (a_reply), NULL, 0, NULL, 0);
+  if (!req_error)
+    {
+      or_unpack_int (reply, &status);
+    }
+  else
+    {
+      status = req_error;
+    }
+
+  return status;
 #else /* CS_MODE */
   int error = NO_ERROR;
   THREAD_ENTRY *thread_p = enter_server ();

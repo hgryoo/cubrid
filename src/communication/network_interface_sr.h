@@ -122,6 +122,9 @@ extern void sqst_update_statistics (THREAD_ENTRY * thread_p, unsigned int rid, c
 extern void sbtree_add_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern void sbtree_load_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern void sbtree_delete_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
+extern void srtree_add_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
+extern void srtree_load_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
+extern void srtree_delete_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern void slocator_remove_class_from_index (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern void sbtree_find_unique (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
 extern void sbtree_find_multi_uniques (THREAD_ENTRY * thread_p, unsigned int rid, char *request, int reqlen);
