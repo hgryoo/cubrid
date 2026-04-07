@@ -183,8 +183,9 @@ typedef enum
 
   RVPGBUF_SET_TDE_ALGORITHM = 127,
   RVFL_FHEAD_SET_TDE_ALGORITHM = 128,
+  RVHF_LOB_REMOVE_DIR = 129,
 
-  RV_LAST_LOGID = RVFL_FHEAD_SET_TDE_ALGORITHM,
+  RV_LAST_LOGID = RVHF_LOB_REMOVE_DIR,
 
   RV_NOT_DEFINED = 999
 } LOG_RCVINDEX;
@@ -195,13 +196,22 @@ typedef enum
 typedef struct log_rcv LOG_RCV;
 struct log_rcv
 {				/* Recovery information */
-  MVCCID mvcc_id;		/* mvcc id */
-  PAGE_PTR pgptr;		/* Page to recover. Page should not be free by recovery functions, however it should be
+  MVCCID mvcc_id = MVCCID_NULL;	/* mvcc id */
+  PAGE_PTR pgptr = nullptr;	/* Page to recover. Page should not be free by recovery functions, however it should be
 				 * set dirty whenever is needed */
-  PGLENGTH offset;		/* Offset/slot of data in the above page to recover */
-  int length;			/* Length of data */
-  const char *data;		/* Replacement data. Pointer becomes invalid once the recovery of the data is finished */
-  LOG_LSA reference_lsa;	/* Next LSA used by compensate/postpone. */
+  PGLENGTH offset = 0;		/* Offset/slot of data in the above page to recover */
+  int length = 0;		/* Length of data */
+  const char *data = nullptr;	/* Replacement data. Pointer becomes invalid once the recovery of the data is finished */
+  LOG_LSA reference_lsa = NULL_LSA;	/* Next LSA used by compensate/postpone. */
+
+  // *INDENT-OFF*
+  log_rcv () = default;
+  log_rcv (const log_rcv &) = delete;
+  log_rcv (log_rcv &&) = delete;
+
+  log_rcv & operator= (const log_rcv &) = delete;
+  log_rcv & operator= (log_rcv &&) = delete;
+  // *INDENT-ON*
 };
 
 /*
@@ -210,12 +220,15 @@ struct log_rcv
 
 struct rvfun
 {
+  using fun_t = int (*)(THREAD_ENTRY * thread_p, LOG_RCV * logrcv);
+  using dump_fun_t = void (*)(FILE * fp, int length, void *data);
+
   LOG_RCVINDEX recv_index;	/* For verification */
   const char *recv_string;
-  int (*undofun) (THREAD_ENTRY * thread_p, LOG_RCV * logrcv);
-  int (*redofun) (THREAD_ENTRY * thread_p, LOG_RCV * logrcv);
-  void (*dump_undofun) (FILE * fp, int length, void *data);
-  void (*dump_redofun) (FILE * fp, int length, void *data);
+  fun_t undofun;
+  fun_t redofun;
+  dump_fun_t dump_undofun;
+  dump_fun_t dump_redofun;
 };
 
 extern struct rvfun RV_fun[];
@@ -243,10 +256,12 @@ extern void rv_check_rvfuns (void);
    || (idx) == RVFL_USER_PAGE_MARK_DELETE \
    || (idx) == RVPGBUF_DEALLOC \
    || (idx) == RVFL_TRACKER_HEAP_REUSE \
+   || (idx) == RVHF_LOB_REMOVE_DIR \
    || (idx) == RVFL_TRACKER_UNREGISTER)
 #define RCV_IS_LOGICAL_RUN_POSTPONE_MANUAL(idx) \
   ((idx) == RVFL_DEALLOC \
    || (idx) == RVHF_MARK_DELETED \
+   || (idx) == RVHF_LOB_REMOVE_DIR \
    || (idx) == RVBT_DELETE_OBJECT_POSTPONE)
 
 #define RCV_IS_LOGICAL_LOG(vpid, idx) \

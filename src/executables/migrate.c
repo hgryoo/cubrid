@@ -39,11 +39,12 @@
 #include "boot_sr.h"
 #include "log_impl.h"
 #include "btree.h"
-#include "transform.h"
+#include "schema_system_catalog_constants.h"
 #include "message_catalog.h"
 #include "error_manager.h"
 #include "system_parameter.h"
 #include "language_support.h"
+#include "catalog_class.h"
 
 #define V9_1_LEVEL (9.1f)
 #define V9_2_LEVEL (9.2f)
@@ -161,7 +162,6 @@ static int get_active_log_vol_path (const char *db_path, char *logvol_path);
 static int check_and_fix_compat_level (const char *db_name, const char *vol_path);
 static int get_db_path (const char *db_name, char *db_full_path);
 static int fix_codeset_in_active_log (const char *db_path, INTL_CODESET codeset);
-extern int catcls_get_db_collation (THREAD_ENTRY * thread_p, LANG_COLL_COMPAT ** db_collations, int *coll_cnt);
 
 static int
 get_active_log_vol_path (const char *db_path, char *logvol_path)
@@ -407,7 +407,7 @@ main (int argc, char *argv[])
   char db_full_path[PATH_MAX];
   int coll_need_manual_migr = 0;
   INTL_CODESET codeset;
-  int i;
+  int i, save;
   VOLUME_UNDO_INFO *p;
   LANG_COLL_COMPAT *db_collations = NULL;
   int db_coll_cnt;
@@ -467,8 +467,7 @@ main (int argc, char *argv[])
       goto error_undo_vol_header;
     }
 
-  sysprm_set_force (prm_get_name (PRM_ID_PB_NBUFFERS), "1024");
-  sysprm_set_force (prm_get_name (PRM_ID_JAVA_STORED_PROCEDURE), "no");
+  sysprm_set_force (PRM_ID_PB_NBUFFERS, "1024");
 
   AU_DISABLE_PASSWORDS ();
 
@@ -550,7 +549,7 @@ main (int argc, char *argv[])
     }
   db_commit_transaction ();
 
-  au_disable ();
+  AU_DISABLE (save);
 
   if (file_update_used_pages_of_vol_header (NULL) == DISK_ERROR)
     {

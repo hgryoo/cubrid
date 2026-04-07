@@ -18,7 +18,14 @@
 
 
 /*
- * cas_util.c -
+ * cas_util.c - Utility functions shared by CAS and CGW
+ * 
+ * This file contains:
+ * - Basic utility functions (IP, string, time operations)
+ * - Type conversion functions (DB type to CAS type)
+ * - SQL parsing functions
+ * - Error handling functions
+ * - Protocol utility functions
  */
 
 #ident "$Id$"
@@ -35,9 +42,13 @@
 #endif
 #include <assert.h>
 
-#include "cas_common.h"
 #include "cas_util.h"
-#include "cas_net_buf.h"
+#include "cas_common_execute.h"
+#include "perf_monitor.h"
+#include "dbi.h"
+#include <strings.h>
+#include <stdbool.h>
+#include <stddef.h>
 
 char *
 ut_uchar2ipstr (unsigned char *ip_addr)
@@ -51,37 +62,6 @@ ut_uchar2ipstr (unsigned char *ip_addr)
   return (ip_str);
 }
 
-char *
-ut_trim (char *str)
-{
-  char *p;
-  char *s;
-
-  if (str == NULL)
-    return (str);
-
-  for (s = str; *s != '\0' && (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r'); s++)
-    ;
-  if (*s == '\0')
-    {
-      *str = '\0';
-      return (str);
-    }
-
-  /* *s must be a non-white char */
-  for (p = s; *p != '\0'; p++)
-    ;
-  for (p--; *p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'; p--)
-    ;
-  *++p = '\0';
-
-  if (s != str)
-    memmove (str, s, strlen (s) + 1);
-
-  return (str);
-}
-
-
 void
 ut_tolower (char *str)
 {
@@ -92,8 +72,7 @@ ut_tolower (char *str)
 
   for (p = str; *p; p++)
     {
-      if (*p >= 'A' && *p <= 'Z')
-	*p = *p - 'A' + 'a';
+      *p = char_tolower (*p);
     }
 }
 
@@ -140,4 +119,62 @@ ut_check_timeout (struct timeval *start_time, struct timeval *end_time, int time
     }
 
   return (diff_msec >= timeout_msec) ? diff_msec : -1;
+}
+
+
+/*****************************
+  move from cas_log.c
+ *****************************/
+
+
+/* ========================================================================
+ * Protocol handler utility functions
+ * ======================================================================== */
+
+/* Shared string arrays for protocol handler functions */
+static const char *schema_type_str[] = {
+  "CLASS",
+  "VCLASS",
+  "QUERY_SPEC",
+  "ATTRIBUTE",
+  "CLASS_ATTRIBUTE",
+  "METHOD",
+  "CLASS_METHOD",
+  "METHOD_FILE",
+  "SUPERCLASS",
+  "SUBCLASS",
+  "CONSTRAINT",
+  "TRIGGER",
+  "CLASS_PRIVILEGE",
+  "ATTR_PRIVILEGE",
+  "DIRECT_SUPER_CLASS",
+  "PRIMARY_KEY",
+  "IMPORTED_KEYS",
+  "EXPORTED_KEYS",
+  "CROSS_REFERENCE",
+  "ATTR_WITH_SYNONYM"
+};
+
+static const char *tran_type_str[] = { "COMMIT", "ROLLBACK" };
+
+const char *
+get_schema_type_str (int schema_type)
+{
+  if (schema_type < 1 || schema_type > CCI_SCH_LAST)
+    {
+      return "";
+    }
+
+  return (schema_type_str[schema_type - 1]);
+}
+
+const char *
+get_tran_type_str (int tran_type)
+{
+  if (tran_type < CCI_TRAN_COMMIT || tran_type > CCI_TRAN_ROLLBACK)
+    {
+      return "";
+    }
+
+  return (tran_type_str[tran_type - 1]);
 }

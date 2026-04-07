@@ -60,7 +60,8 @@
 #include "log_volids.hpp"
 #include "tde.h"
 #include "flashback_cl.h"
-#include "connection_support.h"
+#include "connection_support.hpp"
+#include "memory_monitor_cl.hpp"
 #if !defined(WINDOWS)
 #include "heartbeat.h"
 #endif
@@ -113,6 +114,7 @@ static BOOL WINAPI intr_handler (int sig_no);
 static void intr_handler (int sig_no);
 #endif
 
+static void crash_handler (int sig_no);
 static void backupdb_sig_interrupt_handler (int sig_no);
 STATIC_INLINE char *spacedb_get_size_str (char *buf, UINT64 num_pages, T_SPACEDB_SIZE_UNIT size_unit);
 static void print_timestamp (FILE * outfp);
@@ -262,8 +264,6 @@ backupdb (UTIL_FUNCTION_ARG * arg)
   snprintf (er_msg_file, sizeof (er_msg_file) - 1, "%s_%s.err", database_name, arg->command_name);
   er_init (er_msg_file, ER_NEVER_EXIT);
 
-  sysprm_set_force (prm_get_name (PRM_ID_JAVA_STORED_PROCEDURE), "no");
-
   AU_DISABLE_PASSWORDS ();	/* disable authorization for this operation */
   db_set_client_type (DB_CLIENT_TYPE_ADMIN_UTILITY);
   db_login ("DBA", NULL);
@@ -367,6 +367,7 @@ addvoldb (UTIL_FUNCTION_ARG * arg)
   UINT64 volext_size;
   UINT64 volext_max_writesize;
   const char *volext_string_purpose = NULL;
+  const char *volext_string_voltype = NULL;
   const char *volext_npages_string = NULL;
   const char *volext_size_str = NULL;
   const char *volext_max_writesize_in_sec_str = NULL;
@@ -432,12 +433,9 @@ addvoldb (UTIL_FUNCTION_ARG * arg)
   volext_string_purpose = utility_get_option_string_value (arg_map, ADDVOL_PURPOSE_S, 0);
   if (volext_string_purpose == NULL)
     {
-      volext_string_purpose = "generic";
+      ext_info.purpose = DB_PERMANENT_DATA_PURPOSE;
     }
-
-  ext_info.purpose = DB_PERMANENT_DATA_PURPOSE;
-
-  if (strcasecmp (volext_string_purpose, "data") == 0)
+  else if (strcasecmp (volext_string_purpose, "data") == 0)
     {
       ext_info.purpose = DB_PERMANENT_DATA_PURPOSE;
     }
@@ -469,6 +467,48 @@ addvoldb (UTIL_FUNCTION_ARG * arg)
 	       msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_ADDVOLDB, ADDVOLDB_INVALID_MAX_WRITESIZE_IN_SEC));
     }
 
+  volext_string_voltype = utility_get_option_string_value (arg_map, ADDVOL_VOLTYPE_S, 0);
+  if (volext_string_voltype == NULL || strcasecmp (volext_string_voltype, "perm") == 0)
+    {
+      ext_info.voltype = DB_PERMANENT_VOLTYPE;
+    }
+  else if (strcasecmp (volext_string_voltype, "temp") == 0)
+    {
+      if (sa_mode)
+	{
+	  PRINT_AND_LOG_ERR_MSG (msgcat_message
+				 (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_ADDVOLDB, ADDVOLDB_VOLTYPE_NOT_SUPPORT_SAMODE));
+	  goto error_exit;
+	}
+
+      if (volext_string_purpose != NULL && ext_info.purpose != DB_TEMPORARY_DATA_PURPOSE)
+	{
+	  PRINT_AND_LOG_ERR_MSG (msgcat_message
+				 (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_ADDVOLDB,
+				  ADDVOLDB_VOLTYPE_MUSTBE_TEMP_PURPOSE));
+	  goto error_exit;
+	}
+      else
+	{
+	  ext_info.purpose = DB_TEMPORARY_DATA_PURPOSE;
+	}
+
+      if (ext_info.name != NULL || ext_info.path != NULL)
+	{
+	  PRINT_AND_LOG_ERR_MSG (msgcat_message
+				 (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_ADDVOLDB, ADDVOLDB_VOLTYPE_NOT_USED_PATH_NAME));
+	  goto error_exit;
+	}
+
+      ext_info.voltype = DB_TEMPORARY_VOLTYPE;
+    }
+  else
+    {
+      PRINT_AND_LOG_ERR_MSG (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_ADDVOLDB, ADDVOLDB_MSG_BAD_VOLTYPE),
+			     volext_string_voltype);
+      goto error_exit;
+    }
+
   /* extra validation */
   if (check_database_name (database_name) || check_volume_name (ext_info.name))
     {
@@ -480,8 +520,7 @@ addvoldb (UTIL_FUNCTION_ARG * arg)
   er_init (er_msg_file, ER_NEVER_EXIT);
 
   /* tuning system parameters */
-  sysprm_set_force (prm_get_name (PRM_ID_PB_NBUFFERS), "1024");
-  sysprm_set_force (prm_get_name (PRM_ID_JAVA_STORED_PROCEDURE), "no");
+  sysprm_set_force (PRM_ID_PB_NBUFFERS, "1024");
 
   AU_DISABLE_PASSWORDS ();
   db_set_client_type (DB_CLIENT_TYPE_ADMIN_UTILITY);
@@ -785,8 +824,6 @@ checkdb (UTIL_FUNCTION_ARG * arg)
   snprintf (er_msg_file, sizeof (er_msg_file) - 1, "%s_%s.err", database_name, arg->command_name);
   er_init (er_msg_file, ER_NEVER_EXIT);
 
-  sysprm_set_force (prm_get_name (PRM_ID_JAVA_STORED_PROCEDURE), "no");
-
   AU_DISABLE_PASSWORDS ();
   db_set_client_type (DB_CLIENT_TYPE_ADMIN_UTILITY);
   db_login ("DBA", NULL);
@@ -971,8 +1008,7 @@ spacedb (UTIL_FUNCTION_ARG * arg)
   er_init (er_msg_file, ER_NEVER_EXIT);
 
   /* tuning system parameters */
-  sysprm_set_force (prm_get_name (PRM_ID_PB_NBUFFERS), "1024");
-  sysprm_set_force (prm_get_name (PRM_ID_JAVA_STORED_PROCEDURE), "no");
+  sysprm_set_force (PRM_ID_PB_NBUFFERS, "1024");
 
   /* should have little copyright herald message ? */
   AU_DISABLE_PASSWORDS ();
@@ -1237,6 +1273,7 @@ lockdb (UTIL_FUNCTION_ARG * arg)
   const char *database_name;
   const char *output_file = NULL;
   FILE *outfp = NULL;
+  int is_contention;
 
   if (utility_get_option_string_table_size (arg_map) != 1)
     {
@@ -1249,6 +1286,7 @@ lockdb (UTIL_FUNCTION_ARG * arg)
       goto print_lock_usage;
     }
 
+  is_contention = utility_get_option_bool_value (arg_map, LOCK_DISPLAY_CONTENTION_S);
   output_file = utility_get_option_string_value (arg_map, LOCK_OUTPUT_FILE_S, 0);
   if (output_file == NULL)
     {
@@ -1287,7 +1325,7 @@ lockdb (UTIL_FUNCTION_ARG * arg)
 
   (void) db_set_isolation (TRAN_READ_COMMITTED);
 
-  lock_dump (outfp);
+  lock_dump (outfp, is_contention);
   db_shutdown ();
 
   if (outfp != stdout)
@@ -2138,6 +2176,7 @@ plandump (UTIL_FUNCTION_ARG * arg)
   char er_msg_file[PATH_MAX];
   const char *database_name;
   const char *output_file = NULL;
+  char *sha1 = NULL;
   bool drop_flag = false;
   FILE *outfp = NULL;
 
@@ -2149,6 +2188,7 @@ plandump (UTIL_FUNCTION_ARG * arg)
 
   drop_flag = utility_get_option_bool_value (arg_map, PLANDUMP_DROP_S);
   output_file = utility_get_option_string_value (arg_map, PLANDUMP_OUTPUT_FILE_S, 0);
+  sha1 = utility_get_option_string_value (arg_map, PLANDUMP_SHA1_S, 0);
 
   if (utility_get_option_string_table_size (arg_map) != 1)
     {
@@ -2190,8 +2230,16 @@ plandump (UTIL_FUNCTION_ARG * arg)
       goto error_exit;
     }
 
-  qmgr_dump_query_plans (outfp);
-  if (drop_flag)
+  if (sha1 != NULL)
+    {
+      if (qmgr_drop_query_plans_by_sha1 (sha1) != NO_ERROR)
+	{
+	  PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
+	  db_shutdown ();
+	  goto error_exit;
+	}
+    }
+  else if (drop_flag)
     {
       if (qmgr_drop_all_query_plans () != NO_ERROR)
 	{
@@ -2200,6 +2248,7 @@ plandump (UTIL_FUNCTION_ARG * arg)
 	  goto error_exit;
 	}
     }
+  qmgr_dump_query_plans (outfp);
   db_shutdown ();
 
   if (outfp != stdout)
@@ -2239,7 +2288,12 @@ paramdump (UTIL_FUNCTION_ARG * arg)
   const char *database_name;
   const char *output_file = NULL;
   bool both_flag = false;
+  bool ha_only_flag = false;
+  bool exclude_ha_flag = false;
+  bool for_cm_flag = false;
+  const char *hexa_string;
   FILE *outfp = NULL;
+  unsigned int added_in_flags, out_flags, dump_flags;
 
   if (utility_get_option_string_table_size (arg_map) != 1)
     {
@@ -2254,6 +2308,20 @@ paramdump (UTIL_FUNCTION_ARG * arg)
 
   output_file = utility_get_option_string_value (arg_map, PARAMDUMP_OUTPUT_FILE_S, 0);
   both_flag = utility_get_option_bool_value (arg_map, PARAMDUMP_BOTH_S);
+  ha_only_flag = utility_get_option_bool_value (arg_map, PARAMDUMP_HA_ONLY_S);
+  exclude_ha_flag = utility_get_option_bool_value (arg_map, PARAMDUMP_EXCLUDE_HA_S);
+
+  /* --dump-flag is hidden option intended for developers or technical supoort */
+  hexa_string = utility_get_option_string_value (arg_map, PARAMDUMP_DUMP_FLAG_S, 0);
+
+  /* --for-cm is hidden option to maintain compatibility with cubrid manager */
+  for_cm_flag = utility_get_option_bool_value (arg_map, PARAMDUMP_FOR_CM_S);
+
+  if (ha_only_flag && exclude_ha_flag)
+    {
+      fprintf (stderr, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_PARAMDUMP, PARAMDUMP_MSG_BAD_OPTION));
+      goto print_dumpparam_usage;
+    }
 
   if (output_file == NULL)
     {
@@ -2279,9 +2347,29 @@ paramdump (UTIL_FUNCTION_ARG * arg)
   snprintf (er_msg_file, sizeof (er_msg_file) - 1, "%s_%s.err", database_name, arg->command_name);
   er_init (er_msg_file, ER_NEVER_EXIT);
 
-  sysprm_set_force (prm_get_name (PRM_ID_JAVA_STORED_PROCEDURE), "no");
+  added_in_flags = PRM_EMPTY_FLAG;
+  out_flags = PRM_HIDDEN;
 
-#if defined (CS_MODE)
+  /* ignore another options and print old style, when using --for-cm (that is, for_cm_flag is true.)  */
+  if (for_cm_flag == false)
+    {
+      if (ha_only_flag)
+	{
+	  added_in_flags |= PRM_FOR_HA;
+	}
+      else if (exclude_ha_flag)
+	{
+	  out_flags |= PRM_FOR_HA;
+	}
+
+      if (hexa_string != NULL)
+	{
+	  dump_flags = (unsigned int) strtoul (hexa_string, NULL, 16);
+	  added_in_flags |= dump_flags;
+	  out_flags &= ~dump_flags;
+	}
+    }
+
   /* should have little copyright herald message ? */
   AU_DISABLE_PASSWORDS ();
   db_set_client_type (DB_CLIENT_TYPE_ADMIN_UTILITY);
@@ -2293,23 +2381,48 @@ paramdump (UTIL_FUNCTION_ARG * arg)
       goto error_exit;
     }
 
-  if (both_flag)
+  if (for_cm_flag)
     {
+#if defined(SA_MODE)
+      fprintf (outfp,
+	       msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_PARAMDUMP, PARAMDUMP_MSG_STANDALONE_PARAMETER));
+      sysprm_dump_parameters (outfp, ' ', PRM_FOR_CLIENT | PRM_FOR_SERVER, PRM_OR_CONDITION, out_flags,
+			      PRM_OR_CONDITION, true);
+#else
+      if (both_flag)
+	{
+	  /* dump client's parameters */
+	  fprintf (outfp,
+		   msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_PARAMDUMP, PARAMDUMP_MSG_CLIENT_PARAMETER));
+	  sysprm_dump_parameters (outfp, 'C', PRM_FOR_CLIENT | PRM_FOR_SERVER, PRM_OR_CONDITION, out_flags,
+				  PRM_OR_CONDITION, true);
+	  fprintf (outfp, "\n");
+	}
+
+      /* dump server's parameters */
+      fprintf (outfp, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_PARAMDUMP, PARAMDUMP_MSG_SERVER_PARAMETER),
+	       database_name);
+      sysprm_dump_server_parameters (outfp, PRM_FOR_SERVER | PRM_FOR_SERVER, PRM_OR_CONDITION, out_flags,
+				     PRM_OR_CONDITION, true);
+#endif
+    }
+  else
+    {
+
+      /* dump client's parameters */
       fprintf (outfp, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_PARAMDUMP, PARAMDUMP_MSG_CLIENT_PARAMETER));
-      sysprm_dump_parameters (outfp);
+      sysprm_dump_parameters (outfp, 'C', PRM_FOR_CLIENT | added_in_flags, PRM_AND_CONDITION, out_flags,
+			      PRM_OR_CONDITION, false);
       fprintf (outfp, "\n");
+
+      /* dump server's parameters */
+      fprintf (outfp, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_PARAMDUMP, PARAMDUMP_MSG_SERVER_PARAMETER),
+	       database_name);
+      sysprm_dump_server_parameters (outfp, PRM_FOR_SERVER | added_in_flags, PRM_AND_CONDITION, out_flags,
+				     PRM_OR_CONDITION, false);
     }
-  fprintf (outfp, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_PARAMDUMP, PARAMDUMP_MSG_SERVER_PARAMETER),
-	   database_name);
-  sysprm_dump_server_parameters (outfp);
+
   db_shutdown ();
-#else /* CS_MODE */
-  fprintf (outfp, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_PARAMDUMP, PARAMDUMP_MSG_STANDALONE_PARAMETER));
-  if (sysprm_load_and_init (database_name, NULL, SYSPRM_LOAD_ALL) == NO_ERROR)
-    {
-      sysprm_dump_parameters (outfp);
-    }
-#endif /* !CS_MODE */
 
   if (outfp != stdout)
     {
@@ -2745,14 +2858,14 @@ copylogdb (UTIL_FUNCTION_ARG * arg)
   snprintf (er_msg_file, sizeof (er_msg_file) - 1, "%s_%s.err", database_name, arg->command_name);
   er_init (er_msg_file, ER_NEVER_EXIT);
 
-  AU_DISABLE_PASSWORDS ();
-  db_set_client_type (DB_CLIENT_TYPE_LOG_COPIER);
-  if (db_login ("DBA", NULL) != NO_ERROR)
-    {
-      PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
-      goto error_exit;
-    }
-#if !defined(WINDOWS)
+#if !defined (WINDOWS)
+  os_set_signal_handler (SIGABRT, crash_handler);
+  os_set_signal_handler (SIGILL, crash_handler);
+  os_set_signal_handler (SIGFPE, crash_handler);
+  os_set_signal_handler (SIGBUS, crash_handler);
+  os_set_signal_handler (SIGSEGV, crash_handler);
+  os_set_signal_handler (SIGSYS, crash_handler);
+
   /* save executable path */
   binary_name = basename (arg->argv0);
   (void) envvar_bindir_file (executable_path, PATH_MAX, binary_name);
@@ -2772,7 +2885,7 @@ copylogdb (UTIL_FUNCTION_ARG * arg)
    * during a retry loop, `db_restart` will reset the error file name as :
    * er_init (prm_get_string_value (PRM_ID_ER_LOG_FILE), ... ) 
    */
-  sysprm_set_force (prm_get_name (PRM_ID_ER_LOG_FILE), er_msg_file);
+  sysprm_set_force (PRM_ID_ER_LOG_FILE, er_msg_file);
 
   if (start_pageid < NULL_PAGEID && !HA_DISABLED ())
     {
@@ -2792,6 +2905,14 @@ copylogdb (UTIL_FUNCTION_ARG * arg)
 #endif
 
 retry:
+  AU_DISABLE_PASSWORDS ();
+  db_set_client_type (DB_CLIENT_TYPE_LOG_COPIER);
+  if (db_login ("DBA", NULL) != NO_ERROR)
+    {
+      PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
+      goto error_exit;
+    }
+
   error = db_restart (arg->command_name, TRUE, database_name);
   if (error != NO_ERROR)
     {
@@ -2819,7 +2940,7 @@ retry:
     }
 
   /* PRM_LOG_BACKGROUND_ARCHIVING is always true in CUBRID HA */
-  sysprm_set_to_default (prm_get_name (PRM_ID_LOG_BACKGROUND_ARCHIVING), true);
+  sysprm_set_to_default (PRM_ID_LOG_BACKGROUND_ARCHIVING, true);
 
   error = logwr_copy_log_file (database_name, log_path, mode, start_pageid);
   if (error != NO_ERROR)
@@ -2847,8 +2968,8 @@ error_exit:
     }
 #endif
 
-  if (logwr_force_shutdown () == false
-      && (error == ER_NET_SERVER_CRASHED || error == ER_NET_CANT_CONNECT_SERVER || error == ER_BO_CONNECT_FAILED
+  if (!logwr_force_shutdown ()
+      && (ER_IS_SERVER_DOWN_ERROR (error)
 	  || error == ERR_CSS_TCP_CANNOT_CONNECT_TO_MASTER || error == ERR_CSS_TCP_CONNECT_TIMEDOUT))
     {
       (void) sleep (sleep_nsecs);
@@ -2946,15 +3067,14 @@ applylogdb (UTIL_FUNCTION_ARG * arg)
   free (log_path_base);
   er_init (er_msg_file, ER_NEVER_EXIT);
 
-  AU_DISABLE_PASSWORDS ();
-  db_set_client_type (DB_CLIENT_TYPE_LOG_APPLIER);
-  if (db_login ("DBA", NULL) != NO_ERROR)
-    {
-      PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
-      goto error_exit;
-    }
+#if !defined (WINDOWS)
+  os_set_signal_handler (SIGABRT, crash_handler);
+  os_set_signal_handler (SIGILL, crash_handler);
+  os_set_signal_handler (SIGFPE, crash_handler);
+  os_set_signal_handler (SIGBUS, crash_handler);
+  os_set_signal_handler (SIGSEGV, crash_handler);
+  os_set_signal_handler (SIGSYS, crash_handler);
 
-#if !defined(WINDOWS)
   /* save executable path */
   binary_name = basename (arg->argv0);
   (void) envvar_bindir_file (executable_path, PATH_MAX, binary_name);
@@ -3004,6 +3124,14 @@ applylogdb (UTIL_FUNCTION_ARG * arg)
 #endif
 
 retry:
+  AU_DISABLE_PASSWORDS ();
+  db_set_client_type (DB_CLIENT_TYPE_LOG_APPLIER);
+  if (db_login ("DBA", NULL) != NO_ERROR)
+    {
+      PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
+      goto error_exit;
+    }
+
   error = db_restart (arg->command_name, TRUE, database_name);
   if (error != NO_ERROR)
     {
@@ -3063,9 +3191,9 @@ error_exit:
     }
 #endif
 
-  if (la_force_shutdown () == false
-      && (error == ER_NET_SERVER_CRASHED || error == ER_NET_CANT_CONNECT_SERVER
-	  || error == ERR_CSS_TCP_CANNOT_CONNECT_TO_MASTER || error == ER_BO_CONNECT_FAILED
+  if (!la_force_shutdown ()
+      && (ER_IS_SERVER_DOWN_ERROR (error)
+	  || error == ERR_CSS_TCP_CANNOT_CONNECT_TO_MASTER
 	  || error == ER_NET_SERVER_COMM_ERROR || error == ER_LC_PARTIALLY_FAILED_TO_FLUSH))
     {
       (void) sleep (sleep_nsecs);
@@ -3262,9 +3390,6 @@ applyinfo (UTIL_FUNCTION_ARG * arg)
 	}
     }
 
-  AU_DISABLE_PASSWORDS ();
-  db_set_client_type (DB_CLIENT_TYPE_ADMIN_UTILITY);
-
   /* error message log file */
   sprintf (er_msg_file, "%s_%s.err", database_name, arg->command_name);
   er_init (er_msg_file, ER_NEVER_EXIT);
@@ -3291,6 +3416,9 @@ applyinfo (UTIL_FUNCTION_ARG * arg)
 	    {
 	      goto check_applied_info_end;
 	    }
+
+	  AU_DISABLE_PASSWORDS ();
+	  db_set_client_type (DB_CLIENT_TYPE_ADMIN_UTILITY);
 
 	  error = db_login ("DBA", NULL);
 	  if (error != NO_ERROR)
@@ -3359,6 +3487,9 @@ applyinfo (UTIL_FUNCTION_ARG * arg)
 	    {
 	      goto check_master_info_end;
 	    }
+
+	  AU_DISABLE_PASSWORDS ();
+	  db_set_client_type (DB_CLIENT_TYPE_ADMIN_UTILITY);
 
 	  if (db_login ("DBA", NULL) != NO_ERROR)
 	    {
@@ -3474,6 +3605,22 @@ intr_handler (int sig_no)
 
   return FALSE;
 #endif /* WINDOWS */
+}
+
+/*
+ * crash_handler() - print call stack for occurring crash
+ *    return: none
+ *    sig_no(in)
+ */
+static void
+crash_handler (int sig_no)
+{
+  if (os_set_signal_handler (sig_no, SIG_DFL) == SIG_ERR)
+    {
+      return;
+    }
+
+  er_print_crash_callstack (sig_no);
 }
 
 /*
@@ -3658,8 +3805,6 @@ vacuumdb (UTIL_FUNCTION_ARG * arg)
   snprintf (er_msg_file, sizeof (er_msg_file) - 1, "%s_%s.err", database_name, arg->command_name);
   er_init (er_msg_file, ER_NEVER_EXIT);
 
-  sysprm_set_force (prm_get_name (PRM_ID_JAVA_STORED_PROCEDURE), "no");
-
   AU_DISABLE_PASSWORDS ();
   if (dump_flag)
     {
@@ -3667,7 +3812,7 @@ vacuumdb (UTIL_FUNCTION_ARG * arg)
     }
   else
     {
-      sysprm_set_force (prm_get_name (PRM_ID_DISABLE_VACUUM), "no");
+      sysprm_set_force (PRM_ID_DISABLE_VACUUM, "no");
       db_set_client_type (DB_CLIENT_TYPE_ADMIN_UTILITY);
     }
   db_login ("DBA", NULL);
@@ -4539,4 +4684,294 @@ error_exit:
   return EXIT_FAILURE;
 #endif /* !CS_MODE */
 
+}
+
+int
+memmon (UTIL_FUNCTION_ARG * arg)
+{
+#if defined(CS_MODE)
+  UTIL_ARG_MAP *arg_map = arg->arg_map;
+  char er_msg_file[PATH_MAX];
+  const char *database_name;
+  bool need_shutdown = false;
+  const char *outfile_name;
+  bool disable_force = false;
+  FILE *outfile_fp = NULL;
+  int error_code = NO_ERROR;
+  MMON_SERVER_INFO server_info;
+
+  outfile_name = utility_get_option_string_value (arg_map, MEMMON_OUTPUT_S, 0);
+  disable_force = utility_get_option_bool_value (arg_map, MEMMON_DISABLE_FORCE_S);
+
+  database_name = utility_get_option_string_value (arg_map, OPTION_STRING_TABLE, 0);
+  if (database_name == NULL)
+    {
+      goto print_memmon_usage;
+    }
+
+  if (check_database_name (database_name))
+    {
+      goto error_exit;
+    }
+
+  if (outfile_name && disable_force)
+    {
+      PRINT_AND_LOG_ERR_MSG (msgcat_message
+			     (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_MEMMON,
+			      MEMMON_MSG_CANNOT_USE_DISABLE_FORCE_WITH_OTHER_OPTION));
+      goto error_exit;
+    }
+
+  if (outfile_name)
+    {
+      outfile_fp = fopen (outfile_name, "w+");
+      if (outfile_fp == NULL)
+	{
+	  PRINT_AND_LOG_ERR_MSG (msgcat_message
+				 (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_MEMMON, MEMMON_MSG_CANNOT_OPEN_OUTPUT_FILE),
+				 outfile_name);
+	  goto error_exit;
+	}
+    }
+  else
+    {
+      outfile_fp = stdout;
+    }
+
+  /* error message log file */
+  snprintf (er_msg_file, sizeof (er_msg_file) - 1, "%s_%s.err", database_name, arg->command_name);
+  er_init (er_msg_file, ER_NEVER_EXIT);
+
+  AU_DISABLE_PASSWORDS ();	/* disable authorization for this operation */
+  db_set_client_type (DB_CLIENT_TYPE_ADMIN_UTILITY);
+  db_login ("DBA", NULL);
+
+  if (db_restart (arg->command_name, TRUE, database_name))
+    {
+      PRINT_AND_LOG_ERR_MSG ("%s: %s. \n\n", arg->command_name, db_error_string (3));
+      goto error_exit;
+    }
+  need_shutdown = true;
+
+  if (!prm_get_bool_value (PRM_ID_ENABLE_MEMORY_MONITORING))
+    {
+      PRINT_AND_LOG_ERR_MSG (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_MEMMON, MEMMON_MSG_NOT_SUPPORTED));
+      goto error_exit;
+    }
+
+  if (disable_force)
+    {
+      error_code = mmon_disable_force ();
+      if (error_code != NO_ERROR)
+	{
+	  switch (error_code)
+	    {
+	    case ER_INTERFACE_NOT_SUPPORTED_OPERATION:
+	      PRINT_AND_LOG_ERR_MSG (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_MEMMON,
+						     MEMMON_MSG_NOT_SUPPORTED_OS));
+	      break;
+	    default:
+	      break;
+	    }
+	  goto error_exit;
+	}
+      fprintf (stdout, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_MEMMON, MEMMON_MSG_DISABLE_SUCCESS));
+      goto success_exit;
+    }
+
+  /* execute phase */
+  error_code = mmon_get_server_info (server_info);
+  if (error_code != NO_ERROR)
+    {
+      switch (error_code)
+	{
+	case ER_FAILED:
+	  PRINT_AND_LOG_ERR_MSG (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_MEMMON,
+						 MEMMON_MSG_MEMORY_MONITOR_IS_DISABLED));
+	  break;
+	case ER_INTERFACE_NOT_SUPPORTED_OPERATION:
+	  PRINT_AND_LOG_ERR_MSG (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_MEMMON,
+						 MEMMON_MSG_NOT_SUPPORTED_OS));
+	  break;
+	default:
+	  break;
+	}
+      goto error_exit;
+    }
+
+  mmon_print_server_info (server_info, outfile_fp);
+
+success_exit:
+  fclose (outfile_fp);
+
+  db_shutdown ();
+
+  return EXIT_SUCCESS;
+
+print_memmon_usage:
+  fprintf (stderr, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_MEMMON, MEMMON_MSG_USAGE),
+	   basename (arg->argv0));
+  util_log_write_errid (MSGCAT_UTIL_GENERIC_INVALID_ARGUMENT);
+
+error_exit:
+  if (need_shutdown)
+    {
+      db_shutdown ();
+    }
+
+  if (outfile_fp)
+    {
+      fclose (outfile_fp);
+    }
+
+  return EXIT_FAILURE;
+#else /* CS_MODE */
+  fprintf (stderr, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_MEMMON, MEMMON_MSG_NOT_IN_STANDALONE),
+	   basename (arg->argv0));
+  return EXIT_FAILURE;
+#endif /* !CS_MODE */
+}
+
+/*
+ * cleanfiledb() - cleanfiledb main routine
+ *   return: EXIT_SUCCESS/EXIT_FAILURE
+ */
+int
+cleanfiledb (UTIL_FUNCTION_ARG * arg)
+{
+  UTIL_ARG_MAP *arg_map = arg->arg_map;
+  char er_msg_file[PATH_MAX];
+  const char *db_name;
+#if !defined(NDEBUG)
+  const char *target_vfid_str = NULL;
+#endif
+  const char *output_file = NULL;
+  FILE *outfp = NULL;
+  bool is_dump_file_list;
+  bool is_clean_invalid_file;
+
+  db_name = utility_get_option_string_value (arg_map, OPTION_STRING_TABLE, 0);
+  if (db_name == NULL)
+    {
+      goto print_cleanfiledb_usage;
+    }
+
+  output_file = utility_get_option_string_value (arg_map, CLEANFILEDB_OUTPUT_FILE_S, 0);
+  if (output_file == NULL)
+    {
+      outfp = stdout;
+    }
+  else
+    {
+      outfp = fopen (output_file, "w");
+      if (outfp == NULL)
+	{
+	  PRINT_AND_LOG_ERR_MSG (msgcat_message
+				 (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_CLEANFILEDB, CLEANFILEDB_MSG_BAD_OUTPUT),
+				 output_file);
+	  goto error_exit;
+	}
+    }
+
+  is_dump_file_list = utility_get_option_bool_value (arg_map, CLEANFILEDB_DUMP_FILE_LIST_S);
+  is_clean_invalid_file = utility_get_option_bool_value (arg_map, CLEANFILEDB_CLEAN_INVALID_FILE_S);
+#if !defined(NDEBUG)
+  /*
+   * INFO: Hidden option for debugging.
+   * Usage: -t, --clean-target-file=VFID
+   * Format: "fileid|volid" (e.g., "123|1")
+   */
+  target_vfid_str = utility_get_option_string_value (arg_map, CLEANFILEDB_DELETE_TARGET_FILE_S, 0);
+#endif
+
+  if (check_database_name (db_name))
+    {
+      goto error_exit;
+    }
+
+  /* error message log file */
+  snprintf (er_msg_file, sizeof (er_msg_file) - 1, "%s_%s.err", db_name, arg->command_name);
+  er_init (er_msg_file, ER_NEVER_EXIT);
+
+  AU_DISABLE_PASSWORDS ();
+
+  db_set_client_type (DB_CLIENT_TYPE_ADMIN_UTILITY);
+
+  db_login ("DBA", NULL);
+
+  if (db_restart (arg->command_name, TRUE, db_name) != NO_ERROR)
+    {
+      PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
+      goto error_exit;
+    }
+
+  // Execute with default settings (no command-line options provided)
+  if (!is_dump_file_list && !is_clean_invalid_file
+#if !defined(NDEBUG)
+      && target_vfid_str == NULL
+#endif
+    )
+    {
+      (void) file_dump_file_list (outfp, true);
+
+      fflush (outfp);
+    }
+  else
+    {
+      if (is_dump_file_list)
+	{
+	  (void) file_dump_file_list (outfp, false);
+
+	  fflush (outfp);
+	}
+
+      if (is_clean_invalid_file)
+	{
+	  int heap = 0, heap_ovf = 0, btree = 0, btree_ovf = 0;
+	  int total;
+
+	  if (file_clean_invalid_file (&heap, &heap_ovf, &btree, &btree_ovf) != NO_ERROR)
+	    {
+	      PRINT_AND_LOG_ERR_MSG ("%s\n", db_error_string (3));
+	      db_shutdown ();
+	      goto error_exit;
+	    }
+
+	  total = heap + heap_ovf + btree + btree_ovf;
+
+	  fprintf (outfp,
+		   msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_CLEANFILEDB, CLEANFILEDB_MSG_CLEAN_SUMMARY),
+		   db_name, heap, heap_ovf, btree, btree_ovf, total);
+
+	  fflush (outfp);
+	}
+#if !defined(NDEBUG)
+      else if (target_vfid_str != NULL)
+	{
+	  (void) file_delete_target_file (target_vfid_str);
+	}
+#endif
+    }
+
+  db_shutdown ();
+
+  if (output_file != NULL && outfp != NULL && outfp != stdout)
+    {
+      fclose (outfp);
+    }
+
+  return EXIT_SUCCESS;
+
+print_cleanfiledb_usage:
+  fprintf (stderr, msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_CLEANFILEDB, CLEANFILEDB_MSG_USAGE),
+	   basename (arg->argv0));
+  util_log_write_errid (MSGCAT_UTIL_GENERIC_INVALID_ARGUMENT);
+
+error_exit:
+  if (output_file != NULL && outfp != NULL && outfp != stdout)
+    {
+      fclose (outfp);
+    }
+
+  return EXIT_FAILURE;
 }

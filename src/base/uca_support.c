@@ -31,10 +31,14 @@
 #include "intl_support.h"
 #include "uca_support.h"
 #include "unicode_support.h"
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 #if defined (SUPPRESS_STRLEN_WARNING)
 #define strlen(s1)  ((int) strlen(s1))
 #endif /* defined (SUPPRESS_STRLEN_WARNING) */
+
+#if defined(SA_MODE)
 
 #define DUCET_FILE "ducet.txt"
 
@@ -2618,7 +2622,7 @@ string_to_coll_ce_list (char *s, UCA_COLL_CE_LIST * ui)
   ce_index = 0;
   state = 0;
   error_found = false;
-  while (strlen (str) > 0 && !error_found)
+  while (*str && !error_found)
     {
       int result = 0;
       int val;
@@ -3582,3 +3586,5 @@ build_uca_w_l4 (const UCA_COLL_CE_LIST * ce_list, UCA_L4_W * uca_w_l4)
       uca_w_l4[i] = GET_UCA_WEIGHT (ce_list, i, 3);
     }
 }
+
+#endif //#if defined(SA_MODE)

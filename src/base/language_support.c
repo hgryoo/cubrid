@@ -50,6 +50,8 @@
 #include "db.h"
 #endif /* !defined (SERVER_MODE) */
 #include "dbtype.h"
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 #define PAD ' '			/* str_pad_char(INTL_CODESET_ISO88591, pad, &pad_size) */
 #define SPACE PAD		/* smallest character in the collation sequence */
@@ -118,7 +120,7 @@ struct lang_defaults
 
 /* Order of language/charset pair is important: first encoutered charset is
  * the default for a language */
-LANG_DEFAULTS builtin_Langs[] = {
+static const LANG_DEFAULTS builtin_Langs[] = {
   /* English - ISO-8859-1 - default lang and charset */
   {LANG_NAME_ENGLISH, INTL_LANG_ENGLISH, INTL_CODESET_ISO88591},
   /* English - UTF-8 */
@@ -327,9 +329,6 @@ static void lang_initloc_en_iso88591 (LANG_LOCALE_DATA * ld);
 
 static void lang_initloc_en_binary (LANG_LOCALE_DATA * ld);
 
-static void lang_init_common_en_cs (COLL_DATA * coll_data);
-
-
 static LANG_COLLATION coll_Utf8_en_cs = {
   INTL_CODESET_UTF8, 1, 1, DEFAULT_COLL_OPTIONS, NULL,
   /* collation data */
@@ -348,8 +347,6 @@ static LANG_COLLATION coll_Utf8_en_cs = {
   lang_mht2str_byte,
   lang_init_coll_en_cs
 };
-
-static void lang_init_common_en_ci (COLL_DATA * coll_data);
 
 static void lang_initloc_en_utf8 (LANG_LOCALE_DATA * ld);
 
@@ -1099,8 +1096,7 @@ set_msg_lang_from_env (void)
       if (status != NO_ERROR)
 	{
 	  sprintf (err_msg, "invalid value '%s' for CUBRID_MSG_LANG", lang_Msg_loc_name);
-	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_LOC_INIT, 1, err_msg);
-	  strcpy (lang_Msg_loc_name, LANG_NAME_DEFAULT);
+	  strcpy (lang_Msg_loc_name, LANG_NAME_ENGLISH "." LANG_CHARSET_UTF8);
 	  return ER_LOC_INIT;
 	}
       else
@@ -2007,6 +2003,17 @@ lang_final (void)
 }
 
 /*
+ * lang_is_all_initialized - Checks if the all language support modules are initialized
+ *   return: true if the module has been initialized, false otherwise
+ */
+bool
+lang_is_all_initialized (void)
+{
+  return (lang_Initialized && lang_Builtin_initialized && lang_Charset_initialized && lang_Language_initialized
+	  && lang_Msg_env_initialized);
+}
+
+/*
  * lang_currency_symbol - Computes an appropriate printed representation for
  *                        a currency identifier
  *   return: currency string
@@ -2310,36 +2317,6 @@ lang_set_flag_from_lang (const char *lang_str, bool has_user_format, bool has_us
       status = lang_get_lang_id_from_name (lang_str, &lang);
     }
 
-  if (lang_set_flag_from_lang_id (lang, has_user_format, has_user_lang, flag) == 0)
-    {
-      return status;
-    }
-
-  assert (lang == INTL_LANG_ENGLISH);
-
-  return 1;
-}
-
-/*
- * lang_set_flag_from_lang - set a flag according to language identifier
- *
- *   return: 0 if language string OK and flag was set, non-zero otherwise
- *   lang(in): language identier
- *   has_user_format(in): true if user has given a format, false otherwise
- *   has_user_lang(in): true if user has given a language, false otherwise
- *   flag(out): bit flag : bits 0 and 1 are user flags, bits 2 - 31 are for
- *		language identification
- *		Bit 0 : if set, the format was given by user
-*		Bit 1 : if set, the language was given by user
- *		Bit 2 - 31 : INTL_LANG
- *		Consider change this flag to store the language as value
- *		instead of as bit map
- *
- *  Note : function is used in context of some date-string functions.
- */
-int
-lang_set_flag_from_lang_id (const INTL_LANG lang, bool has_user_format, bool has_user_lang, int *flag)
-{
   int lang_val = (int) lang;
 
   *flag = 0;
@@ -2350,13 +2327,15 @@ lang_set_flag_from_lang_id (const INTL_LANG lang, bool has_user_format, bool has
   if (lang_val >= lang_Count_locales)
     {
       lang_val = (int) INTL_LANG_ENGLISH;
-      *flag |= lang_val << 2;
-      return 1;
+      status = 1;
     }
 
-  *flag |= lang_val << 2;
+  *flag |= (lang_val << 2);
 
-  return 0;
+  assert (((*flag) & LANG_LOADED_LOCALES_PARITY_MASK) == 0);
+  *flag |= LANG_LOADED_LOCALES_PARITY;
+
+  return status;
 }
 
 /*
@@ -2377,7 +2356,8 @@ lang_get_lang_id_from_flag (const int flag, bool * has_user_format, bool * has_u
   *has_user_format = ((flag & 0x1) == 0x1) ? true : false;
   *has_user_lang = ((flag & 0x2) == 0x2) ? true : false;
 
-  lang_val = flag >> 2;
+  assert ((flag & LANG_LOADED_LOCALES_PARITY_MASK) == LANG_LOADED_LOCALES_PARITY);
+  lang_val = (flag & ~LANG_LOADED_LOCALES_PARITY_MASK) >> 2;
 
   if (lang_val >= 0 && lang_val < lang_Count_locales)
     {
@@ -5316,80 +5296,6 @@ lang_initloc_en_binary (LANG_LOCALE_DATA * ld)
 }
 
 /*
- * lang_init_common_en_cs () - init collation data for English case
- *			       sensitive (no matter the charset)
- *			       with optional ts (trailing space sensitive)
- *   in: coll_dat (collation data)
- *   return:
- */
-static void
-lang_init_common_en_cs (COLL_DATA * coll_data)
-{
-  int i;
-  static bool is_common_en_cs_init = false;
-
-  if (is_common_en_cs_init)
-    {
-      return;
-    }
-
-  for (i = 0; i < coll_data->w_count; i++)
-    {
-      coll_data->weights_ti[i] = coll_data->weights[i] = i;
-      coll_data->next_cp_ti[i] = coll_data->next_cp[i] = i + 1;
-    }
-
-  coll_data->weights_ti[32] = 0;
-  coll_data->next_cp_ti[32] = 1;
-
-  is_common_en_cs_init = true;
-}
-
-/*
- * lang_init_common_en_ci () - init collation data for English case
- *			       insensitive (no matter the charset)
- *			       with optional ts (trailing space sensitive)
- *   in: coll_data (collation data)
- *   return:
- */
-static void
-lang_init_common_en_ci (COLL_DATA * coll_data)
-{
-  int i;
-  static bool is_common_en_ci_init = false;
-
-  if (is_common_en_ci_init)
-    {
-      return;
-    }
-
-  for (i = 0; i < coll_data->w_count; i++)
-    {
-      coll_data->weights_ti[i] = coll_data->weights[i] = i;
-      coll_data->next_cp_ti[i] = coll_data->next_cp[i] = i + 1;
-    }
-
-  for (i = 'a'; i <= (int) 'z'; i++)
-    {
-      coll_data->weights_ti[i] = coll_data->weights[i] = i - ('a' - 'A');
-      coll_data->next_cp_ti[i] = coll_data->next_cp[i] = i + 1 - ('a' - 'A');
-    }
-
-  coll_data->next_cp['z'] = coll_data->next_cp['Z'];
-  coll_data->next_cp['a' - 1] = coll_data->next_cp['A' - 1];
-
-  coll_data->next_cp_ti['z'] = coll_data->next_cp_ti['Z'];
-  coll_data->next_cp_ti['a' - 1] = coll_data->next_cp_ti['A' - 1];
-
-  /* for ignore trailing space */
-  coll_data->weights_ti[32] = 0;
-  coll_data->next_cp_ti[32] = 1;
-
-
-  is_common_en_ci_init = true;
-}
-
-/*
  * lang_init_coll_en_cs () - init collation for English case sensitive
  * 			     on no matter charset (iso88591, utf8, euckr)
  * 			     with optional ts (trailing space sensitive)
@@ -5405,10 +5311,29 @@ lang_init_coll_en_cs (LANG_COLLATION * lang_coll)
       return;
     }
 
-  /* init data */
-  lang_init_common_en_cs (&lang_coll->coll);
+  /* init collation data for English case sensitive (no matter the charset) with optional ts (trailing space sensitive) */
+  static bool is_common_en_cs_init =[](COLL_DATA * coll_data) {
+    int i;
+    for (i = 0; i < coll_data->w_count; i++)
+      {
+	coll_data->weights_ti[i] = coll_data->weights[i] = i;
+	coll_data->next_cp_ti[i] = coll_data->next_cp[i] = i + 1;
+      }
+
+    coll_data->weights_ti[32] = 0;
+    coll_data->next_cp_ti[32] = 1;
+    return true;
+  }
+  (&lang_coll->coll);
 
   lang_coll->need_init = false;
+
+  /* Notice:
+   * This ensures the variable is not optimized away, even though it does not change the functional logic of the code
+   * Please do not delete the following two lines.
+   */
+  (void) is_common_en_cs_init;	// Dummy Reference  
+  *(volatile bool *) &is_common_en_cs_init;
 }
 
 /*
@@ -5427,10 +5352,42 @@ lang_init_coll_en_ci (LANG_COLLATION * lang_coll)
       return;
     }
 
-  /* init data */
-  lang_init_common_en_ci (&lang_coll->coll);
+  /* init collation data for English case insensitive (no matter the charset) with optional ts (trailing space sensitive) */
+  static bool is_common_en_ci_init =[](COLL_DATA * coll_data) {
+    int i;
+    for (i = 0; i < coll_data->w_count; i++)
+      {
+	coll_data->weights_ti[i] = coll_data->weights[i] = i;
+	coll_data->next_cp_ti[i] = coll_data->next_cp[i] = i + 1;
+      }
+
+    for (i = 'a'; i <= (int) 'z'; i++)
+      {
+	coll_data->weights_ti[i] = coll_data->weights[i] = i - ('a' - 'A');
+	coll_data->next_cp_ti[i] = coll_data->next_cp[i] = i + 1 - ('a' - 'A');
+      }
+
+    coll_data->next_cp['z'] = coll_data->next_cp['Z'];
+    coll_data->next_cp['a' - 1] = coll_data->next_cp['A' - 1];
+
+    coll_data->next_cp_ti['z'] = coll_data->next_cp_ti['Z'];
+    coll_data->next_cp_ti['a' - 1] = coll_data->next_cp_ti['A' - 1];
+
+    /* for ignore trailing space */
+    coll_data->weights_ti[32] = 0;
+    coll_data->next_cp_ti[32] = 1;
+    return true;
+  }
+  (&lang_coll->coll);
 
   lang_coll->need_init = false;
+
+  /* Notice:
+   * This ensures the variable is not optimized away, even though it does not change the functional logic of the code
+   * Please do not delete the following two lines.
+   */
+  (void) is_common_en_ci_init;	// Dummy Reference  
+  *(volatile bool *) &is_common_en_ci_init;
 }
 
 /*

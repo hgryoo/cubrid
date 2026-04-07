@@ -137,6 +137,7 @@ static ARG_MAP_TABLE ua_Space_map[] = {
 
 static ARG_MAP_TABLE ua_Lock_map[] = {
   {"-o", "--" LOCK_OUTPUT_FILE_L},
+  {"-c", "--" LOCK_DISPLAY_CONTENTION_L},
   {0, 0}
 };
 
@@ -290,6 +291,7 @@ UTIL_MAP_TABLE ua_Util_table[] = {
   {"optimizedb", UTIL_OPTION_OPTIMIZEDB, ua_Optimize_map},
   {"installdb", UTIL_OPTION_INSTALLDB, ua_Install_map},
   {"diagdb", UTIL_OPTION_DIAGDB, ua_Diag_map},
+  {"cleanfiledb", UTIL_OPTION_CLEANFILEDB, ua_cleanfiledb_map},
   {"checkdb", UTIL_OPTION_CHECKDB, ua_Check_map},
   {"killtran", UTIL_OPTION_KILLTRAN, ua_Killtran_map},
   {"loaddb", UTIL_OPTION_LOADDB, ua_Load_map},

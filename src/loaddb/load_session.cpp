@@ -29,6 +29,8 @@
 #include "xserver_interface.h"
 
 #include <sstream>
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 namespace cubload
 {
@@ -125,7 +127,7 @@ namespace cubload
 	thread_ref.conn_entry = &m_conn_entry;
 	driver *driver = thread_ref.m_loaddb_driver;
 
-	assert (driver != NULL && !driver->is_initialized ());
+	assert (driver != NULL &&!driver->is_initialized ());
 	init_driver (driver, m_session);
 
 	bool is_syntax_check_only = m_session.get_args ().syntax_check;
@@ -238,6 +240,7 @@ namespace cubload
     , m_max_batch_id {NULL_BATCH_ID}
     , m_active_task_count {0}
     , m_class_registry ()
+    , m_load_client_type (DB_CLIENT_TYPE_LOADDB_UTILITY)
     , m_stats ()
     , m_is_failed (false)
     , m_collected_stats ()
@@ -504,30 +507,6 @@ namespace cubload
     while (!atomic_val.compare_exchange_strong (curr_max, new_max));
   }
 
-  void
-  session::update_class_statistics (cubthread::entry &thread_ref)
-  {
-    if (m_args.disable_statistics || m_args.syntax_check)
-      {
-	return;
-      }
-
-    std::vector<const class_entry *> class_entries;
-    m_class_registry.get_all_class_entries (class_entries);
-
-    append_log_msg (LOADDB_MSG_UPDATING_STATISTICS);
-
-    for (const class_entry *class_entry : class_entries)
-      {
-	if (!class_entry->is_ignored ())
-	  {
-	    OID *class_oid = const_cast<OID *> (&class_entry->get_class_oid ());
-	    xstats_update_statistics (&thread_ref, class_oid, STATS_WITH_SAMPLING);
-	    append_log_msg (LOADDB_MSG_UPDATED_CLASS_STATS, class_entry->get_class_name ());
-	  }
-      }
-  }
-
   class_registry &
   session::get_class_registry ()
   {
@@ -538,6 +517,18 @@ namespace cubload
   session::get_args ()
   {
     return m_args;
+  }
+
+  int
+  session::get_client_type ()
+  {
+    return m_load_client_type.load ();
+  }
+
+  void
+  session::set_client_type (int client_type)
+  {
+    m_load_client_type.store (client_type);
   }
 
   void
@@ -686,7 +677,7 @@ namespace cubload
 	assert (m_collected_stats.empty ());
       }
 
-    status = load_status (is_completed (), is_failed (), stats_);
+    status = load_status (get_client_type (), is_completed (), is_failed (), stats_);
 
     if (!has_lock)
       {

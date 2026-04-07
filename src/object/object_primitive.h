@@ -184,84 +184,82 @@ typedef struct pr_type
  * PRIMITIVE TYPE STRUCTURES
  */
 
-extern PR_TYPE tp_Null;
-extern PR_TYPE tp_Integer;
-extern PR_TYPE tp_Short;
-extern PR_TYPE tp_Float;
-extern PR_TYPE tp_Double;
-extern PR_TYPE tp_String;
-extern PR_TYPE tp_Set;
-extern PR_TYPE tp_Multiset;
-extern PR_TYPE tp_Sequence;
-extern PR_TYPE tp_Object;
-extern PR_TYPE tp_Midxkey;
-extern PR_TYPE tp_Time;
-extern PR_TYPE tp_Utime;
-extern PR_TYPE tp_Date;
-extern PR_TYPE tp_Datetime;
-extern PR_TYPE tp_Monetary;
-extern PR_TYPE tp_Elo;
-extern PR_TYPE tp_Blob;
-extern PR_TYPE tp_Clob;
-extern PR_TYPE tp_Variable;
-extern PR_TYPE tp_Substructure;
-extern PR_TYPE tp_Pointer;
-extern PR_TYPE tp_Error;
-extern PR_TYPE tp_Vobj;
-extern PR_TYPE tp_Oid;
-extern PR_TYPE tp_Numeric;
-extern PR_TYPE tp_Bit;
-extern PR_TYPE tp_VarBit;
-extern PR_TYPE tp_Char;
-extern PR_TYPE tp_NChar;
-extern PR_TYPE tp_VarNChar;
-extern PR_TYPE tp_ResultSet;
-extern PR_TYPE tp_Bigint;
-extern PR_TYPE tp_Enumeration;
-extern PR_TYPE tp_Timestamptz;
-extern PR_TYPE tp_Timestampltz;
-extern PR_TYPE tp_Datetimetz;
-extern PR_TYPE tp_Datetimeltz;
-extern PR_TYPE tp_Timetz;
-extern PR_TYPE tp_Timeltz;
-extern PR_TYPE tp_Json;
+extern const PR_TYPE tp_Null;
+extern const PR_TYPE tp_Integer;
+extern const PR_TYPE tp_Short;
+extern const PR_TYPE tp_Float;
+extern const PR_TYPE tp_Double;
+extern const PR_TYPE tp_String;
+extern const PR_TYPE tp_Set;
+extern const PR_TYPE tp_Multiset;
+extern const PR_TYPE tp_Sequence;
+extern const PR_TYPE tp_Object;
+extern const PR_TYPE tp_Midxkey;
+extern const PR_TYPE tp_Time;
+extern const PR_TYPE tp_Utime;
+extern const PR_TYPE tp_Date;
+extern const PR_TYPE tp_Datetime;
+extern const PR_TYPE tp_Monetary;
+extern const PR_TYPE tp_Elo;
+extern const PR_TYPE tp_Blob;
+extern const PR_TYPE tp_Clob;
+extern const PR_TYPE tp_Variable;
+extern const PR_TYPE tp_Substructure;
+extern const PR_TYPE tp_Pointer;
+extern const PR_TYPE tp_Error;
+extern const PR_TYPE tp_Vobj;
+extern const PR_TYPE tp_Oid;
+extern const PR_TYPE tp_Numeric;
+extern const PR_TYPE tp_Bit;
+extern const PR_TYPE tp_VarBit;
+extern const PR_TYPE tp_Char;
 
-extern PR_TYPE *tp_Type_null;
-extern PR_TYPE *tp_Type_integer;
-extern PR_TYPE *tp_Type_short;
-extern PR_TYPE *tp_Type_float;
-extern PR_TYPE *tp_Type_double;
-extern PR_TYPE *tp_Type_string;
-extern PR_TYPE *tp_Type_error;
-extern PR_TYPE *tp_Type_pointer;
-extern PR_TYPE *tp_Type_oid;
-extern PR_TYPE *tp_Type_set;
-extern PR_TYPE *tp_Type_multiset;
-extern PR_TYPE *tp_Type_sequence;
-extern PR_TYPE *tp_Type_object;
-extern PR_TYPE *tp_Type_time;
-extern PR_TYPE *tp_Type_utime;
-extern PR_TYPE *tp_Type_date;
-extern PR_TYPE *tp_Type_monetary;
-extern PR_TYPE *tp_Type_elo;
-extern PR_TYPE *tp_Type_blob;
-extern PR_TYPE *tp_Type_clob;
-extern PR_TYPE *tp_Type_variable;
-extern PR_TYPE *tp_Type_substructure;
-extern PR_TYPE *tp_Type_vobj;
-extern PR_TYPE *tp_Type_numeric;
-extern PR_TYPE *tp_Type_bit;
-extern PR_TYPE *tp_Type_varbit;
-extern PR_TYPE *tp_Type_char;
-extern PR_TYPE *tp_Type_nchar;
-extern PR_TYPE *tp_Type_varnchar;
-extern PR_TYPE *tp_Type_resultset;
-extern PR_TYPE *tp_Type_midxkey;
-extern PR_TYPE *tp_Type_bigint;
-extern PR_TYPE *tp_Type_datetime;
-extern PR_TYPE *tp_Type_json;
+extern const PR_TYPE tp_ResultSet;
+extern const PR_TYPE tp_Bigint;
+extern const PR_TYPE tp_Enumeration;
+extern const PR_TYPE tp_Timestamptz;
+extern const PR_TYPE tp_Timestampltz;
+extern const PR_TYPE tp_Datetimetz;
+extern const PR_TYPE tp_Datetimeltz;
+extern const PR_TYPE tp_Timetz;
+extern const PR_TYPE tp_Timeltz;
+extern const PR_TYPE tp_Json;
 
-extern PR_TYPE *tp_Type_id_map[];
+extern const PR_TYPE *tp_Type_null;
+extern const PR_TYPE *tp_Type_integer;
+extern const PR_TYPE *tp_Type_short;
+extern const PR_TYPE *tp_Type_float;
+extern const PR_TYPE *tp_Type_double;
+extern const PR_TYPE *tp_Type_string;
+extern const PR_TYPE *tp_Type_error;
+extern const PR_TYPE *tp_Type_pointer;
+extern const PR_TYPE *tp_Type_oid;
+extern const PR_TYPE *tp_Type_set;
+extern const PR_TYPE *tp_Type_multiset;
+extern const PR_TYPE *tp_Type_sequence;
+extern const PR_TYPE *tp_Type_object;
+extern const PR_TYPE *tp_Type_time;
+extern const PR_TYPE *tp_Type_utime;
+extern const PR_TYPE *tp_Type_date;
+extern const PR_TYPE *tp_Type_monetary;
+extern const PR_TYPE *tp_Type_elo;
+extern const PR_TYPE *tp_Type_blob;
+extern const PR_TYPE *tp_Type_clob;
+extern const PR_TYPE *tp_Type_variable;
+extern const PR_TYPE *tp_Type_substructure;
+extern const PR_TYPE *tp_Type_vobj;
+extern const PR_TYPE *tp_Type_numeric;
+extern const PR_TYPE *tp_Type_bit;
+extern const PR_TYPE *tp_Type_varbit;
+extern const PR_TYPE *tp_Type_char;
+extern const PR_TYPE *tp_Type_resultset;
+extern const PR_TYPE *tp_Type_midxkey;
+extern const PR_TYPE *tp_Type_bigint;
+extern const PR_TYPE *tp_Type_datetime;
+extern const PR_TYPE *tp_Type_json;
+
+
+extern const PR_TYPE *tp_Type_id_map[];
 
 /*
  * EXTERNAL FUNCTIONS
@@ -275,8 +273,8 @@ PRIM_SET_NULL (DB_VALUE * value)
 }
 
 /* Type structure accessors */
-extern PR_TYPE *pr_type_from_id (DB_TYPE id);
-extern PR_TYPE *pr_find_type (const char *name);
+extern const PR_TYPE *pr_type_from_id (DB_TYPE id);
+extern const PR_TYPE *pr_find_type (const char *name);
 extern const char *pr_type_name (DB_TYPE id);
 
 STATIC_INLINE bool pr_is_set_type (DB_TYPE type) __attribute__ ((ALWAYS_INLINE));
@@ -308,12 +306,14 @@ extern int pr_free_ext_value (DB_VALUE * value);
 extern DB_VALUE_COMPARE_RESULT pr_midxkey_compare (DB_MIDXKEY * mul1, DB_MIDXKEY * mul2, int do_coercion,
 						   int total_order, int num_index_term, int *start_colp,
 						   int *diff_column, bool * dom_is_desc, int *result_size);
-extern int pr_midxkey_element_disk_size (char *mem, DB_DOMAIN * domain);
+STATIC_INLINE int pr_midxkey_element_disk_size (char *mem, DB_DOMAIN * domain) __attribute__ ((ALWAYS_INLINE));
 extern int pr_midxkey_get_element_nocopy (const DB_MIDXKEY * midxkey, int index, DB_VALUE * value, int *prev_indexp,
 					  char **prev_ptrp);
 extern int pr_midxkey_add_elements (DB_VALUE * keyval, DB_VALUE * dbvals, int num_dbvals,
 				    struct tp_domain *dbvals_domain_list);
-extern int pr_midxkey_init_boundbits (char *bufptr, int n_atts);
+extern int pr_midxkey_add_elements_with_null (DB_VALUE * keyval, DB_VALUE * dbvals, int num_dbvals,
+					      struct tp_domain *dbvals_domain_list, int tail_null_cnt);
+
 extern int pr_index_writeval_disk_size (DB_VALUE * value);
 extern int pr_data_writeval_disk_size (DB_VALUE * value);
 extern void pr_data_writeval (struct or_buf *buf, DB_VALUE * value);
@@ -353,10 +353,6 @@ extern int pr_Enable_string_compression;
 /* 1 size byte, 4 bytes the compressed size, 4 bytes the decompressed size, length and the max alignment */
 #define PRIM_STRING_MAXIMUM_DISK_SIZE(length) (OR_BYTE_SIZE + OR_INT_SIZE + OR_INT_SIZE + (length) + MAX_ALIGNMENT)
 
-// *INDENT-OFF*
-#define MIDXKEY_BOUNDBITS_INIT(bufptr, nbytes)  do { if(nbytes > 0) { memset ((bufptr), 0x00, (nbytes)); } } while(0)
-// *INDENT-ON*
-
 /*
  * pr_is_set_type - Test to see if a type identifier is one of the set types.
  *    return: non-zero if type is one of the set types
@@ -380,15 +376,7 @@ pr_is_set_type (DB_TYPE type)
 STATIC_INLINE int
 pr_is_string_type (DB_TYPE type)
 {
-  int status = 0;
-
-  if (type == DB_TYPE_VARCHAR || type == DB_TYPE_CHAR || type == DB_TYPE_VARNCHAR || type == DB_TYPE_NCHAR
-      || type == DB_TYPE_VARBIT || type == DB_TYPE_BIT)
-    {
-      status = 1;
-    }
-
-  return status;
+  return TP_IS_STRING_TYPE (type);
 }
 
 /*
@@ -401,6 +389,26 @@ STATIC_INLINE int
 pr_is_prefix_key_type (DB_TYPE type)
 {
   return (type == DB_TYPE_MIDXKEY || pr_is_string_type (type));
+}
+
+/*
+ * pr_midxkey_element_disk_size - returns the number of bytes that will be
+ * written by the "index_write" type function for this memory buffer.
+ *    return: byte size of disk representation
+ *    mem(in): memory buffer
+ *    domain(in): type domain
+ */
+STATIC_INLINE int
+pr_midxkey_element_disk_size (char *mem, DB_DOMAIN * domain)
+{
+  /*
+   * variable types except VARCHAR and VARBIT
+   * cannot be a member of midxkey
+   */
+  assert (!(domain->type->variable_p
+	    && !(TP_DOMAIN_TYPE (domain) == DB_TYPE_VARCHAR || TP_DOMAIN_TYPE (domain) == DB_TYPE_VARBIT)));
+
+  return domain->type->get_index_size_of_mem (mem, domain);
 }
 
 //////////////////////////////////////////////////////////////////////////

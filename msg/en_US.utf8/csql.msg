@@ -62,9 +62,9 @@ For additional information, see http://www.cubrid.org\n
 46 %1$d command(s) successfully processed.
 47 In the command from line %1$d,
 48 In line %1$d, column %2$d,
-49 Type `;help' for help messages.
+49 Type ';help' for help messages, or ';exit' to quit.
 50 ERROR: 
-51 CUBRID SQL Interpreter
+51 \n\tCUBRID SQL Interpreter (version %1$s)\n\n
 52 There have been updates. Do you want to commit ? (`Y' or `N') 
 53 Enter `Y' to commit, `N' to abort. 
 54 Committed.
@@ -114,6 +114,7 @@ $ These 3 should be blank
 196 An undefined error has occurred.
 197 ';edit' is not allowed when output has been redirected.
 198 Format failed.
+199 Multibyte characters unavailable in prompt. Check LANG and DB codeset settings.
 
 203 <%1$s> 
 204 <Super Classes> 
@@ -152,7 +153,7 @@ $ csql help messages
    ;PRINT                       - print command buffer.\n\
    ;SHELL                       - invoke shell.\n\
    ;CD                          - change current working directory.\n\
-   ;EXit                        - exit program.\n\
+   ;EXit (or Ctrl+d)            - exit program.\n\
 \n\
    ;CLear                       - clear command buffer.\n\
    ;EDIT   [format/fmt]         - invoke system editor [after formatter] with command buffer.\n\
@@ -179,13 +180,13 @@ $ csql help messages
    ;SChema class-name           - display schema information of a class.\n\
    ;TRIgger [`*'|trigger-name]  - display trigger definition.\n\
    ;Get system_parameter        - get the value of a system parameter.\n\
-   ;SEt system_parameter=value  - set the value of a system parameter.\n\
+   ;SET system_parameter=value  - set the value of a system parameter.\n\
    ;STring-width [width]        - set width that each column which is a string type is displayed.\n\
    ;COLumn-width [name]=[width] - set width that a specific column is displayed.\n\
    ;PLan [simple/detail/off]    - show query execution plan.\n\
    ;Info <command>              - display internal information.\n\
-   ;TIme [ON/OFF]               - enable/disable to display the query\n\
-                                  execution time.\n\
+   ;TIme [ON/OFF]               - enable/disable to display the query execution time.\n\
+   ;SERver-output [ON/OFF]      - enable/disable displaying server messages stored in DBMS_OUTPUT buffer.\n\
    ;LINe-output [ON/OFF]        - enable/disable to display each value in a line\n\
    ;HISTORYList                 - display list of the executed queries.\n\
    ;HISTORYRead <history_num>   - read entry on the history number into command buffer.\n\
@@ -215,3 +216,4 @@ $ csql help messages
 235 <Partitions>
 236 A class name is required.
 237 <Comment>
+238 Failed to compile system catalog classes.

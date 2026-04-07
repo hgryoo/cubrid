@@ -20,6 +20,11 @@
  * vacuum.c - Vacuuming system implementation.
  *
  */
+#if !defined(WINDOWS)
+#define __STDC_FORMAT_MACROS
+#include <inttypes.h>
+#endif
+
 #include "system.h"
 #include "vacuum.h"
 
@@ -33,6 +38,7 @@
 #include "log_compress.h"
 #include "log_lsa.hpp"
 #include "log_impl.h"
+#include "log_reader.hpp"
 #include "mvcc.h"
 #include "mvcc_table.hpp"
 #include "object_representation.h"
@@ -49,6 +55,7 @@
 #include "thread_manager.hpp"
 #if defined (SERVER_MODE)
 #include "thread_worker_pool.hpp"
+#include "monitor_vacuum_ovfp_threshold.hpp"
 #endif // SERVER_MODE
 #include "util_func.h"
 
@@ -58,6 +65,8 @@
 #include <stack>
 
 #include <cstring>
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 /* The maximum number of slots in a page if all of them are empty.
  * IO_MAX_PAGE_SIZE is used for page size and any headers are ignored (it
@@ -235,25 +244,6 @@ struct vacuum_data_page
       (data_page) = NULL; \
     } while (0)
 
-/* Set page dirty [and free it]. First and last vacuum data page are not freed. */
-#define vacuum_set_dirty_data_page(thread_p, data_page, free) \
-  do \
-    { \
-      if ((data_page) != vacuum_Data.first_page && (data_page) != vacuum_Data.last_page) \
-	{ \
-	  pgbuf_set_dirty (thread_p, (PAGE_PTR) (data_page), free); \
-	} \
-      else  \
-	{ \
-	  /* Do not unfix first or last page. */ \
-	  pgbuf_set_dirty (thread_p, (PAGE_PTR) (data_page), DONT_FREE); \
-	} \
-      if ((free) == FREE) \
-	{ \
-	  (data_page) = NULL; \
-	} \
-    } while (0)
-
 static inline void
 vacuum_set_dirty_data_page_dont_free (cubthread::entry * thread_p, vacuum_data_page * data_page)
 {
@@ -427,6 +417,25 @@ struct vacuum_data
 };
 static VACUUM_DATA vacuum_Data;
 // *INDENT-ON*
+
+/* Set page dirty [and free it]. First and last vacuum data page are not freed. */
+static inline void
+vacuum_set_dirty_data_page (cubthread::entry * thread_p, vacuum_data_page * data_page, bool free)
+{
+  if ((data_page) != vacuum_Data.first_page && (data_page) != vacuum_Data.last_page)
+    {
+      pgbuf_set_dirty (thread_p, (PAGE_PTR) (data_page), free);
+    }
+  else
+    {
+      /* Do not unfix first or last page. */
+      pgbuf_set_dirty (thread_p, (PAGE_PTR) (data_page), DONT_FREE);
+    }
+  if ((free) == FREE)
+    {
+      (data_page) = NULL;
+    }
+}
 
 /* vacuum data load */
 typedef struct vacuum_data_load VACUUM_DATA_LOAD;
@@ -650,6 +659,9 @@ struct vacuum_dropped_files_rcv_data
 };
 
 bool vacuum_Is_booted = false;
+#if defined (SERVER_MODE)
+class ovfp_threshold_mgr g_ovfp_threshold_mgr;
+#endif
 
 /* Logging */
 #define VACUUM_LOG_DATA_ENTRY_MSG(name) \
@@ -763,12 +775,12 @@ vacuum_init_thread_context (cubthread::entry &context, thread_type type, VACUUM_
   context.claim_system_worker ();
 }
 
-// class vacuum_master_context_manager
+// class vacuum_master_entry_manager
 //
 //  description:
 //    extend entry_manager to override context construction and retirement
 //
-class vacuum_master_context_manager : public cubthread::daemon_entry_manager
+class vacuum_master_entry_manager : public cubthread::daemon_entry_manager
 {
   private:
     void on_daemon_create (cubthread::entry &context) final
@@ -818,20 +830,20 @@ class vacuum_master_task : public cubthread::entry_task
     MVCCID m_oldest_visible_mvccid;                   // saved oldest visible mvccid (recomputed on each iteration)
 };
 
-// class vacuum_worker_context_manager
+// class vacuum_worker_entry_manager
 //
 //  description:
 //    extern entry manager to override construction/retirement of vacuum worker context
 //
-class vacuum_worker_context_manager : public cubthread::entry_manager
+class vacuum_worker_entry_manager : public cubthread::entry_manager
 {
   public:
-    vacuum_worker_context_manager () : cubthread::entry_manager ()
+    vacuum_worker_entry_manager () : cubthread::entry_manager ()
     {
       m_pool = new resource_shared_pool<VACUUM_WORKER> (vacuum_Workers, VACUUM_MAX_WORKER_COUNT);
     }
 
-    ~vacuum_worker_context_manager ()
+    ~vacuum_worker_entry_manager ()
     {
       delete m_pool;
     }
@@ -919,11 +931,11 @@ class vacuum_worker_task : public cubthread::entry_task
 
 // vacuum master globals
 static cubthread::daemon *vacuum_Master_daemon = NULL;                       // daemon thread
-static vacuum_master_context_manager *vacuum_Master_context_manager = NULL;  // context manager
+static vacuum_master_entry_manager *vacuum_Master_entry_manager = NULL;  // entry manager
 
 // vacuum worker globals
-static cubthread::entry_workpool *vacuum_Worker_threads = NULL;              // thread pool
-static vacuum_worker_context_manager *vacuum_Worker_context_manager = NULL;  // context manager
+static cubthread::worker_pool *vacuum_Worker_threads = NULL;              // thread pool
+static vacuum_worker_entry_manager *vacuum_Worker_entry_manager = NULL;  // entry manager
 
 /* *INDENT-ON* */
 
@@ -934,7 +946,7 @@ vacuum_sa_run_job (THREAD_ENTRY * thread_p, const VACUUM_DATA_ENTRY & data_entry
 {
   PERF_UTIME_TRACKER_TIME (thread_p, &perf_tracker, PSTAT_VAC_MASTER);
 
-  VACUUM_WORKER *worker_p = vacuum_Worker_context_manager->claim_worker ();
+  VACUUM_WORKER *worker_p = vacuum_Worker_entry_manager->claim_worker ();
   thread_type save_type = thread_type::TT_NONE;
   vacuum_convert_thread_to_worker (thread_p, worker_p, save_type);
   assert (save_type == thread_type::TT_VACUUM_MASTER);
@@ -944,7 +956,7 @@ vacuum_sa_run_job (THREAD_ENTRY * thread_p, const VACUUM_DATA_ENTRY & data_entry
 
   vacuum_convert_thread_to_master (thread_p, save_type);
   assert (save_type == thread_type::TT_VACUUM_WORKER);
-  vacuum_Worker_context_manager->retire_worker (*worker_p);
+  vacuum_Worker_entry_manager->retire_worker (*worker_p);
 
   PERF_UTIME_TRACKER_START (thread_p, &perf_tracker);
 }
@@ -1124,7 +1136,7 @@ xvacuum_dump (THREAD_ENTRY * thread_p, FILE * outfp)
 
   fprintf (outfp, "\n");
   fprintf (outfp, "*** Vacuum Dump ***\n");
-  fprintf (outfp, "First log page ID referenced = %lld ", min_log_pageid);
+  fprintf (outfp, "First log page ID referenced = %" PRId64 " ", min_log_pageid);
 
   if (logpb_is_page_in_archive (min_log_pageid))
     {
@@ -1145,6 +1157,9 @@ xvacuum_dump (THREAD_ENTRY * thread_p, FILE * outfp)
     {
       fprintf (outfp, "(in %s)\n", fileio_get_base_file_name (log_Name_active));
     }
+#if defined (SERVER_MODE)
+  g_ovfp_threshold_mgr.dump (thread_p, outfp);
+#endif
 }
 
 /*
@@ -1232,6 +1247,10 @@ vacuum_initialize (THREAD_ENTRY * thread_p, int vacuum_log_block_npages, VFID * 
   vacuum_Master.prefetch_first_pageid = NULL_PAGEID;
   vacuum_Master.prefetch_last_pageid = NULL_PAGEID;
   vacuum_Master.allocated_resources = false;
+  vacuum_Master.idx = -1;
+#if defined (SERVER_MODE)
+  g_ovfp_threshold_mgr.init ();
+#endif
 
   /* Initialize workers */
   for (i = 0; i < VACUUM_MAX_WORKER_COUNT; i++)
@@ -1248,6 +1267,7 @@ vacuum_initialize (THREAD_ENTRY * thread_p, int vacuum_log_block_npages, VFID * 
       vacuum_Workers[i].prefetch_first_pageid = NULL_PAGEID;
       vacuum_Workers[i].prefetch_last_pageid = NULL_PAGEID;
       vacuum_Workers[i].allocated_resources = false;
+      vacuum_Workers[i].idx = i;
     }
 
   return NO_ERROR;
@@ -1256,6 +1276,11 @@ error:
   vacuum_finalize (thread_p);
   return (error_code == NO_ERROR) ? ER_FAILED : error_code;
 }
+
+REGISTER_DAEMON (vacuum);
+// *INDENT-OFF*
+REGISTER_WORKERPOOL (vacuum, []() { return prm_get_integer_value (PRM_ID_VACUUM_WORKER_COUNT); });
+// *INDENT-ON*
 
 int
 vacuum_boot (THREAD_ENTRY * thread_p)
@@ -1294,8 +1319,8 @@ vacuum_boot (THREAD_ENTRY * thread_p)
     }
 
   // create context managers
-  vacuum_Master_context_manager = new vacuum_master_context_manager ();
-  vacuum_Worker_context_manager = new vacuum_worker_context_manager ();
+  vacuum_Master_entry_manager = new vacuum_master_entry_manager ();
+  vacuum_Worker_entry_manager = new vacuum_worker_entry_manager ();
 
 #if defined (SERVER_MODE)
 
@@ -1311,8 +1336,8 @@ vacuum_boot (THREAD_ENTRY * thread_p)
   // create thread pool
   vacuum_Worker_threads =
     thread_manager->create_worker_pool (prm_get_integer_value (PRM_ID_VACUUM_WORKER_COUNT),
-					VACUUM_MAX_TASKS_IN_WORKER_POOL, "vacuum workers",
-					vacuum_Worker_context_manager, 1, log_vacuum_worker_pool);
+					VACUUM_MAX_TASKS_IN_WORKER_POOL, "vacuum",
+					vacuum_Worker_entry_manager, 1, log_vacuum_worker_pool);
   assert (vacuum_Worker_threads != NULL);
 
   int vacuum_master_wakeup_interval_msec = prm_get_integer_value (PRM_ID_VACUUM_MASTER_WAKEUP_INTERVAL);
@@ -1320,7 +1345,7 @@ vacuum_boot (THREAD_ENTRY * thread_p)
 
   // create vacuum master thread
   vacuum_Master_daemon =
-    thread_manager->create_daemon (looper, new vacuum_master_task (), "vacuum_master", vacuum_Master_context_manager);
+    thread_manager->create_daemon (looper, new vacuum_master_task (), "vacuum-master", vacuum_Master_entry_manager);
 
   /* *INDENT-ON* */
 #endif /* SERVER_MODE */
@@ -1353,8 +1378,8 @@ vacuum_stop_workers (THREAD_ENTRY * thread_p)
       cubthread::get_manager ()->destroy_worker_pool (vacuum_Worker_threads);
     }
 
-  delete vacuum_Worker_context_manager;
-  vacuum_Worker_context_manager = NULL;
+  delete vacuum_Worker_entry_manager;
+  vacuum_Worker_entry_manager = NULL;
 }
 
 void
@@ -1371,8 +1396,8 @@ vacuum_stop_master (THREAD_ENTRY * thread_p)
     {
       cubthread::get_manager ()->destroy_daemon (vacuum_Master_daemon);
     }
-  delete vacuum_Master_context_manager;
-  vacuum_Master_context_manager = NULL;
+  delete vacuum_Master_entry_manager;
+  vacuum_Master_entry_manager = NULL;
 
   vacuum_Is_booted = false;
 }
@@ -1511,7 +1536,7 @@ vacuum_heap (THREAD_ENTRY * thread_p, VACUUM_WORKER * worker, MVCCID threshold_m
 	  vacuum_check_shutdown_interruption (thread_p, error_code);
 
 	  vacuum_er_log_error (VACUUM_ER_LOG_HEAP, "Vacuum heap page %d|%d, error_code=%d.",
-			       page_ptr->oid.volid, page_ptr->oid.pageid);
+			       page_ptr->oid.volid, page_ptr->oid.pageid, error_code);
 
 #if defined (NDEBUG)
 	  if (!thread_p->shutdown)
@@ -1996,7 +2021,7 @@ retry_prepare:
 	    {
 	      ASSERT_ERROR_AND_SET (error_code);
 	      vacuum_check_shutdown_interruption (thread_p, error_code);
-	      vacuum_er_log_error (VACUUM_ER_LOG_HEAP, "Failed to fix page %d|d.", VPID_AS_ARGS (&forward_vpid));
+	      vacuum_er_log_error (VACUUM_ER_LOG_HEAP, "Failed to fix page %d|%d.", VPID_AS_ARGS (&forward_vpid));
 	      return error_code;
 	    }
 	  /* Both pages fixed. */
@@ -2988,6 +3013,8 @@ vacuum_master_task::execute (cubthread::entry &thread_ref)
 
   PERF_UTIME_TRACKER_START (&thread_ref, &perf_tracker);
 
+  pgbuf_thread_variables_init (&thread_ref);
+
   m_oldest_visible_mvccid = log_Gl.mvcc_table.update_global_oldest_visible ();
   vacuum_er_log (VACUUM_ER_LOG_MASTER, "update oldest_visible = %lld", (long long int) m_oldest_visible_mvccid);
 
@@ -3379,6 +3406,8 @@ vacuum_process_log_block (THREAD_ENTRY * thread_p, VACUUM_DATA_ENTRY * data, boo
 	    }
 	  assert (!OID_ISNULL (&oid));
 
+	  thread_p->read_ovfl_pages_count = 0;
+
 	  /* Vacuum based on rcvindex. */
 	  if (log_record_data.rcvindex == RVBT_MVCC_NOTIFY_VACUUM)
 	    {
@@ -3445,6 +3474,15 @@ vacuum_process_log_block (THREAD_ENTRY * thread_p, VACUUM_DATA_ENTRY * data, boo
 	      /* Unexpected. */
 	      assert_release (false);
 	    }
+
+#if defined (SERVER_MODE)
+	  if (thread_p->read_ovfl_pages_count >= g_ovfp_threshold_mgr.get_threshold_page_cnt ())
+	    {
+	      g_ovfp_threshold_mgr.add_read_pages_count (thread_p, worker->idx, btid_int.sys_btid,
+							 thread_p->read_ovfl_pages_count);
+	    }
+#endif
+
 	  /* Did we have any errors? */
 	  if (error_code != NO_ERROR)
 	    {
@@ -6041,6 +6079,11 @@ vacuum_log_add_dropped_file (THREAD_ENTRY * thread_p, const VFID * vfid, const O
 {
   LOG_DATA_ADDR addr;
   VACUUM_DROPPED_FILES_RCV_DATA rcv_data;
+
+  if (prm_get_bool_value (PRM_ID_DISABLE_VACUUM))
+    {
+      return;
+    }
 
   vacuum_er_log (VACUUM_ER_LOG_DROPPED_FILES, "Append %s log from dropped file %d|%d.",
 		 pospone_or_undo ? "postpone" : "undo", vfid->volid, vfid->fileid);

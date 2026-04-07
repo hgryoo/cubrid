@@ -73,7 +73,7 @@ typedef struct tp_domain
 {
   struct tp_domain *next;	/* next in the same domain list */
   struct tp_domain *next_list;	/* next domain list */
-  struct pr_type *type;
+  const struct pr_type *type;
 
   int precision;
   int scale;
@@ -168,8 +168,6 @@ extern TP_DOMAIN tp_Vobj_domain;
 extern TP_DOMAIN tp_Oid_domain;
 extern TP_DOMAIN tp_Numeric_domain;
 extern TP_DOMAIN tp_Char_domain;
-extern TP_DOMAIN tp_NChar_domain;
-extern TP_DOMAIN tp_VarNChar_domain;
 extern TP_DOMAIN tp_Bit_domain;
 extern TP_DOMAIN tp_VarBit_domain;
 extern TP_DOMAIN tp_Midxkey_domain;
@@ -239,15 +237,10 @@ typedef enum tp_match
  *    Tests to see if a type is any one of the character types.
  */
 
-#define TP_IS_CHAR_TYPE(typeid) \
-  (((typeid) == DB_TYPE_VARCHAR)  || ((typeid) == DB_TYPE_CHAR) || \
-   ((typeid) == DB_TYPE_VARNCHAR) || ((typeid) == DB_TYPE_NCHAR))
-
-#define TP_IS_FIXED_LEN_CHAR_TYPE(typeid) \
-  (((typeid) == DB_TYPE_CHAR) || ((typeid) == DB_TYPE_NCHAR))
-
-#define TP_IS_VAR_LEN_CHAR_TYPE(typeid) \
-    (((typeid) == DB_TYPE_VARCHAR) || ((typeid) == DB_TYPE_VARNCHAR))
+#define TP_IS_CHAR_TYPE(typeid)           ((typeid) == DB_TYPE_VARCHAR || (typeid) == DB_TYPE_CHAR)
+#define TP_IS_LOB_TYPE(typeid)            ((typeid) == DB_TYPE_BLOB || (typeid) == DB_TYPE_CLOB)
+#define TP_IS_FIXED_LEN_CHAR_TYPE(typeid) ((typeid) == DB_TYPE_CHAR)
+#define TP_IS_VAR_LEN_CHAR_TYPE(typeid)   ((typeid) == DB_TYPE_VARCHAR)
 
 /*
  * TP_IS_CHAR_BIT_TYPE
@@ -283,6 +276,10 @@ typedef enum tp_match
 #define TP_IS_FLOATING_NUMBER_TYPE(typeid) \
   (((typeid) == DB_TYPE_FLOAT) || ((typeid) == DB_TYPE_DOUBLE) \
    || ((typeid) == DB_TYPE_NUMERIC) || ((typeid) == DB_TYPE_MONETARY))
+
+#define TP_IS_DISCRETE_NUMBER_TYPE(typeid) \
+  (((typeid) == DB_TYPE_INTEGER) || ((typeid) == DB_TYPE_SMALLINT) \
+   || ((typeid) == DB_TYPE_BIGINT))
 
 /*
  * Precision for non-parameterized predefined types
@@ -348,7 +345,6 @@ typedef enum tp_match
 #define TP_DATETIMETZ_AS_CHAR_LENGTH    64
 
 /* CHAR type and VARCHAR type are compatible with each other */
-/* NCHAR type and VARNCHAR type are compatible with each other */
 /* BIT type and VARBIT type are compatible with each other */
 /* OID type and OBJECT type are compatible with each other */
 /* Keys can come in with a type of DB_TYPE_OID, but the B+tree domain
@@ -358,8 +354,6 @@ typedef enum tp_match
       (((key1_type) == (key2_type)) || \
       (((key1_type) == DB_TYPE_CHAR || (key1_type) == DB_TYPE_VARCHAR) && \
        ((key2_type) == DB_TYPE_CHAR || (key2_type) == DB_TYPE_VARCHAR)) || \
-      (((key1_type) == DB_TYPE_NCHAR || (key1_type) == DB_TYPE_VARNCHAR) && \
-       ((key2_type) == DB_TYPE_NCHAR || (key2_type) == DB_TYPE_VARNCHAR)) || \
       (((key1_type) == DB_TYPE_BIT || (key1_type) == DB_TYPE_VARBIT) && \
        ((key2_type) == DB_TYPE_BIT || (key2_type) == DB_TYPE_VARBIT)) || \
       (((key1_type) == DB_TYPE_OID || (key1_type) == DB_TYPE_OBJECT) && \
@@ -505,6 +499,8 @@ extern "C"
 #endif
   extern int tp_domain_attach (TP_DOMAIN ** dlist, TP_DOMAIN * domain);
 
+  extern TP_DOMAIN_STATUS tp_value_auto_cast_with_precision_check (const DB_VALUE * src, DB_VALUE * dest,
+								   const TP_DOMAIN * desired_domain);
   extern TP_DOMAIN_STATUS tp_value_auto_cast (const DB_VALUE * src, DB_VALUE * dest, const TP_DOMAIN * desired_domain);
   extern int tp_value_str_auto_cast_to_number (DB_VALUE * src, DB_VALUE * dest, DB_TYPE * val_type);
   extern TP_DOMAIN *tp_infer_common_domain (TP_DOMAIN * arg1, TP_DOMAIN * arg2);

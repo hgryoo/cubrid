@@ -49,12 +49,13 @@
 #include "execute_statement.h"
 #include "locator_cl.h"
 #include "server_interface.h"
-#include "api_compat.h"
+#include "db_session.h"
 #include "network_interface_cl.h"
 #include "transaction_cl.h"
 #include "dbtype.h"
 #include "util_func.h"
 #include "xasl.h"
+#include "query_cl.h"
 
 #define BUF_SIZE 1024
 
@@ -77,14 +78,15 @@ static DB_SESSION *initialize_session (DB_SESSION * session);
 static int db_execute_and_keep_statement_local (DB_SESSION * session, int stmt_ndx, DB_QUERY_RESULT ** result);
 static DB_OBJLIST *db_get_all_chosen_classes (int (*p) (MOBJ o));
 static int is_vclass_object (MOBJ class_);
-static char *get_reasonable_predicate (DB_ATTRIBUTE * att);
+static char *get_reasonable_predicate (DB_ATTRIBUTE * att, char *predicate, int predicate_buf_sz);
 static void update_execution_values (PARSER_CONTEXT * parser, int result, CUBRID_STMT_TYPE statement_type);
 static void copy_execution_values (EXECUTION_STATE_VALUES * source, EXECUTION_STATE_VALUES * destination);
 static int values_list_to_values_array (PARSER_CONTEXT * parser, PT_NODE * values_list, DB_VALUE_ARRAY * values_array);
 static int set_prepare_info_into_list (DB_PREPARE_INFO * prepare_info, PT_NODE * statement);
 static PT_NODE *char_array_to_name_list (PARSER_CONTEXT * parser, char **names, int length);
 static int do_process_prepare_statement (DB_SESSION * session, PT_NODE * statement);
-static int do_get_prepared_statement_info (DB_SESSION * session, int stmt_idx);
+static int do_get_prepared_statement_info (DB_SESSION * session, int stmt_idx, int *subquery_num,
+					   DB_PREPARE_SUBQUERY_INFO ** subquery_info);
 static int do_set_user_host_variables (DB_SESSION * session, PT_NODE * using_list);
 static int do_cast_host_variables_to_expected_domain (DB_SESSION * session);
 static int do_recompile_and_execute_prepared_statement (DB_SESSION * session, PT_NODE * statement,
@@ -93,10 +95,17 @@ static int do_process_deallocate_prepare (DB_SESSION * session, PT_NODE * statem
 static bool is_allowed_as_prepared_statement (PT_NODE * node);
 static bool is_allowed_as_prepared_statement_with_hv (PT_NODE * node);
 static bool db_check_limit_need_recompile (PARSER_CONTEXT * parser, PT_NODE * statement, int xasl_flag);
+static bool db_check_where_need_recompile (PARSER_CONTEXT * parser, PT_NODE * statement, int xasl_flag);
 
 static DB_CLASS_MODIFICATION_STATUS pt_has_modified_class (PARSER_CONTEXT * parser, PT_NODE * statement);
 static PT_NODE *pt_has_modified_class_helper (PARSER_CONTEXT * parser, PT_NODE * tree, void *arg, int *continue_walk);
 static bool db_can_execute_statement_with_autocommit (PARSER_CONTEXT * parser, PT_NODE * statement);
+static PT_NODE *do_process_prepare_subquery_pre (PARSER_CONTEXT * parser, PT_NODE * stmt, void *arg,
+						 int *continue_walk);
+
+static PT_NODE *do_execute_cte_pre (PARSER_CONTEXT * parser, PT_NODE * stmt, void *arg, int *continue_walk);
+
+int g_open_buffer_control_flags = 0;
 
 /*
  * get_dimemsion_of() - returns the number of elements of a null-terminated
@@ -212,6 +221,11 @@ db_open_buffer_local (const char *buffer)
 
   if (session)
     {
+      if (g_open_buffer_control_flags & PARSER_FOR_PLCSQL_STATIC_SQL)
+	{
+	  session->parser->flag.is_parsing_static_sql = 1;
+	}
+
       session->statements = parser_parse_string_with_escapes (session->parser, buffer, false);
       if (session->statements)
 	{
@@ -267,6 +281,12 @@ db_open_file (FILE * file)
   return session;
 }
 
+void
+db_init_lexer_lineno ()
+{
+  csql_yyset_lineno (1);
+}
+
 /*
  * db_make_session_for_one_statement_execution() -
  * return:
@@ -303,6 +323,7 @@ db_parse_one_statement (DB_SESSION * session)
       if (session->type_list)
 	{
 	  db_free_query_format (session->type_list[0]);
+	  session->type_list[0] = NULL;
 	}
       if (session->statements[0])
 	{
@@ -610,12 +631,43 @@ db_compile_statement_local (DB_SESSION * session)
     {
       /* we don't actually have the statement which will be executed and we need to get some information about it from
        * the server */
-      int err = do_get_prepared_statement_info (session, stmt_ndx);
+      DB_PREPARE_SUBQUERY_INFO *subquery_info;
+      int i, num_query;
+      int err = do_get_prepared_statement_info (session, stmt_ndx, &num_query, &subquery_info);
+
+      QUERY_ID query_id;
+      QFILE_LIST_ID *list_id;
+
       if (err != NO_ERROR)
 	{
 	  return err;
 	}
+
+      /* execute subqueries first */
+      if (subquery_info)
+	{
+	  int q;
+
+	  err = do_execute_prepared_subquery (parser, statement, num_query, subquery_info);
+
+	  /* clear subquery's prepare info. */
+	  for (q = 0; q < num_query; q++)
+	    {
+	      if (subquery_info[q].host_var_index)
+		{
+		  free (subquery_info[q].host_var_index);
+		}
+	    }
+
+	  free (subquery_info);
+
+	  if (err != NO_ERROR)
+	    {
+	      return err;
+	    }
+	}
     }
+
   /* prefetch and lock classes to avoid deadlock */
   (void) pt_class_pre_fetch (parser, statement);
   if (pt_has_error (parser))
@@ -677,7 +729,12 @@ db_compile_statement_local (DB_SESSION * session)
    */
   if (PT_IS_DBLINK_DML_QUERY (statement))
     {
-      ;
+      /*
+         The remote DML query can not use the cached plan,
+         because the atuo-variable holder can not be composed during compiling.
+         Instead the remote query is generated by parser_print_tree.
+       */
+      statement->flag.recompile = 1;
     }
   else
     {
@@ -731,7 +788,8 @@ db_compile_statement_local (DB_SESSION * session)
    * is disabled, old interface of do_statement() will be used instead. do_statement() makes a XASL everytime rather
    * than using XASL cache. Also, it can be executed in the server without touching the XASL cache by calling
    * prepare_and_execute_query(). */
-  if (prm_get_integer_value (PRM_ID_XASL_CACHE_MAX_ENTRIES) > 0 && statement->flag.cannot_prepare == 0)
+  if (!parser->flag.is_parsing_static_sql && prm_get_integer_value (PRM_ID_XASL_CACHE_MAX_ENTRIES) > 0
+      && statement->flag.cannot_prepare == 0)
     {
       if (session->is_subsession_for_prepared)
 	{
@@ -1607,6 +1665,30 @@ db_get_lock_classes (DB_SESSION * session)
   return (char **) (session->parser->lcks_classes);
 }
 
+static PT_NODE *
+do_execute_subquery_pre (PARSER_CONTEXT * parser, PT_NODE * stmt, void *arg, int *continue_walk)
+{
+  int *err = (int *) arg;
+
+  *continue_walk = PT_CONTINUE_WALK;
+
+  if (stmt->node_type != PT_SELECT)
+    {
+      return stmt;
+    }
+
+  if (stmt->info.query.flag.subquery_cached && stmt->xasl_id)
+    {
+      *err = do_execute_subquery (parser, stmt);
+      if (*err != NO_ERROR)
+	{
+	  *continue_walk = PT_STOP_WALK;
+	}
+    }
+
+  return stmt;
+}
+
 /*
  * db_execute_and_keep_statement_local() - This function executes the SQL
  *    statement identified by the stmt argument and returns the result.
@@ -1750,6 +1832,17 @@ db_execute_and_keep_statement_local (DB_SESSION * session, int stmt_ndx, DB_QUER
       db_set_base_server_time (&parser->sys_datetime);
     }
 
+  /* All CTE sub-queries included in the query must be executed first. */
+  if (pt_is_allowed_result_cache () && !statement->flag.do_not_use_subquery_cache)
+    {
+      err = NO_ERROR;
+      parser_walk_tree (parser, statement, do_execute_subquery_pre, (void *) &err, NULL, NULL);
+      if (err != NO_ERROR)
+	{
+	  return err;
+	}
+    }
+
   if (statement->node_type == PT_PREPARE_STATEMENT)
     {
       err = do_process_prepare_statement (session, statement);
@@ -1810,8 +1903,8 @@ db_execute_and_keep_statement_local (DB_SESSION * session, int stmt_ndx, DB_QUER
     {
       /* now, execute the statement by calling do_execute_statement() */
       err = do_execute_statement (parser, statement);
-      if (((err == ER_QPROC_XASLNODE_RECOMPILE_REQUESTED || err == ER_QPROC_INVALID_XASLNODE)
-	   && session->stage[stmt_ndx] == StatementPreparedStage)
+      if (((err == ER_QPROC_XASLNODE_RECOMPILE_REQUESTED || err == ER_QPROC_INVALID_XASLNODE
+	    || err == ER_QPROC_RESULT_CACHE_INVALID) && session->stage[stmt_ndx] == StatementPreparedStage)
 	  || (err == ER_QPROC_XASLNODE_RECOMPILE_REQUESTED && session->stage[stmt_ndx] == StatementExecutedStage))
 	{
 	  /* The cache entry was deleted before 'execute' */
@@ -1820,8 +1913,19 @@ db_execute_and_keep_statement_local (DB_SESSION * session, int stmt_ndx, DB_QUER
 	      pt_free_statement_xasl_id (statement);
 	    }
 
+	  if (err == ER_QPROC_RESULT_CACHE_INVALID)
+	    {
+	      statement->flag.do_not_use_subquery_cache = 1;
+	      statement->flag.recompile = 1;
+	      if (statement->node_type == PT_EXECUTE_PREPARE)
+		{
+		  statement->info.execute.recompile = 1;
+		  return do_recompile_and_execute_prepared_statement (session, statement, result);
+		}
+	    }
+
 	  cls_status = pt_has_modified_class (parser, statement);
-	  if (cls_status == DB_CLASS_NOT_MODIFIED)
+	  if (err == ER_QPROC_RESULT_CACHE_INVALID || cls_status == DB_CLASS_NOT_MODIFIED)
 	    {
 	      /* forget all errors */
 	      er_clear ();
@@ -2290,6 +2394,93 @@ char_array_to_name_list (PARSER_CONTEXT * parser, char **names, int length)
   return list;
 }
 
+static DB_PREPARE_SUBQUERY_INFO *
+set_prepare_subquery_info (PT_NODE * query, DB_PREPARE_SUBQUERY_INFO * info, int num_query)
+{
+  int i, q = num_query;
+
+  if (num_query % 4 == 0)	/* need to realloc subquery info every 4 */
+    {
+      int alloc_size = sizeof (DB_PREPARE_SUBQUERY_INFO) * (num_query / 4 + 1) * 4;
+
+      DB_PREPARE_SUBQUERY_INFO *alloc = (DB_PREPARE_SUBQUERY_INFO *) realloc (info, alloc_size);
+
+      if (alloc == NULL)
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, alloc_size);
+	  goto err_exit;
+	}
+
+      info = alloc;
+    }
+
+  XASL_ID_COPY (&info[q].xasl_id, query->xasl_id);
+  info[q].host_var_count = query->sub_host_var_count;
+  info[q].host_var_index = NULL;
+
+  if (query->sub_host_var_count > 0)
+    {
+      info[q].host_var_index = (int *) malloc (sizeof (int) * query->sub_host_var_count);
+      if (info[q].host_var_index == NULL)
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1,
+		  sizeof (int) * query->sub_host_var_count);
+	  goto err_exit;
+	}
+
+      memcpy (info[q].host_var_index, query->sub_host_var_index, query->sub_host_var_count * sizeof (int));
+    }
+
+  return info;
+
+err_exit:
+  if (info != NULL)
+    {
+      for (i = 0; i < num_query; i++)
+	{
+	  if (info[i].host_var_index)
+	    {
+	      free (info[i].host_var_index);
+	    }
+	}
+      free (info);
+    }
+
+  return NULL;
+}
+
+static PT_NODE *
+do_process_prepare_subquery_pre (PARSER_CONTEXT * parser, PT_NODE * stmt, void *arg, int *continue_walk)
+{
+  DB_PREPARE_INFO *prepare_info;
+
+  *continue_walk = PT_CONTINUE_WALK;
+
+  if (!PT_IS_QUERY_NODE_TYPE (stmt->node_type))
+    {
+      return stmt;
+    }
+
+  *continue_walk = PT_CONTINUE_WALK;
+
+  prepare_info = (DB_PREPARE_INFO *) arg;
+
+  if (stmt->node_type == PT_SELECT && stmt->xasl_id != NULL && stmt->info.query.flag.subquery_cached)
+    {
+      prepare_info->subquery_info =
+	set_prepare_subquery_info (stmt, prepare_info->subquery_info, prepare_info->subquery_num);
+      if (prepare_info->subquery_info == NULL)
+	{
+	  *continue_walk = PT_STOP_WALK;
+	  return stmt;
+	}
+
+      prepare_info->subquery_num++;
+    }
+
+  return stmt;
+}
+
 /*
  * do_process_prepare_statement () - execute a 'PREPARE STMT FROM ...'
  *				     statement
@@ -2308,7 +2499,7 @@ do_process_prepare_statement (DB_SESSION * session, PT_NODE * statement)
   const char *const statement_literal = (char *) statement->info.prepare.statement->info.value.data_value.str->bytes;
   int err = NO_ERROR;
   char *stmt_info = NULL;
-  int info_len = 0;
+  int i, info_len = 0;
   assert (statement->node_type == PT_PREPARE_STATEMENT);
   db_init_prepare_info (&prepare_info);
 
@@ -2374,14 +2565,25 @@ do_process_prepare_statement (DB_SESSION * session, PT_NODE * statement)
   prepare_info.auto_param_count = prepared_session->parser->auto_param_count;
   /* set recompile */
   prepare_info.recompile = prepared_stmt->flag.recompile;
-  /* set OIDs included */
+
   if (prepare_info.stmt_type == CUBRID_STMT_SELECT)
     {
+      /* set OIDs included */
       prepare_info.oids_included = prepared_stmt->info.query.oids_included;
+
+      /* set result cache */
+      prepare_info.do_cache = prepared_stmt->info.query.flag.do_cache;
     }
 
   err = set_prepare_info_into_list (&prepare_info, prepared_stmt);
   if (err != NO_ERROR)
+    {
+      goto cleanup;
+    }
+
+  parser_walk_tree (prepared_session->parser, prepared_stmt, do_process_prepare_subquery_pre, &prepare_info, NULL,
+		    NULL);
+  if ((err = er_errid ()) != NO_ERROR)
     {
       goto cleanup;
     }
@@ -2391,6 +2593,7 @@ do_process_prepare_statement (DB_SESSION * session, PT_NODE * statement)
     {
       goto cleanup;
     }
+
   info_len = err;
 
   err = csession_create_prepared_statement (name, prepared_stmt->alias_print, stmt_info, info_len);
@@ -2416,12 +2619,20 @@ cleanup:
 
   if (prepare_info.into_list != NULL)
     {
-      int i = 0;
       for (i = 0; i < prepare_info.into_count; i++)
 	{
 	  free_and_init (prepare_info.into_list[i]);
 	}
       free_and_init (prepare_info.into_list);
+    }
+
+  if (prepare_info.subquery_info != NULL)
+    {
+      for (i = 0; i < prepare_info.subquery_num; i++)
+	{
+	  free_and_init (prepare_info.subquery_info[i].host_var_index);
+	}
+      free_and_init (prepare_info.subquery_info);
     }
 
   return err;
@@ -2434,7 +2645,8 @@ cleanup:
  * stmt_idx (in) : statement index
  */
 static int
-do_get_prepared_statement_info (DB_SESSION * session, int stmt_idx)
+do_get_prepared_statement_info (DB_SESSION * session, int stmt_idx, int *subquery_num,
+				DB_PREPARE_SUBQUERY_INFO ** subquery_info)
 {
   const char *name = NULL;
   char *stmt_info = NULL;
@@ -2458,6 +2670,8 @@ do_get_prepared_statement_info (DB_SESSION * session, int stmt_idx)
     }
 
   db_unpack_prepare_info (&prepare_info, stmt_info);
+  *subquery_num = prepare_info.subquery_num;
+  *subquery_info = prepare_info.subquery_info;
 
   statement->info.execute.column_count = 0;
   col = prepare_info.columns;
@@ -2482,6 +2696,7 @@ do_get_prepared_statement_info (DB_SESSION * session, int stmt_idx)
       PT_INTERNAL_ERROR (parser, "allocate new node");
     }
   statement->info.execute.recompile = prepare_info.recompile;
+  statement->info.execute.do_cache = prepare_info.do_cache;
   statement->info.execute.oids_included = prepare_info.oids_included;
 
   XASL_ID_COPY (&statement->info.execute.xasl_id, &xasl_id);
@@ -2520,12 +2735,22 @@ do_get_prepared_statement_info (DB_SESSION * session, int stmt_idx)
   parser->auto_param_count = 0;
   parser->flag.set_host_var = 1;
 
-  /* Multi range optimization check: if host-variables were used (not auto-parameterized), the orderby_num () limit may
+  /* Like optimization check: if host-variables were used in LIKE conditions, check if query needs to be recompiled
+   * to remove LIKE conditions.
+   * Multi range optimization check: if host-variables were used (not auto-parameterized), the orderby_num () limit may
    * change and invalidate or validate multi range optimization. Check if query needs to be recompiled. */
   if (!XASL_ID_IS_NULL (&xasl_id)	/* xasl_id should not be null */
       && !statement->info.execute.recompile	/* recompile is already planned */
       && (prepare_info.host_variables.size > prepare_info.auto_param_count))
     {
+      if (xasl_header.xasl_flag & LIKE_RECOMPILE_CANDIDATE && prm_get_bool_value (PRM_ID_HOSTVAR_PEEKING))
+	{
+	  if (db_check_where_need_recompile (parser, statement, xasl_header.xasl_flag))
+	    {
+	      XASL_ID_SET_NULL (&statement->info.execute.xasl_id);
+	    }
+	}
+
       /* query has to be multi range opt candidate */
       if (xasl_header.xasl_flag & (MRO_CANDIDATE | MRO_IS_USED | SORT_LIMIT_CANDIDATE | SORT_LIMIT_USED))
 	{
@@ -2605,7 +2830,7 @@ do_cast_host_variables_to_expected_domain (DB_SESSION * session)
 
       if (TP_IS_CHAR_TYPE (hv_dom->type->id))
 	{
-	  if (hv_dom->type->id != typ && (typ == DB_TYPE_VARCHAR || typ == DB_TYPE_VARNCHAR))
+	  if (hv_dom->type->id != typ && (typ == DB_TYPE_VARCHAR))
 	    {
 	      db_value_domain_init (hv, typ, prec, 0);
 	    }
@@ -2656,6 +2881,90 @@ do_set_user_host_variables (DB_SESSION * session, PT_NODE * using_list)
 
   return err;
 }
+
+
+/*
+ * db_check_where_need_recompile () - Check if statement has to be recompiled
+ *				      for where optimizations with supplied
+ *				      where value
+ *
+ * return	  : true if recompile is needed, false otherwise
+ * parser (in)	  : parser context for statement
+ * statement (in) : execute prepare statement
+ *
+ */
+static bool
+db_check_where_need_recompile (PARSER_CONTEXT * parent_parser, PT_NODE * statement, int xasl_flag)
+{
+  DB_SESSION *session = NULL;
+  PT_NODE *query = NULL;
+  bool do_recompile = false;
+  DB_VALUE *save_host_variables = NULL;
+  TP_DOMAIN **save_host_var_expected_domains = NULL;
+  int save_host_var_count, save_auto_param_count;
+
+  if (statement->node_type != PT_EXECUTE_PREPARE)
+    {
+      /* statement must be execute prepare */
+      return false;
+    }
+  if (statement->info.execute.stmt_type != CUBRID_STMT_SELECT)
+    {
+      return false;
+    }
+
+  assert (statement->info.execute.query->node_type == PT_VALUE);
+  assert (statement->info.execute.query->type_enum == PT_TYPE_CHAR);
+
+  session = db_open_buffer_local ((char *) statement->info.execute.query->info.value.data_value.str->bytes);
+  if (session == NULL)
+    {
+      /* error opening session */
+      return false;
+    }
+
+  if (session->dimension != 1)
+    {
+      /* need full recompile */
+      do_recompile = true;
+      goto exit;
+    }
+  query = session->statements[0];
+  assert (PT_IS_QUERY (query));
+
+  /* set host variable info */
+  save_auto_param_count = session->parser->auto_param_count;
+  save_host_var_count = session->parser->host_var_count;
+  save_host_variables = session->parser->host_variables;
+  save_host_var_expected_domains = session->parser->host_var_expected_domains;
+
+  session->parser->host_variables = parent_parser->host_variables;
+  session->parser->host_var_expected_domains = parent_parser->host_var_expected_domains;
+  session->parser->host_var_count = parent_parser->host_var_count;
+  session->parser->auto_param_count = parent_parser->auto_param_count;
+  session->parser->flag.set_host_var = 1;
+
+  if (pt_recompile_for_like_optimizations (session->parser, query, xasl_flag))
+    {
+      do_recompile = true;
+    }
+
+  /* restore host variable info */
+  session->parser->host_variables = save_host_variables;
+  session->parser->host_var_expected_domains = save_host_var_expected_domains;
+  session->parser->auto_param_count = save_auto_param_count;
+  session->parser->host_var_count = save_host_var_count;
+  session->parser->flag.set_host_var = 0;
+
+exit:
+  /* clean up */
+  if (session != NULL)
+    {
+      db_close_session (session);
+    }
+  return do_recompile;
+}
+
 
 /*
  * db_check_limit_need_recompile () - Check if statement has to be recompiled
@@ -2782,6 +3091,7 @@ do_recompile_and_execute_prepared_statement (DB_SESSION * session, PT_NODE * sta
 
   if (statement->info.execute.recompile)
     {
+      new_session->statements[0]->flag.do_not_use_subquery_cache = 1;
       new_session->statements[0]->flag.recompile = statement->info.execute.recompile;
     }
 
@@ -3319,7 +3629,10 @@ db_close_session_local (DB_SESSION * session)
 
       for (i = 0, hv = parser->host_variables; i < parser->host_var_count + parser->auto_param_count; i++, hv++)
 	{
-	  db_value_clear (hv);
+	  if (hv)
+	    {
+	      db_value_clear (hv);
+	    }
 	}
       free_and_init (parser->host_variables);
     }
@@ -3519,11 +3832,12 @@ db_validate_query_spec (DB_OBJECT * vclass, const char *query_spec)
  *   any reasonable predicate against this attribute and return that predicate
  * returns: a reasonable predicate against att if one exists, NULL otherwise
  * att(in) : an instance attribute
+ * predicate(out) : the buffer to store the predicate
+ * predicate_buf_sz(in) : the size of the predicate buffer
  */
 static char *
-get_reasonable_predicate (DB_ATTRIBUTE * att)
+get_reasonable_predicate (DB_ATTRIBUTE * att, char *predicate, int predicate_buf_sz)
 {
-  static char predicate[300];
   const char *att_name, *cond;
 
   if (!att || db_attribute_is_shared (att) || !(att_name = db_attribute_name (att)))
@@ -3586,7 +3900,8 @@ get_reasonable_predicate (DB_ATTRIBUTE * att)
       return NULL;
     }
 
-  snprintf (predicate, sizeof (predicate) - 1, "%s%s", att_name, cond);
+  assert (predicate != NULL && predicate_buf_sz > 1);
+  snprintf (predicate, predicate_buf_sz - 1, "%s%s", att_name, cond);
   return predicate;
 }
 
@@ -3600,12 +3915,6 @@ int
 db_validate (DB_OBJECT * vc)
 {
   int retval = NO_ERROR;
-  DB_QUERY_SPEC *specs;
-  const char *s, *separator = " where ";
-  char buffer[BUF_SIZE], *pred, *bufp, *newbuf;
-  DB_QUERY_RESULT *result = NULL;
-  DB_ATTRIBUTE *attributes;
-  int len, limit = BUF_SIZE;
 
   CHECK_CONNECT_ERROR ();
 
@@ -3628,6 +3937,8 @@ db_validate (DB_OBJECT * vc)
 	}
       else
 	{
+	  DB_QUERY_SPEC *specs;
+	  const char *s;
 
 	  for (specs = db_get_query_specs (vc); specs; specs = db_query_spec_next (specs))
 	    {
@@ -3646,20 +3957,28 @@ db_validate (DB_OBJECT * vc)
 
   if (retval >= 0)
     {
-      strcpy (buffer, "select count(*) from ");
-      strcat (buffer, db_get_class_name (vc));
+      DB_QUERY_RESULT *result = NULL;
+      DB_ATTRIBUTE *attributes;
+      const char *const separator[2] = { " where ", " and " };
+      const int separator_len[2] = { (int) strlen (separator[0]), (int) strlen (separator[1]) };
+      int separator_idx = 0;
+      char buffer[BUF_SIZE], *pred, *bufp, *newbuf;
+      int len, tlen, limit = BUF_SIZE;
+      char predicate[300];
+
+      sprintf (buffer, "select count(*) from %s", db_get_class_name (vc));
       attributes = db_get_attributes (vc);
       len = (int) strlen (buffer);
       bufp = buffer;
 
       while (attributes)
 	{
-	  pred = get_reasonable_predicate (attributes);
+	  pred = get_reasonable_predicate (attributes, predicate, sizeof (predicate));
 	  if (pred)
 	    {
 	      /* make sure we have enough room in the buffer */
-	      len += (int) (strlen (separator) + strlen (pred));
-	      if (len >= limit)
+	      tlen = (int) (separator_len[separator_idx] + strlen (pred));
+	      if (len + tlen >= limit)
 		{
 		  /* increase buffer by BUF_SIZE */
 		  limit += BUF_SIZE;
@@ -3679,9 +3998,12 @@ db_validate (DB_OBJECT * vc)
 		  bufp = newbuf;
 		}
 	      /* append another predicate */
-	      strcat (bufp, separator);
-	      strcat (bufp, pred);
-	      separator = " and ";
+	      sprintf (bufp + len, "%s%s", separator[separator_idx], pred);
+	      len += tlen;
+	      if (separator_idx == 0)
+		{
+		  separator_idx++;
+		}
 	    }
 	  attributes = db_attribute_next (attributes);
 	}

@@ -119,6 +119,7 @@ extern "C"
     CSQL_E_UNKNOWN_TEXT = 196,
     CSQL_E_CANT_EDIT_TEXT = 197,
     CSQL_E_FORMAT_TEXT = 198,
+    CSQL_E_LANG_TEXT = 199,
 
     CSQL_HELP_CLASS_HEAD_TEXT = 203,
     CSQL_HELP_SUPER_CLASS_HEAD_TEXT = 204,
@@ -148,7 +149,8 @@ extern "C"
     CSQL_HELP_INFOCMD_TEXT = 233,
     CSQL_HELP_PARTITION_HEAD_TEXT = 235,
     CSQL_E_CLASSNAMEMISSED_TEXT = 236,
-    CSQL_HELP_TRIGGER_COMMENT_TEXT = 237
+    CSQL_HELP_TRIGGER_COMMENT_TEXT = 237,
+    CSQL_E_SYSTEM_CATALOG_COMPILE_FAIL_TEXT = 238,
   };
 
 #define SCRATCH_TEXT_LEN (4096)
@@ -172,7 +174,8 @@ extern "C"
     CSQL_ERR_CANT_EDIT,
     CSQL_ERR_INFO_CMD_HELP,
     CSQL_ERR_CLASS_NAME_MISSED,
-    CSQL_ERR_FORMAT
+    CSQL_ERR_FORMAT,
+    CSQL_ERR_SYSTEM_CATALOG_COMPILE,
   };
 
 /* session command numbers */
@@ -242,7 +245,12 @@ extern "C"
 
     S_CMD_SINGLELINE,
 
-    S_CMD_CONNECT
+    S_CMD_CONNECT,
+
+    S_CMD_MIDXKEY,
+
+/* cmd PL/CSQL stuffs */
+    S_CMD_SERVER_OUTPUT
   } SESSION_CMD;
 
 /* iq_ function return status */
@@ -288,9 +296,12 @@ extern "C"
     char column_delimiter;
     char column_enclosure;
     bool loaddb_output;
+    bool pl_server_output;
 #if defined(CSQL_NO_LONGGING)
     bool no_logging;
 #endif				/* CSQL_NO_LONGGING */
+    bool midxkey_print;
+    bool noprint_entrymsg;
   } CSQL_ARGUMENT;
 
   typedef struct
@@ -367,8 +378,7 @@ extern "C"
   extern void csql_help_info (const char *command, int aucommit_flag);
   extern void csql_killtran (const char *argument);
 
-  extern char *csql_db_value_as_string (DB_VALUE * value, int *length, bool plain_string, CSQL_OUTPUT_TYPE output_type,
-					char cloumn_enclosure);
+  extern char *csql_db_value_as_string (DB_VALUE * value, int *length, const CSQL_ARGUMENT * csql_arg);
 
   extern char *csql_string_to_plain_string (const char *string_value, int length, int *result_length);
 

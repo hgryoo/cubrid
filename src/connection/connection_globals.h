@@ -28,9 +28,13 @@
 
 #include "connection_defs.h"
 
+#define DEFAULT_MASTER_PORT_NO (1523)
+
 #define CSS_CR_NORMAL_ONLY_IDX  0
 
 #define CSS_MAX_CLIENT_COUNT   4000
+
+#define CSS_SERVER_PROC_REGISTER_INITIALIZER    {"", 0, -1, "", ""}
 
 typedef bool (*CSS_CHECK_CLIENT_TYPE) (BOOT_CLIENT_TYPE client_type);
 typedef int (*CSS_GET_MAX_CONN_NUM) (void);
@@ -57,19 +61,39 @@ typedef struct css_conn_rule_info
   int num_curr_conn;
 } CSS_CONN_RULE_INFO;
 
-extern int css_Service_id;
-extern const char *css_Service_name;
+/*
+ * server register resource message body
+ */
 
-extern int css_Server_use_new_connection_protocol;
-extern int css_Server_inhibit_connection_socket;
+/* process register */
+typedef struct css_server_proc_register CSS_SERVER_PROC_REGISTER;
+struct css_server_proc_register
+{
+  static constexpr int CSS_SERVER_MAX_SZ_SERVER_NAME = 255;
+  static constexpr int CSS_SERVER_MAX_SZ_PROC_EXEC_PATH = 128;
+  static constexpr int CSS_SERVER_MAX_SZ_PROC_ARGS = 1024;
+
+  char server_name[CSS_SERVER_MAX_SZ_SERVER_NAME];
+  int server_name_length;
+  int pid;
+
+  char exec_path[CSS_SERVER_MAX_SZ_PROC_EXEC_PATH];
+  char args[CSS_SERVER_MAX_SZ_PROC_ARGS];
+};
+
+extern int css_Server_use_new_connection_protocol;	// TODO: remove ?
+extern int css_Server_inhibit_connection_socket;	// TODO: remove ?
+#if defined(WINDOWS)
 extern SOCKET css_Server_connection_socket;
+#endif
 extern CSS_CONN_RULE_INFO css_Conn_rules[];
 extern const int css_Conn_rules_size;
 
+#if defined(SERVER_MODE)
 extern SOCKET css_Pipe_to_master;
-
+#endif
 #define CSS_NET_MAGIC_SIZE		8
-extern char css_Net_magic[CSS_NET_MAGIC_SIZE];
+extern const char css_Net_magic[CSS_NET_MAGIC_SIZE];
 extern void css_init_conn_rules (void);
 extern int css_get_max_conn (void);
 

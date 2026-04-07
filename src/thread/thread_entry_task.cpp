@@ -24,11 +24,14 @@
 
 #include "error_manager.h"
 #include "log_impl.h"
+#include "perf_monitor.h"	/* pstat_Metadata, PSTAT_...*/
 #include "porting.h"
 #include "thread_entry.hpp"
 #include "thread_manager.hpp"
 
 #include <cstring>
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 namespace cubthread
 {
@@ -44,6 +47,9 @@ namespace cubthread
 #if defined (SERVER_MODE)
     context.m_status = entry::status::TS_RUN;
     context.shutdown = false;
+    context.m_px_orig_thread_entry = NULL;
+    context.m_uses_px_stats = false;
+    context.m_px_stats = NULL;
 #endif // SERVER_MODE
 
     context.get_error_context ().register_thread_local ();
@@ -67,9 +73,13 @@ namespace cubthread
     context.tran_index = NULL_TRAN_INDEX;
     context.check_interrupt = true;
     context.private_lru_index = -1;
+    context.m_is_private_lru_enabled = false;
 #if defined (SERVER_MODE)
     context.m_status = entry::status::TS_FREE;
     context.resume_status = THREAD_RESUME_NONE;
+    context.m_px_orig_thread_entry = NULL;
+    perfmon_destroy_parallel_stats (&context);
+    context.m_uses_px_stats = false;
 #endif // SERVER_MODE
 
     get_manager ()->retire_entry (context);
@@ -86,7 +96,16 @@ namespace cubthread
 #if defined (SERVER_MODE)
     context.resume_status = THREAD_RESUME_NONE;
     context.shutdown = false;
+    context.m_px_orig_thread_entry = NULL;
+    perfmon_destroy_parallel_stats (&context);
+    context.m_uses_px_stats = false;
 #endif // SERVER_MODE
+
+    /* Set clearly for safety.
+     * In fact, it is processed in functions that call xlocator_fetch_all().
+     */
+    context._unload_parallel_process_idx = NO_UNLOAD_PARALLEL_PROCESSIING;
+    context._unload_cnt_parallel_process = NO_UNLOAD_PARALLEL_PROCESSIING;
 
     on_recycle (context);
   }
@@ -118,4 +137,24 @@ namespace cubthread
     on_daemon_retire (context);
   }
 
+  system_worker_entry_manager::system_worker_entry_manager (thread_type a_thread_type)
+    : m_thread_type { a_thread_type }
+  {
+  }
+
+  void
+  system_worker_entry_manager::on_create (entry &context)
+  {
+    context.type = m_thread_type;
+    context.tran_index = LOG_SYSTEM_TRAN_INDEX;
+  }
+
+  void
+  system_worker_entry_manager::on_recycle (entry &context)
+  {
+    // thread type is 'not' reset in the parent, checked here
+    assert (context.type == m_thread_type);
+    // transaction index is reset in parent
+    context.tran_index = LOG_SYSTEM_TRAN_INDEX;
+  }
 } // namespace cubthread

@@ -68,11 +68,8 @@
 #if defined(SERVER_MODE)
 #include "connection_error.h"
 #include "connection_sr.h"
-#else /* SERVER_MODE */
-#include "connection_cl.h"
 #endif /* SERVER_MODE */
 #include "error_manager.h"
-#include "connection_globals.h"
 #include "system_parameter.h"
 #include "environment_variable.h"
 #include "tcp.h"
@@ -80,8 +77,11 @@
 
 #ifndef HAVE_GETHOSTBYNAME_R
 #include <pthread.h>
+
 static pthread_mutex_t gethostbyname_lock = PTHREAD_MUTEX_INITIALIZER;
 #endif /* HAVE_GETHOSTBYNAME_R */
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 #define HOST_ID_ARRAY_SIZE 8	/* size of the host_id string */
 #define TCP_MIN_NUM_RETRIES 3
@@ -120,35 +120,18 @@ css_gethostname (char *name, size_t namelen)
     }
 
   size_t namelen_ = (size_t) namelen;
-  addrinfo hints, *result = NULL;
-
-  memset (&hints, 0, sizeof (hints));
-  hints.ai_family = AF_UNSPEC;	// either IPV4 or IPV6
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_flags = AI_CANONNAME;
 
   char hostname[namelen_];
   hostname[namelen_ - 1] = '\0';
-  gethostname (hostname, namelen_);
-
-  int gai_error = getaddrinfo_uhost (hostname, NULL, &hints, &result);
-  if (gai_error != 0)
+  if (gethostname (hostname, namelen_) < 0)
     {
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_GAI_ERROR, 1, hostname);
-      return ER_GAI_ERROR;
-    }
-
-  size_t canonname_size = strlen (result->ai_canonname) + 1;	// +1 for NULL terminator
-  if (canonname_size > namelen_)
-    {
-      freeaddrinfo (result);
       return ER_FAILED;
     }
+  else
+    {
+      strncpy (name, hostname, namelen);
+    }
 
-  memcpy (name, result->ai_canonname, canonname_size);
-  name[canonname_size] = '\0';
-
-  freeaddrinfo (result);
   return NO_ERROR;
 }
 
@@ -196,15 +179,18 @@ static void
 css_sockopt (SOCKET sd)
 {
   int bool_value = 1;
+  int prm_value;
 
-  if (prm_get_integer_value (PRM_ID_TCP_RCVBUF_SIZE) > 0)
+  prm_value = prm_get_integer_value (PRM_ID_TCP_RCVBUF_SIZE);
+  if (prm_value > 0)
     {
-      setsockopt (sd, SOL_SOCKET, SO_RCVBUF, (int *) prm_get_value (PRM_ID_TCP_RCVBUF_SIZE), sizeof (int));
+      setsockopt (sd, SOL_SOCKET, SO_RCVBUF, &prm_value, sizeof (int));
     }
 
-  if (prm_get_integer_value (PRM_ID_TCP_SNDBUF_SIZE) > 0)
+  prm_value = prm_get_integer_value (PRM_ID_TCP_SNDBUF_SIZE);
+  if (prm_value > 0)
     {
-      setsockopt (sd, SOL_SOCKET, SO_SNDBUF, (int *) prm_get_value (PRM_ID_TCP_SNDBUF_SIZE), sizeof (int));
+      setsockopt (sd, SOL_SOCKET, SO_SNDBUF, &prm_value, sizeof (int));
     }
 
   if (prm_get_bool_value (PRM_ID_TCP_NODELAY))
@@ -249,7 +235,7 @@ css_hostname_to_ip (const char *host, unsigned char *ip_addr)
 
       if (gethostbyname_r_uhost (host, &hent, buf, sizeof (buf), &hp, &herr) != 0 || hp == NULL)
 	{
-	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_BO_UNABLE_TO_FIND_HOSTNAME, 1, host);
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_BO_UNABLE_TO_FIND_HOSTNAME, 2, host, HOSTS_FILE);
 	  return ER_BO_UNABLE_TO_FIND_HOSTNAME;
 	}
       memcpy ((void *) ip_addr, (void *) hent.h_addr, hent.h_length);
@@ -260,7 +246,7 @@ css_hostname_to_ip (const char *host, unsigned char *ip_addr)
 
       if (gethostbyname_r_uhost (host, &hent, buf, sizeof (buf), &herr) == NULL)
 	{
-	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_BO_UNABLE_TO_FIND_HOSTNAME, 1, host);
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_BO_UNABLE_TO_FIND_HOSTNAME, 2, host, HOSTS_FILE);
 	  return ER_BO_UNABLE_TO_FIND_HOSTNAME;
 	}
       memcpy ((void *) ip_addr, (void *) hent.h_addr, hent.h_length);
@@ -270,7 +256,7 @@ css_hostname_to_ip (const char *host, unsigned char *ip_addr)
 
       if (gethostbyname_r_uhost (host, &hent, &ht_data) == -1)
 	{
-	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_BO_UNABLE_TO_FIND_HOSTNAME, 1, host);
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_BO_UNABLE_TO_FIND_HOSTNAME, 2, host, HOSTS_FILE);
 	  return ER_BO_UNABLE_TO_FIND_HOSTNAME;
 	}
       memcpy ((void *) ip_addr, (void *) hent.h_addr, hent.h_length);
@@ -285,7 +271,7 @@ css_hostname_to_ip (const char *host, unsigned char *ip_addr)
       if (hp == NULL)
 	{
 	  pthread_mutex_unlock (&gethostbyname_lock);
-	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_BO_UNABLE_TO_FIND_HOSTNAME, 1, host);
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_BO_UNABLE_TO_FIND_HOSTNAME, 2, host, HOSTS_FILE);
 	  return ER_BO_UNABLE_TO_FIND_HOSTNAME;
 	}
       memcpy ((void *) ip_addr, (void *) hp->h_addr, hp->h_length);
@@ -337,7 +323,7 @@ css_sockaddr (const char *host, int port, struct sockaddr *saddr, socklen_t * sl
 
       if (gethostbyname_r_uhost (host, &hent, buf, sizeof (buf), &hp, &herr) != 0 || hp == NULL)
 	{
-	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_HOST_NAME_ERROR, 1, host);
+	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_HOST_NAME_ERROR, 2, host, HOSTS_FILE);
 	  return INVALID_SOCKET;
 	}
       memcpy ((void *) &tcp_saddr.sin_addr, (void *) hent.h_addr, hent.h_length);
@@ -348,7 +334,7 @@ css_sockaddr (const char *host, int port, struct sockaddr *saddr, socklen_t * sl
 
       if (gethostbyname_r_uhost (host, &hent, buf, sizeof (buf), &herr) == NULL)
 	{
-	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_HOST_NAME_ERROR, 1, host);
+	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_HOST_NAME_ERROR, 2, host, HOSTS_FILE);
 	  return INVALID_SOCKET;
 	}
       memcpy ((void *) &tcp_saddr.sin_addr, (void *) hent.h_addr, hent.h_length);
@@ -358,7 +344,7 @@ css_sockaddr (const char *host, int port, struct sockaddr *saddr, socklen_t * sl
 
       if (gethostbyname_r_uhost (host, &hent, &ht_data) == -1)
 	{
-	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_HOST_NAME_ERROR, 1, host);
+	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_HOST_NAME_ERROR, 2, host, HOSTS_FILE);
 	  return INVALID_SOCKET;
 	}
       memcpy ((void *) &tcp_saddr.sin_addr, (void *) hent.h_addr, hent.h_length);
@@ -374,7 +360,7 @@ css_sockaddr (const char *host, int port, struct sockaddr *saddr, socklen_t * sl
       if (hp == NULL)
 	{
 	  pthread_mutex_unlock (&gethostbyname_lock);
-	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_HOST_NAME_ERROR, 1, host);
+	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_HOST_NAME_ERROR, 2, host, HOSTS_FILE);
 	  return INVALID_SOCKET;
 	}
       memcpy ((void *) &tcp_saddr.sin_addr, (void *) hp->h_addr, hp->h_length);
@@ -855,6 +841,17 @@ css_master_accept (SOCKET sockfd)
 	    }
 
 	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_ACCEPT_ERROR, 0);
+	  if (errno == EMFILE)
+	    {
+	      er_log_debug (ARG_FILE_LINE,
+			    "failed to accept connection: too many open files in this process (EMFILE). current process fd limit may be insufficient.");
+	    }
+	  else if (errno == ENFILE)
+	    {
+	      er_log_debug (ARG_FILE_LINE,
+			    "failed to accept connection: system-wide file descriptor limit reached (ENFILE).");
+	    }
+
 	  return INVALID_SOCKET;
 	}
 
@@ -1059,33 +1056,30 @@ css_tcp_master_datagram (char *path_name, SOCKET * sockfd)
 SOCKET
 css_open_new_socket_from_master (SOCKET fd, unsigned short *rid)
 {
-  unsigned short req_id;
+  union
+  {
+    struct cmsghdr hdr;
+    char buf[CONTROLLEN];
+  } cmsgbuf;
+  struct cmsghdr *cmsg;
   SOCKET new_fd = INVALID_SOCKET;
-  int rc;
-  struct iovec iov[1];
+  unsigned short req_id;
   struct msghdr msg;
+  struct iovec iov;
   int pid;
-#if defined(LINUX) || defined(AIX)
-  static struct cmsghdr *cmptr = NULL;
-#endif /* LINUX || AIX */
+  int rc;
 
-  iov[0].iov_base = (char *) &req_id;
-  iov[0].iov_len = sizeof (unsigned short);
-  msg.msg_iov = iov;
-  msg.msg_iovlen = 1;
+  memset (&cmsgbuf, 0, sizeof (cmsgbuf));
+
+  iov.iov_base = &req_id;
+  iov.iov_len = sizeof (unsigned short);
+
   msg.msg_name = (caddr_t) NULL;
   msg.msg_namelen = 0;
-#if !defined(LINUX) && !defined(AIX)
-  msg.msg_accrights = (caddr_t) & new_fd;	/* address of descriptor */
-  msg.msg_accrightslen = sizeof (new_fd);	/* receive 1 descriptor */
-#else /* not LINUX and not AIX */
-  if (cmptr == NULL && (cmptr = (struct cmsghdr *) malloc (CONTROLLEN)) == NULL)
-    {
-      return INVALID_SOCKET;
-    }
-  msg.msg_control = (void *) cmptr;
-  msg.msg_controllen = CONTROLLEN;
-#endif /* not LINUX */
+  msg.msg_iov = &iov;
+  msg.msg_iovlen = 1;
+  msg.msg_control = cmsgbuf.buf;
+  msg.msg_controllen = sizeof (cmsgbuf.buf);
 
   rc = recvmsg (fd, &msg, 0);
   if (rc < 0)
@@ -1095,20 +1089,26 @@ css_open_new_socket_from_master (SOCKET fd, unsigned short *rid)
       return INVALID_SOCKET;
     }
 
+  for (cmsg = CMSG_FIRSTHDR (&msg); cmsg; cmsg = CMSG_NXTHDR (&msg, cmsg))
+    {
+      if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS && cmsg->cmsg_len >= CMSG_LEN (sizeof (int)))
+	{
+	  memcpy (&new_fd, CMSG_DATA (cmsg), sizeof (new_fd));
+	  break;
+	}
+    }
+
+  if (IS_INVALID_SOCKET (new_fd))
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ERR_CSS_TCP_RECVMSG, 0);
+      return INVALID_SOCKET;
+    }
+
   *rid = ntohs (req_id);
-
   pid = getpid ();
-#if defined(LINUX) || defined(AIX)
-  new_fd = *(SOCKET *) CMSG_DATA (cmptr);
-#endif /* LINUX || AIX */
-
-#ifdef SYSV
-  ioctl (new_fd, SIOCSPGRP, (caddr_t) & pid);
-#else /* not SYSV */
   fcntl (new_fd, F_SETOWN, pid);
-#endif /* not SYSV */
-
   css_sockopt (new_fd);
+
   return new_fd;
 }
 

@@ -56,6 +56,10 @@
 #include "dbtype.h"
 #include "execute_statement.h"
 
+#if defined (SERVER_MODE)
+#error Does not belong to server module
+#endif
+
 extern unsigned int db_on_server;
 
 /*
@@ -1584,7 +1588,7 @@ ws_release_instance (MOP mop)
 void
 ws_release_user_instance (MOP mop)
 {
-  /* to keep instances of system classes, for instance, db_serial's. This prevents from dangling references to serial
+  /* to keep instances of system classes, for instance, _db_serial's. This prevents from dangling references to serial
    * objects during replication. The typical scenario is to update serials, cull mops which clears the mop up, and then
    * truncate the table which leads updating the serial mop to reset its values. */
   if (db_is_system_class (mop->class_mop) > 0)
@@ -2443,6 +2447,8 @@ ws_final (void)
   MOP mop, next;
   unsigned int slot;
 
+  dk_deduplicate_key_attribute_finalized ();
+
   tr_final ();
 
   if (prm_get_bool_value (PRM_ID_WS_MEMORY_REPORT))
@@ -2539,6 +2545,13 @@ ws_clear_internal (bool clear_vmop_keys)
 void
 ws_clear (void)
 {
+#if defined(SA_MODE)
+  /* In SA_MODE, rollback calls ws_clear() instead of ws_abort_mops().
+   * ws_abort_mops() already calls au_reset_authorization_caches() in CS_MODE,
+   * so we must do it here explicitly for the SA_MODE path. 
+   */
+  au_reset_authorization_caches ();
+#endif
   ws_clear_internal (false);
 }
 

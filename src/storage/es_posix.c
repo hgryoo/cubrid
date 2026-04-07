@@ -31,6 +31,7 @@
 #if defined(WINDOWS)
 #include <io.h>
 #define S_ISDIR(m) ((m) & S_IFDIR)
+typedef int mode_t;
 #else
 #include <unistd.h>
 #include <sys/vfs.h>
@@ -47,14 +48,23 @@
 #include "thread_entry.hpp"
 #include "thread_manager.hpp"	// for thread_get_thread_entry_info
 #endif // SERVER_MODE
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
+
+#define ES_POSIX_COPY_BUFSIZE		(4096 * 4)	/* 16K */
 
 #if defined (SA_MODE) || defined (SERVER_MODE)
 /* es_posix_base_dir - */
-static char es_base_dir[PATH_MAX];
+char es_base_dir[PATH_MAX] = { 0 };
 
 static void es_get_unique_name (char *dirname1, char *dirname2, const char *metaname, char *filename);
-static int es_make_dirs (const char *dirname1, const char *dirname2);
-static void es_rename_path (char *src, char *tgt, char *metaname);
+static void es_rename_path (const char *src, char *tgt, char *metaname);
+
+static int es_abs_open (const char *abs_path, int flags);
+static int es_abs_open (const char *abs_path, int flags, mode_t mode);
+static int es_make_abs_path (char *abs_path, const char *src_path);
+static int es_os_rename_file_abs (const char *src, const char *dst);
+
 
 /*
  * es_posix_get_unique_name - make unique path string for external file
@@ -82,6 +92,9 @@ es_get_unique_name (char *dirname1, char *dirname2, const char *metaname, char *
   r = rand ();
 #endif
 
+  /* defensive, we don't want minus in filename */
+  r = r < 0 ? r * (-1) : r;
+
   /* get unique numbers */
   unum = es_get_unique_num ();
 
@@ -102,7 +115,7 @@ es_get_unique_name (char *dirname1, char *dirname2, const char *metaname, char *
  * dirname1(in): first level directory name
  * dirname2(in): second level directory name
  */
-static int
+int
 es_make_dirs (const char *dirname1, const char *dirname2)
 {
   char dirbuf[PATH_MAX];
@@ -152,11 +165,13 @@ retry:
  * tgt(out): target path
  */
 static void
-es_rename_path (char *src, char *tgt, char *metaname)
+es_rename_path (const char *src, char *tgt, char *metaname)
 {
-  char *s, *t;
+  const char *s;
+  char *t;
 
   assert (metaname != NULL);
+
   /*
    * src: /.../ces_000/ces_tmp.123456789
    *                  ^
@@ -189,6 +204,74 @@ es_rename_path (char *src, char *tgt, char *metaname)
     }
 
   sprintf (t, "%s%s", metaname, s);
+}
+
+/*
+ * es_abs_open -
+ *
+ * return: return code of file open
+ * path(in): file path for open, relative or absolute
+ *           if relative, (lob_base_path) + path will be opened
+ */
+
+static int
+es_abs_open (const char *path, int flags)
+{
+  const char *abs_path = path;
+  char path_buf[PATH_MAX];
+  int ret = NO_ERROR;
+
+  if ((ret = es_make_abs_path (path_buf, path)) < 0)
+    {
+      return ret;
+    }
+
+  if (ret > 0)
+    {
+      abs_path = path_buf;
+    }
+
+  return open (abs_path, flags);
+}
+
+static int
+es_abs_open (const char *path, int flags, mode_t mode)
+{
+  const char *abs_path = path;
+  char path_buf[PATH_MAX];
+  int ret = NO_ERROR;
+
+  if ((ret = es_make_abs_path (path_buf, path)) < 0)
+    {
+      return ret;
+    }
+
+  if (ret > 0)
+    {
+      abs_path = path_buf;
+    }
+
+  return open (abs_path, flags, mode);
+}
+
+/*
+ * es_make_abs_path -
+ *
+ * return: return code, 0: already absolute path
+ * path(in): file path for open, relative or absolute
+ *           if relative, (lob_base_path) + path will be opened
+ */
+static int
+es_make_abs_path (char *dst, const char *src)
+{
+  int ret = 0;
+
+  if ((IS_ABS_PATH (src)) == false)
+    {
+      ret = snprintf (dst, PATH_MAX, "%s%c%s", es_base_dir, PATH_SEPARATOR, src);
+    }
+
+  return ret;
 }
 #endif /* SA_MODE || SERVER_MODE */
 
@@ -255,7 +338,7 @@ retry:
 		dirname2, PATH_SEPARATOR, filename);
 #else
   /* default */
-  n = snprintf (new_path, PATH_MAX - 1, "%s%c%s%c%s", es_base_dir, PATH_SEPARATOR, dirname1, PATH_SEPARATOR, filename);
+  n = snprintf (new_path, PATH_MAX - 1, "%s%c%s", dirname1, PATH_SEPARATOR, filename);
 #endif
   if (n < 0)
     {
@@ -266,9 +349,9 @@ retry:
   es_log ("xes_posix_create_file(): %s\n", new_path);
 
 #if defined (WINDOWS)
-  fd = open (new_path, O_WRONLY | O_CREAT | O_EXCL | O_BINARY, S_IRWXU);
+  fd = es_abs_open (new_path, O_WRONLY | O_CREAT | O_EXCL | O_BINARY, S_IRWXU);
 #else /* WINDOWS */
-  fd = open (new_path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH | O_LARGEFILE);
+  fd = es_abs_open (new_path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH | O_LARGEFILE);
 #endif /* !WINDOWS */
   if (fd < 0)
     {
@@ -280,9 +363,9 @@ retry:
 	      return ret;
 	    }
 #if defined (WINDOWS)
-	  fd = open (new_path, O_WRONLY | O_CREAT | O_EXCL | O_BINARY, S_IRWXU);
+	  fd = es_abs_open (new_path, O_WRONLY | O_CREAT | O_EXCL | O_BINARY, S_IRWXU);
 #else /* WINDOWs */
-	  fd = open (new_path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH | O_LARGEFILE);
+	  fd = es_abs_open (new_path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH | O_LARGEFILE);
 #endif /* !WINDOWS */
 	}
     }
@@ -313,8 +396,15 @@ xes_posix_write_file (const char *path, const void *buf, size_t count, off_t off
   int fd;
   ssize_t nbytes;
   size_t total = 0;
+  const char *abs_path = path;
+  char path_buf[PATH_MAX];
 
-  es_log ("xes_posix_write_file(%s, count %d offset %ld)\n", path, count, offset);
+  if (es_make_abs_path (path_buf, path) > 0)
+    {
+      abs_path = path_buf;
+    }
+
+  es_log ("xes_posix_write_file(%s, count %d offset %ld)\n", abs_path, count, offset);
 
   /*
    * TODO: This block of codes prevents partial update or writing at advanced
@@ -322,9 +412,9 @@ xes_posix_write_file (const char *path, const void *buf, size_t count, off_t off
    * This restriction is introduced due to OwFS's capability.
    * We need to reconsider about this specification.
    */
-  if (stat (path, &pstat) < 0)
+  if (stat (abs_path, &pstat) < 0)
     {
-      er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_ES_GENERAL, 2, "POSIX", path);
+      er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_ES_GENERAL, 2, "POSIX", abs_path);
       return ER_ES_GENERAL;
     }
   if (offset != pstat.st_size)
@@ -336,9 +426,9 @@ xes_posix_write_file (const char *path, const void *buf, size_t count, off_t off
     }
 
 #if defined (WINDOWS)
-  fd = open (path, O_WRONLY | O_APPEND | O_BINARY, S_IRWXU);
+  fd = es_abs_open (abs_path, O_WRONLY | O_APPEND | O_BINARY, S_IRWXU);
 #else /* WINDOWs */
-  fd = open (path, O_WRONLY | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH | O_LARGEFILE);
+  fd = es_abs_open (abs_path, O_WRONLY | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH | O_LARGEFILE);
 #endif /* !WINDOWS */
   if (fd < 0)
     {
@@ -398,9 +488,9 @@ xes_posix_read_file (const char *path, void *buf, size_t count, off_t offset)
   es_log ("xes_posix_read_file(%s, count %d offset %ld)\n", path, count, offset);
 
 #if defined (WINDOWS)
-  fd = open (path, O_RDONLY | O_BINARY);
+  fd = es_abs_open (path, O_RDONLY | O_BINARY);
 #else /* WINDOWS */
-  fd = open (path, O_RDONLY | O_LARGEFILE);
+  fd = es_abs_open (path, O_RDONLY | O_LARGEFILE);
 #endif /* !WINDOWS */
   if (fd < 0)
     {
@@ -466,13 +556,20 @@ int
 xes_posix_delete_file (const char *path)
 {
   int ret;
+  const char *abs_path = path;
+  char buf[PATH_MAX];
 
-  es_log ("xes_posix_delete_file(%s)\n", path);
+  if (es_make_abs_path (buf, path) > 0)
+    {
+      abs_path = buf;
+    }
 
-  ret = unlink (path);
+  es_log ("xes_posix_delete_file(%s)\n", abs_path);
+
+  ret = unlink (abs_path);
   if (ret < 0)
     {
-      er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_ES_GENERAL, 2, "POSIX", path);
+      er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_ES_GENERAL, 2, "POSIX", abs_path);
       return ER_ES_GENERAL;
     }
 
@@ -489,8 +586,6 @@ xes_posix_delete_file (const char *path)
 int
 xes_posix_copy_file (const char *src_path, char *metaname, char *new_path)
 {
-#define ES_POSIX_COPY_BUFSIZE		(4096 * 4)	/* 16K */
-
   int rd_fd, wr_fd, n;
   ssize_t ret;
   char dirname1[NAME_MAX], dirname2[NAME_MAX], filename[NAME_MAX];
@@ -498,9 +593,9 @@ xes_posix_copy_file (const char *src_path, char *metaname, char *new_path)
 
   /* open a source file */
 #if defined (WINDOWS)
-  rd_fd = open (src_path, O_RDONLY | O_BINARY);
+  rd_fd = es_abs_open (src_path, O_RDONLY | O_BINARY);
 #else /* WINDOWS */
-  rd_fd = open (src_path, O_RDONLY | O_LARGEFILE);
+  rd_fd = es_abs_open (src_path, O_RDONLY | O_LARGEFILE);
 #endif /* !WINDOWS */
   if (rd_fd < 0)
     {
@@ -516,10 +611,12 @@ retry:
 		dirname2, PATH_SEPARATOR, filename);
 #else
   /* default */
-  n = snprintf (new_path, PATH_MAX - 1, "%s%c%s%c%s", es_base_dir, PATH_SEPARATOR, dirname1, PATH_SEPARATOR, filename);
+  n = snprintf (new_path, PATH_MAX - 1, "%s%c%s", dirname1, PATH_SEPARATOR, filename);
 #endif
   if (n < 0)
     {
+      close (rd_fd);
+
       assert (false);
       return ER_ES_INVALID_PATH;
     }
@@ -527,9 +624,9 @@ retry:
   es_log ("xes_posix_copy_file(%s, %s): %s\n", src_path, metaname, new_path);
 
 #if defined (WINDOWS)
-  wr_fd = open (new_path, O_WRONLY | O_CREAT | O_EXCL | O_BINARY, S_IRWXU);
+  wr_fd = es_abs_open (new_path, O_WRONLY | O_CREAT | O_EXCL | O_BINARY, S_IRWXU);
 #else /* WINDOWS */
-  wr_fd = open (new_path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH | O_LARGEFILE);
+  wr_fd = es_abs_open (new_path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH | O_LARGEFILE);
 #endif /* !WINDOWS */
   if (wr_fd < 0)
     {
@@ -542,9 +639,10 @@ retry:
 	      return ER_ES_GENERAL;
 	    }
 #if defined (WINDOWS)
-	  wr_fd = open (new_path, O_WRONLY | O_CREAT | O_EXCL | O_BINARY, S_IRWXU);
+	  wr_fd = es_abs_open (new_path, O_WRONLY | O_CREAT | O_EXCL | O_BINARY, S_IRWXU);
 #else /* WINDOWS */
-	  wr_fd = open (new_path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH | O_LARGEFILE);
+	  wr_fd =
+	    es_abs_open (new_path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH | O_LARGEFILE);
 #endif /* !WINDOWS */
 	}
     }
@@ -590,11 +688,124 @@ retry:
 }
 
 /*
- * es_posix_rename_file - convert a locator & file path according to the metaname
+ * xes_posix_copy_file_with_prefix - Similar to xes_posix_copy_file(), but handles only the ES_POSIX type and performs file copy
+                              while adding a prefix to the destination path.
+ *
+ * return: error code
+ * src_path(in): path of the original source file
+ * metaname(in) : meta name combined with in_uri
+ * prefix(in): prefix that will be added to the destination path when copying
+ * new_path(out): new path of the copied file
+ */
+int
+xes_posix_copy_file_with_prefix (const char *src_path, char *metaname, const char *prefix, char *new_path)
+{
+  int rd_fd, wr_fd, n = 0;
+  ssize_t ret;
+  char dirname1[NAME_MAX], dirname2[NAME_MAX], filename[NAME_MAX];
+  char buf[ES_POSIX_COPY_BUFSIZE];
+  char *p;
+
+  /* Check the existence of the source file by trying to open it */
+  rd_fd = es_abs_open (src_path, O_RDONLY | O_LARGEFILE);
+  if (rd_fd < 0)
+    {
+      er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_ES_GENERAL, 2, "POSIX", src_path);
+      return ER_ES_GENERAL;
+    }
+
+retry:
+  /* create a target file */
+  es_get_unique_name (dirname1, dirname2, metaname, filename);
+
+  n = snprintf (new_path, PATH_MAX - 1, "%s%c%s%c%s", prefix, PATH_SEPARATOR, dirname1, PATH_SEPARATOR, filename);
+  if (n < 0 || n >= PATH_MAX - 1)
+    {
+      close (rd_fd);
+      return ER_ES_INVALID_PATH;
+    }
+
+  es_log ("xes_posix_copy_file_with_prefix(%s, %s): %s\n", src_path, metaname, new_path);
+
+  /* check file existence */
+  wr_fd = es_abs_open (new_path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH | O_LARGEFILE);
+  if (wr_fd < 0)
+    {
+      if (errno == ENOENT)
+	{
+	  p = strrchr (new_path, PATH_SEPARATOR);
+	  if (p != NULL)
+	    {
+	      *p = '\0';	/* Temporarily truncate the path to extract the directory portion */
+	    }
+	  else
+	    {
+	      close (rd_fd);
+	      return ER_ES_GENERAL;
+	    }
+
+	  ret = es_make_dirs (new_path, dirname2);
+	  if (ret != NO_ERROR)
+	    {
+	      close (rd_fd);
+
+	      er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_ES_GENERAL, 2, "POSIX", src_path);
+	      return ER_ES_GENERAL;
+	    }
+
+	  *p = PATH_SEPARATOR;
+	  wr_fd =
+	    es_abs_open (new_path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH | O_LARGEFILE);
+	}
+    }
+
+  if (wr_fd < 0)
+    {
+      if (errno == EEXIST)
+	{
+	  goto retry;
+	}
+      close (rd_fd);
+
+      er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_ES_GENERAL, 2, "POSIX", new_path);
+      return ER_ES_GENERAL;
+    }
+
+  /* copy data */
+  do
+    {
+      ret = read (rd_fd, buf, ES_POSIX_COPY_BUFSIZE);
+      if (ret == 0)
+	{
+	  break;		/* end of file */
+	}
+      else if (ret < 0)
+	{
+	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_ES_GENERAL, 2, "POSIX", src_path);
+	  break;
+	}
+
+      ret = write (wr_fd, buf, (unsigned) ret);
+      if (ret <= 0)
+	{
+	  er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_ES_GENERAL, 2, "POSIX", new_path);
+	  break;
+	}
+    }
+  while (ret > 0);
+
+  close (rd_fd);
+  close (wr_fd);
+
+  return (ret < 0) ? ER_ES_GENERAL : NO_ERROR;
+}
+
+/*
+ * xes_posix_rename_file - convert a locator & file path according to the metaname
  *
  * return: error code, ER_ES_GENERAL or NO_ERRROR
  * src_path(in): file path to rename
- * metapath(in) : meta name combined with src_path
+ * metaname(in) : meta name combined with src_path
  * new_path(out): new file path
  */
 int
@@ -606,9 +817,86 @@ xes_posix_rename_file (const char *src_path, const char *metaname, char *new_pat
 
   es_log ("xes_posix_rename_file(%s, %s): %s\n", src_path, metaname, new_path);
 
-  ret = os_rename_file (src_path, new_path);
+  ret = es_os_rename_file_abs (src_path, new_path);
 
   return (ret < 0) ? ER_ES_GENERAL : NO_ERROR;
+}
+
+/*
+ * xes_posix_move_file_with_prefix - Moves a LOB file from the source path to a destination directory defined by the prefix.
+ *
+ * return: error code
+ * src_path(in): Source file path
+ * metaname(in) : Metadata used for the new file name
+ * prefix(in) : prefix to be added to the destination path when moving the file
+ * new_path(out): Resulting path of the moved file
+ */
+int
+xes_posix_move_file_with_prefix (const char *src_path, const char *metaname, const char *prefix, char *new_path)
+{
+  ssize_t ret;
+  char dirname1[NAME_MAX], dirname2[NAME_MAX], filename[NAME_MAX];
+  char *p;
+
+  /* Create a target file */
+  es_get_unique_name (dirname1, dirname2, metaname, filename);
+
+  ret = snprintf (new_path, PATH_MAX, "%s%c%s%c%s", prefix, PATH_SEPARATOR, dirname1, PATH_SEPARATOR, filename);
+  if (ret < 0 || ret >= PATH_MAX)
+    {
+      er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_ES_GENERAL, 2, "POSIX", new_path);
+      return ER_ES_INVALID_PATH;
+    }
+  es_log ("xes_posix_move_file_with_prefix(%s, %s): %s\n", src_path, metaname, new_path);
+
+  p = strrchr (new_path, PATH_SEPARATOR);
+  if (p != NULL)
+    {
+      *p = '\0';		/* Temporarily truncate the path to extract the directory portion */
+    }
+  else
+    {
+      return ER_ES_GENERAL;
+    }
+
+  /* Try create directory */
+  ret = es_make_dirs (new_path, dirname2);
+
+  *p = PATH_SEPARATOR;
+
+  if (ret != NO_ERROR)
+    {
+      er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_ES_GENERAL, 2, "POSIX", new_path);
+      return ER_ES_GENERAL;
+    }
+
+  ret = es_os_rename_file_abs (src_path, new_path);
+  if (ret != NO_ERROR)
+    {
+      er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_ES_GENERAL, 2, "POSIX", src_path);
+      return ER_ES_GENERAL;
+    }
+
+  return NO_ERROR;
+}
+
+static int
+es_os_rename_file_abs (const char *src, const char *dst)
+{
+  const char *abs_dst_path = dst, *abs_src_path = src;
+  char dst_buf[PATH_MAX], src_buf[PATH_MAX];
+
+  if (es_make_abs_path (src_buf, src) > 0)
+    {
+      abs_src_path = src_buf;
+    }
+
+  if (es_make_abs_path (dst_buf, dst) > 0)
+    {
+      abs_dst_path = dst_buf;
+    }
+
+  return os_rename_file (abs_src_path, abs_dst_path);
 }
 
 
@@ -623,13 +911,20 @@ xes_posix_get_file_size (const char *path)
 {
   int ret;
   struct stat pstat;
+  const char *abs_path = path;
+  char buf[PATH_MAX];
 
-  es_log ("xes_posix_get_file_size(%s)\n", path);
+  if (es_make_abs_path (buf, path) > 0)
+    {
+      abs_path = buf;
+    }
 
-  ret = stat (path, &pstat);
+  es_log ("xes_posix_get_file_size(%s)\n", abs_path);
+
+  ret = stat (abs_path, &pstat);
   if (ret < 0)
     {
-      er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_ES_GENERAL, 2, "POSIX", path);
+      er_set_with_oserror (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_ES_GENERAL, 2, "POSIX", abs_path);
       return -1;
     }
 

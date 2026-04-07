@@ -33,6 +33,8 @@
 #include "xasl_analytic.hpp"
 
 #include <cmath>
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 static int qdata_analytic_interpolation (cubthread::entry *thread_p, cubxasl::analytic_list_node *ana_p,
     QFILE_LIST_SCAN_ID *scan_id);
@@ -54,7 +56,7 @@ qdata_initialize_analytic_func (cubthread::entry *thread_p, ANALYTIC_TYPE *func_
       return ER_FAILED;
     }
 
-  const FUNC_TYPE fcode = func_p->function;
+  const FUNC_CODE fcode = func_p->function;
   if (fcode == PT_COUNT_STAR || fcode == PT_COUNT)
     {
       db_make_bigint (func_p->value, 0);
@@ -89,7 +91,7 @@ qdata_initialize_analytic_func (cubthread::entry *thread_p, ANALYTIC_TYPE *func_
 
       db_private_free_and_init (thread_p, type_list.domp);
 
-      if (qfile_copy_list_id (func_p->list_id, list_id_p, true) != NO_ERROR)
+      if (qfile_copy_list_id (func_p->list_id, list_id_p, true, QFILE_PROHIBIT_DEPENDENT) != NO_ERROR)
 	{
 	  qfile_free_list_id (list_id_p);
 	  return ER_FAILED;
@@ -113,7 +115,7 @@ qdata_evaluate_analytic_func (cubthread::entry *thread_p, ANALYTIC_TYPE *func_p,
 {
   DB_VALUE dbval, sqr_val;
   DB_VALUE *opr_dbval_p = NULL;
-  PR_TYPE *pr_type_p;
+  const PR_TYPE *pr_type_p;
   OR_BUF buf;
   char *disk_repr_p = NULL;
   int dbval_size;
@@ -226,9 +228,7 @@ qdata_evaluate_analytic_func (cubthread::entry *thread_p, ANALYTIC_TYPE *func_p,
 	  error = pr_type_p->data_writeval (&buf, &dbval);
 	  if (error != NO_ERROR)
 	    {
-	      /* ER_TF_BUFFER_OVERFLOW means that val_size or packing is bad. */
-	      assert (error != ER_TF_BUFFER_OVERFLOW);
-
+	      assert_release (buf.ptr <= buf.endptr);
 	      db_private_free_and_init (thread_p, disk_repr_p);
 	      error = ER_FAILED;
 	      goto exit;
@@ -757,7 +757,7 @@ qdata_finalize_analytic_func (cubthread::entry *thread_p, ANALYTIC_TYPE *func_p,
   DB_VALUE dbval;
   QFILE_LIST_ID *list_id_p;
   char *tuple_p;
-  PR_TYPE *pr_type_p;
+  const PR_TYPE *pr_type_p;
   OR_BUF buf;
   QFILE_LIST_SCAN_ID scan_id;
   SCAN_CODE scan_code;
@@ -887,7 +887,7 @@ qdata_finalize_analytic_func (cubthread::entry *thread_p, ANALYTIC_TYPE *func_p,
 		  if (DB_IS_NULL (func_p->value))
 		    {
 		      /* first iteration: can't add to a null agg_ptr->value */
-		      PR_TYPE *tmp_pr_type;
+		      const PR_TYPE *tmp_pr_type;
 		      DB_TYPE dbval_type = DB_VALUE_DOMAIN_TYPE (&dbval);
 
 		      tmp_pr_type = pr_type_from_id (dbval_type);
@@ -1104,7 +1104,7 @@ qdata_analytic_interpolation (cubthread::entry *thread_p, cubxasl::analytic_list
   int error = NO_ERROR;
   INT64 tuple_count;
   double row_num_d, f_row_num_d, c_row_num_d, percentile_d;
-  FUNC_TYPE function;
+  FUNC_CODE function;
   double cur_group_percentile;
 
   assert (ana_p != NULL && scan_id != NULL && scan_id->status == S_OPENED);

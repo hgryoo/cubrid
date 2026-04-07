@@ -36,6 +36,7 @@
 #include "work_space.h"		/* for MOP */
 #include "class_object.h"	/* for SM_CLASS */
 #include "schema_template.h"	/* template interface */
+#include "schema_system_catalog.hpp"	/* for comparing system catalog name */
 #include "trigger_manager.h"	/* for TR_EVENT_TYPE */
 #include "tde.h"
 
@@ -118,7 +119,6 @@ extern int sm_exist_index (MOP classop, const char *idxname, BTID * btid);
 
 /* Misc schema operations */
 extern int sm_rename_class (MOP op, const char *new_name);
-extern void sm_mark_system_classes (void);
 extern int sm_update_all_catalog_statistics (bool with_fullscan);
 extern int sm_update_catalog_statistics (const char *class_name, bool with_fullscan);
 extern int sm_force_write_all_classes (void);
@@ -127,7 +127,6 @@ extern void sm_mark_system_class_for_catalog (void);
 #endif /* SA_MODE */
 extern int sm_mark_system_class (MOP classop, int on_or_off);
 extern int sm_is_system_class (MOP op);
-extern bool sm_check_system_class_by_name (const char *name);
 extern bool sm_is_reuse_oid_class (MOP op);
 extern int sm_check_reuse_oid_class (MOP op);
 extern int sm_is_partitioned_class (MOP op);
@@ -218,6 +217,7 @@ extern bool sm_has_indexes (MOBJ class_);
 /* Interpreter support functions */
 extern char *sm_downcase_name (const char *name, char *buf, int buf_size);
 extern char *sm_user_specified_name (const char *name, char *buf, int buf_size);
+extern char *sm_user_specified_name_for_serial (const char *name, char *buf, int buf_size);
 extern char *sm_qualifier_name (const char *name, char *buf, int buf_size);
 extern const char *sm_remove_qualifier_name (const char *name);
 extern MOP sm_find_class (const char *name);

@@ -2,12 +2,13 @@ pipeline {
   agent none
 
   triggers {
-    pollSCM('H 21 * * 1,2,4,5,7')
+    pollSCM('H 19 * * 1,2,3,4,5')
   }
 
   environment {
     OUTPUT_DIR = 'packages'
     TEST_REPORT = 'reports'
+    JUNIT_REQUIRED = "${BRANCH_NAME =~ /^feature\/.*/ ? 'false' : 'true'}"
   }
 
   stages {
@@ -35,13 +36,25 @@ pipeline {
             echo 'Packing...'
             sh "scl enable devtoolset-8 -- /entrypoint.sh dist -o ${OUTPUT_DIR}"
 
-            echo 'Testing...'
-            sh '/entrypoint.sh test || echo "$? failed"'
+            script {
+              if (env.BRANCH_NAME ==~ /^feature\/.*/) {
+                echo 'Skip testing for feature branch'
+              } else {
+            	echo 'Testing...'
+            	sh '/entrypoint.sh test || echo "$? failed"'
+              }
+            }
           }
           post {
             always {
-              archiveArtifacts "${OUTPUT_DIR}/*"
-              junit "${TEST_REPORT}/*.xml"
+              script {
+                archiveArtifacts "${OUTPUT_DIR}/*"
+                if (env.JUNIT_REQUIRED == 'true') {
+                  junit "${TEST_REPORT}/*.xml"
+                } else {
+                  echo 'Skip junit for feature branch'
+                }
+              }
             }
           }
         }
@@ -64,33 +77,25 @@ pipeline {
             echo 'Packing...'
             sh "scl enable devtoolset-8 -- /entrypoint.sh dist -m debug -o ${OUTPUT_DIR}"
 
-            echo 'Testing...'
-            sh '/entrypoint.sh test || echo "$? failed"'
+            script {
+              if (env.BRANCH_NAME ==~ /^feature\/.*/) {
+                echo 'Skip testing for feature branch'
+              } else {
+            	echo 'Testing...'
+            	sh '/entrypoint.sh test || echo "$? failed"'
+              }
+            }
           }
           post {
             always {
-              archiveArtifacts "${OUTPUT_DIR}/*"
-              junit "${TEST_REPORT}/*.xml"
-            }
-          }
-        }
-
-        stage('Windows Release') {
-          agent {
-            node {
-              label 'windows'
-            }
-          }
-          steps {
-            echo 'Building...'
-            bat "win/build.bat build"
-
-            echo 'Packing...'
-            bat "win/build.bat /out ${OUTPUT_DIR} dist"
-          }
-          post {
-            always {
-              archiveArtifacts "${OUTPUT_DIR}/*"
+              script {
+                archiveArtifacts "${OUTPUT_DIR}/*"
+                if (env.JUNIT_REQUIRED == 'true') {
+                  junit "${TEST_REPORT}/*.xml"
+                } else {
+                  echo 'Skip junit for feature branch'
+                }
+              }
             }
           }
         }
@@ -100,8 +105,15 @@ pipeline {
 
   post {
     always {
-      build job: "${DEPLOY_JOB}", parameters: [string(name: 'PROJECT_NAME', value: "${JOB_NAME}")],
-            propagate: false
+      script {
+        if (env.BRANCH_NAME ==~ /^feature\/.*/) {
+          build job: "${DEPLOY_JOB_FOR_MANUAL}", parameters: [string(name: 'PROJECT_NAME', value: "${JOB_NAME}")],
+                propagate: false
+        } else {
+          build job: "${DEPLOY_JOB}", parameters: [string(name: 'PROJECT_NAME', value: "${JOB_NAME}")],
+                propagate: false
+        }
+      }
       emailext replyTo: '$DEFAULT_REPLYTO', to: '$DEFAULT_RECIPIENTS',
                subject: '$DEFAULT_SUBJECT', body: '''${JELLY_SCRIPT,template="html"}'''
     }

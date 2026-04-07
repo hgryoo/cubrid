@@ -37,6 +37,8 @@
 #include "error_code.h"
 #include "memory_alloc.h"
 #include "base64.h"
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 #define  MAX_BASE64_LINE_LENGTH      76
 #define  CH_INVALID                  -1
@@ -53,7 +55,7 @@ struct base64_chunk
 /*
  *   Helper table for encoding
  */
-const char *base64_map = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "abcdefghijklmnopqrstuvwxyz" "0123456789+/";
+const char *const base64_map = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "abcdefghijklmnopqrstuvwxyz" "0123456789+/";
 
 /*
  *  Helper table for decoding.

@@ -24,8 +24,9 @@
 #define _XASL_ANALYTIC_HPP_
 
 #include "dbtype_def.h"
+#include "db_function.hpp"          // FUNC_CODE
 #include "regu_var.hpp"             // regu_variable_node
-#include "storage_common.h"       // FUNC_TYPE, QUERY_OPTIONS
+#include "storage_common.h"       // QUERY_OPTIONS
 
 // forward definitions
 struct qfile_list_id;
@@ -66,7 +67,7 @@ namespace cubxasl
     analytic_list_node *next;		/* next analytic node */
 
     /* constant fields, XASL serialized */
-    FUNC_TYPE function;		/* analytic function type */
+    FUNC_CODE function;		/* analytic function type */
     QUERY_OPTIONS option;		/* DISTINCT/ALL option */
     tp_domain *domain;		/* domain of the result */
     tp_domain *original_domain;	/* domain of the result */
@@ -87,6 +88,11 @@ namespace cubxasl
     /* runtime values */
     analytic_function_info info;	/* custom function runtime values */
     qfile_list_id *list_id;	/* used for distinct handling */
+    qfile_list_id *group_list_id;	/* file containing group headers */
+    qfile_list_id *order_list_id;	/* file containing group values */
+    int curr_group_tuple_count;		/* tuples in current group */
+    int curr_group_tuple_count_nn;	/* tuples in current group with non-NULL values */
+    int curr_sort_key_tuple_count;	/* tuples sharing current sort key */
     db_value *value;		/* value of the aggregate */
     db_value *value2;		/* for STTDEV and VARIANCE */
     db_value *out_value;		/* DB_VALUE used for output */
@@ -102,6 +108,10 @@ namespace cubxasl
     analytic_eval_type *next;	/* next eval group */
     analytic_list_node *head;		/* analytic type list */
     SORT_LIST *sort_list;		/* partition sort */
+    int sort_list_size;		/* the total size of the sort list */
+    int covered_size;		/* covered size */
+    DB_VALUE *current_values;	/* current values */
+    DB_VALUE *temp_values;	/* temp values */
 
     analytic_eval_type () = default;
   };

@@ -30,6 +30,7 @@
 #include "object_representation_constants.h"
 #include "oid.h"
 #include "storage_common.h"
+#include "lock_table.h"		// lock_conv
 #include "thread_compat.hpp"
 
 #define LC_AREA_ONEOBJ_PACKED_SIZE (OR_INT_SIZE * 4 + \
@@ -311,6 +312,9 @@ struct lc_lock_set
 				 * into mem */
   LC_LOCKSET_REQOBJ *objects;	/* Description of requested objects. The number of structures are num_reqobjs */
   bool first_fetch_lockset_call;	/* First client call to fetch_request */
+#if defined(CS_MODE)
+  int eid;			/* When first_fetch_lockset_call is true, it is set via net_client_request_2recv_copyarea() */
+#endif
 };
 
 typedef struct lc_lockhint_class LC_LOCKHINT_CLASS;
@@ -336,6 +340,9 @@ struct lc_lock_hint
   LC_LOCKHINT_CLASS *classes;	/* Description of set of classes. The number of class structures are num_classes.. Ptr
 				 * into mem */
   bool first_fetch_lockhint_call;	/* First client call to fetch_lockhint */
+#if defined(CS_MODE)
+  int eid;			/* When first_fetch_lockhint_call is true, it is set via net_client_request_2recv_copyarea() */
+#endif
 };
 
 enum lc_prefetch_flags
@@ -404,9 +411,10 @@ extern LC_COPYAREA *locator_reallocate_copy_area_by_length (LC_COPYAREA * old_ar
 
 extern void locator_free_copy_area (LC_COPYAREA * copyarea);
 extern char *locator_pack_copy_area_descriptor (int num_objs, LC_COPYAREA * copyarea, char *desc, int desc_len);
-extern char *locator_unpack_copy_area_descriptor (int num_objs, LC_COPYAREA * copyarea, char *desc);
+extern char *locator_unpack_copy_area_descriptor (int num_objs, LC_COPYAREA * copyarea, char *desc,
+						  int packed_desc_size);
 extern int locator_send_copy_area (LC_COPYAREA * copyarea, char **contents_ptr, int *contents_length, char **desc_ptr,
-				   int *desc_length);
+				   int *desc_length, bool encode_endian);
 #if defined(SERVER_MODE)
 extern LC_COPYAREA *locator_recv_allocate_copyarea (int num_objs, char **contents_ptr, int contents_length);
 #else /* SERVER_MODE */
@@ -426,6 +434,7 @@ extern int locator_pack_lockset (LC_LOCKSET * lockset, bool pack_classes, bool p
 extern int locator_unpack_lockset (LC_LOCKSET * lockset, bool unpack_classes, bool unpack_objects);
 extern LC_LOCKHINT *locator_allocate_lockhint (int max_classes, bool quit_on_errors);
 extern LC_LOCKHINT *locator_reallocate_lockhint (LC_LOCKHINT * lockhint, int max_classes);
+extern void locator_free_packed (char *packed_area, int packed_size);
 extern void locator_free_lockhint (LC_LOCKHINT * lockhint);
 extern int locator_pack_lockhint (LC_LOCKHINT * lockhint, bool pack_classes);
 extern int locator_unpack_lockhint (LC_LOCKHINT * lockhint, bool unpack_classes);

@@ -41,7 +41,7 @@
 #endif /* SOLARIS || LINUX */
 
 #include "connection_defs.h"
-#include "connection_cl.h"
+#include "client_support.h"
 #if defined(WINDOWS)
 #include "wintcp.h"
 #endif /* WINDOWS */
@@ -135,6 +135,8 @@ static bool commdb_Arg_deact_confirm_no_server = false;
 static char *commdb_Arg_host_name = NULL;
 static bool commdb_Arg_ha_start_util_process = false;
 static char *commdb_Arg_ha_util_process_args = NULL;
+static bool commdb_Arg_shutdown_reviving_server = false;
+static char *commdb_Arg_shutdown_reviving_server_name = NULL;
 
 /*
  * send_request_no_args() - send request without argument
@@ -147,7 +149,7 @@ send_request_no_args (CSS_CONN_ENTRY * conn, int command)
 {
   unsigned short request_id;
 
-  if (css_send_request (conn, command, &request_id, NULL, 0) == NO_ERRORS)
+  if (__gv_cvar.css_send_request (conn, command, &request_id, NULL, 0) == NO_ERRORS)
     return (request_id);
   else
     return (0);
@@ -166,7 +168,7 @@ send_request_one_arg (CSS_CONN_ENTRY * conn, int command, char *buffer, int size
 {
   unsigned short request_id;
 
-  if (css_send_request (conn, command, &request_id, buffer, size) == NO_ERRORS)
+  if (__gv_cvar.css_send_request (conn, command, &request_id, buffer, size) == NO_ERRORS)
     return (request_id);
   else
     return (0);
@@ -187,7 +189,7 @@ send_request_two_args (CSS_CONN_ENTRY * conn, int command, char *buffer1, int si
 {
   unsigned short request_id;
 
-  if (css_send_request (conn, command, &request_id, buffer1, size1) == NO_ERRORS)
+  if (__gv_cvar.css_send_request (conn, command, &request_id, buffer1, size1) == NO_ERRORS)
     if (css_send_data (conn, request_id, buffer2, size2) == NO_ERRORS)
       return (request_id);
   return (0);
@@ -215,7 +217,7 @@ send_for_start_time (CSS_CONN_ENTRY * conn)
 static void
 return_string (CSS_CONN_ENTRY * conn, unsigned short request_id, char **buffer, int *buffer_size)
 {
-  css_receive_data (conn, request_id, buffer, buffer_size, -1);
+  __gv_cvar.css_receive_data (conn, request_id, buffer, buffer_size, -1);
 }
 
 /*
@@ -288,7 +290,7 @@ return_integer_data (CSS_CONN_ENTRY * conn, unsigned short request_id)
   int size;
   int *buffer = NULL;
 
-  if (css_receive_data (conn, request_id, (char **) &buffer, &size, -1) == NO_ERRORS)
+  if (__gv_cvar.css_receive_data (conn, request_id, (char **) &buffer, &size, -1) == NO_ERRORS)
     {
       if (size == sizeof (int))
 	{
@@ -1064,6 +1066,18 @@ process_ha_start_util_process (CSS_CONN_ENTRY * conn, char *args)
 }
 
 /*
+ * process_shutdown_reviving_server() - shutdown reviving server
+ *   return: none
+ *   server_name(in)  : server name
+ *   conn(in)          : connection info
+ */
+static void
+process_shutdown_reviving_server (CSS_CONN_ENTRY * conn, char *server_name)
+{
+  send_request_one_arg (conn, SHUTDOWN_REVIVING_SERVER, server_name, (int) strlen (server_name) + 1);
+}
+
+/*
  * process_batch_command() - process user command in batch mode
  *   return: none
  *   conn(in): connection info
@@ -1179,6 +1193,11 @@ process_batch_command (CSS_CONN_ENTRY * conn)
       return process_ha_start_util_process (conn, (char *) commdb_Arg_ha_util_process_args);
     }
 
+  if (commdb_Arg_shutdown_reviving_server)
+    {
+      process_shutdown_reviving_server (conn, (char *) commdb_Arg_shutdown_reviving_server_name);
+    }
+
   return NO_ERROR;
 }
 
@@ -1221,6 +1240,7 @@ main (int argc, char **argv)
     {COMMDB_HOST_L, 1, 0, COMMDB_HOST_S},
     {COMMDB_HA_ADMIN_INFO_L, 0, 0, COMMDB_HA_ADMIN_INFO_S},
     {COMMDB_HA_START_UTIL_PROCESS_L, 1, 0, COMMDB_HA_START_UTIL_PROCESS_S},
+    {COMMDB_SHUTDOWN_REVIVING_SERVER_L, 1, 0, COMMDB_SHUTDOWN_REVIVING_SERVER_S},
     {0, 0, 0, 0}
   };
 
@@ -1369,6 +1389,14 @@ main (int argc, char **argv)
 	  commdb_Arg_ha_util_process_args = strdup (optarg);
 	  commdb_Arg_ha_start_util_process = true;
 	  break;
+	case COMMDB_SHUTDOWN_REVIVING_SERVER_S:
+	  if (commdb_Arg_shutdown_reviving_server_name != NULL)
+	    {
+	      free_and_init (commdb_Arg_shutdown_reviving_server_name);
+	    }
+	  commdb_Arg_shutdown_reviving_server_name = strdup (optarg);
+	  commdb_Arg_shutdown_reviving_server = true;
+	  break;
 	default:
 	  util_log_write_errid (MSGCAT_UTIL_GENERIC_INVALID_ARGUMENT);
 	  goto usage;
@@ -1387,7 +1415,7 @@ main (int argc, char **argv)
       goto error;
     }
 
-  conn = css_connect_to_master_for_info (hostname, port_id, &rid);
+  conn = __gv_cvar.css_connect_to_master_for_info (hostname, port_id, &rid);
   if (conn == NULL)
     {
       PRINT_AND_LOG_ERR_MSG (msgcat_message (MSGCAT_CATALOG_UTILS, MSGCAT_UTIL_SET_COMMDB, COMMDB_STRING11), hostname);
@@ -1438,6 +1466,10 @@ end:
   if (commdb_Arg_ha_util_process_args != NULL)
     {
       free_and_init (commdb_Arg_ha_util_process_args);
+    }
+  if (commdb_Arg_shutdown_reviving_server_name != NULL)
+    {
+      free_and_init (commdb_Arg_shutdown_reviving_server_name);
     }
 
   return status;

@@ -46,6 +46,7 @@
 #include "semantic_check.h"
 #include "xasl_generation.h"
 #include "memory_alloc.h"
+#include "schema_system_catalog_constants.h"
 #include "transform.h"
 #include "set_object.h"
 #include "object_accessor.h"
@@ -58,6 +59,8 @@
 #include "xasl_to_stream.h"
 #include "parser_support.h"
 #include "dbtype.h"
+#include "jsp_cl.h"
+#include "msgcat_glossary.hpp"
 
 #if defined (SUPPRESS_STRLEN_WARNING)
 #define strlen(s1)  ((int) strlen(s1))
@@ -82,7 +85,7 @@
 #define UNIQUE_SAVEPOINT_REVOKE_USER "rEVOKEuSER"
 
 #define QUERY_MAX_SIZE	1024 * 1024
-#define MAX_FILTER_PREDICATE_STRING_LENGTH 255
+#define MAX_FILTER_PREDICATE_STRING_LENGTH (1073741823)
 #define MAX_FUNCTION_EXPRESSION_STRING_LENGTH 1024
 
 typedef enum
@@ -227,6 +230,8 @@ struct db_value_slist
 static int drop_class_name (const char *name, bool is_cascade_constraints);
 
 static int do_alter_one_clause_with_template (PARSER_CONTEXT * parser, PT_NODE * alter);
+static int lob_process_dir_add_attr (SM_CLASS * class_, int old_att_count);
+static int lob_process_dir_drop_attr (SM_CLASS * class_, const char *attr_name);
 static int do_alter_clause_rename_entity (PARSER_CONTEXT * const parser, PT_NODE * const alter);
 static int do_alter_clause_add_index (PARSER_CONTEXT * const parser, PT_NODE * const alter);
 static int do_alter_clause_drop_index (PARSER_CONTEXT * const parser, PT_NODE * const alter);
@@ -365,6 +370,8 @@ static int execute_create_select_query (PARSER_CONTEXT * parser, const char *con
 					PT_CREATE_SELECT_ACTION create_select_action, DB_QUERY_TYPE * query_columns,
 					PT_NODE * flagged_statement);
 
+static int do_set_auto_increment (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, const char *attr_name,
+				  PT_NODE * attribute, SM_ATTRIBUTE ** attr);
 static int do_find_auto_increment_serial (MOP * auto_increment_obj, const char *class_name, const char *attr_name);
 static int do_check_fk_constraints_internal (DB_CTMPL * ctemplate, PT_NODE * constraints, bool is_partitioned);
 
@@ -548,80 +555,101 @@ do_alter_one_clause_with_template (PARSER_CONTEXT * parser, PT_NODE * alter)
 	  PT_END;
 	}
 #endif
-      error = tran_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
-      if (error == NO_ERROR)
-	{
-	  error =
-	    do_add_attributes (parser, ctemplate, alter->info.alter.alter_clause.attr_mthd.attr_def_list,
-			       alter->info.alter.constraint_list, NULL);
-	  if (error != NO_ERROR)
-	    {
-	      dbt_abort_class (ctemplate);
-	      tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
-	      return error;
-	    }
+      {
+	SM_CLASS *class_ = ctemplate->current;
+	SM_ATTRIBUTE *attr;
+	int new_att_count = 0;
+	int old_att_count = class_->att_count;
+	int type_id = 0;
+	int lob_attrid_arr_length = 0;
+	int *lob_alloc_attrid_arr = NULL;
+	int lob_local_attrid_arr[2];
 
+	error = tran_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
+	if (error == NO_ERROR)
+	  {
+	    error =
+	      do_add_attributes (parser, ctemplate, alter->info.alter.alter_clause.attr_mthd.attr_def_list,
+				 alter->info.alter.constraint_list, NULL);
+	    if (error != NO_ERROR)
+	      {
+		dbt_abort_class (ctemplate);
+		tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
+		return error;
+	      }
 
-	  vclass = dbt_finish_class (ctemplate);
-	  if (vclass == NULL)
-	    {
-	      assert (er_errid () != NO_ERROR);
-	      error = er_errid ();
-	      dbt_abort_class (ctemplate);
-	      tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
-	      return error;
-	    }
+	    vclass = dbt_finish_class (ctemplate);
 
-	  ctemplate = dbt_edit_class (vclass);
-	  if (ctemplate == NULL)
-	    {
-	      assert (er_errid () != NO_ERROR);
-	      error = er_errid ();
-	      tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
-	      return error;
-	    }
+	    if (vclass == NULL)
+	      {
+		assert (er_errid () != NO_ERROR);
+		error = er_errid ();
+		dbt_abort_class (ctemplate);
+		tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
+		return error;
+	      }
 
-	  error = do_add_constraints (ctemplate, alter->info.alter.constraint_list);
-	  if (error != NO_ERROR)
-	    {
-	      dbt_abort_class (ctemplate);
-	      tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
-	      return error;
-	    }
+	    ctemplate = dbt_edit_class (vclass);
+	    if (ctemplate == NULL)
+	      {
+		assert (er_errid () != NO_ERROR);
+		error = er_errid ();
+		tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
+		return error;
+	      }
 
-	  error = do_check_fk_constraints (ctemplate, alter->info.alter.constraint_list);
-	  if (error != NO_ERROR)
-	    {
-	      (void) dbt_abort_class (ctemplate);
-	      (void) tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
-	      return error;
-	    }
+	    error = do_add_constraints (ctemplate, alter->info.alter.constraint_list);
+	    if (error != NO_ERROR)
+	      {
+		dbt_abort_class (ctemplate);
+		tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
+		return error;
+	      }
 
-	  if (alter->info.alter.alter_clause.attr_mthd.mthd_def_list != NULL)
-	    {
-	      error = do_add_methods (parser, ctemplate, alter->info.alter.alter_clause.attr_mthd.mthd_def_list);
-	    }
-	  if (error != NO_ERROR)
-	    {
-	      dbt_abort_class (ctemplate);
-	      tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
-	      return error;
-	    }
+	    error = do_check_fk_constraints (ctemplate, alter->info.alter.constraint_list);
+	    if (error != NO_ERROR)
+	      {
+		(void) dbt_abort_class (ctemplate);
+		(void) tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
+		return error;
+	      }
 
-	  if (alter->info.alter.alter_clause.attr_mthd.mthd_file_list != NULL)
-	    {
-	      error = do_add_method_files (parser, ctemplate, alter->info.alter.alter_clause.attr_mthd.mthd_file_list);
-	    }
-	  if (error != NO_ERROR)
-	    {
-	      dbt_abort_class (ctemplate);
-	      tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
-	      return error;
-	    }
+	    if (alter->info.alter.alter_clause.attr_mthd.mthd_def_list != NULL)
+	      {
+		error = do_add_methods (parser, ctemplate, alter->info.alter.alter_clause.attr_mthd.mthd_def_list);
+	      }
+	    if (error != NO_ERROR)
+	      {
+		dbt_abort_class (ctemplate);
+		tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
+		return error;
+	      }
 
-	  assert (alter->info.alter.create_index == NULL);
-	}
-      break;
+	    if (alter->info.alter.alter_clause.attr_mthd.mthd_file_list != NULL)
+	      {
+		error =
+		  do_add_method_files (parser, ctemplate, alter->info.alter.alter_clause.attr_mthd.mthd_file_list);
+	      }
+	    if (error != NO_ERROR)
+	      {
+		dbt_abort_class (ctemplate);
+		tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
+		return error;
+	      }
+
+	    assert (alter->info.alter.create_index == NULL);
+
+	    error = lob_process_dir_add_attr (ctemplate->current, old_att_count);
+	    if (error != NO_ERROR)
+	      {
+		dbt_abort_class (ctemplate);
+		tran_abort_upto_system_savepoint (UNIQUE_SAVEPOINT_ADD_ATTR_MTHD);
+		return error;
+	      }
+	  }
+
+	break;
+      }
 
     case PT_RESET_QUERY:
       {
@@ -684,6 +712,7 @@ do_alter_one_clause_with_template (PARSER_CONTEXT * parser, PT_NODE * alter)
       break;
 
     case PT_DROP_ATTR_MTHD:
+      attr_mthd_name = "";
       p = alter->info.alter.alter_clause.attr_mthd.attr_mthd_name_list;
       for (; p && p->node_type == PT_NAME; p = p->next)
 	{
@@ -731,8 +760,7 @@ do_alter_one_clause_with_template (PARSER_CONTEXT * parser, PT_NODE * alter)
       p = alter->info.alter.alter_clause.attr_mthd.mthd_file_list;
       for (;
 	   p && p->node_type == PT_FILE_PATH && (path = p->info.file_path.string) != NULL && path->node_type == PT_VALUE
-	   && (path->type_enum == PT_TYPE_VARCHAR || path->type_enum == PT_TYPE_CHAR || path->type_enum == PT_TYPE_NCHAR
-	       || path->type_enum == PT_TYPE_VARNCHAR); p = p->next)
+	   && (path->type_enum == PT_TYPE_VARCHAR || path->type_enum == PT_TYPE_CHAR); p = p->next)
 	{
 	  mthd_file = (char *) path->info.value.data_value.str->bytes;
 	  error = dbt_drop_method_file (ctemplate, mthd_file);
@@ -741,6 +769,13 @@ do_alter_one_clause_with_template (PARSER_CONTEXT * parser, PT_NODE * alter)
 	      dbt_abort_class (ctemplate);
 	      return error;
 	    }
+	}
+
+      error = lob_process_dir_drop_attr (ctemplate->current, (char *) attr_mthd_name);
+      if (error != NO_ERROR)
+	{
+	  dbt_abort_class (ctemplate);
+	  return error;
 	}
 
       break;
@@ -973,7 +1008,7 @@ do_alter_one_clause_with_template (PARSER_CONTEXT * parser, PT_NODE * alter)
 		  break;
 		}
 	      error = pt_coerce_value_for_default_value (parser, def_val, def_val, pt_desired_type, data_type,
-							 d->info.data_default.default_expr_type);
+							 d->info.data_default.default_expr_type, true);
 	      if (error != NO_ERROR)
 		{
 		  if (pt_has_error (parser))
@@ -1050,7 +1085,7 @@ do_alter_one_clause_with_template (PARSER_CONTEXT * parser, PT_NODE * alter)
 		}
 
 	      error = pt_coerce_value_for_default_value (parser, temp_val, temp_val, pt_desired_type, data_type,
-							 d->info.data_default.default_expr_type);
+							 d->info.data_default.default_expr_type, true);
 	      db_value_clear (&src_val);
 	      temp_val->info.value.db_value_is_in_workspace = 0;
 	      parser_free_node (parser, temp_val);
@@ -1391,6 +1426,125 @@ alter_partition_fail:
 }
 
 /*
+ * lob_process_dir_add_attr() - This function is called during the execution of
+ *                              ALTER TABLE ... ADD COLUMN. If the newly added column is a LOB type,
+ *                              it constructs an attribute ID array and triggers the creation of the
+ *                              corresponding LOB directory.
+ *   return: Error code
+ *   class_(in): Class information
+ *   old_att_count(in): Number of attributes before adding new attributes
+ */
+static int
+lob_process_dir_add_attr (SM_CLASS * class_, int old_att_count)
+{
+  SM_ATTRIBUTE *attr;
+  HFID lob_hfid;
+  int lob_attrid_arr_length = 0;
+  int *lob_alloc_attrid_arr = NULL;
+  int lob_local_attrid_arr[2];
+  int *lob_attrid_arr = NULL;
+  int error = NO_ERROR;
+
+  assert (class_ != NULL);
+  assert (old_att_count >= 0);
+
+  for (int i = old_att_count; i < class_->att_count; i++)
+    {
+      attr = &class_->attributes[i];
+
+      if (TP_IS_LOB_TYPE (attr->type->id))
+	{
+	  lob_attrid_arr_length++;
+	}
+    }
+
+  if (lob_attrid_arr_length == 0)
+    {
+      goto end;
+    }
+  else if (lob_attrid_arr_length <= 2)
+    {
+      lob_attrid_arr = lob_local_attrid_arr;
+    }
+  else
+    {
+      lob_alloc_attrid_arr = (int *) malloc (sizeof (int) * lob_attrid_arr_length);
+      if (lob_alloc_attrid_arr == NULL)
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, sizeof (int) * lob_attrid_arr_length);
+	  error = ER_OUT_OF_VIRTUAL_MEMORY;
+	  goto end;
+	}
+
+      lob_attrid_arr = lob_alloc_attrid_arr;
+    }
+
+  for (int i = old_att_count, index = 0; i < class_->att_count; i++)
+    {
+      attr = &class_->attributes[i];
+
+      if (TP_IS_LOB_TYPE (attr->type->id))
+	{
+	  lob_attrid_arr[index++] = attr->id;
+	}
+    }
+
+  lob_hfid = class_->header.ch_heap;
+  error = locator_lob_create_or_remove_dir (NULL, &lob_hfid, lob_attrid_arr, lob_attrid_arr_length);
+  if (error != NO_ERROR)
+    {
+      goto end;
+    }
+
+end:
+  free (lob_alloc_attrid_arr);
+
+  return error;
+}
+
+/*
+ * lob_process_dir_drop_attr() - This function is called during the execution of
+ *                               ALTER TABLE ... DROP COLUMN. If the column being dropped is a LOB type,
+ *                               it removes the corresponding LOB directory.
+ *   return: Error code
+ *   class_(in): Class information
+ *   attr_name(in): Name of the attribute to be dropped
+ */
+static int
+lob_process_dir_drop_attr (SM_CLASS * class_, const char *attr_name)
+{
+  SM_ATTRIBUTE attr;
+  int error = NO_ERROR;
+
+  assert (class_ != NULL);
+  assert (attr_name != NULL);
+
+  for (int i = 0; i < class_->att_count; i++)
+    {
+      attr = class_->attributes[i];
+
+      if (strcmp (attr.header.name, attr_name) == 0)
+	{
+	  if (TP_IS_LOB_TYPE (attr.type->id))
+	    {
+	      HFID lob_hfid = class_->header.ch_heap;
+	      int lob_attrid_arr[1] = { attr.id };
+
+	      error = locator_lob_create_or_remove_dir (&lob_hfid, NULL, lob_attrid_arr, 1);
+	      if (error != NO_ERROR)
+		{
+		  return error;
+		}
+	    }
+
+	  break;
+	}
+    }
+
+  return error;
+}
+
+/*
  * do_alter_clause_rename_entity() - Executes an ALTER TABLE RENAME TO clause
  *   return: Error code
  *   parser(in): Parser context
@@ -1581,16 +1735,9 @@ do_alter_change_auto_increment (PARSER_CONTEXT * const parser, PT_NODE * const a
 	{
 	  continue;
 	}
-      if (ai_serial != NULL)
-	{
-	  /* we already found a serial. AMBIGUITY! */
-	  ERROR0 (error, ER_AUTO_INCREMENT_SINGLE_COL_AMBIGUITY);
-	  goto change_ai_error;
-	}
-      else
-	{
-	  ai_serial = cur_attr->auto_increment;
-	}
+
+      ai_serial = cur_attr->auto_increment;
+      break;
     }
 
   if (ai_serial == NULL)
@@ -1727,10 +1874,7 @@ error_exit:
 
 #define IS_NAME(n)      ((n)->node_type == PT_NAME)
 #define IS_STRING(n)    ((n)->node_type == PT_VALUE &&          \
-                         ((n)->type_enum == PT_TYPE_VARCHAR  || \
-                          (n)->type_enum == PT_TYPE_CHAR     || \
-                          (n)->type_enum == PT_TYPE_VARNCHAR || \
-                          (n)->type_enum == PT_TYPE_NCHAR))
+                         ((n)->type_enum == PT_TYPE_VARCHAR  || (n)->type_enum == PT_TYPE_CHAR))
 #define GET_NAME(n)     ((char *) (n)->info.name.original)
 #define GET_STRING(n)   ((char *) (n)->info.value.data_value.str->bytes)
 
@@ -1748,7 +1892,7 @@ do_grant (const PARSER_CONTEXT * parser, const PT_NODE * statement)
   DB_OBJECT *user_obj, *class_mop;
   PT_NODE *auth_cmd_list, *auth_list, *auth;
   DB_AUTH db_auth;
-  PT_NODE *spec_list, *s_list, *spec;
+  PT_NODE *spec_list;
   PT_NODE *entity_list, *entity;
   int grant_option;
   bool set_savepoint = false;
@@ -1790,24 +1934,52 @@ do_grant (const PARSER_CONTEXT * parser, const PT_NODE * statement)
 	{
 	  db_auth = pt_auth_to_db_auth (auth);
 
-	  s_list = spec_list;
-	  for (spec = s_list; spec != NULL; spec = spec->next)
+	  if (auth->info.auth_cmd.auth_cmd == PT_EXECUTE_PROCEDURE_PRIV)
 	    {
-	      entity_list = spec->info.spec.flat_entity_list;
-	      for (entity = entity_list; entity != NULL; entity = entity->next)
+	      // NOTE: db_auth is always DB_AUTH_EXECUTE
+	      assert (db_auth == DB_AUTH_EXECUTE);
+
+	      PT_NODE *p_list = spec_list;
+	      for (PT_NODE * procs = p_list; procs != NULL; procs = procs->next)
 		{
-		  class_mop = db_find_class (entity->info.name.original);
-		  if (class_mop == NULL)
+		  // [TODO] Resovle user schema name, built-in package name
+		  const char *proc_name = procs->info.name.original;
+
+		  MOP proc_mop = jsp_find_stored_procedure (proc_name, DB_AUTH_NONE);
+		  if (proc_mop == NULL)
 		    {
 		      assert (er_errid () != NO_ERROR);
 		      error = er_errid ();
 		      goto end;
 		    }
 
-		  error = db_grant (user_obj, class_mop, db_auth, grant_option);
+		  error = db_grant_object (DB_OBJECT_PROCEDURE, user_obj, proc_mop, db_auth, grant_option);
 		  if (error != NO_ERROR)
 		    {
 		      goto end;
+		    }
+		}
+	    }
+	  else
+	    {
+	      for (PT_NODE * spec = spec_list; spec != NULL; spec = spec->next)
+		{
+		  entity_list = spec->info.spec.flat_entity_list;
+		  for (entity = entity_list; entity != NULL; entity = entity->next)
+		    {
+		      class_mop = db_find_class (entity->info.name.original);
+		      if (class_mop == NULL)
+			{
+			  assert (er_errid () != NO_ERROR);
+			  error = er_errid ();
+			  goto end;
+			}
+
+		      error = db_grant_object (DB_OBJECT_CLASS, user_obj, class_mop, db_auth, grant_option);
+		      if (error != NO_ERROR)
+			{
+			  goto end;
+			}
 		    }
 		}
 	    }
@@ -1870,24 +2042,53 @@ do_revoke (const PARSER_CONTEXT * parser, const PT_NODE * statement)
 	{
 	  db_auth = pt_auth_to_db_auth (auth);
 
-	  s_list = spec_list;
-	  for (spec = s_list; spec != NULL; spec = spec->next)
+	  if (auth->info.auth_cmd.auth_cmd == PT_EXECUTE_PROCEDURE_PRIV)
 	    {
-	      entity_list = spec->info.spec.flat_entity_list;
-	      for (entity = entity_list; entity != NULL; entity = entity->next)
+	      // NOTE: db_auth is always DB_AUTH_EXECUTE
+	      assert (db_auth == DB_AUTH_EXECUTE);
+
+	      PT_NODE *p_list = spec_list;
+	      for (PT_NODE * procs = p_list; procs != NULL; procs = procs->next)
 		{
-		  class_mop = db_find_class (entity->info.name.original);
-		  if (class_mop == NULL)
+		  // [TODO] Resovle user schema name, built-in package name
+		  const char *proc_name = procs->info.name.original;
+
+		  MOP proc_mop = jsp_find_stored_procedure (proc_name, DB_AUTH_NONE);
+		  if (proc_mop == NULL)
 		    {
 		      assert (er_errid () != NO_ERROR);
 		      error = er_errid ();
 		      goto end;
 		    }
 
-		  error = db_revoke (user_obj, class_mop, db_auth);
+		  // TODO: In CBRD-24912, GRANT/REVOKE for stored procedure is implemented, the following will be processed properly
+		  error = db_revoke_object (DB_OBJECT_PROCEDURE, user_obj, proc_mop, db_auth);
 		  if (error != NO_ERROR)
 		    {
 		      goto end;
+		    }
+		}
+	    }
+	  else
+	    {
+	      for (PT_NODE * spec = spec_list; spec != NULL; spec = spec->next)
+		{
+		  entity_list = spec->info.spec.flat_entity_list;
+		  for (entity = entity_list; entity != NULL; entity = entity->next)
+		    {
+		      class_mop = db_find_class (entity->info.name.original);
+		      if (class_mop == NULL)
+			{
+			  assert (er_errid () != NO_ERROR);
+			  error = er_errid ();
+			  goto end;
+			}
+
+		      error = db_revoke_object (DB_OBJECT_CLASS, user_obj, class_mop, db_auth);
+		      if (error != NO_ERROR)
+			{
+			  goto end;
+			}
 		    }
 		}
 	    }
@@ -2033,7 +2234,7 @@ do_create_user (const PARSER_CONTEXT * parser, const PT_NODE * statement)
   password = (node && IS_STRING (node)) ? GET_STRING (node) : NULL;
   if (password != NULL)
     {
-      error = au_set_password (user, password);
+      error = au_set_password_encrypt (user, password);
       if (error != NO_ERROR)
 	{
 	  goto end;
@@ -2114,6 +2315,13 @@ do_create_user (const PARSER_CONTEXT * parser, const PT_NODE * statement)
 	}
     }
 
+  // for syncronizing created_time and updated_time
+  error = au_set_user_timestamps (user);
+  if (error != NO_ERROR)
+    {
+      goto end;
+    }
+
 end:
   if (set_savepoint && error != NO_ERROR && !ER_IS_ABORTED_DUE_TO_DEADLOCK (error))
     {
@@ -2191,9 +2399,11 @@ int
 do_alter_user (const PARSER_CONTEXT * parser, const PT_NODE * statement)
 {
   int error = NO_ERROR;
-  DB_OBJECT *user;
+  DB_OBJECT *user, *member;
   PT_NODE *node;
+  const PT_ALTER_CODE alter_user_code = statement->info.alter_user.code;
   const char *user_name, *password, *comment;
+  const char *member_name;
   bool set_savepoint = false;
 
   CHECK_MODIFICATION_ERROR ();
@@ -2240,10 +2450,83 @@ do_alter_user (const PARSER_CONTEXT * parser, const PT_NODE * statement)
   if (node != NULL)
     {
       password = IS_STRING (node) ? GET_STRING (node) : NULL;
-      error = au_set_password (user, password);
+      error = au_set_password_encrypt (user, password);
       if (error != NO_ERROR)
 	{
 	  goto end;
+	}
+    }
+
+  /* member */
+  node = statement->info.alter_user.members;
+  member_name = (node && IS_NAME (node)) ? GET_NAME (node) : NULL;
+  if (member_name != NULL)
+    {
+      if (!ws_is_same_object (user, Au_user) && !au_is_dba_group_member (Au_user))
+	{
+	  error = ER_AU_NOT_OWNER;
+	  er_set (ER_WARNING_SEVERITY, ARG_FILE_LINE, error, 1, MSGCAT_GET_GLOSSARY_MSG (MSGCAT_GLOSSARY_CLASS));
+	  goto end;
+	}
+
+      switch (alter_user_code)
+	{
+	case PT_ADD_MEMBERS:
+	  do
+	    {
+	      member = db_find_user (member_name);
+
+	      if (member == NULL)
+		{
+		  assert (er_errid () != NO_ERROR);
+		  error = er_errid ();
+		}
+	      else
+		{
+		  error = db_add_member (user, member);
+		}
+
+	      if (error != NO_ERROR)
+		{
+		  goto end;
+		}
+
+	      node = node->next;
+	      member_name = (node && IS_NAME (node)) ? GET_NAME (node) : NULL;
+	    }
+	  while (member_name != NULL);
+	  break;
+	case PT_DROP_MEMBERS:
+	  do
+	    {
+	      member = db_find_user (member_name);
+
+	      if (member == NULL)
+		{
+		  assert (er_errid () != NO_ERROR);
+		  error = er_errid ();
+		}
+	      else
+		{
+		  error = db_drop_member (user, member);
+		}
+
+	      if (error != NO_ERROR)
+		{
+		  goto end;
+		}
+
+	      node = node->next;
+	      member_name = (node && IS_NAME (node)) ? GET_NAME (node) : NULL;
+	    }
+	  while (member_name != NULL);
+	  break;
+	default:
+	  /* 
+	   * code shall be one of the above 2 types, otherwise it's an error. 
+	   */
+	  assert (false);
+	  break;
 	}
     }
 
@@ -2255,6 +2538,19 @@ do_alter_user (const PARSER_CONTEXT * parser, const PT_NODE * statement)
 
       comment = (char *) PT_VALUE_GET_BYTES (node);
       error = au_set_user_comment (user, comment);
+      if (error != NO_ERROR)
+	{
+	  goto end;
+	}
+    }
+
+/*
+ * Timestamp already updated during add/drop members (member_name != NULL)
+ * in db_add_member() or db_drop_member(); update only for password or comment changes.
+ */
+  if (statement->info.alter_user.members == NULL)
+    {
+      error = au_update_user_timestamp (user);
       if (error != NO_ERROR)
 	{
 	  goto end;
@@ -2785,6 +3081,33 @@ create_or_drop_index_helper (PARSER_CONTEXT * parser, const char *const constrai
 	    }
 	}
 
+      bool has_deduplicate_key_col = false;
+
+      // Class or shared attributes are not considered. These are not indexed columns.
+      // Also, The prefix index is also not supported.(The prefix index  will be deprecated.)
+      if (ctype == DB_CONSTRAINT_INDEX || ctype == DB_CONSTRAINT_REVERSE_INDEX)
+	{
+	  int param_dedup_level = prm_get_integer_value (PRM_ID_DEDUPLICATE_KEY_LEVEL);
+	  if (param_dedup_level == DEDUPLICATE_ABSOLUTE_DISABLE)
+	    {
+	      ((PT_INDEX_INFO *) idx_info)->deduplicate_level = DEDUPLICATE_KEY_LEVEL_OFF;
+	    }
+	  else
+	    {
+	      if (idx_info->deduplicate_level == DEDUPLICATE_OPTION_AUTO)
+		{
+		  PT_INDEX_INFO *t_info = (PT_INDEX_INFO *) idx_info;
+		  t_info->deduplicate_level = param_dedup_level;
+		}
+
+	      if ((idx_info->deduplicate_level != DEDUPLICATE_KEY_LEVEL_OFF) && (idx_info->prefix_length == NULL))
+		{
+		  has_deduplicate_key_col = true;
+		  nnames++;
+		}
+	    }
+	}
+
       attnames = (char **) malloc ((nnames + 1) * sizeof (const char *));
       if (attnames == NULL)
 	{
@@ -2821,6 +3144,11 @@ create_or_drop_index_helper (PARSER_CONTEXT * parser, const char *const constrai
 	  i++;
 	  c = c->next;
 	}
+
+      if (has_deduplicate_key_col)
+	{
+	  nnames--;		// get count of real columns, except hidden column
+	}
       attnames[i] = NULL;
 
       if (nnames == 1 && idx_info->prefix_length)
@@ -2846,6 +3174,25 @@ create_or_drop_index_helper (PARSER_CONTEXT * parser, const char *const constrai
 	      func_index_info->attr_index_start = nnames - idx_info->func_no_args;
 	    }
 	}
+
+      if (has_deduplicate_key_col)
+	{
+	  SM_CLASS *class_ = NULL;
+	  assert ((ctype == DB_CONSTRAINT_INDEX) || (ctype == DB_CONSTRAINT_REVERSE_INDEX));
+
+	  error = au_fetch_class (obj, &class_, AU_FETCH_READ, AU_INDEX);
+	  if (error != NO_ERROR)
+	    {
+	      goto end;
+	    }
+
+	  if (class_->constraints == NULL
+	      || !classobj_check_attr_in_unique_constraint (class_->constraints, attnames, func_index_info))
+	    {
+	      dk_create_index_level_adjust (idx_info, attnames, asc_desc, attrs_prefix_length, func_index_info,
+					    nnames, DB_IS_CONSTRAINT_REVERSE_INDEX_FAMILY (ctype));
+	    }
+	}
     }
 
   cname = sm_produce_constraint_name (sm_get_ch_name (obj), ctype, (const char **) attnames, asc_desc, constraint_name);
@@ -2866,6 +3213,7 @@ create_or_drop_index_helper (PARSER_CONTEXT * parser, const char *const constrai
 	  idx_info->where->info.expr.paren_type = 0;
 	  save_custom = parser->custom_print;
 	  parser->custom_print |= PT_CHARSET_COLLATE_FULL;
+
 	  filter_expr = pt_print_bytes ((PARSER_CONTEXT *) parser, (PT_NODE *) idx_info->where);
 	  parser->custom_print = save_custom;
 	  if (filter_expr)
@@ -4591,7 +4939,7 @@ do_rename_partition (MOP old_class, const char *newname)
   int newlen;
   int error;
   char new_subname[PARTITION_VARCHAR_LEN + 1], *ptr;
-  char expr[DB_MAX_PARTITION_EXPR_LENGTH] = { '\0' };
+  char expr[DB_MAX_PARTITION_EXPR_LENGTH + 1] = { '\0' };
   char *expr_ptr = NULL;
 
   if (!old_class || !newname)
@@ -4609,6 +4957,7 @@ do_rename_partition (MOP old_class, const char *newname)
 
   /* The pexpr format is defined in the function pt_node_to_partition_info. */
   strncpy (expr, smclass->partition->expr, DB_MAX_PARTITION_EXPR_LENGTH);
+  expr[DB_MAX_PARTITION_EXPR_LENGTH] = '\0';
   expr_ptr = strchr (expr, ']');	// skip select list
   expr_ptr = strchr (expr_ptr + 1, '[');	// find table name
   sprintf (expr_ptr, "[%s]", newname);
@@ -4779,6 +5128,48 @@ exit:
   return error;
 }
 
+static int
+do_set_auto_increment (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, const char *attr_name, PT_NODE * attribute,
+		       SM_ATTRIBUTE ** attr)
+{
+  SM_ATTRIBUTE *ctmpl_attrs = ctemplate->attributes;
+  int error = NO_ERROR;
+  MOP auto_increment_obj = NULL;
+
+  assert (attribute->info.attr_def.attr_type != PT_META_ATTR && attribute->info.attr_def.attr_type != PT_SHARED);
+  assert (attribute->info.attr_def.auto_increment != NULL);
+  assert (attr != NULL);
+
+  if (*attr == NULL)
+    {
+      error = smt_find_attribute (ctemplate, attr_name, 0, attr);
+    }
+  if (error != NO_ERROR)
+    {
+      return error;
+    }
+
+  while (ctmpl_attrs != NULL)
+    {
+      if (ctmpl_attrs->auto_increment == NULL)
+	{
+	  ctmpl_attrs = (SM_ATTRIBUTE *) ctmpl_attrs->header.next;
+	  continue;
+	}
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_AUTO_INCREMENT_SINGLE_COL_ONLY, 0);
+      return ER_AUTO_INCREMENT_SINGLE_COL_ONLY;
+    }
+
+  error = do_create_auto_increment_serial (parser, &auto_increment_obj, ctemplate->name, attribute);
+
+  if (error == NO_ERROR)
+    {
+      (*attr)->auto_increment = auto_increment_obj;
+      (*attr)->flags |= SM_ATTFLAG_AUTO_INCREMENT;
+    }
+
+  return error;
+}
 
 /*
  * do_find_auto_increment_serial() -
@@ -5806,7 +6197,7 @@ do_alter_partitioning_post (PARSER_CONTEXT * parser, PT_NODE * alter, SM_PARTITI
 	{
 	  return error;
 	}
-      /* fall through */
+      [[fallthrough]];
     case PT_ADD_HASHPARTITION:
       error = do_redistribute_partitions_data (entity_name, pinfo->keycol, NULL, 0, PT_ADD_HASHPARTITION, true, false);
       break;
@@ -6945,30 +7336,12 @@ validate_attribute_domain (PARSER_CONTEXT * parser, PT_NODE * attribute, const b
 		    }
 		  break;
 
-		case PT_TYPE_NCHAR:
-		  if (p != DB_DEFAULT_PRECISION
-		      && (p < 0 || (p == 0 && check_zero_precision) || p > DB_MAX_NCHAR_PRECISION))
-		    {
-		      PT_ERRORmf3 (parser, attribute, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_INV_PREC, p, 0,
-				   DB_MAX_NCHAR_PRECISION);
-		    }
-		  break;
-
 		case PT_TYPE_VARCHAR:
 		  if (p != DB_DEFAULT_PRECISION
 		      && (p < 0 || (p == 0 && check_zero_precision) || p > DB_MAX_VARCHAR_PRECISION))
 		    {
 		      PT_ERRORmf3 (parser, attribute, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_INV_PREC, p, 0,
 				   DB_MAX_VARCHAR_PRECISION);
-		    }
-		  break;
-
-		case PT_TYPE_VARNCHAR:
-		  if (p != DB_DEFAULT_PRECISION
-		      && (p < 0 || (p == 0 && check_zero_precision) || p > DB_MAX_VARNCHAR_PRECISION))
-		    {
-		      PT_ERRORmf3 (parser, attribute, MSGCAT_SET_PARSER_SEMANTIC, MSGCAT_SEMANTIC_INV_PREC, p, 0,
-				   DB_MAX_VARNCHAR_PRECISION);
 		    }
 		  break;
 
@@ -7173,16 +7546,7 @@ do_add_attribute (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NODE * attri
     {
       if (attribute->info.attr_def.auto_increment)
 	{
-	  error = do_create_auto_increment_serial (parser, &auto_increment_obj, ctemplate->name, attribute);
-
-	  if (error == NO_ERROR)
-	    {
-	      if (smt_find_attribute (ctemplate, attr_name, 0, &att) == NO_ERROR)
-		{
-		  att->auto_increment = auto_increment_obj;
-		  att->flags |= SM_ATTFLAG_AUTO_INCREMENT;
-		}
-	    }
+	  error = do_set_auto_increment (parser, ctemplate, attr_name, attribute, &att);
 	}
     }
 
@@ -7476,6 +7840,59 @@ add_foreign_key (DB_CTMPL * ctemplate, const PT_NODE * cnstr, const char **att_n
     {
       att_names[i++] = p->info.name.original;
     }
+
+  int param_dedup_level = prm_get_integer_value (PRM_ID_DEDUPLICATE_KEY_LEVEL);
+  if (param_dedup_level == DEDUPLICATE_ABSOLUTE_DISABLE)
+    {
+      fk_info->deduplicate_level = DEDUPLICATE_KEY_LEVEL_OFF;
+    }
+  else
+    {
+      if (fk_info->deduplicate_level == DEDUPLICATE_OPTION_AUTO)
+	{
+	  fk_info->deduplicate_level = param_dedup_level;
+	}
+
+      if (fk_info->deduplicate_level != DEDUPLICATE_KEY_LEVEL_OFF)
+	{
+	  SM_CLASS *class_ = NULL;
+	  SM_CLASS_CONSTRAINT *free_cons = NULL;
+	  SM_CLASS_CONSTRAINT *check_cons;
+
+	  if (ctemplate->op != NULL)
+	    {
+	      error = au_fetch_class (ctemplate->op, &class_, AU_FETCH_READ, AU_INDEX);
+	      if (error != NO_ERROR)
+		{
+		  return error;
+		}
+
+	      check_cons = class_->constraints;
+	    }
+	  else
+	    {
+	      error = classobj_make_class_constraints (ctemplate->properties, ctemplate->attributes, &check_cons);
+	      if (error != NO_ERROR)
+		{
+		  return error;
+		}
+
+	      free_cons = check_cons;
+	    }
+
+	  att_names[i] = NULL;
+	  if (check_cons == NULL || !classobj_check_attr_in_unique_constraint (check_cons, (char **) att_names, NULL))
+	    {
+	      // adjust for FK: add deduplicate_key_attr column
+	      att_names[i++] = dk_get_deduplicate_key_attr_name (fk_info->deduplicate_level);
+	    }
+
+	  if (free_cons != NULL)
+	    {
+	      classobj_free_class_constraints (free_cons);
+	    }
+	}
+    }
   att_names[i] = NULL;
 
   if (fk_info->referenced_attrs != NULL)
@@ -7557,7 +7974,10 @@ do_add_constraints (DB_CTMPL * ctemplate, PT_NODE * constraints)
 
   if (max_attrs > 0)
     {
-      buf_size = (max_attrs + 1) * sizeof (char *);
+      // If there is an FK, one more space is allocated in advance because deduplicate_key_attr information will be added.
+      // max_attrs +  [ deduplicate_key_attr ] + NULL
+      buf_size = (max_attrs + 2) * sizeof (char *);
+
       att_names = (char **) malloc (buf_size);
 
       if (att_names == NULL)
@@ -8094,8 +8514,7 @@ do_add_method_files (const PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NOD
   for (mf = method_files; mf && error == NO_ERROR; mf = mf->next)
     {
       if (mf->node_type == PT_FILE_PATH && (path = mf->info.file_path.string) != NULL && path->node_type == PT_VALUE
-	  && (path->type_enum == PT_TYPE_VARCHAR || path->type_enum == PT_TYPE_CHAR || path->type_enum == PT_TYPE_NCHAR
-	      || path->type_enum == PT_TYPE_VARNCHAR))
+	  && (path->type_enum == PT_TYPE_VARCHAR || path->type_enum == PT_TYPE_CHAR))
 	{
 	  method_file_name = (char *) path->info.value.data_value.str->bytes;
 	  error = dbt_add_method_file (ctemplate, method_file_name);
@@ -8668,25 +9087,12 @@ do_create_entity (PARSER_CONTEXT * parser, PT_NODE * node)
 	      goto error_exit;
 	    }
 
-	  switch (column->domain->type->id)
+	  if (column->domain->type->id == DB_TYPE_VARCHAR)
 	    {
-	    case DB_TYPE_VARCHAR:
 	      if (column->domain->precision == DB_DEFAULT_PRECISION)
 		{
 		  column->domain->precision = DB_MAX_VARCHAR_PRECISION;
 		}
-	      break;
-	    case DB_TYPE_VARNCHAR:
-	      if (column->domain->precision == DB_DEFAULT_PRECISION)
-		{
-		  column->domain->precision = DB_MAX_VARNCHAR_PRECISION;
-		}
-	      else if (column->domain->precision > DB_MAX_VARNCHAR_PRECISION)
-		{
-		  column->domain->precision = DB_MAX_VARNCHAR_PRECISION;
-		}
-	    default:
-	      break;
 	    }
 	}
     }
@@ -9930,9 +10336,9 @@ static int
 do_alter_change_owner (PARSER_CONTEXT * const parser, PT_NODE * const alter)
 {
   int error = NO_ERROR;
-  DB_OBJECT *obj = NULL;
-  DB_VALUE returnval, class_val, user_val;
+  MOP class_mop, user_mop;
   PT_NODE *class_, *user;
+  SM_CLASS *sm_class = NULL;
 
   assert (alter != NULL);
 
@@ -9942,20 +10348,35 @@ do_alter_change_owner (PARSER_CONTEXT * const parser, PT_NODE * const alter)
   user = alter->info.alter.alter_clause.user.user_name;
   assert (user != NULL);
 
-  db_make_null (&returnval);
-
-  db_make_string (&class_val, class_->info.name.original);
-  db_make_string (&user_val, user->info.name.original);
-
-  au_change_owner_method (obj, &returnval, &class_val, &user_val);
-
-  pr_clear_value (&class_val);
-  pr_clear_value (&user_val);
-
-  if (DB_VALUE_TYPE (&returnval) == DB_TYPE_ERROR)
+  class_mop = sm_find_class (class_->info.name.original);
+  if (class_mop == NULL)
     {
-      error = db_get_error (&returnval);
+      ASSERT_ERROR_AND_SET (error);
+      return error;
     }
+
+  error = au_fetch_class_force (class_mop, &sm_class, AU_FETCH_UPDATE);
+  if (error != NO_ERROR)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      return error;
+    }
+
+  /* To change the owner of a system class is not allowed. */
+  if (sm_issystem (sm_class))
+    {
+      ERROR_SET_ERROR_1ARG (error, ER_AU_CANT_ALTER_OWNER_OF_SYSTEM_CLASS, "");
+      return error;
+    }
+
+  user_mop = au_find_user (user->info.name.original);
+  if (user_mop == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      return error;
+    }
+
+  error = au_change_class_owner (class_mop, user_mop);
 
   return error;
 }
@@ -10528,6 +10949,7 @@ do_change_att_schema_only (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NOD
 	    {
 	      break;
 	    }
+	  [[fallthrough]];
 
 	default:
 	  att = attribute->info.attr_def.attr_name;
@@ -10656,20 +11078,10 @@ do_change_att_schema_only (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NOD
   if (is_att_prop_set (attr_chg_prop->p[P_AUTO_INCR], ATT_CHG_PROPERTY_DIFF)
       || is_att_prop_set (attr_chg_prop->p[P_AUTO_INCR], ATT_CHG_PROPERTY_GAINED))
     {
-      MOP auto_increment_obj = NULL;
 
-      assert (attribute->info.attr_def.auto_increment != NULL);
+      error = do_set_auto_increment (parser, ctemplate, attr_name, attribute, &found_att);
 
-      error = do_create_auto_increment_serial (parser, &auto_increment_obj, ctemplate->name, attribute);
-      if (error == NO_ERROR)
-	{
-	  if (found_att != NULL)
-	    {
-	      found_att->auto_increment = auto_increment_obj;
-	      found_att->flags |= SM_ATTFLAG_AUTO_INCREMENT;
-	    }
-	}
-      else
+      if (error != NO_ERROR)
 	{
 	  goto exit;
 	}
@@ -10708,7 +11120,7 @@ do_change_att_schema_only (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NOD
 	}
     }
 
-  /* attribute type changed, and auto_increment is set to use(unchanged), update max_val in db_serial according to new
+  /* attribute type changed, and auto_increment is set to use(unchanged), update max_val in _db_serial according to new
    * type */
   if (is_att_prop_set (attr_chg_prop->p[P_AUTO_INCR], ATT_CHG_PROPERTY_PRESENT_OLD | ATT_CHG_PROPERTY_UNCHANGED)
       && is_att_prop_set (attr_chg_prop->p[P_TYPE], ATT_CHG_PROPERTY_DIFF))
@@ -10906,6 +11318,26 @@ build_attr_change_map (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NODE * 
       attr_chg_properties->p[P_AUTO_INCR] |= ATT_CHG_PROPERTY_PRESENT_OLD;
     }
 
+  /* 
+   * DEFAULT value and AUTO INCREMENT cannot be defined for the same column.
+   * Therefore, it will change to the property on which the last MODIFY statement was executed. 
+   */
+  if (attr_def->info.attr_def.data_default != NULL)
+    {
+      if (att->flags & SM_ATTFLAG_AUTO_INCREMENT)
+	{
+	  attr_chg_properties->p[P_AUTO_INCR] |= ATT_CHG_PROPERTY_LOST;
+	}
+    }
+  else if (attr_def->info.attr_def.auto_increment != NULL)
+    {
+      if ((!DB_IS_NULL (&(att->default_value.original_value)) || !DB_IS_NULL (&(att->default_value.value))
+	   || att->default_value.default_expr.default_expr_type != DB_DEFAULT_NONE))
+	{
+	  attr_chg_properties->p[P_DEFAULT_VALUE] |= ATT_CHG_PROPERTY_LOST;
+	}
+    }
+
   /* existing FOREIGN KEY (referencing) */
   attr_chg_properties->p[P_CONSTR_FK] = 0;
   if (att->flags & SM_ATTFLAG_FOREIGN_KEY)
@@ -11099,6 +11531,7 @@ build_attr_change_map (PARSER_CONTEXT * parser, DB_CTMPL * ctemplate, PT_NODE * 
 	  break;
 	case PT_CONSTRAIN_NULL:
 	  attr_chg_properties->p[P_NOT_NULL] = ATT_CHG_PROPERTY_LOST;
+	  [[fallthrough]];
 	case PT_CONSTRAIN_NOT_NULL:
 	  constr_att_list = cnstr->info.constraint.un.not_null.attr;
 	  chg_prop_idx = P_NOT_NULL;
@@ -11408,22 +11841,6 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	  assert (req_prec >= 0);
 	}
     }
-  else if (new_type == DB_TYPE_VARNCHAR)
-    {
-      if (req_prec == DB_MAX_VARNCHAR_PRECISION)
-	{
-	  is_req_max_prec = true;
-	}
-      else if (req_prec == TP_FLOATING_PRECISION_VALUE)
-	{
-	  req_prec = DB_MAX_VARNCHAR_PRECISION;
-	  is_req_max_prec = true;
-	}
-      else
-	{
-	  assert (req_prec >= 0);
-	}
-    }
   else
     {
       assert (is_req_max_prec == false);
@@ -11452,9 +11869,7 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	    }
 	  break;
 	case DB_TYPE_CHAR:
-	case DB_TYPE_NCHAR:
 	case DB_TYPE_VARCHAR:
-	case DB_TYPE_VARNCHAR:
 	  if (req_prec >= MIN_DIGITS_FOR_SHORT + 1)
 	    {
 	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
@@ -11497,9 +11912,7 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	    }
 	  break;
 	case DB_TYPE_CHAR:
-	case DB_TYPE_NCHAR:
 	case DB_TYPE_VARCHAR:
-	case DB_TYPE_VARNCHAR:
 	  if (req_prec >= MIN_DIGITS_FOR_INTEGER + 1)
 	    {
 	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
@@ -11537,9 +11950,7 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	    }
 	  break;
 	case DB_TYPE_CHAR:
-	case DB_TYPE_NCHAR:
 	case DB_TYPE_VARCHAR:
-	case DB_TYPE_VARNCHAR:
 	  if (req_prec >= MIN_DIGITS_FOR_BIGINT + 1)
 	    {
 	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
@@ -11595,9 +12006,7 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_NEED_ROW_CHECK;
 	  break;
 	case DB_TYPE_CHAR:
-	case DB_TYPE_NCHAR:
 	case DB_TYPE_VARCHAR:
-	case DB_TYPE_VARNCHAR:
 	  if (req_prec >= cur_prec + 2)
 	    {
 	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
@@ -11621,12 +12030,10 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	case DB_TYPE_BIGINT:
 	case DB_TYPE_NUMERIC:
 	case DB_TYPE_CHAR:
-	case DB_TYPE_NCHAR:
 	case DB_TYPE_ENUMERATION:
 	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_NEED_ROW_CHECK;
 	  break;
 	case DB_TYPE_VARCHAR:
-	case DB_TYPE_VARNCHAR:
 	  if (is_req_max_prec)
 	    {
 	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
@@ -11655,12 +12062,10 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	case DB_TYPE_NUMERIC:
 	case DB_TYPE_FLOAT:
 	case DB_TYPE_CHAR:
-	case DB_TYPE_NCHAR:
 	case DB_TYPE_ENUMERATION:
 	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_NEED_ROW_CHECK;
 	  break;
 	case DB_TYPE_VARCHAR:
-	case DB_TYPE_VARNCHAR:
 	  if (is_req_max_prec)
 	    {
 	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
@@ -11688,12 +12093,10 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	case DB_TYPE_NUMERIC:
 	case DB_TYPE_FLOAT:
 	case DB_TYPE_CHAR:
-	case DB_TYPE_NCHAR:
 	case DB_TYPE_ENUMERATION:
 	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_NEED_ROW_CHECK;
 	  break;
 	case DB_TYPE_VARCHAR:
-	case DB_TYPE_VARNCHAR:
 	  if (is_req_max_prec)
 	    {
 	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
@@ -11716,9 +12119,7 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
       switch (new_type)
 	{
 	case DB_TYPE_CHAR:
-	case DB_TYPE_NCHAR:
 	case DB_TYPE_VARCHAR:
-	case DB_TYPE_VARNCHAR:
 	  if (req_prec >= MIN_CHARS_FOR_TIME)
 	    {
 	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
@@ -11749,9 +12150,7 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
 	  break;
 	case DB_TYPE_CHAR:
-	case DB_TYPE_NCHAR:
 	case DB_TYPE_VARCHAR:
-	case DB_TYPE_VARNCHAR:
 	  if (req_prec >= MIN_CHARS_FOR_DATE)
 	    {
 	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
@@ -11785,9 +12184,7 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
 	  break;
 	case DB_TYPE_CHAR:
-	case DB_TYPE_NCHAR:
 	case DB_TYPE_VARCHAR:
-	case DB_TYPE_VARNCHAR:
 	  if (req_prec >= MIN_CHARS_FOR_DATETIME)
 	    {
 	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
@@ -11821,9 +12218,7 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
 	  break;
 	case DB_TYPE_CHAR:
-	case DB_TYPE_NCHAR:
 	case DB_TYPE_VARCHAR:
-	case DB_TYPE_VARNCHAR:
 	  if (req_prec >= MIN_CHARS_FOR_DATETIMETZ)
 	    {
 	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
@@ -11857,9 +12252,7 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
 	  break;
 	case DB_TYPE_CHAR:
-	case DB_TYPE_NCHAR:
 	case DB_TYPE_VARCHAR:
-	case DB_TYPE_VARNCHAR:
 	  if (req_prec >= MIN_CHARS_FOR_DATETIMETZ)
 	    {
 	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
@@ -11893,9 +12286,7 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
 	  break;
 	case DB_TYPE_CHAR:
-	case DB_TYPE_NCHAR:
 	case DB_TYPE_VARCHAR:
-	case DB_TYPE_VARNCHAR:
 	  if (req_prec >= MIN_CHARS_FOR_TIMESTAMP)
 	    {
 	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
@@ -11929,9 +12320,7 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
 	  break;
 	case DB_TYPE_CHAR:
-	case DB_TYPE_NCHAR:
 	case DB_TYPE_VARCHAR:
-	case DB_TYPE_VARNCHAR:
 	  if (req_prec >= MIN_CHARS_FOR_TIMESTAMPTZ)
 	    {
 	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
@@ -11965,9 +12354,7 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
 	  break;
 	case DB_TYPE_CHAR:
-	case DB_TYPE_NCHAR:
 	case DB_TYPE_VARCHAR:
-	case DB_TYPE_VARNCHAR:
 	  if (req_prec >= MIN_CHARS_FOR_TIMESTAMPTZ)
 	    {
 	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
@@ -12064,87 +12451,6 @@ build_att_type_change_map (TP_DOMAIN * curr_domain, TP_DOMAIN * req_domain, SM_A
 	  break;
 	default:
 	  assert (new_type != DB_TYPE_VARCHAR);
-	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_NOT_SUPPORTED;
-	  break;
-	}
-      break;
-
-    case DB_TYPE_NCHAR:
-      switch (new_type)
-	{
-	case DB_TYPE_SHORT:
-	case DB_TYPE_INTEGER:
-	case DB_TYPE_BIGINT:
-	case DB_TYPE_NUMERIC:
-	case DB_TYPE_FLOAT:
-	case DB_TYPE_DOUBLE:
-	case DB_TYPE_MONETARY:
-	case DB_TYPE_DATE:
-	case DB_TYPE_TIME:
-	case DB_TYPE_DATETIME:
-	case DB_TYPE_DATETIMETZ:
-	case DB_TYPE_DATETIMELTZ:
-	case DB_TYPE_TIMESTAMP:
-	case DB_TYPE_TIMESTAMPTZ:
-	case DB_TYPE_TIMESTAMPLTZ:
-	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_NEED_ROW_CHECK;
-	  break;
-	case DB_TYPE_VARNCHAR:
-	  if (req_prec >= cur_prec)
-	    {
-	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
-	    }
-	  else
-	    {
-	      if (prm_get_bool_value (PRM_ID_ALTER_TABLE_CHANGE_TYPE_STRICT) == true)
-		{
-		  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_NOT_SUPPORTED_WITH_CFG;
-		}
-	      else
-		{
-		  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_NEED_ROW_CHECK;
-		}
-	    }
-	  break;
-	default:
-	  assert (new_type != DB_TYPE_NCHAR);
-	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_NOT_SUPPORTED;
-	  break;
-	}
-      break;
-
-    case DB_TYPE_VARNCHAR:
-      switch (new_type)
-	{
-	case DB_TYPE_SHORT:
-	case DB_TYPE_INTEGER:
-	case DB_TYPE_BIGINT:
-	case DB_TYPE_NUMERIC:
-	case DB_TYPE_FLOAT:
-	case DB_TYPE_DOUBLE:
-	case DB_TYPE_MONETARY:
-	case DB_TYPE_DATE:
-	case DB_TYPE_TIME:
-	case DB_TYPE_DATETIME:
-	case DB_TYPE_DATETIMETZ:
-	case DB_TYPE_DATETIMELTZ:
-	case DB_TYPE_TIMESTAMP:
-	case DB_TYPE_TIMESTAMPTZ:
-	case DB_TYPE_TIMESTAMPLTZ:
-	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_NEED_ROW_CHECK;
-	  break;
-	case DB_TYPE_NCHAR:
-	  if (req_prec >= cur_prec)
-	    {
-	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_UPGRADE;
-	    }
-	  else
-	    {
-	      attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_NEED_ROW_CHECK;
-	    }
-	  break;
-	default:
-	  assert (new_type != DB_TYPE_VARNCHAR);
 	  attr_chg_properties->p[P_TYPE] |= ATT_CHG_TYPE_NOT_SUPPORTED;
 	  break;
 	}
@@ -12821,7 +13127,7 @@ check_default_on_update_clause (PARSER_CONTEXT * parser, PT_NODE * attribute)
     }
 
   error = pt_coerce_value_for_default_value (parser, temp_ptval, temp_ptval, desired_type, attribute->data_type,
-					     on_update_expr_type);
+					     on_update_expr_type, true);
 
   if (pt_has_error (parser))
     {
@@ -12989,7 +13295,7 @@ get_att_default_from_def (PARSER_CONTEXT * parser, PT_NODE * attribute, DB_VALUE
       if (def_expr_type == DB_DEFAULT_NONE)
 	{
 	  error = pt_coerce_value_for_default_value (parser, def_val, def_val, desired_type, attribute->data_type,
-						     def_expr_type);
+						     def_expr_type, true);
 	  if (error != NO_ERROR)
 	    {
 	      goto exit_on_coerce_error;
@@ -13028,7 +13334,7 @@ get_att_default_from_def (PARSER_CONTEXT * parser, PT_NODE * attribute, DB_VALUE
 	    }
 
 	  error = pt_coerce_value_for_default_value (parser, temp_val, temp_val, desired_type, attribute->data_type,
-						     def_expr_type);
+						     def_expr_type, true);
 	  db_value_clear (&src);
 	  temp_val->info.value.db_value_is_in_workspace = 0;
 	  parser_free_node (parser, temp_val);
@@ -13113,7 +13419,6 @@ get_hard_default_for_type (PT_TYPE_ENUM type)
 {
   static const char *zero = "0";
   static const char *empty_str = "''";
-  static const char *empty_n_str = "N''";
   static const char *empty_bit = "b'0'";
   static const char *empty_date = "DATE '01/01/0001'";
   static const char *empty_time = "TIME '00:00'";
@@ -13162,10 +13467,6 @@ get_hard_default_for_type (PT_TYPE_ENUM type)
     case PT_TYPE_CHAR:
     case PT_TYPE_VARCHAR:
       return empty_str;
-
-    case PT_TYPE_VARNCHAR:
-    case PT_TYPE_NCHAR:
-      return empty_n_str;
 
     case PT_TYPE_SET:
     case PT_TYPE_MULTISET:
@@ -14414,6 +14715,7 @@ pt_node_to_function_index (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * no
 
   save_custom = parser->custom_print;
   parser->custom_print |= PT_CHARSET_COLLATE_FULL;
+
   expr_str = parser_print_tree_with_quotes (parser, expr);
   parser->custom_print = save_custom;
   assert (expr_str != NULL);
@@ -14725,7 +15027,7 @@ do_recreate_filter_index_constr (PARSER_CONTEXT * parser, SM_PREDICATE_INFO * fi
       goto error;
     }
 
-  query_str_len = strlen (filter_index_info->pred_string) + strlen (class_name) + 9 /* strlen("SELECT * ") */  +
+  query_str_len = strlen (filter_index_info->pred_string) + strlen (class_name) + 9 /* strlen("SELECT 1 ") */  +
     6 /* strlen(" FROM ") */  +
     2 /* [] */  +
     7 /* strlen(" WHERE " */  +
@@ -14736,7 +15038,7 @@ do_recreate_filter_index_constr (PARSER_CONTEXT * parser, SM_PREDICATE_INFO * fi
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, query_str_len);
       return ER_OUT_OF_VIRTUAL_MEMORY;
     }
-  snprintf (query_str, query_str_len, "SELECT * FROM [%s] WHERE %s", class_name, filter_index_info->pred_string);
+  snprintf (query_str, query_str_len, "SELECT 1 FROM [%s] WHERE %s", class_name, filter_index_info->pred_string);
   stmt = parser_parse_string_use_sys_charset (parser, query_str);
   if (stmt == NULL || *stmt == NULL || pt_has_error (parser))
     {
@@ -14790,6 +15092,7 @@ do_recreate_filter_index_constr (PARSER_CONTEXT * parser, SM_PREDICATE_INFO * fi
   where_predicate->info.expr.paren_type = 0;
   save_custom = parser->custom_print;
   parser->custom_print |= PT_CHARSET_COLLATE_FULL;
+
   filter_expr = pt_print_bytes (parser, where_predicate);
   parser->custom_print = save_custom;
   if (filter_expr)
@@ -15131,10 +15434,12 @@ pt_node_to_partition_info (PARSER_CONTEXT * parser, PT_NODE * node, PT_NODE * en
   if (node->node_type == PT_PARTITION)
     {
       partition->partition_type = node->info.partition.type;
+      partition->class_partition_type = DB_PARTITIONED_CLASS;
     }
   else
     {
       partition->partition_type = node->info.parts.type;
+      partition->class_partition_type = DB_PARTITION_CLASS;
     }
 
   if (node->node_type == PT_PARTITION)

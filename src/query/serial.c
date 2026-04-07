@@ -40,6 +40,8 @@
 #include "slotted_page.h"
 #include "dbtype.h"
 #include "xasl_cache.h"
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 #if !defined(SERVER_MODE)
 #define pthread_mutex_init(a, b)
@@ -50,7 +52,7 @@ static int rv;
 static int rc;
 #endif /* !SERVER_MODE */
 
-/* attribute of db_serial class */
+/* attribute of _db_serial class */
 typedef enum
 {
   SERIAL_ATTR_UNIQUE_NAME_INDEX,
@@ -63,7 +65,7 @@ typedef enum
   SERIAL_ATTR_CYCLIC_INDEX,
   SERIAL_ATTR_STARTED_INDEX,
   SERIAL_ATTR_CLASS_NAME_INDEX,
-  SERIAL_ATTR_ATT_NAME_INDEX,
+  SERIAL_ATTR_ATTR_NAME_INDEX,
   SERIAL_ATTR_CACHED_NUM_INDEX,
   SERIAL_ATTR_MAX_INDEX
 } SR_ATTRIBUTES;
@@ -470,7 +472,7 @@ serial_get_next_cached_value (THREAD_ENTRY * thread_p, SERIAL_CACHE_ENTRY * entr
 	  return error;
 	}
 
-      /* cur_val of db_serial is updated to last_cached_val of entry */
+      /* cur_val of _db_serial is updated to last_cached_val of entry */
       error = serial_update_cur_val_of_serial (thread_p, entry, num_alloc);
       if (error != NO_ERROR)
 	{
@@ -498,7 +500,7 @@ serial_get_next_cached_value (THREAD_ENTRY * thread_p, SERIAL_CACHE_ENTRY * entr
 
 /*
  * serial_update_cur_val_of_serial () -
- *                cur_val of db_serial is updated to last_cached_val of entry
+ *                cur_val of _db_serial is updated to last_cached_val of entry
  *   return: NO_ERROR, or ER_status
  *   entry(in)    :
  */
@@ -1301,9 +1303,9 @@ serial_load_attribute_info_of_db_serial (THREAD_ENTRY * thread_p)
 	{
 	  serial_Attrs_id[SERIAL_ATTR_CLASS_NAME_INDEX] = i;
 	}
-      else if (strcmp (attr_name_p, SERIAL_ATTR_ATT_NAME) == 0)
+      else if (strcmp (attr_name_p, SERIAL_ATTR_ATTR_NAME) == 0)
 	{
-	  serial_Attrs_id[SERIAL_ATTR_ATT_NAME_INDEX] = i;
+	  serial_Attrs_id[SERIAL_ATTR_ATTR_NAME_INDEX] = i;
 	}
       else if (strcmp (attr_name_p, SERIAL_ATTR_CACHED_NUM) == 0)
 	{

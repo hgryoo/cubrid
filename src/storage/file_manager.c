@@ -29,6 +29,8 @@
 #include <stddef.h>
 #include <string.h>
 #include <time.h>
+#include <unordered_map>
+#include <functional>
 
 #include "file_manager.h"
 
@@ -63,6 +65,10 @@
 #endif /* SERVER_MODE */
 #include "fault_injection.h"
 #include "thread_manager.hpp"	// for thread_get_thread_entry_info
+#include "partition_sr.h"
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
+
 
 /************************************************************************/
 /* Define structures, globals, and macro's                              */
@@ -172,8 +178,9 @@ struct file_header
 #define FILE_IS_TEMPORARY(fh) (((fh)->file_flags & FILE_FLAG_TEMPORARY) != 0)
 #define FILE_IS_TDE_ENCRYPTED(fh) (((fh)->file_flags & FILE_FLAG_ENCRYPTED_MASK) != 0)
 
-#define FILE_CACHE_LAST_FIND_NTH(fh) \
-  (FILE_IS_NUMERABLE (fh) && FILE_IS_TEMPORARY (fh) && (fh)->type == FILE_TEMP)
+#define FILE_CACHE_LAST_FIND_NTH(fh, thread_p) \
+  (FILE_IS_NUMERABLE (fh) && FILE_IS_TEMPORARY (fh) && (fh)->type == FILE_TEMP \
+   && thread_p->m_px_orig_thread_entry == NULL /* not parallel thread */)
 
 /* Numerable file types. Currently, we used this property for extensible hashes and sort files. */
 #define FILE_TYPE_CAN_BE_NUMERABLE(ftype) ((ftype) == FILE_EXTENDIBLE_HASH \
@@ -261,24 +268,6 @@ typedef int (*FILE_EXTDATA_ITEM_FUNC) (THREAD_ENTRY * thread_p, const void *data
  * set.
  */
 
-/* FILE_ALLOC_BITMAP -
- * Type used to store allocation bitmap for sectors.  */
-typedef UINT64 FILE_ALLOC_BITMAP;
-#define FILE_FULL_PAGE_BITMAP	    0xFFFFFFFFFFFFFFFF	/* Full allocation bitmap */
-#define FILE_EMPTY_PAGE_BITMAP	    0x0000000000000000	/* Empty allocation bitmap */
-
-#define FILE_ALLOC_BITMAP_NBITS ((int) (sizeof (FILE_ALLOC_BITMAP) * CHAR_BIT))
-
-/* FILE_PARTIAL_SECTOR -
- * Structure used by partially allocated sectors table. Store sector VSID and its allocation bitmap. */
-typedef struct file_partial_sector FILE_PARTIAL_SECTOR;
-struct file_partial_sector
-{
-  VSID vsid;			/* Important - VSID must be first member of FILE_PARTIAL_SECTOR. Sometimes, the
-				 * FILE_PARTIAL_SECTOR pointers in file table are reinterpreted as VSID. */
-  FILE_ALLOC_BITMAP page_bitmap;
-};
-#define FILE_PARTIAL_SECTOR_INITIALIZER { VSID_INITIALIZER, 0 }
 
 /************************************************************************/
 /* Utility structures                                                   */
@@ -406,15 +395,6 @@ typedef enum
 #define FILE_RV_DEALLOC_COMPENSATE true
 #define FILE_RV_DEALLOC_RUN_POSTPONE false
 
-typedef struct file_ftab_collector FILE_FTAB_COLLECTOR;
-struct file_ftab_collector
-{
-  int npages;
-  int nsects;
-  FILE_PARTIAL_SECTOR *partsect_ftab;
-};
-#define FILE_FTAB_COLLECTOR_INITIALIZER { 0, 0, NULL }
-
 /* FILE_MAP_CONTEXT - context variables for file_map_pages function. */
 typedef struct file_map_context FILE_MAP_CONTEXT;
 struct file_map_context
@@ -473,6 +453,16 @@ struct file_tempcache_entry
   FILE_TEMPCACHE_ENTRY *next;
 };
 
+typedef struct file_tempcache_tran_entry FILE_TEMPCACHE_TRAN_ENTRY;
+struct file_tempcache_tran_entry
+{
+  pthread_mutex_t mutex;
+  FILE_TEMPCACHE_ENTRY *head;
+#if !defined (NDEBUG)
+  int owner_mutex;
+#endif
+};
+
 typedef struct file_tempcache FILE_TEMPCACHE;
 struct file_tempcache
 {
@@ -491,7 +481,7 @@ struct file_tempcache
   int owner_mutex;
 #endif				/* !NDEBUG */
 
-  FILE_TEMPCACHE_ENTRY **tran_files;	/* transaction temporary files */
+  FILE_TEMPCACHE_TRAN_ENTRY *tran_files;	/* transaction temporary files */
 
   /* space info */
   SPACEDB_FILES spacedb_temp;
@@ -741,6 +731,7 @@ static int file_user_page_table_extdata_dump (THREAD_ENTRY * thread_p, const FIL
 static int file_user_page_table_item_dump (THREAD_ENTRY * thread_p, const void *data, int index, bool * stop,
 					   void *args);
 static int file_sector_map_dealloc (THREAD_ENTRY * thread_p, const void *data, int index, bool * stop, void *args);
+static int file_sector_map_dealloc_temp (THREAD_ENTRY * thread_p, const void *data, int index, bool * stop, void *args);
 static int file_set_tde_algorithm (THREAD_ENTRY * thread_p, const VFID * vfid, TDE_ALGORITHM tde_algo);
 static TDE_ALGORITHM file_get_tde_algorithm_internal (const FILE_HEADER * fhead);
 static void file_set_tde_algorithm_internal (FILE_HEADER * fhead, TDE_ALGORITHM tde_algo);
@@ -795,6 +786,10 @@ STATIC_INLINE FILE_TEMPCACHE_ENTRY *file_tempcache_pop_tran_file (THREAD_ENTRY *
 STATIC_INLINE void file_tempcache_push_tran_file (THREAD_ENTRY * thread_p, FILE_TEMPCACHE_ENTRY * entry)
   __attribute__ ((ALWAYS_INLINE));
 STATIC_INLINE void file_tempcache_dump (FILE * fp) __attribute__ ((ALWAYS_INLINE));
+STATIC_INLINE void file_tempcache_lock_tran_entry (FILE_TEMPCACHE_TRAN_ENTRY * tran_entry)
+  __attribute__ ((ALWAYS_INLINE));
+STATIC_INLINE void file_tempcache_unlock_tran_entry (FILE_TEMPCACHE_TRAN_ENTRY * tran_entry)
+  __attribute__ ((ALWAYS_INLINE));
 
 /************************************************************************/
 /* File tracker section                                                 */
@@ -821,6 +816,14 @@ static int file_tracker_item_dump (THREAD_ENTRY * thread_p, PAGE_PTR page_of_ite
 				   int index_item, bool * stop, void *args);
 static int file_tracker_item_dump_capacity (THREAD_ENTRY * thread_p, PAGE_PTR page_of_item,
 					    FILE_EXTENSIBLE_DATA * extdata, int index_item, bool * stop, void *args);
+static int file_tracker_item_collect_invalid_file (THREAD_ENTRY * thread_p, PAGE_PTR page_of_item,
+						   FILE_EXTENSIBLE_DATA * extdata, int index_item, bool * stop,
+						   void *args);
+#if !defined (NDEBUG)
+static int file_tracker_item_delete_target_file (THREAD_ENTRY * thread_p, PAGE_PTR page_of_item,
+						 FILE_EXTENSIBLE_DATA * extdata, int index_item, bool * stop,
+						 void *args);
+#endif
 static int file_tracker_item_dump_heap (THREAD_ENTRY * thread_p, PAGE_PTR page_of_item, FILE_EXTENSIBLE_DATA * extdata,
 					int index_item, bool * stop, void *args);
 static int file_tracker_item_dump_heap_capacity (THREAD_ENTRY * thread_p, PAGE_PTR page_of_item,
@@ -1420,6 +1423,9 @@ file_header_dump (THREAD_ENTRY * thread_p, const FILE_HEADER * fhead, FILE * fp)
 STATIC_INLINE void
 file_header_dump_descriptor (THREAD_ENTRY * thread_p, const FILE_HEADER * fhead, FILE * fp)
 {
+  BTID btid;
+  char *index_name = NULL;
+
   switch (fhead->type)
     {
     case FILE_HEAP:
@@ -1433,20 +1439,17 @@ file_header_dump_descriptor (THREAD_ENTRY * thread_p, const FILE_HEADER * fhead,
       break;
 
     case FILE_BTREE:
-      {
-	BTID btid;
-	char *index_name = NULL;
-	btid.vfid = fhead->self;
-	btid.root_pageid = fhead->vpid_sticky_first.pageid;
+      btid.vfid = fhead->self;
+      btid.root_pageid = fhead->vpid_sticky_first.pageid;
 
-	if (heap_get_indexinfo_of_btid (thread_p, &fhead->descriptor.btree.class_oid, &btid, NULL, NULL, NULL, NULL,
-					&index_name, NULL) == NO_ERROR)
-	  {
-	    file_print_name_of_class (thread_p, fp, &fhead->descriptor.btree.class_oid);
-	    fprintf (fp, ", %s, ATTRID: %5d \n", index_name != NULL ? index_name : "*UNKNOWN-INDEX*",
-		     fhead->descriptor.btree.attr_id);
-	  }
-      }
+      if (heap_get_indexinfo_of_btid (thread_p, &fhead->descriptor.btree.class_oid, &btid, NULL, NULL, NULL, NULL,
+				      &index_name, NULL) == NO_ERROR)
+	{
+	  file_print_name_of_class (thread_p, fp, &fhead->descriptor.btree.class_oid);
+	  fprintf (fp, ", %s, ATTRID: %5d ", index_name != NULL ? index_name : "*UNKNOWN-INDEX*",
+		   fhead->descriptor.btree.attr_id);
+	}
+      fprintf (fp, "\n");
       break;
 
     case FILE_BTREE_OVERFLOW_KEY:
@@ -1468,6 +1471,7 @@ file_header_dump_descriptor (THREAD_ENTRY * thread_p, const FILE_HEADER * fhead,
     case FILE_DROPPED_FILES:
     case FILE_VACUUM_DATA:
     default:
+      fprintf (fp, "\n");
       break;
     }
 }
@@ -3167,14 +3171,26 @@ file_create_temp_internal (THREAD_ENTRY * thread_p, int npages, FILE_TYPE ftype,
 
   if (VFID_ISNULL (&tempcache_entry->vfid))
     {
+      int tran_index = file_get_tempcache_entry_index (thread_p);
+      FILE_TEMPCACHE_TRAN_ENTRY *tran_entry = &file_Tempcache.tran_files[tran_index];
+
       FILE_TABLESPACE_FOR_TEMP_NPAGES (&tablespace, npages);
+
+      /* file_create() internally calls log_sysop_start().
+       * log_sysop_start() uses a transaction-level mutex (rmutex_topop) that does not
+       * support concurrent access from multiple worker threads sharing the same transaction. */
+      file_tempcache_lock_tran_entry (tran_entry);
       error_code = file_create (thread_p, ftype, &tablespace, NULL, true, is_numerable, vfid_out);
+      file_tempcache_unlock_tran_entry (tran_entry);
+
       if (error_code != NO_ERROR)
 	{
 	  ASSERT_ERROR ();
+
 	  file_tempcache_retire_entry (tempcache_entry);
 	  return error_code;
 	}
+
       tempcache_entry->vfid = *vfid_out;
     }
   else
@@ -4029,6 +4045,70 @@ file_sector_map_dealloc (THREAD_ENTRY * thread_p, const void *data, int index, b
 }
 
 /*
+ * file_sector_map_dealloc_temp () - FILE_EXTDATA_ITEM_FUNC to dealloc user pages of temp table
+ *
+ * return        : error code
+ * thread_p (in) : thread entry
+ * data (in)     : FILE_PARTIAL_SECTOR * or VSID *
+ * index (in)    : unused
+ * stop (in)     : unused
+ * args (in)     : is_partial
+ */
+static int
+file_sector_map_dealloc_temp (THREAD_ENTRY * thread_p, const void *data, int index, bool * stop, void *args)
+{
+  bool is_partial = *(bool *) args;
+  FILE_PARTIAL_SECTOR partsect = FILE_PARTIAL_SECTOR_INITIALIZER;
+  int offset = 0;
+  VPID vpid;
+  PAGE_PTR page = NULL;
+  int error_code = NO_ERROR;
+
+  if (is_partial)
+    {
+      partsect = *(FILE_PARTIAL_SECTOR *) data;
+    }
+  else
+    {
+      partsect.vsid = *(VSID *) data;
+    }
+
+  vpid.volid = partsect.vsid.volid;
+  for (offset = 0, vpid.pageid = SECTOR_FIRST_PAGEID (partsect.vsid.sectid); offset < DISK_SECTOR_NPAGES;
+       offset++, vpid.pageid++)
+    {
+      if (is_partial && !file_partsect_is_bit_set (&partsect, offset))
+	{
+	  /* not allocated */
+	  continue;
+	}
+
+      page = pgbuf_simple_fix (thread_p, &vpid, false);
+      if (page == NULL)
+	{
+	  /* don't care about page which is not on page buffer. */
+	  continue;
+	}
+
+      if (pgbuf_get_page_ptype (thread_p, page) == PAGE_FTAB)
+	{
+	  /* table page, do not invalidate yet */
+	  pgbuf_simple_unfix (thread_p, page);
+	  page = NULL;
+	  continue;
+	}
+
+      if (pgbuf_dealloc_temp_page (thread_p, page, true) != NO_ERROR)
+	{
+	  return ER_FAILED;
+	}
+      page = NULL;
+    }
+
+  return NO_ERROR;
+}
+
+/*
  * file_destroy () - Destroy file - unreserve all sectors used by file on disk.
  *
  * return	 : Error code
@@ -4048,6 +4128,12 @@ file_destroy (THREAD_ENTRY * thread_p, const VFID * vfid, bool is_temp)
   DB_VOLPURPOSE volpurpose;
   bool save_check_interrupt = false;
   int error_code = NO_ERROR;
+  FILE_EXTENSIBLE_DATA *extdata_ftab = NULL;
+  bool is_partial;
+  int iter_sects;
+  int offset;
+  VPID vpid_ftab;
+  PAGE_PTR page_ftab = NULL;
 
   assert (vfid != NULL && !VFID_ISNULL (vfid));
 
@@ -4110,13 +4196,6 @@ file_destroy (THREAD_ENTRY * thread_p, const VFID * vfid, bool is_temp)
   if (!FILE_IS_TEMPORARY (fhead))
     {
       /* we need to deallocate pages */
-      FILE_EXTENSIBLE_DATA *extdata_ftab = NULL;
-      bool is_partial;
-      int iter_sects;
-      int offset;
-      VPID vpid_ftab;
-      PAGE_PTR page_ftab = NULL;
-
       ftab_collector.npages = 0;
       ftab_collector.nsects = 0;
       ftab_collector.partsect_ftab =
@@ -4178,11 +4257,65 @@ file_destroy (THREAD_ENTRY * thread_p, const VFID * vfid, bool is_temp)
     }
   else
     {
-      /* todo: invalidate pages in page buffer. actually move them to the bottom of LRU lists. */
+      /* invalidate pages in page buffer. actually remove dirty flag. */
+      ftab_collector.npages = 0;
+      ftab_collector.nsects = 0;
+      ftab_collector.partsect_ftab =
+	(FILE_PARTIAL_SECTOR *) db_private_alloc (thread_p, fhead->n_page_ftab * sizeof (FILE_PARTIAL_SECTOR));
+      if (ftab_collector.partsect_ftab == NULL)
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1,
+		  fhead->n_page_ftab * sizeof (FILE_PARTIAL_SECTOR));
+	  error_code = ER_OUT_OF_VIRTUAL_MEMORY;
+	  goto exit;
+	}
+
+      FILE_HEADER_GET_PART_FTAB (fhead, extdata_ftab);
+      is_partial = true;
+      error_code =
+	file_extdata_apply_funcs (thread_p, extdata_ftab, file_extdata_collect_ftab_pages, &ftab_collector,
+				  file_sector_map_dealloc_temp, &is_partial, true, NULL, NULL);
+      if (error_code != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  goto exit;
+	}
+
+      /* deallocate table pages - other than header page */
+      for (iter_sects = 0; iter_sects < ftab_collector.nsects; iter_sects++)
+	{
+	  vpid_ftab.volid = ftab_collector.partsect_ftab[iter_sects].vsid.volid;
+	  for (offset = 0,
+	       vpid_ftab.pageid = SECTOR_FIRST_PAGEID (ftab_collector.partsect_ftab[iter_sects].vsid.sectid);
+	       offset < DISK_SECTOR_NPAGES; offset++, vpid_ftab.pageid++)
+	    {
+	      if (file_partsect_is_bit_set (&ftab_collector.partsect_ftab[iter_sects], offset))
+		{
+		  page_ftab = pgbuf_simple_fix (thread_p, &vpid_ftab, false);
+		  if (page_ftab == NULL)
+		    {
+		      /* don't care about page which is not on page buffer. */
+		      continue;
+		    }
+		  if (pgbuf_dealloc_temp_page (thread_p, page_ftab, true) != NO_ERROR)
+		    {
+		      ASSERT_ERROR ();
+		      goto exit;
+		    }
+		  page_ftab = NULL;
+		}
+	    }
+	}
+
       ATOMIC_INC_32 (&file_Tempcache.spacedb_temp.nfile, -1);
       ATOMIC_INC_32 (&file_Tempcache.spacedb_temp.npage_ftab, -fhead->n_page_ftab);
       ATOMIC_INC_32 (&file_Tempcache.spacedb_temp.npage_user, -fhead->n_page_user);
       ATOMIC_INC_32 (&file_Tempcache.spacedb_temp.npage_reserved, -fhead->n_page_free);
+      if (pgbuf_dealloc_temp_page (thread_p, page_fhead, false) != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  goto exit;
+	}
       pgbuf_unfix_and_init (thread_p, page_fhead);
     }
 
@@ -4312,6 +4445,22 @@ int
 file_temp_retire_preserved (THREAD_ENTRY * thread_p, const VFID * vfid)
 {
   return file_temp_retire_internal (thread_p, vfid, true);
+}
+
+int
+file_temp_truncate (THREAD_ENTRY * thread_p, const VFID * vfid)
+{
+  int error_code = NO_ERROR;
+  if (vfid == NULL || VFID_ISNULL (vfid))
+    {
+      return NO_ERROR;
+    }
+  error_code = file_temp_reset_user_pages (thread_p, vfid);
+  if (error_code != NO_ERROR)
+    {
+      assert (false);
+    }
+  return error_code;
 }
 
 /*
@@ -6122,7 +6271,7 @@ file_dealloc (THREAD_ENTRY * thread_p, const VFID * vfid, const VPID * vpid, FIL
 
   file_log ("file_dealloc", "file %d|%d marked vpid %|%d as deleted", VFID_AS_ARGS (vfid), VPID_AS_ARGS (vpid));
 
-  if (FILE_CACHE_LAST_FIND_NTH (fhead))
+  if (FILE_CACHE_LAST_FIND_NTH (fhead, thread_p))
     {
       /* reset cached search location */
       VPID_SET_NULL (&fhead->vpid_find_nth_last);
@@ -6662,6 +6811,74 @@ file_get_num_user_pages (THREAD_ENTRY * thread_p, const VFID * vfid, int *n_user
 }
 
 /*
+ * file_get_num_total_user_pages () - Output number of user pages in class
+ *
+ * return                 : Error code
+ * thread_p (in)          : Thread entry
+ * OID (in)               : Class identifier
+ * total_pages (out) : Output number of user pages of class
+ */
+int
+file_get_num_total_user_pages (THREAD_ENTRY * thread_p, OID * cls_oid, int *total_pages)
+{
+  int count = 0, part_pages = 0;
+  OID *partitions = NULL;
+  CLS_INFO *cls_info_p = NULL;
+  int error = NO_ERROR;
+
+  if (partition_get_partition_oids (thread_p, cls_oid, &partitions, &count) != NO_ERROR)
+    {
+      error = ER_FAILED;
+      goto end;
+    }
+
+  if (count > 0)
+    {
+      /* partition table */
+      for (int i = 0; i < count; i++)
+	{
+	  cls_info_p = catalog_get_class_info (thread_p, &partitions[i], NULL);
+	  if (cls_info_p == NULL)
+	    {
+	      error = ER_FAILED;
+	      goto end;
+	    }
+	  if (file_get_num_user_pages (thread_p, &(cls_info_p->ci_hfid.vfid), &part_pages) != NO_ERROR)
+	    {
+	      error = ER_FAILED;
+	      goto end;
+	    }
+	  *total_pages += part_pages;
+	  catalog_free_class_info_and_init (cls_info_p);
+	}
+    }
+  else
+    {
+      cls_info_p = catalog_get_class_info (thread_p, cls_oid, NULL);
+      if (cls_info_p == NULL)
+	{
+	  error = ER_FAILED;
+	  goto end;
+	}
+      if (file_get_num_user_pages (thread_p, &(cls_info_p->ci_hfid.vfid), total_pages) != NO_ERROR)
+	{
+	  error = ER_FAILED;
+	  goto end;
+	}
+      catalog_free_class_info_and_init (cls_info_p);
+    }
+
+end:
+  if (partitions != NULL)
+    {
+      db_private_free (thread_p, partitions);
+    }
+  catalog_free_class_info_and_init (cls_info_p);
+
+  return NO_ERROR;
+}
+
+/*
  * file_check_vpid () - check vpid is one of the file's user pages
  *
  * return           : DISK_INVALID if page does not belong to file, DISK_ERROR for errors and DISK_VALID for successful
@@ -6986,7 +7203,7 @@ file_extdata_collect_ftab_pages (THREAD_ENTRY * thread_p, const FILE_EXTENSIBLE_
       /* find in collected sectors */
       for (idx_sect = 0; idx_sect < collect->nsects; idx_sect++)
 	{
-	  if (disk_compare_vsids (&vsid_this, &collect->partsect_ftab->vsid) == 0)
+	  if (disk_compare_vsids (&vsid_this, &collect->partsect_ftab[idx_sect].vsid) == 0)
 	    {
 	      break;
 	    }
@@ -8052,7 +8269,7 @@ file_numerable_find_nth (THREAD_ENTRY * thread_p, const VFID * vfid, int nth, bo
     }
   else
     {
-      if (FILE_CACHE_LAST_FIND_NTH (fhead) && !VPID_ISNULL (&fhead->vpid_find_nth_last)
+      if (FILE_CACHE_LAST_FIND_NTH (fhead, thread_p) && !VPID_ISNULL (&fhead->vpid_find_nth_last)
 	  && !VPID_EQ (&vpid_fhead, &fhead->vpid_find_nth_last) && nth >= fhead->first_index_find_nth_last)
 	{
 	  /* start searching from last search location */
@@ -8081,7 +8298,7 @@ file_numerable_find_nth (THREAD_ENTRY * thread_p, const VFID * vfid, int nth, bo
 	  goto exit;
 	}
 
-      if (FILE_CACHE_LAST_FIND_NTH (fhead))
+      if (FILE_CACHE_LAST_FIND_NTH (fhead, thread_p))
 	{
 	  /* note that we consider this file cannot be accessed concurrently. therefore we do not promote to write latch
 	   * and we do not set page dirty to update the cached search location. */
@@ -8452,8 +8669,12 @@ file_temp_alloc (THREAD_ENTRY * thread_p, PAGE_PTR page_fhead, FILE_ALLOC_TYPE a
 	pgbuf_fix (thread_p, &fhead->vpid_last_temp_alloc, OLD_PAGE, PGBUF_LATCH_WRITE, PGBUF_UNCONDITIONAL_LATCH);
       if (page_ftab == NULL)
 	{
-	  assert_release (false);
-	  error_code = ER_FAILED;
+	  error_code = er_errid ();
+	  if (error_code != ER_INTERRUPTED)
+	    {
+	      assert_release (false);
+	    }
+
 	  goto exit;
 	}
       extdata_part_ftab = (FILE_EXTENSIBLE_DATA *) page_ftab;
@@ -8469,7 +8690,12 @@ file_temp_alloc (THREAD_ENTRY * thread_p, PAGE_PTR page_fhead, FILE_ALLOC_TYPE a
 	disk_reserve_sectors (thread_p, DB_TEMPORARY_DATA_PURPOSE, fhead->volid_last_expand, 1, &partsect_new.vsid);
       if (error_code != NO_ERROR)
 	{
-	  assert_release (false);
+	  error_code = er_errid ();
+	  if (error_code != ER_INTERRUPTED)
+	    {
+	      assert_release (false);
+	    }
+
 	  goto exit;
 	}
 
@@ -8574,8 +8800,12 @@ file_temp_alloc (THREAD_ENTRY * thread_p, PAGE_PTR page_fhead, FILE_ALLOC_TYPE a
       page_ftab = pgbuf_fix (thread_p, &vpid_next, OLD_PAGE, PGBUF_LATCH_WRITE, PGBUF_UNCONDITIONAL_LATCH);
       if (page_ftab == NULL)
 	{
-	  assert_release (false);
-	  error_code = ER_FAILED;
+	  error_code = er_errid ();
+	  if (error_code != ER_INTERRUPTED)
+	    {
+	      assert_release (false);
+	    }
+
 	  goto exit;
 	}
       extdata_part_ftab = (FILE_EXTENSIBLE_DATA *) page_ftab;
@@ -8706,7 +8936,7 @@ file_temp_reset_user_pages (THREAD_ENTRY * thread_p, const VFID * vfid)
   int nsect_full_new;
   int nsect_empty_new;
   FILE_EXTENSIBLE_DATA *extdata_user_page_ftab;
-  bool save_interrupt;
+  bool save_interrupt, is_partial;
   bool found = false;
   int error_code = NO_ERROR;
 
@@ -8746,6 +8976,18 @@ file_temp_reset_user_pages (THREAD_ENTRY * thread_p, const VFID * vfid)
   if (error_code != NO_ERROR)
     {
       assert_release (false);
+      goto exit;
+    }
+
+  /* dealloc temp page */
+  FILE_HEADER_GET_PART_FTAB (fhead, extdata_part_ftab);
+  is_partial = true;
+  error_code =
+    file_extdata_apply_funcs (thread_p, extdata_part_ftab, NULL, NULL, file_sector_map_dealloc_temp, &is_partial, true,
+			      NULL, NULL);
+  if (error_code != NO_ERROR)
+    {
+      ASSERT_ERROR ();
       goto exit;
     }
 
@@ -8932,8 +9174,8 @@ file_tempcache_init (void)
 #endif
 
   /* allocate transaction temporary files lists */
-  memsize = ntrans * sizeof (FILE_TEMPCACHE_ENTRY *);
-  file_Tempcache.tran_files = (FILE_TEMPCACHE_ENTRY **) malloc (memsize);
+  memsize = ntrans * sizeof (FILE_TEMPCACHE_TRAN_ENTRY);
+  file_Tempcache.tran_files = (FILE_TEMPCACHE_TRAN_ENTRY *) malloc (memsize);
   if (file_Tempcache.tran_files == NULL)
     {
       pthread_mutex_destroy (&file_Tempcache.mutex);
@@ -8941,6 +9183,15 @@ file_tempcache_init (void)
       return ER_OUT_OF_VIRTUAL_MEMORY;
     }
   memset (file_Tempcache.tran_files, 0, memsize);
+
+
+  for (int i = 0; i < ntrans; i++)
+    {
+      pthread_mutex_init (&file_Tempcache.tran_files[i].mutex, NULL);
+#if !defined (NDEBUG)
+      file_Tempcache.tran_files[i].owner_mutex = -1;
+#endif
+    }
 
   /* stats */
   memset (&file_Tempcache.spacedb_temp, 0, sizeof (file_Tempcache.spacedb_temp));
@@ -8977,11 +9228,14 @@ file_tempcache_final (void)
   /* free all transaction lists... they should be empty anyway, but be conservative */
   for (tran = 0; tran < ntrans; tran++)
     {
-      if (file_Tempcache.tran_files[tran] != NULL)
+      file_tempcache_lock_tran_entry (&file_Tempcache.tran_files[tran]);
+      if (file_Tempcache.tran_files[tran].head != NULL)
 	{
 	  /* should be empty */
-	  file_tempcache_free_entry_list (&file_Tempcache.tran_files[tran]);
+	  file_tempcache_free_entry_list (&file_Tempcache.tran_files[tran].head);
 	}
+      file_tempcache_unlock_tran_entry (&file_Tempcache.tran_files[tran]);
+      pthread_mutex_destroy (&file_Tempcache.tran_files[tran].mutex);
     }
   free_and_init (file_Tempcache.tran_files);
 
@@ -9365,13 +9619,13 @@ file_get_tempcache_entry_index (THREAD_ENTRY * thread_p)
 void
 file_tempcache_drop_tran_temp_files (THREAD_ENTRY * thread_p)
 {
-  if (file_Tempcache.tran_files[file_get_tempcache_entry_index (thread_p)] != NULL)
+  int tran_index = file_get_tempcache_entry_index (thread_p);
+  file_tempcache_lock_tran_entry (&file_Tempcache.tran_files[tran_index]);
+  if (file_Tempcache.tran_files[tran_index].head != NULL)
     {
-      file_log ("file_tempcache_drop_tran_temp_files",
-		"drop %d transaction temporary files", file_get_tran_num_temp_files (thread_p));
-      file_tempcache_cache_or_drop_entries (thread_p,
-					    &file_Tempcache.tran_files[file_get_tempcache_entry_index (thread_p)]);
+      file_tempcache_cache_or_drop_entries (thread_p, &file_Tempcache.tran_files[tran_index].head);
     }
+  file_tempcache_unlock_tran_entry (&file_Tempcache.tran_files[tran_index]);
 }
 
 /*
@@ -9386,6 +9640,7 @@ file_tempcache_cache_or_drop_entries (THREAD_ENTRY * thread_p, FILE_TEMPCACHE_EN
 {
   FILE_TEMPCACHE_ENTRY *temp_file;
   FILE_TEMPCACHE_ENTRY *next = NULL;
+  int num = 0;
 
   for (temp_file = *entries; temp_file != NULL; temp_file = next)
     {
@@ -9405,7 +9660,9 @@ file_tempcache_cache_or_drop_entries (THREAD_ENTRY * thread_p, FILE_TEMPCACHE_EN
 	    }
 	  file_tempcache_retire_entry (temp_file);
 	}
+      num++;
     }
+  file_log ("file_tempcache_cache_or_drop_entries", "drop %d transaction temporary files", num);
   *entries = NULL;
 }
 
@@ -9419,10 +9676,12 @@ file_tempcache_cache_or_drop_entries (THREAD_ENTRY * thread_p, FILE_TEMPCACHE_EN
 STATIC_INLINE FILE_TEMPCACHE_ENTRY *
 file_tempcache_pop_tran_file (THREAD_ENTRY * thread_p, const VFID * vfid)
 {
-  FILE_TEMPCACHE_ENTRY **tran_files_p = &file_Tempcache.tran_files[file_get_tempcache_entry_index (thread_p)];
+  int tran_index = file_get_tempcache_entry_index (thread_p);
+  FILE_TEMPCACHE_TRAN_ENTRY *tran_entry = &file_Tempcache.tran_files[tran_index];
   FILE_TEMPCACHE_ENTRY *entry = NULL, *prev_entry = NULL;
 
-  for (entry = *tran_files_p; entry != NULL; entry = entry->next)
+  file_tempcache_lock_tran_entry (tran_entry);
+  for (entry = tran_entry->head; entry != NULL; entry = entry->next)
     {
       if (VFID_EQ (&entry->vfid, vfid))
 	{
@@ -9433,18 +9692,18 @@ file_tempcache_pop_tran_file (THREAD_ENTRY * thread_p, const VFID * vfid)
 	    }
 	  else
 	    {
-	      *tran_files_p = entry->next;
+	      tran_entry->head = entry->next;
 	    }
 	  entry->next = NULL;
 
 	  file_log ("file_tempcache_pop_tran_file", "removed entry " FILE_TEMPCACHE_ENTRY_MSG,
 		    FILE_TEMPCACHE_ENTRY_AS_ARGS (entry));
-
+	  file_tempcache_unlock_tran_entry (tran_entry);
 	  return entry;
 	}
       prev_entry = entry;
     }
-
+  file_tempcache_unlock_tran_entry (tran_entry);
   /* should have found it */
   assert_release (false);
   return NULL;
@@ -9460,13 +9719,16 @@ file_tempcache_pop_tran_file (THREAD_ENTRY * thread_p, const VFID * vfid)
 STATIC_INLINE void
 file_tempcache_push_tran_file (THREAD_ENTRY * thread_p, FILE_TEMPCACHE_ENTRY * entry)
 {
-  FILE_TEMPCACHE_ENTRY **tran_files_p = &file_Tempcache.tran_files[file_get_tempcache_entry_index (thread_p)];
+  int tran_index = file_get_tempcache_entry_index (thread_p);
+  FILE_TEMPCACHE_TRAN_ENTRY *tran_entry = &file_Tempcache.tran_files[tran_index];
 
-  entry->next = *tran_files_p;
-  *tran_files_p = entry;
+  file_tempcache_lock_tran_entry (tran_entry);
+  entry->next = tran_entry->head;
+  tran_entry->head = entry;
 
   file_log ("file_tempcache_push_tran_file", "pushed entry " FILE_TEMPCACHE_ENTRY_MSG,
 	    FILE_TEMPCACHE_ENTRY_AS_ARGS (entry));
+  file_tempcache_unlock_tran_entry (tran_entry);
 }
 
 /*
@@ -9478,14 +9740,15 @@ file_tempcache_push_tran_file (THREAD_ENTRY * thread_p, FILE_TEMPCACHE_ENTRY * e
 int
 file_get_tran_num_temp_files (THREAD_ENTRY * thread_p)
 {
-  FILE_TEMPCACHE_ENTRY **tran_files_p = &file_Tempcache.tran_files[file_get_tempcache_entry_index (thread_p)];
+  FILE_TEMPCACHE_TRAN_ENTRY *tran_entry = &file_Tempcache.tran_files[file_get_tempcache_entry_index (thread_p)];
   FILE_TEMPCACHE_ENTRY *entry;
   int num = 0;
-
-  for (entry = *tran_files_p; entry != NULL; entry = entry->next)
+  file_tempcache_lock_tran_entry (tran_entry);
+  for (entry = tran_entry->head; entry != NULL; entry = entry->next)
     {
       num++;
     }
+  file_tempcache_unlock_tran_entry (tran_entry);
   return num;
 }
 
@@ -9533,6 +9796,30 @@ file_tempcache_dump (FILE * fp)
   /* todo: to print transaction temporary files we need some kind of synchronization... right now each transaction
    *       manages its own list freely. */
 }
+
+STATIC_INLINE void
+file_tempcache_lock_tran_entry (FILE_TEMPCACHE_TRAN_ENTRY * tran_entry)
+{
+  assert (tran_entry->owner_mutex != thread_get_current_entry_index ());
+  pthread_mutex_lock (&tran_entry->mutex);
+  assert (tran_entry->owner_mutex == -1);
+#if !defined (NDEBUG)
+  tran_entry->owner_mutex = thread_get_current_entry_index ();
+#endif /* !NDEBUG */
+}
+
+STATIC_INLINE void
+file_tempcache_unlock_tran_entry (FILE_TEMPCACHE_TRAN_ENTRY * tran_entry)
+{
+  assert (tran_entry->owner_mutex == thread_get_current_entry_index ());
+#if !defined (NDEBUG)
+  tran_entry->owner_mutex = -1;
+#endif /* !NDEBUG */
+  pthread_mutex_unlock (&tran_entry->mutex);
+}
+
+
+
 
 /************************************************************************/
 /* File tracker section                                                 */
@@ -10926,6 +11213,575 @@ file_tracker_dump_all_capacities (THREAD_ENTRY * thread_p, FILE * fp)
   return NO_ERROR;
 }
 
+bool
+file_is_valid_heap_file (THREAD_ENTRY * thread_p, OID * class_oid_p)
+{
+  bool is_valid = true;
+
+  if (!OID_ISNULL (class_oid_p))
+    {
+      RECDES recdes;
+      HEAP_SCANCACHE scan_cache;
+
+      (void) heap_scancache_quick_start_root_hfid (thread_p, &scan_cache);
+
+      if (heap_get_class_record (thread_p, class_oid_p, &recdes, &scan_cache, PEEK) != S_SUCCESS)
+	{
+	  is_valid = false;
+	}
+
+      heap_scancache_end (thread_p, &scan_cache);
+    }
+
+  return is_valid;
+}
+
+/*
+ * file_tracker_item_dump_file () - FILE_TRACK_ITEM_FUNC to dump file
+ *
+ * return            : error code
+ * thread_p (in)     : thread entry
+ * page_of_item (in) : tracker page
+ * extdata (in)      : tracker extensible data
+ * index_item (in)   : item index
+ * stop (in)         : not used
+ * args (in)         : FILE *
+ */
+static int
+file_tracker_item_dump_file (THREAD_ENTRY * thread_p, PAGE_PTR page_of_item, FILE_EXTENSIBLE_DATA * extdata,
+			     int index_item, bool * stop, void *args)
+{
+  FILE_TRACK_ITEM *item;
+  VPID vpid_fhead;
+  PAGE_PTR page_fhead = NULL;
+  FILE_HEADER *fhead = NULL;
+// *INDENT-OFF*
+  void **params = static_cast<void **> (args);
+  FILE *fp = static_cast<FILE *> (params[0]);
+  bool invalid_only = *static_cast<bool *> (params[1]);
+  std::unordered_set<OID> *valid_oids = static_cast<std::unordered_set<OID> *> (params[2]);
+  std::unordered_set<OID> *invalid_oids = static_cast<std::unordered_set<OID> *> (params[3]);
+// *INDENT-ON*
+  int error_code = NO_ERROR;
+
+  item = (FILE_TRACK_ITEM *) file_extdata_at (extdata, index_item);
+
+  vpid_fhead.volid = item->volid;
+  vpid_fhead.pageid = item->fileid;
+
+  page_fhead = pgbuf_fix (thread_p, &vpid_fhead, OLD_PAGE, PGBUF_LATCH_READ, PGBUF_UNCONDITIONAL_LATCH);
+  if (page_fhead == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error_code);
+      return error_code;
+    }
+
+  fhead = (FILE_HEADER *) page_fhead;
+
+  file_header_sanity_check (thread_p, fhead);
+
+  bool need_dump = true;
+
+  if (invalid_only)
+    {
+      OID *class_oid_p = NULL;
+
+      switch (fhead->type)
+	{
+	case FILE_HEAP:
+	case FILE_HEAP_REUSE_SLOTS:
+	  class_oid_p = &fhead->descriptor.heap.class_oid;
+	  break;
+	case FILE_MULTIPAGE_OBJECT_HEAP:
+	  class_oid_p = &fhead->descriptor.heap_overflow.class_oid;
+	  break;
+	case FILE_BTREE:
+	  class_oid_p = &fhead->descriptor.btree.class_oid;
+	  break;
+	case FILE_BTREE_OVERFLOW_KEY:
+	  class_oid_p = &fhead->descriptor.btree_key_overflow.class_oid;
+	  break;
+	default:
+	  break;
+	}
+
+      if (class_oid_p != NULL)
+	{
+	  auto it = valid_oids->find (*class_oid_p);
+	  if (it != valid_oids->end ())
+	    {
+	      need_dump = false;
+	    }
+	  else
+	    {
+	      auto it = invalid_oids->find (*class_oid_p);
+	      if (it == invalid_oids->end ())
+		{
+		  if (file_is_valid_heap_file (thread_p, class_oid_p))
+		    {
+		      need_dump = false;
+
+		      valid_oids->insert (*class_oid_p);
+		    }
+		  else
+		    {
+		      invalid_oids->insert (*class_oid_p);
+		    }
+		}
+	    }
+	}
+      else
+	{
+	  need_dump = false;
+	}
+    }
+
+  if (need_dump)
+    {
+      fprintf (fp, "%4d|%4d %5d  %-22s ", item->volid, item->fileid, fhead->n_page_user,
+	       file_type_to_string (fhead->type));
+      if ((FILE_TYPE) item->type == FILE_HEAP && item->metadata.heap.is_marked_deleted)
+	{
+	  fprintf (fp, "Marked as deleted... ");
+	}
+
+      file_header_dump_descriptor (thread_p, fhead, fp);
+    }
+
+  pgbuf_unfix (thread_p, page_fhead);
+
+  return NO_ERROR;
+}
+
+/*
+ * xfile_tracker_dump_file_list () - dump all files
+ *
+ * return           : error code
+ * thread_p (in)    : thread entry
+ * invalid_only(in) : dump only invalid files if set
+ * outfp (in)       : FILE stream where to dump the file list
+ */
+int
+xfile_tracker_dump_file_list (THREAD_ENTRY * thread_p, FILE * outfp, bool invalid_only)
+{
+  int error_code = NO_ERROR;
+  void *args[4];
+// *INDENT-OFF*
+  std::unordered_set<OID> valid_oids;
+  std::unordered_set<OID> invalid_oids;
+// *INDENT-ON*
+
+  if (outfp == NULL)
+    {
+      outfp = stdout;
+    }
+
+// *INDENT-OFF*
+  args[0] = static_cast<void *> (outfp);
+  args[1] = static_cast<void *> (&invalid_only);
+  args[2] = static_cast<void *> (&valid_oids);
+  args[3] = static_cast<void *> (&invalid_oids);
+// *INDENT-ON*
+
+  fprintf (outfp, "    VFID   npages    type             FDES\n");
+  error_code = file_tracker_map (thread_p, PGBUF_LATCH_READ, file_tracker_item_dump_file, (void *) args);
+  if (error_code != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      return error_code;
+    }
+
+  return NO_ERROR;
+}
+
+// *INDENT-OFF*
+inline bool operator==(const VFID &a, const VFID &b)
+{
+  return a.fileid == b.fileid && a.volid == b.volid;
+}
+
+namespace std
+{
+  template <>
+  struct hash<VFID>
+  {
+    size_t operator()(const VFID &v) const
+    {
+      return std::hash<int>()(v.fileid) ^ (std::hash<int>()(v.volid) << 1);
+    }
+  };
+}
+// *INDENT-ON*
+
+/*
+ * file_tracker_item_collect_invalid_file () - collect invalid file
+ *
+ * return            : error code
+ * thread_p (in)     : thread entry
+ * page_of_item (in) : tracker page
+ * extdata (in)      : tracker extensible data
+ * index_item (in)   : item index
+ * stop (in)         : not used
+ * args (in)         : not used
+ */
+static int
+file_tracker_item_collect_invalid_file (THREAD_ENTRY * thread_p, PAGE_PTR page_of_item, FILE_EXTENSIBLE_DATA * extdata,
+					int index_item, bool * stop, void *args)
+{
+  FILE_TRACK_ITEM *item;
+  VPID vpid_fhead;
+  PAGE_PTR page_fhead = NULL;
+  FILE_HEADER *fhead = NULL;
+  int error_code = NO_ERROR;
+// *INDENT-OFF*
+  void **params = static_cast<void **> (args);
+  std::unordered_set<OID> *valid_oids = static_cast<std::unordered_set<OID> *> (params[0]);
+  std::unordered_set<OID> *invalid_oids = static_cast<std::unordered_set<OID> *> (params[1]);
+  std::unordered_map<VFID, FILE_TYPE> *invalid_files = static_cast<std::unordered_map<VFID, FILE_TYPE> *> (params[2]);
+// *INDENT-ON*
+
+  item = (FILE_TRACK_ITEM *) file_extdata_at (extdata, index_item);
+
+  vpid_fhead.volid = item->volid;
+  vpid_fhead.pageid = item->fileid;
+
+  page_fhead = pgbuf_fix (thread_p, &vpid_fhead, OLD_PAGE, PGBUF_LATCH_READ, PGBUF_UNCONDITIONAL_LATCH);
+  if (page_fhead == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error_code);
+      return error_code;
+    }
+
+  fhead = (FILE_HEADER *) page_fhead;
+
+  file_header_sanity_check (thread_p, fhead);
+
+  OID *class_oid_p = NULL;
+  bool is_found = false;
+
+  switch (fhead->type)
+    {
+    case FILE_HEAP:
+    case FILE_HEAP_REUSE_SLOTS:
+      class_oid_p = &fhead->descriptor.heap.class_oid;
+      break;
+    case FILE_MULTIPAGE_OBJECT_HEAP:
+      class_oid_p = &fhead->descriptor.heap_overflow.class_oid;
+      break;
+    case FILE_BTREE:
+      class_oid_p = &fhead->descriptor.btree.class_oid;
+      break;
+    case FILE_BTREE_OVERFLOW_KEY:
+      class_oid_p = &fhead->descriptor.btree_key_overflow.class_oid;
+      break;
+    default:
+      break;
+    }
+
+  if (class_oid_p != NULL)
+    {
+      auto it = invalid_oids->find (*class_oid_p);
+      if (it != invalid_oids->end ())
+	{
+	  is_found = true;
+	}
+      else
+	{
+	  auto it = valid_oids->find (*class_oid_p);
+	  if (it == valid_oids->end ())
+	    {
+	      if (!file_is_valid_heap_file (thread_p, class_oid_p))
+		{
+		  is_found = true;
+
+		  invalid_oids->insert (*class_oid_p);
+		}
+	      else
+		{
+		  valid_oids->insert (*class_oid_p);
+		}
+	    }
+	}
+    }
+
+  if (is_found)
+    {
+// *INDENT-OFF*
+      auto [it, inserted] = invalid_files->emplace (VFID{item->fileid, item->volid}, fhead->type);
+// *INDENT-ON*
+      assert (inserted && "Duplicate VFID insertion detected");
+    }
+
+  pgbuf_unfix (thread_p, page_fhead);
+
+  return NO_ERROR;
+}
+
+/*
+ * file_delete_invalid_file () - delete invalid file
+ *
+ * return            : error code
+ * thread_p (in)     : thread entry
+ * invalid_files (in):
+ * heap (out)        :
+ * heap_ovf (out)    :
+ * btree (out)       :
+ * btree_ovf (out)   :
+ */
+// *INDENT-OFF*
+int
+file_delete_invalid_file (THREAD_ENTRY * thread_p,
+			  const std::unordered_map<VFID, FILE_TYPE> &invalid_files,
+			  int *heap, int *heap_ovf, int *btree, int *btree_ovf)
+// *INDENT-ON*
+{
+  int error_code = NO_ERROR;
+  assert (heap != nullptr);
+  assert (heap_ovf != nullptr);
+  assert (btree != nullptr);
+  assert (btree_ovf != nullptr);
+
+// *INDENT-OFF*
+  for (const auto &[vfid, file_type]:invalid_files)
+// *INDENT-ON*
+  {
+    log_sysop_start (thread_p);
+
+    if (file_destroy (thread_p, &vfid, false) != NO_ERROR)
+      {
+	ASSERT_ERROR_AND_SET (error_code);
+	log_sysop_abort (thread_p);
+	return error_code;
+      }
+
+    log_sysop_commit (thread_p);
+
+    switch (file_type)
+      {
+      case FILE_HEAP:
+      case FILE_HEAP_REUSE_SLOTS:
+	++(*heap);
+	break;
+      case FILE_MULTIPAGE_OBJECT_HEAP:
+	++(*heap_ovf);
+	break;
+      case FILE_BTREE:
+	++(*btree);
+	break;
+      case FILE_BTREE_OVERFLOW_KEY:
+	++(*btree_ovf);
+	break;
+      default:
+	assert (false && "Unknown FILE_TYPE");
+	break;
+      }
+  }
+
+  return NO_ERROR;
+}
+
+/*
+ * xfile_tracker_clean_invalid_file () - clean invalid file
+ *
+ * return         : error code
+ * thread_p (in)  : thread entry
+ * heap (out)     :
+ * heap_ovf (out) :
+ * btree (out)    :
+ * btree_ovf (out):
+ */
+int
+xfile_tracker_clean_invalid_file (THREAD_ENTRY * thread_p, int *heap, int *heap_ovf, int *btree, int *btree_ovf)
+{
+  void *args[3];
+  int error_code = NO_ERROR;
+// *INDENT-OFF*
+  std::unordered_set<OID> valid_oids;
+  std::unordered_set<OID> invalid_oids;
+  std::unordered_map<VFID, FILE_TYPE> invalid_files;
+
+  args[0] = static_cast<void *> (&valid_oids);
+  args[1] = static_cast<void *> (&invalid_oids);
+  args[2] = static_cast<void *> (&invalid_files);
+// *INDENT-ON*
+
+  error_code = file_tracker_map (thread_p, PGBUF_LATCH_WRITE, file_tracker_item_collect_invalid_file, args);
+  if (error_code != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      return error_code;
+    }
+
+  if (!invalid_files.empty ())
+    {
+      error_code = file_delete_invalid_file (thread_p, invalid_files, heap, heap_ovf, btree, btree_ovf);
+      if (error_code != NO_ERROR)
+	{
+	  return error_code;
+	}
+    }
+
+  return NO_ERROR;
+}
+
+#if !defined(NDEBUG)
+/*
+ * parse_target_vfid () - Parse vfid string "fileid|volid" (e.g., "123|1")
+ *
+ * return          : true on success, false on failure
+ * in_vfid_str (in): vfid string
+ * out_vfid (out)  : parsed vfid
+ */
+bool
+parse_target_vfid (const char *in_vfid_str, VFID * out_vfid)
+{
+  char sentinel;
+
+  if (in_vfid_str == NULL || out_vfid == NULL)
+    {
+      return false;
+    }
+
+  for (int i = 0; in_vfid_str[i] != '\0'; i++)
+    {
+      if (!isdigit ((unsigned char) in_vfid_str[i]) && in_vfid_str[i] != '|')
+	{
+	  return false;
+	}
+    }
+
+  if (sscanf (in_vfid_str, "%d|%hd%c", &out_vfid->fileid, &out_vfid->volid, &sentinel) != 2)
+    {
+      return false;
+    }
+
+  return true;
+}
+
+/*
+ * file_tracker_item_delete_target_file () - delete target file
+ *
+ * return            : error code
+ * thread_p (in)     : thread entry
+ * page_of_item (in) : tracker page
+ * extdata (in)      : tracker extensible data
+ * index_item (in)   : item index
+ * stop (in)         : not used
+ * args (in)         : vfid
+ */
+static int
+file_tracker_item_delete_target_file (THREAD_ENTRY * thread_p, PAGE_PTR page_of_item,
+				      FILE_EXTENSIBLE_DATA * extdata, int index_item, bool * stop, void *args)
+{
+  FILE_TRACK_ITEM *item;
+  VFID *target_vfid;
+  VPID vpid_fhead;
+  PAGE_PTR page_fhead = NULL;
+  FILE_HEADER *fhead = NULL;
+  int error_code = NO_ERROR;
+
+  target_vfid = (VFID *) args;
+
+  item = (FILE_TRACK_ITEM *) file_extdata_at (extdata, index_item);
+
+  if (target_vfid->fileid != item->fileid || target_vfid->volid != item->volid)
+    {
+      return NO_ERROR;
+    }
+
+  vpid_fhead.volid = item->volid;
+  vpid_fhead.pageid = item->fileid;
+
+  page_fhead = pgbuf_fix (thread_p, &vpid_fhead, OLD_PAGE, PGBUF_LATCH_READ, PGBUF_UNCONDITIONAL_LATCH);
+  if (page_fhead == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error_code);
+      return error_code;
+    }
+
+  fhead = (FILE_HEADER *) page_fhead;
+
+  file_header_sanity_check (thread_p, fhead);
+
+  FILE_TYPE file_type = fhead->type;
+
+  if (file_type == FILE_HEAP || file_type == FILE_HEAP_REUSE_SLOTS || file_type == FILE_MULTIPAGE_OBJECT_HEAP
+      || file_type == FILE_BTREE || file_type == FILE_BTREE_OVERFLOW_KEY || file_type == FILE_QUERY_AREA
+      || file_type == FILE_TEMP || file_type == FILE_UNKNOWN_TYPE)
+    {
+      if (page_fhead != NULL)
+	{
+	  pgbuf_unfix (thread_p, page_fhead);
+
+	  page_fhead = NULL;
+	}
+
+      log_sysop_start (thread_p);
+
+      if (file_type == FILE_QUERY_AREA || file_type == FILE_TEMP)
+	{
+	  if (file_destroy (thread_p, target_vfid, true) != NO_ERROR)
+	    {
+	      ASSERT_ERROR_AND_SET (error_code);
+
+	      log_sysop_abort (thread_p);
+
+	      return error_code;
+	    }
+	}
+      else
+	{
+	  if (file_destroy (thread_p, target_vfid, false) != NO_ERROR)
+	    {
+	      ASSERT_ERROR_AND_SET (error_code);
+
+	      log_sysop_abort (thread_p);
+
+	      return error_code;
+	    }
+	}
+
+      log_sysop_commit (thread_p);
+    }
+
+  if (page_fhead != NULL)
+    {
+      pgbuf_unfix (thread_p, page_fhead);
+    }
+
+  return NO_ERROR;
+}
+
+/*
+ * xfile_tracker_delete_target_file () - delete target file
+ *
+ * return               : error code
+ * thread_p (in)        : thread entry
+ * target_vfid_str (in) : vfid string
+ */
+int
+xfile_tracker_delete_target_file (THREAD_ENTRY * thread_p, const char *target_vfid_str)
+{
+  VFID target_vfid = VFID_INITIALIZER;
+  int error_code = NO_ERROR;
+
+  if (parse_target_vfid (target_vfid_str, &target_vfid) != true)
+    {
+      // TODO: Define error message for release build
+      return ER_FAILED;
+    }
+
+  error_code = file_tracker_map (thread_p, PGBUF_LATCH_WRITE, file_tracker_item_delete_target_file, &target_vfid);
+  if (error_code != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      return error_code;
+    }
+
+  return NO_ERROR;
+}
+#endif
+
 /*
  * file_tracker_item_dump_heap () - FILE_TRACK_ITEM_FUNC to dump heap file
  *
@@ -10998,8 +11854,8 @@ file_tracker_dump_all_heap (THREAD_ENTRY * thread_p, FILE * fp, bool dump_record
  * args (in)         : context
  */
 static int
-file_tracker_item_dump_heap_capacity (THREAD_ENTRY * thread_p, PAGE_PTR page_of_item, FILE_EXTENSIBLE_DATA * extdata,
-				      int index_item, bool * stop, void *args)
+file_tracker_item_dump_heap_capacity (THREAD_ENTRY * thread_p, PAGE_PTR page_of_item,
+				      FILE_EXTENSIBLE_DATA * extdata, int index_item, bool * stop, void *args)
 {
   FILE_TRACK_ITEM *item;
   HFID hfid;
@@ -11059,8 +11915,8 @@ file_tracker_dump_all_heap_capacities (THREAD_ENTRY * thread_p, FILE * fp)
  * args (in)         : context
  */
 static int
-file_tracker_item_dump_btree_capacity (THREAD_ENTRY * thread_p, PAGE_PTR page_of_item, FILE_EXTENSIBLE_DATA * extdata,
-				       int index_item, bool * stop, void *args)
+file_tracker_item_dump_btree_capacity (THREAD_ENTRY * thread_p, PAGE_PTR page_of_item,
+				       FILE_EXTENSIBLE_DATA * extdata, int index_item, bool * stop, void *args)
 {
   FILE_TRACK_ITEM *item;
   BTID btid;
@@ -11241,8 +12097,8 @@ file_tracker_check (THREAD_ENTRY * thread_p)
  * args (in/out)     : DISK_VOLMAP_CLONE *
  */
 static int
-file_tracker_item_check (THREAD_ENTRY * thread_p, PAGE_PTR page_of_item, FILE_EXTENSIBLE_DATA * extdata, int index_item,
-			 bool * stop, void *args)
+file_tracker_item_check (THREAD_ENTRY * thread_p, PAGE_PTR page_of_item, FILE_EXTENSIBLE_DATA * extdata,
+			 int index_item, bool * stop, void *args)
 {
   DISK_VOLMAP_CLONE *disk_map_clone = (DISK_VOLMAP_CLONE *) args;
   FILE_TRACK_ITEM *item;
@@ -11308,11 +12164,13 @@ file_tracker_item_spacedb (THREAD_ENTRY * thread_p, PAGE_PTR page_of_item, FILE_
   switch (fhead->type)
     {
     case FILE_BTREE:
+    case FILE_BTREE_OVERFLOW_KEY:
       /* index file */
       spacedb_ftype = SPACEDB_INDEX_FILE;
       break;
     case FILE_HEAP:
     case FILE_HEAP_REUSE_SLOTS:
+    case FILE_MULTIPAGE_OBJECT_HEAP:
       /* heap file */
       spacedb_ftype = SPACEDB_HEAP_FILE;
       break;
@@ -11596,6 +12454,173 @@ exit:
     }
 
   return error_code;
+}
+
+/*
+ * file_extdata_collect_data_sectors_part () - collect FILE_PARTIAL_SECTOR from partial table
+ *
+ * return        : NO_ERROR
+ * thread_p (in) : thread entry
+ * item (in)     : item (FILE_PARTIAL_SECTOR)
+ * index (in)    : index
+ * stop (out)    : ignored
+ * args (in/out) : FILE_FTAB_COLLECTOR *
+ */
+static int
+file_extdata_collect_data_sectors_part (THREAD_ENTRY * thread_p, const void *item, int index_unused, bool * stop,
+					void *args)
+{
+  FILE_FTAB_COLLECTOR *collect = (FILE_FTAB_COLLECTOR *) args;
+  FILE_PARTIAL_SECTOR *partsect = (FILE_PARTIAL_SECTOR *) item;
+
+  collect->partsect_ftab[collect->nsects++] = *partsect;
+  collect->npages += bit64_count_ones (partsect->page_bitmap);
+
+  return NO_ERROR;
+}
+
+/*
+ * file_extdata_collect_data_sectors_full () - collect VSID from full table and convert to FILE_PARTIAL_SECTOR
+ *
+ * return        : NO_ERROR
+ * thread_p (in) : thread entry
+ * item (in)     : item (VSID)
+ * index (in)    : index
+ * stop (out)    : ignored
+ * args (in/out) : FILE_FTAB_COLLECTOR *
+ */
+static int
+file_extdata_collect_data_sectors_full (THREAD_ENTRY * thread_p, const void *item, int index_unused, bool * stop,
+					void *args)
+{
+  FILE_FTAB_COLLECTOR *collect = (FILE_FTAB_COLLECTOR *) args;
+  VSID *vsid = (VSID *) item;
+
+  collect->partsect_ftab[collect->nsects].vsid = *vsid;
+  collect->partsect_ftab[collect->nsects].page_bitmap = FILE_FULL_PAGE_BITMAP;
+  collect->nsects++;
+  collect->npages += DISK_SECTOR_NPAGES;
+
+  return NO_ERROR;
+}
+
+/*
+ * file_get_all_data_sectors () - collect all data sectors
+ *
+ * return        : NO_ERROR or error code
+ * thread_p (in) : thread entry
+ * hfid (in)     : heap file ID
+ * collector_out(out): output collected table pages
+ */
+int
+file_get_all_data_sectors (THREAD_ENTRY * thread_p, const VFID * vfid, FILE_FTAB_COLLECTOR * collector_out)
+{
+  VPID vpid_fhead;
+  PAGE_PTR page_fhead;
+  FILE_HEADER *fhead = NULL;
+  FILE_EXTENSIBLE_DATA *extdata_ftab = NULL;
+  FILE_FTAB_COLLECTOR ftab_collector;
+  int i, j;
+  int error_code = NO_ERROR;
+
+  FILE_GET_HEADER_VPID (vfid, &vpid_fhead);
+  page_fhead = pgbuf_fix (thread_p, &vpid_fhead, OLD_PAGE, PGBUF_LATCH_READ, PGBUF_UNCONDITIONAL_LATCH);
+  if (page_fhead == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error_code);
+      return error_code;
+    }
+
+  fhead = (FILE_HEADER *) page_fhead;
+  collector_out->npages = 0;
+  collector_out->nsects = 0;
+  collector_out->partsect_ftab =
+    (FILE_PARTIAL_SECTOR *) db_private_alloc (thread_p, fhead->n_sector_total * sizeof (FILE_PARTIAL_SECTOR));
+
+  if (collector_out->partsect_ftab == NULL)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1,
+	      fhead->n_sector_total * sizeof (FILE_PARTIAL_SECTOR));
+      pgbuf_unfix (thread_p, page_fhead);
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+
+  ftab_collector.npages = 0;
+  ftab_collector.nsects = 0;
+  ftab_collector.partsect_ftab =
+    (FILE_PARTIAL_SECTOR *) db_private_alloc (thread_p, fhead->n_page_ftab * sizeof (FILE_PARTIAL_SECTOR));
+
+  if (ftab_collector.partsect_ftab == NULL)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1,
+	      fhead->n_page_ftab * sizeof (FILE_PARTIAL_SECTOR));
+      pgbuf_unfix (thread_p, page_fhead);
+      db_private_free_and_init (thread_p, collector_out->partsect_ftab);
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+
+  VSID_FROM_VPID (&ftab_collector.partsect_ftab[0].vsid, &vpid_fhead);
+  ftab_collector.partsect_ftab[0].page_bitmap = FILE_EMPTY_PAGE_BITMAP;
+  file_partsect_set_bit (&ftab_collector.partsect_ftab[0],
+			 file_partsect_pageid_to_offset (&ftab_collector.partsect_ftab[0], vpid_fhead.pageid));
+  ftab_collector.nsects = 1;
+  ftab_collector.npages = 1;
+
+  FILE_HEADER_GET_PART_FTAB (fhead, extdata_ftab);
+  error_code =
+    file_extdata_apply_funcs (thread_p, extdata_ftab, file_extdata_collect_ftab_pages, &ftab_collector,
+			      file_extdata_collect_data_sectors_part, collector_out, false, NULL, NULL);
+
+  if (error_code != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      db_private_free_and_init (thread_p, ftab_collector.partsect_ftab);
+      db_private_free_and_init (thread_p, collector_out->partsect_ftab);
+      pgbuf_unfix (thread_p, page_fhead);
+      return ER_FAILED;
+    }
+
+  if (!FILE_IS_TEMPORARY (fhead))
+    {
+      FILE_HEADER_GET_FULL_FTAB (fhead, extdata_ftab);
+      error_code =
+	file_extdata_apply_funcs (thread_p, extdata_ftab, file_extdata_collect_ftab_pages, &ftab_collector,
+				  file_extdata_collect_data_sectors_full, collector_out, false, NULL, NULL);
+      if (error_code != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  db_private_free_and_init (thread_p, ftab_collector.partsect_ftab);
+	  db_private_free_and_init (thread_p, collector_out->partsect_ftab);
+	  pgbuf_unfix (thread_p, page_fhead);
+	  return ER_FAILED;
+	}
+    }
+
+  for (i = 0; i < ftab_collector.nsects; i++)
+    {
+      FILE_PARTIAL_SECTOR *ftab_sec = &ftab_collector.partsect_ftab[i];
+      FILE_PARTIAL_SECTOR *data_sec;
+      for (j = 0; j < collector_out->nsects; j++)
+	{
+	  data_sec = &collector_out->partsect_ftab[j];
+	  if (VSID_EQ (&ftab_sec->vsid, &data_sec->vsid))
+	    {
+	      data_sec->page_bitmap &= ~ftab_sec->page_bitmap;
+	      break;
+	    }
+	}
+    }
+
+  pgbuf_unfix (thread_p, page_fhead);
+  db_private_free_and_init (thread_p, ftab_collector.partsect_ftab);
+  if (error_code != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      db_private_free_and_init (thread_p, collector_out->partsect_ftab);
+      return ER_FAILED;
+    }
+
+  return NO_ERROR;
 }
 
 /************************************************************************/

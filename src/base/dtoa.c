@@ -30,6 +30,11 @@
 #include <stdlib.h>
 #include "mprec.h"
 #include <stdlib.h>
+#ifdef DEBUG
+#include <stdio.h>
+#endif
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 void free_Bigints (struct _Jv_Bigint *p);
 
@@ -141,8 +146,6 @@ _DEFUN (quorem, (b, S), _Jv_Bigint * b _AND _Jv_Bigint * S)
 }
 
 #ifdef DEBUG
-#include <stdio.h>
-
 void
 print (_Jv_Bigint * b)
 {
@@ -388,7 +391,7 @@ _DEFUN (_dtoa_r, (ptr, _d, mode, ndigits, decpt, sign, rve, float_type),
       break;
     case 2:
       leftright = 0;
-      /* FALLTHRU */
+      [[fallthrough]];
     case 4:
       if (ndigits <= 0)
 	ndigits = 1;
@@ -396,7 +399,7 @@ _DEFUN (_dtoa_r, (ptr, _d, mode, ndigits, decpt, sign, rve, float_type),
       break;
     case 3:
       leftright = 0;
-      /* FALLTHRU */
+      [[fallthrough]];
     case 5:
       i = ndigits + k + 1;
       ilim = i;

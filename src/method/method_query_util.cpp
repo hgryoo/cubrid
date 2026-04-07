@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <unordered_set>
 
 #include "dbtype.h"
 
@@ -28,6 +29,8 @@
 #include "object_domain.h"
 #include "object_primitive.h"
 #endif
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 namespace cubmethod
 {
@@ -460,24 +463,10 @@ namespace cubmethod
   {
     const char *val_str = NULL;
     int err, len;
-
-    DB_TYPE val_type = db_value_type (value);
-
-    if (val_type == DB_TYPE_NCHAR || val_type == DB_TYPE_VARNCHAR)
+    err = db_value_coerce (value, value_string, db_type_to_db_domain (DB_TYPE_VARCHAR));
+    if (err >= 0)
       {
-	err = db_value_coerce (value, value_string, db_type_to_db_domain (DB_TYPE_VARNCHAR));
-	if (err >= 0)
-	  {
-	    val_str = db_get_nchar (value_string, &len);
-	  }
-      }
-    else
-      {
-	err = db_value_coerce (value, value_string, db_type_to_db_domain (DB_TYPE_VARCHAR));
-	if (err >= 0)
-	  {
-	    val_str = db_get_char (value_string, &len);
-	  }
+	val_str = db_get_char (value_string, &len);
       }
 
     return std::string (val_str);
@@ -522,13 +511,37 @@ namespace cubmethod
 	return -1;
       }
 
+    std::unordered_set<int> numbered_markers;
+
     int num_markers = 0;
     int sql_len = sql.size ();
     for (int i = 0; i < sql_len; i++)
       {
 	if (sql[i] == '?')
 	  {
-	    num_markers++;
+	    if (i + 1 < sql_len && sql[++i] == ':')
+	      {
+		// read ?:<number> form
+		int begin_idx = i + 1;
+		int idx = begin_idx;
+
+		while (idx < sql_len && sql[idx] >= '0' && sql[idx] <= '9')
+		  {
+		    idx++;
+		  }
+
+		if (idx > begin_idx)
+		  {
+		    std::string number (&sql[begin_idx], idx - begin_idx);
+		    numbered_markers.insert (stoi (number));
+		  }
+
+		i = idx;
+	      }
+	    else
+	      {
+		num_markers++;
+	      }
 	  }
 	else if (sql[i] == '-' && sql[i + 1] == '-')
 	  {
@@ -551,6 +564,8 @@ namespace cubmethod
 	    i = consume_tokens (sql, i + 1, DOUBLE_QUOTED_STRING);
 	  }
       }
+
+    num_markers += numbered_markers.size ();
 
     return num_markers;
   }
@@ -689,9 +704,7 @@ namespace cubmethod
 	break;
 
       case DB_TYPE_CHAR:
-      case DB_TYPE_NCHAR:
       case DB_TYPE_VARCHAR:
-      case DB_TYPE_VARNCHAR:
       {
 	int def_size = db_get_string_size (def);
 	const char *def_str_p = db_get_string (def);

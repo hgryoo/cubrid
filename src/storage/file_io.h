@@ -30,7 +30,6 @@
 #include "config.h"
 #include "dbtype_def.h"
 #include "log_lsa.hpp"
-#include "lz4.h"
 #include "memory_hash.h"
 #include "porting.h"
 #include "porting_inline.hpp"
@@ -40,6 +39,7 @@
 
 #include <stdio.h>
 #include <time.h>
+#include <map>
 
 #define NULL_VOLDES   (-1)	/* Value of a null (invalid) vol descriptor */
 
@@ -154,12 +154,6 @@ typedef enum
   FILEIO_RUN_AWAY_LOCKF,
   FILEIO_NOT_LOCKF
 } FILEIO_LOCKF_TYPE;
-
-typedef enum
-{
-  FILEIO_SYNC_ONLY,
-  FILEIO_SYNC_ALSO_FLUSH_DWB
-} FILEIO_SYNC_OPTION;
 
 typedef enum
 {
@@ -454,6 +448,10 @@ struct flush_stats
   unsigned int num_tokens;
 };
 
+// *INDENT-OFF*
+using FILEIO_UNLINKED_VOLINFO_MAP = std::map <int, std::pair<std::string, std::string>>;
+// *INDENT-ON*
+
 extern int fileio_open (const char *vlabel, int flags, int mode);
 extern void fileio_close (int vdes);
 extern int fileio_format (THREAD_ENTRY * thread_p, const char *db_fullname, const char *vlabel, VOLID volid,
@@ -463,7 +461,8 @@ extern int fileio_format (THREAD_ENTRY * thread_p, const char *db_fullname, cons
 extern int fileio_expand_to (THREAD_ENTRY * threda_p, VOLID volid, DKNPAGES npages_toadd, DB_VOLTYPE voltype);
 #endif /* not CS_MODE */
 extern void *fileio_initialize_pages (THREAD_ENTRY * thread_p, int vdes, FILEIO_PAGE * io_pgptr, DKNPAGES start_pageid,
-				      DKNPAGES npages, size_t page_size, int kbytes_to_be_written_per_sec);
+				      DKNPAGES npages, size_t page_size, bool ensure_metadata,
+				      int kbytes_to_be_written_per_sec);
 extern void fileio_initialize_res (THREAD_ENTRY * thread_p, FILEIO_PAGE * io_page, PGLENGTH page_size);
 #if defined (ENABLE_UNUSED_FUNCTION)
 extern DKNPAGES fileio_truncate (VOLID volid, DKNPAGES npages_to_resize);
@@ -481,7 +480,7 @@ extern void fileio_dismount_without_fsync (THREAD_ENTRY * thread_p, int vdes);
 extern void fileio_dismount_all (THREAD_ENTRY * thread_p);
 extern void *fileio_read (THREAD_ENTRY * thread_p, int vol_fd, void *io_page_p, PAGEID page_id, size_t page_size);
 extern void *fileio_write_or_add_to_dwb (THREAD_ENTRY * thread_p, int vol_fd, FILEIO_PAGE * io_page_p, PAGEID page_id,
-					 size_t page_size);
+					 size_t page_size, bool ensure_metadata);
 extern void *fileio_write (THREAD_ENTRY * thread_p, int vol_fd, void *io_page_p, PAGEID page_id, size_t page_size,
 			   FILEIO_WRITE_MODE write_mode);
 extern void *fileio_read_pages (THREAD_ENTRY * thread_p, int vol_fd, char *io_pages_p, PAGEID page_id, int num_pages,
@@ -490,9 +489,10 @@ extern void *fileio_write_pages (THREAD_ENTRY * thread_p, int vol_fd, char *io_p
 				 size_t page_size, FILEIO_WRITE_MODE write_mode);
 extern void *fileio_writev (THREAD_ENTRY * thread_p, int vdes, void **arrayof_io_pgptr, PAGEID start_pageid,
 			    DKNPAGES npages, size_t page_size);
-extern int fileio_synchronize (THREAD_ENTRY * thread_p, int vdes, const char *vlabel,
-			       FILEIO_SYNC_OPTION check_sync_dwb);
-extern int fileio_synchronize_all (THREAD_ENTRY * thread_p, bool include_log);
+extern bool fileio_fsync_pending (void);
+extern int fileio_synchronize_directory (THREAD_ENTRY * thread_p, const char *label);
+extern int fileio_synchronize (THREAD_ENTRY * thread_p, int vdes, const char *vlabel, bool ensure_metadata);
+extern int fileio_synchronize_all (THREAD_ENTRY * thread_p);
 #if defined (ENABLE_UNUSED_FUNCTION)
 extern void *fileio_read_user_area (THREAD_ENTRY * thread_p, int vdes, PAGEID pageid, off_t start_offset, size_t nbytes,
 				    void *area);
@@ -577,7 +577,8 @@ extern int fileio_get_next_restore_file (THREAD_ENTRY * thread_p, FILEIO_BACKUP_
 					 VOLID * volid);
 extern int fileio_restore_volume (THREAD_ENTRY * thread_p, FILEIO_BACKUP_SESSION * session, char *to_vlabel,
 				  char *verbose_to_vlabel, char *prev_vlabel, FILEIO_RESTORE_PAGE_BITMAP * page_bitmap,
-				  bool remember_pages);
+				  bool remember_pages, bool & is_prev_vheader_restored,
+				  FILEIO_UNLINKED_VOLINFO_MAP & unlinked_vol_info);
 extern int fileio_skip_restore_volume (THREAD_ENTRY * thread_p, FILEIO_BACKUP_SESSION * session);
 extern const char *fileio_get_zip_method_string (FILEIO_ZIP_METHOD zip_method);
 extern const char *fileio_get_zip_level_string (FILEIO_ZIP_LEVEL zip_level);
@@ -604,9 +605,11 @@ extern int fileio_symlink (const char *src, const char *dest, int overwrite);
 extern int fileio_set_permission (const char *vlabel);
 #endif /* !WINDOWS */
 
+#if defined(ENABLE_UNUSED_FUNCTION)
 #if defined(SERVER_MODE)
 int fileio_os_sysconf (void);
 #endif /* SERVER_MODE */
+#endif
 
 /* flush control related */
 extern int fileio_flush_control_initialize (void);
@@ -627,4 +630,8 @@ extern int fileio_set_page_checksum (THREAD_ENTRY * thread_p, FILEIO_PAGE * io_p
 extern int fileio_page_check_corruption (THREAD_ENTRY * thread_p, FILEIO_PAGE * io_page, bool * is_page_corrupted);
 extern void fileio_page_hexa_dump (const char *data, int length);
 extern bool fileio_is_formatted_page (THREAD_ENTRY * thread_p, const char *io_page);
+
+/* lob_dir */
+extern int fileio_lob_remove_dir (char *lob_path);
+extern int fileio_lob_remove_matching_dir (const char *keyword);
 #endif /* _FILE_IO_H_ */

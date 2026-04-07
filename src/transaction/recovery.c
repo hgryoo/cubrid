@@ -22,22 +22,25 @@
 
 #ident "$Id$"
 
-#include "config.h"
-
-#include <stdio.h>
-
 #include "recovery.h"
-#include "log_manager.h"
-#include "replication.h"
+
+#include "boot_sr.h"
 #include "btree.h"
 #include "btree_load.h"
-#include "system_catalog.h"
+#include "config.h"
 #include "disk_manager.h"
 #include "extendible_hash.h"
 #include "file_manager.h"
-#include "overflow_file.h"
-#include "boot_sr.h"
 #include "locator_sr.h"
+#include "log_manager.h"
+#include "overflow_file.h"
+#include "replication.h"
+#include "system_catalog.h"
+
+#include <stdio.h>
+
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 /*
  *
@@ -45,6 +48,8 @@
  *
  * Note: When adding new entries, be sure to add the an entry to print it as
  * a string in rv_rcvindex_string().
+ *
+ * TODO: the second argument - log rcv structure - should be a pointer to const data
  */
 struct rvfun RV_fun[] = {
   {RVDK_NEWVOL,
@@ -828,6 +833,12 @@ struct rvfun RV_fun[] = {
    "RVFL_FHEAD_SET_TDE_ALGORITHM",
    file_rv_set_tde_algorithm,
    file_rv_set_tde_algorithm,
+   NULL,
+   NULL},
+  {RVHF_LOB_REMOVE_DIR,
+   "RVHF_LOB_REMOVE_DIR",
+   heap_rv_lob_remove_dir,
+   heap_rv_lob_remove_dir,
    NULL,
    NULL},
 };

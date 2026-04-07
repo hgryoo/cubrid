@@ -89,7 +89,9 @@ typedef enum
   MSGCAT_UTIL_SET_VACUUMDB = 55,
   MSGCAT_UTIL_SET_CHECKSUMDB = 56,
   MSGCAT_UTIL_SET_TDE = 57,
-  MSGCAT_UTIL_SET_FLASHBACK = 58
+  MSGCAT_UTIL_SET_FLASHBACK = 58,
+  MSGCAT_UTIL_SET_MEMMON = 59,
+  MSGCAT_UTIL_SET_CLEANFILEDB = 60
 } MSGCAT_UTIL_SET;
 
 /* Message id in the set MSGCAT_UTIL_SET_GENERIC */
@@ -125,10 +127,13 @@ typedef enum
   MSGCAT_UTIL_GENERIC_MANAGER_NOT_INSTALLED = 41,
   MSGCAT_UTIL_GENERIC_INVALID_ARGUMENT = 42,
   MSGCAT_UTIL_GENERIC_FILEOPEN_ERROR = 43,
-  /* javasp usage = 44 ? */
+  /* pl usage = 44 ? */
   /* gateway usage = 45 ? */
   MSGCAT_UTIL_GENERIC_CLASSNAME_EXCEED_MAX_LENGTH = 46,
-  MSGCAT_UTIL_GENERIC_CLASSNAME_INVALID_FORMAT = 47
+  MSGCAT_UTIL_GENERIC_CLASSNAME_INVALID_FORMAT = 47,
+  MSGCAT_UTIL_GENERIC_INVALID_HOSTNAME = 48,
+  MSGCAT_UTIL_GENERIC_EMPTY_HOSTS_CONF = 49,
+  MSGCAT_UTIL_GENERIC_FILE_NOT_FOUND = 50
 } MSGCAT_UTIL_GENERIC_MSG;
 
 /* Message id in the set MSGCAT_UTIL_SET_DELETEDB */
@@ -234,6 +239,10 @@ typedef enum
   ADDVOLDB_MSG_BAD_NPAGES = 20,
   ADDVOLDB_MSG_BAD_PURPOSE = 21,
   ADDVOLDB_INVALID_MAX_WRITESIZE_IN_SEC = 22,
+  ADDVOLDB_MSG_BAD_VOLTYPE = 23,
+  ADDVOLDB_VOLTYPE_NOT_SUPPORT_SAMODE = 24,
+  ADDVOLDB_VOLTYPE_MUSTBE_TEMP_PURPOSE = 25,
+  ADDVOLDB_VOLTYPE_NOT_USED_PATH_NAME = 26,
   ADDVOLDB_MSG_USAGE = 60
 } MSGCAT_ADDVOLDB_MSG;
 
@@ -304,6 +313,7 @@ typedef enum
 typedef enum
 {
   DIAGDB_MSG_BAD_OUTPUT = 15,
+  DIAGDB_MSG_UNKNOWN_CLASS = 16,
   DIAGDB_MSG_USAGE = 60
 } MSGCAT_DIAGDB_MSG;
 
@@ -503,8 +513,10 @@ typedef enum
   LOADDB_MSG_IGNORED_CLASS = 121,
   LOADDB_MSG_EXCEED_MAX_USER_LEN = 122,
   LOADDB_MSG_EMPTY_SCHEMA_FILE_LIST = 123,
-
-  LOADDB_MSG_USAGE = 124
+  LOADDB_MSG_COMPAT_UNDER_11_2 = 124,
+  LOADDB_MSG_COMPAT_UNDER_11_4 = 125,
+  LOADDB_MSG_COMPAT_OFF = 126,
+  LOADDB_MSG_USAGE = 127
 } MSGCAT_LOADDB_MSG;
 
 /* Message id in the set MSGCAT_UTIL_SET_MIGDB */
@@ -544,6 +556,7 @@ typedef enum
   PARAMDUMP_MSG_CLIENT_PARAMETER = 21,
   PARAMDUMP_MSG_SERVER_PARAMETER = 22,
   PARAMDUMP_MSG_STANDALONE_PARAMETER = 23,
+  PARAMDUMP_MSG_BAD_OPTION = 24,
   PARAMDUMP_MSG_USAGE = 60
 } MSGCAT_PARAMDUMP_MSG;
 
@@ -738,6 +751,27 @@ typedef enum
   FLASHBACK_MSG_USAGE = 60
 } MSGCAT_FLASHBACK_MSG;
 
+/* Message id in the set MSGCAT_UTIL_SET_MEMMON */
+typedef enum
+{
+  MEMMON_MSG_NOT_SUPPORTED = 1,
+  MEMMON_MSG_NOT_IN_STANDALONE = 2,
+  MEMMON_MSG_CANNOT_OPEN_OUTPUT_FILE = 3,
+  MEMMON_MSG_DISABLE_SUCCESS = 4,
+  MEMMON_MSG_CANNOT_USE_DISABLE_FORCE_WITH_OTHER_OPTION = 5,
+  MEMMON_MSG_MEMORY_MONITOR_IS_DISABLED = 6,
+  MEMMON_MSG_NOT_SUPPORTED_OS = 7,
+  MEMMON_MSG_USAGE = 60
+} MSGCAT_MEMMON_MSG;
+
+/* Message id in the set MSGCAT_UTIL_SET_CLEANFILEDB */
+typedef enum
+{
+  CLEANFILEDB_MSG_BAD_OUTPUT = 10,
+  CLEANFILEDB_MSG_CLEAN_SUMMARY = 11,
+  CLEANFILEDB_MSG_USAGE = 60
+} MSGCAT_CLEANFILEDB_MSG;
+
 typedef void *DSO_HANDLE;
 
 typedef enum
@@ -758,6 +792,7 @@ typedef enum
   OPTIMIZEDB,
   INSTALLDB,
   DIAGDB,
+  CLEANFILEDB,
   PATCHDB,
   CHECKDB,
   ALTERDBHOST,
@@ -785,6 +820,7 @@ typedef enum
   CHECKSUMDB,
   TDE,
   FLASHBACK,
+  MEMMON,
   LOGFILEDUMP,
 } UTIL_INDEX;
 
@@ -875,7 +911,7 @@ typedef struct _ha_config
 #define UTIL_CUBRID             "cubrid" UTIL_EXE_EXT
 #define UTIL_COPYLOGDB          "copylogdb" UTIL_EXE_EXT
 #define UTIL_APPLYLOGDB         "applylogdb" UTIL_EXE_EXT
-#define UTIL_JAVASP_NAME        "cub_javasp" UTIL_EXE_EXT
+#define UTIL_PL_NAME            "cub_pl" UTIL_EXE_EXT
 
 #define PROPERTY_ON             "on"
 #define PROPERTY_OFF            "off"
@@ -888,7 +924,7 @@ typedef struct _ha_config
 #define PRINT_GATEWAY_NAME      "cubrid gateway"
 #define PRINT_MANAGER_NAME      "cubrid manager server"
 #define PRINT_HEARTBEAT_NAME    "cubrid heartbeat"
-#define PRINT_JAVASP_NAME       "cubrid javasp"
+#define PRINT_PL_NAME           "cubrid pl"
 #define PRINT_HA_PROCS_NAME     "HA processes"
 
 #define PRINT_CMD_SERVICE       "service"
@@ -896,9 +932,10 @@ typedef struct _ha_config
 #define PRINT_CMD_GATEWAY       "gateway"
 #define PRINT_CMD_MANAGER       "manager"
 #define PRINT_CMD_SERVER        "server"
-#define PRINT_CMD_JAVASP        "javasp"
+#define PRINT_CMD_PL            "pl"
 
 #define PRINT_CMD_START         "start"
+#define PRINT_CMD_RESTART       "restart"
 #define PRINT_CMD_STOP          "stop"
 #define PRINT_CMD_STATUS        "status"
 #define PRINT_CMD_DEREG         "deregister"
@@ -939,6 +976,7 @@ typedef struct _ha_config
 #define COMMDB_HA_ADMIN_INFO              "--admin-info"
 #define COMMDB_VERBOSE_OUTPUT             "--verbose"
 #define COMMDB_HA_START_UTIL_PROCESS	  "-t"
+#define COMMDB_SHUTDOWN_REVIVING_SERVER     "--shutdown-reviving-server"
 
 #define ACLDB_RELOAD            "-r"
 
@@ -950,7 +988,7 @@ typedef struct _ha_config
 #define MASK_GATEWAY            0x10
 #define MASK_ADMIN              0x20
 #define MASK_HEARTBEAT          0x40
-#define MASK_JAVASP             0x80
+#define MASK_PL                 0x80
 
 /* utility option list */
 #define UTIL_OPTION_CREATEDB                    "createdb"
@@ -970,6 +1008,7 @@ typedef struct _ha_config
 #define UTIL_OPTION_OPTIMIZEDB                  "optimizedb"
 #define UTIL_OPTION_INSTALLDB                   "installdb"
 #define UTIL_OPTION_DIAGDB                      "diagdb"
+#define UTIL_OPTION_CLEANFILEDB                 "cleanfiledb"
 #define UTIL_OPTION_PATCHDB                     "emergency_patchlog"
 #define UTIL_OPTION_CHECKDB                     "checkdb"
 #define UTIL_OPTION_ALTERDBHOST                 "alterdbhost"
@@ -997,6 +1036,7 @@ typedef struct _ha_config
 #define UTIL_OPTION_CHECKSUMDB			"checksumdb"
 #define UTIL_OPTION_TDE			        "tde"
 #define UTIL_OPTION_FLASHBACK                   "flashback"
+#define UTIL_OPTION_MEMMON                      "memmon"
 
 #define HIDDEN_CS_MODE_S                        15000
 
@@ -1138,6 +1178,8 @@ typedef struct _ha_config
 #define ADDVOL_VOLUME_SIZE_L                    "db-volume-size"
 #define ADDVOL_MAX_WRITESIZE_IN_SEC_S           10707
 #define ADDVOL_MAX_WRITESIZE_IN_SEC_L           "max-writesize-in-sec"
+#define ADDVOL_VOLTYPE_L			"voltype"
+#define ADDVOL_VOLTYPE_S			't'
 
 #if 0
 /* delvoldb option list */
@@ -1172,6 +1214,8 @@ typedef struct _ha_config
 /* lockdb option list */
 #define LOCK_OUTPUT_FILE_S                      'o'
 #define LOCK_OUTPUT_FILE_L                      "output-file"
+#define LOCK_DISPLAY_CONTENTION_S               'c'
+#define LOCK_DISPLAY_CONTENTION_L               "contention"
 
 /* optimizedb option list */
 #define OPTIMIZE_CLASS_NAME_S                   'n'
@@ -1194,6 +1238,26 @@ typedef struct _ha_config
 #define DIAG_OUTPUT_FILE_L                      "output-file"
 #define DIAG_EMERGENCY_S                        11202
 #define DIAG_EMERGENCY_L                        "emergency"
+#define DIAG_CLASS_NAME_S                       'n'
+#define DIAG_CLASS_NAME_L                       "class-name"
+#define DIAG_INPUT_FILE_S                       'i'
+#define DIAG_INPUT_FILE_L                       "input-file"
+
+/* cleanfiledb option list */
+#define CLEANFILEDB_SA_MODE_S                   'S'
+#define CLEANFILEDB_SA_MODE_L                   "SA-mode"
+#define CLEANFILEDB_CS_MODE_S                   'C'
+#define CLEANFILEDB_CS_MODE_L                   "CS-mode"
+#define CLEANFILEDB_OUTPUT_FILE_S               'o'
+#define CLEANFILEDB_OUTPUT_FILE_L               "output-file"
+#define CLEANFILEDB_DUMP_FILE_LIST_S            'l'
+#define CLEANFILEDB_DUMP_FILE_LIST_L            "list"
+#define CLEANFILEDB_CLEAN_INVALID_FILE_S        'c'
+#define CLEANFILEDB_CLEAN_INVALID_FILE_L        "clean-invalid-file"
+#if !defined(NDEBUG)
+#define CLEANFILEDB_DELETE_TARGET_FILE_S        'd'
+#define CLEANFILEDB_DELETE_TARGET_FILE_L        "delete-target-file"
+#endif
 
 /* patch option list */
 #define PATCH_RECREATE_LOG_S                    'r'
@@ -1236,6 +1300,8 @@ typedef struct _ha_config
 #define PLANDUMP_DROP_L                         "drop"
 #define PLANDUMP_OUTPUT_FILE_S		        'o'
 #define PLANDUMP_OUTPUT_FILE_L                  "output-file"
+#define PLANDUMP_SHA1_S		        	's'
+#define PLANDUMP_SHA1_L                  	"sha1"
 
 /* tranlist option list */
 #if defined(NEED_PRIVILEGE_PASSWORD)
@@ -1327,6 +1393,8 @@ typedef struct _ha_config
 #define UNLOAD_INCLUDE_REFERENCE_L              "include-reference"
 #define UNLOAD_INPUT_CLASS_ONLY_S               11902
 #define UNLOAD_INPUT_CLASS_ONLY_L               "input-class-only"
+/* "--lo-count" is a deprecated option that has been removed.
+ * Let's delete it through a separate issue.*/
 #define UNLOAD_LO_COUNT_S                       11903
 #define UNLOAD_LO_COUNT_L                       "lo-count"
 #define UNLOAD_ESTIMATED_SIZE_S                 11904
@@ -1365,6 +1433,22 @@ typedef struct _ha_config
 #define UNLOAD_SPLIT_SCHEMA_FILES_L             "split-schema-files"
 #define UNLOAD_AS_DBA_S                         11921
 #define UNLOAD_AS_DBA_L                         "as-dba"
+#define UNLOAD_SKIP_INDEX_DETAIL_S              11922	/* support for SUPPORT_DEDUPLICATE_KEY_MODE */
+#define UNLOAD_SKIP_INDEX_DETAIL_L              "skip-index-detail"	/* support for SUPPORT_DEDUPLICATE_KEY_MODE */
+#define UNLOAD_THREAD_COUNT_S                   't'
+#define UNLOAD_THREAD_COUNT_L                   "thread-count"
+#define UNLOAD_STRING_BUFFER_SIZE_S             11923
+#define UNLOAD_STRING_BUFFER_SIZE_L             "use-string-buffer"
+#define UNLOAD_REQUEST_PAGES_S                  11924
+#define UNLOAD_REQUEST_PAGES_L                  "use-request-pages"
+#define UNLOAD_MT_PROCESS_S                     11925
+#define UNLOAD_MT_PROCESS_L                     "process"
+#define UNLOAD_SAMPLING_TEST_S                  11926
+#define UNLOAD_SAMPLING_TEST_L                  "sampling-test"
+#define UNLOAD_ENHANCED_ESTIMATES_S             11927
+#define UNLOAD_ENHANCED_ESTIMATES_L             "enhanced-estimates"
+
+
 
 /* compactdb option list */
 #define COMPACT_VERBOSE_S                       'v'
@@ -1439,6 +1523,8 @@ typedef struct _ha_config
 #define CSQL_LOADDB_OUTPUT_L			"loaddb-output"
 #define CSQL_SYSADM_REBUILD_CATALOG_S           12020
 #define CSQL_SYSADM_REBUILD_CATALOG_L           "sysadm-rebuild-catalog"
+#define CSQL_NOPRINT_TITLE_S			12021
+#define CSQL_NOPRINT_TITLE_L			"skip-title"
 
 #define COMMDB_SERVER_LIST_S                    'P'
 #define COMMDB_SERVER_LIST_L                    "server-list"
@@ -1486,6 +1572,8 @@ typedef struct _ha_config
 #define COMMDB_HA_ADMIN_INFO_L                  "admin-info"
 #define COMMDB_HA_START_UTIL_PROCESS_S          't'
 #define COMMDB_HA_START_UTIL_PROCESS_L          "start-ha-util-process"
+#define COMMDB_SHUTDOWN_REVIVING_SERVER_S       12116
+#define COMMDB_SHUTDOWN_REVIVING_SERVER_L       "shutdown-reviving-server"
 
 /* paramdump option list */
 #define PARAMDUMP_OUTPUT_FILE_S                 'o'
@@ -1496,6 +1584,14 @@ typedef struct _ha_config
 #define PARAMDUMP_SA_MODE_L                     "SA-mode"
 #define PARAMDUMP_CS_MODE_S                     'C'
 #define PARAMDUMP_CS_MODE_L                     "CS-mode"
+#define PARAMDUMP_HA_ONLY_S			12200
+#define PARAMDUMP_HA_ONLY_L			"ha-only"
+#define PARAMDUMP_EXCLUDE_HA_S			12201
+#define PARAMDUMP_EXCLUDE_HA_L			"exclude-ha"
+#define PARAMDUMP_DUMP_FLAG_S			12202
+#define PARAMDUMP_DUMP_FLAG_L			"dump-flag"
+#define PARAMDUMP_FOR_CM_S			12203
+#define PARAMDUMP_FOR_CM_L			"for-cm"
 
 /* statdump option list */
 #define STATDUMP_OUTPUT_FILE_S                  'o'
@@ -1691,6 +1787,12 @@ typedef struct _ha_config
 #define FLASHBACK_OLDEST_S          14102
 #define FLASHBACK_OLDEST_L          "oldest"
 
+/* memmon option list */
+#define MEMMON_OUTPUT_S             'o'
+#define MEMMON_OUTPUT_L             "output-file"
+#define MEMMON_DISABLE_FORCE_S      14103
+#define MEMMON_DISABLE_FORCE_L      "disable-force"
+
 #if defined(WINDOWS)
 #define LIB_UTIL_CS_NAME                "cubridcs.dll"
 #define LIB_UTIL_SA_NAME                "cubridsa.dll"
@@ -1729,7 +1831,6 @@ extern "C"
   extern INT64 utility_get_option_bigint_value (UTIL_ARG_MAP * arg_map, int arg_ch);
   extern int utility_get_option_string_table_size (UTIL_ARG_MAP * arg_map);
   extern int utility_check_class_name (const char *class_name);
-  extern bool utility_check_system_class_name (const char *class_name);
 
   extern FILE *fopen_ex (const char *filename, const char *type);
 
@@ -1759,8 +1860,7 @@ extern "C"
   extern int changemode_keyword (int *keyval_p, char **keystr_p);
   extern int copylogdb_keyword (int *keyval_p, char **keystr_p);
 
-  extern int utility_keyword_value (UTIL_KEYWORD * keywords, int *keyval_p, char **keystr_p);
-  extern int utility_keyword_search (UTIL_KEYWORD * keywords, int *keyval_p, char **keystr_p);
+  extern int utility_keyword_search (const UTIL_KEYWORD * keywords, int *keyval_p, char **keystr_p);
 
   extern int utility_localtime (const time_t * ts, struct tm *result);
 
@@ -1804,6 +1904,7 @@ extern "C"
   extern int copydb (UTIL_FUNCTION_ARG * arg_map);
   extern int optimizedb (UTIL_FUNCTION_ARG * arg_map);
   extern int diagdb (UTIL_FUNCTION_ARG * arg_map);
+  extern int cleanfiledb (UTIL_FUNCTION_ARG * arg_map);
   extern int patchdb (UTIL_FUNCTION_ARG * arg_map);
   extern int estimatedb_data (UTIL_FUNCTION_ARG * arg_map);
   extern int estimatedb_index (UTIL_FUNCTION_ARG * arg_map);
@@ -1827,6 +1928,7 @@ extern "C"
   extern int checksumdb (UTIL_FUNCTION_ARG * arg_map);
   extern int tde (UTIL_FUNCTION_ARG * arg_map);
   extern int flashback (UTIL_FUNCTION_ARG * arg_map);
+  extern int memmon (UTIL_FUNCTION_ARG * arg_map);
 
   extern void util_admin_usage (const char *argv0);
   extern void util_admin_version (const char *argv0);

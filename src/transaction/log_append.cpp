@@ -28,6 +28,8 @@
 #include "thread_entry.hpp"
 #include "thread_manager.hpp"
 #include "vacuum.h"
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 #if !defined(SERVER_MODE)
 static LOG_ZIP *log_zip_undo = NULL;
@@ -865,7 +867,7 @@ prior_lsa_gen_undoredo_record_from_crumbs (THREAD_ENTRY *thread_p, LOG_PRIOR_NOD
       /* Must also fill MVCCID field */
       mvccid_p = &mvcc_undo_p->mvccid;
 
-    /* Fall through */
+      [[fallthrough]];
     case LOG_UNDO_DATA:
       undo_p = (node->log_header.type == LOG_UNDO_DATA ? (LOG_REC_UNDO *) node->data_header : &mvcc_undo_p->undo);
 
@@ -880,7 +882,7 @@ prior_lsa_gen_undoredo_record_from_crumbs (THREAD_ENTRY *thread_p, LOG_PRIOR_NOD
       /* Must also fill MVCCID field */
       mvccid_p = &mvcc_redo_p->mvccid;
 
-    /* Fall through */
+      [[fallthrough]];
     case LOG_REDO_DATA:
       redo_p = (node->log_header.type == LOG_REDO_DATA ? (LOG_REC_REDO *) node->data_header : &mvcc_redo_p->redo);
 
@@ -899,7 +901,7 @@ prior_lsa_gen_undoredo_record_from_crumbs (THREAD_ENTRY *thread_p, LOG_PRIOR_NOD
       /* Must also fill MVCCID field */
       mvccid_p = &mvcc_undoredo_p->mvccid;
 
-    /* Fall through */
+      [[fallthrough]];
     case LOG_UNDOREDO_DATA:
     case LOG_DIFF_UNDOREDO_DATA:
       undoredo_p = ((node->log_header.type == LOG_UNDOREDO_DATA || node->log_header.type == LOG_DIFF_UNDOREDO_DATA)

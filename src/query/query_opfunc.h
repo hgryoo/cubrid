@@ -19,6 +19,7 @@
 #ifndef _QUERY_OPFUNC_H_
 #define _QUERY_OPFUNC_H_
 
+#include "xasl.h"
 #ident "$Id$"
 
 #if !defined (SERVER_MODE) && !defined (SA_MODE)
@@ -26,6 +27,7 @@
 #endif /* !defined (SERVER_MODE) && !defined (SA_MODE) */
 
 #include "dbtype_def.h"
+#include "db_function.hpp"
 #include "query_list.h"
 #include "storage_common.h"
 #include "string_opfunc.h"
@@ -55,8 +57,7 @@ typedef enum
 extern void qdata_set_value_list_to_null (val_list_node * val_list);
 extern bool qdata_copy_db_value (DB_VALUE * dbval1, const DB_VALUE * dbval2);
 
-extern int qdata_copy_db_value_to_tuple_value (DB_VALUE * dbval, bool clear_compressed_string, char *tvalp,
-					       int *tval_size);
+extern int qdata_copy_db_value_to_tuple_value (DB_VALUE * dbval, char *tvalp, int *tval_size);
 extern int qdata_copy_valptr_list_to_tuple (THREAD_ENTRY * thread_p, valptr_list_node * valptr_list, val_descr * vd,
 					    qfile_tuple_record * tplrec);
 extern QPROC_TPLDESCR_STATUS qdata_generate_tuple_desc_for_valptr_list (THREAD_ENTRY * thread_p,
@@ -81,7 +82,11 @@ extern int qdata_get_valptr_type_list (THREAD_ENTRY * thread_p, valptr_list_node
 				       qfile_tuple_value_type_list * type_list);
 extern int qdata_evaluate_function (THREAD_ENTRY * thread_p, regu_variable_node * func, val_descr * vd, OID * obj_oid,
 				    QFILE_TUPLE tpl);
-
+extern int qdata_get_val_list_type_list (THREAD_ENTRY * thread_p, VAL_LIST * val_list,
+					 qfile_tuple_value_type_list * type_list);
+extern int qdata_copy_val_list_to_tuple (THREAD_ENTRY * thread_p, VAL_LIST * val_list, qfile_tuple_record * tplrec);
+extern int qdata_tuple_to_val_list (THREAD_ENTRY * thread_p, qfile_tuple_value_type_list * type_list,
+				    qfile_tuple_record * tplrec, VAL_LIST * val_list);
 
 #if defined (ENABLE_UNUSED_FUNCTION)
 extern void regu_set_error_with_one_args (int err_type, const char *infor);
@@ -111,14 +116,14 @@ extern int qdata_get_cardinality (THREAD_ENTRY * thread_p, DB_VALUE * db_class_n
 extern int qdata_tuple_to_values_array (THREAD_ENTRY * thread_p, qfile_tuple_descriptor * tuple, DB_VALUE ** values);
 extern int qdata_get_tuple_value_size_from_dbval (DB_VALUE * dbval_p);
 extern int qdata_apply_interpolation_function_coercion (DB_VALUE * f_value, tp_domain ** result_dom, DB_VALUE * result,
-							FUNC_TYPE function);
+							FUNC_CODE function);
 extern int qdata_interpolation_function_values (DB_VALUE * f_value, DB_VALUE * c_value, double row_num_d,
 						double f_row_num_d, double c_row_num_d, tp_domain ** result_dom,
-						DB_VALUE * result, FUNC_TYPE function);
+						DB_VALUE * result, FUNC_CODE function);
 extern int qdata_get_interpolation_function_result (THREAD_ENTRY * thread_p, qfile_list_scan_id * scan_id,
 						    tp_domain * domain, int pos, double row_num_d, double f_row_num_d,
 						    double c_row_num_d, DB_VALUE * result, tp_domain ** result_dom,
-						    FUNC_TYPE function);
+						    FUNC_CODE function);
 extern int qdata_update_interpolation_func_value_and_domain (DB_VALUE * src_val, DB_VALUE * dest_val,
 							     tp_domain ** domain);
 

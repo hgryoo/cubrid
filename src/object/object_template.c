@@ -57,6 +57,7 @@
 #include "trigger_manager.h"
 #include "environment_variable.h"
 #include "transform.h"
+#include "schema_system_catalog_constants.h"
 #include "execute_statement.h"
 #include "network_interface_cl.h"
 
@@ -491,9 +492,8 @@ quick_validate (SM_VALIDATION * valid, DB_VALUE * value)
       break;
 
     case DB_TYPE_CHAR:
-    case DB_TYPE_NCHAR:
+
     case DB_TYPE_VARCHAR:
-    case DB_TYPE_VARNCHAR:
       if (type == valid->last_type && DB_GET_STRING_PRECISION (value) == valid->last_precision)
 	{
 	  is_valid = 1;
@@ -588,9 +588,7 @@ cache_validation (SM_VALIDATION * valid, DB_VALUE * value)
       break;
 
     case DB_TYPE_CHAR:
-    case DB_TYPE_NCHAR:
     case DB_TYPE_VARCHAR:
-    case DB_TYPE_VARNCHAR:
     case DB_TYPE_BIT:
     case DB_TYPE_VARBIT:
       valid->last_type = type;

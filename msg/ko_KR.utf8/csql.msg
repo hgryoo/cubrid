@@ -62,9 +62,9 @@ $set 1 MSGCAT_CSQL_SET_CSQL
 46 %1$d 개의 명령어가 실행되었습니다.
 47 라인 %1$d,
 48 라인 %1$d, 열 %2$d,
-49 도움말 메시지를 보려면 ';help' 명령어를 입력하세요.
+49 도움말 메시지를 보려면 ';help' 명령어를 입력하시고, 종료하려면 ';exit' 명령어를 입력하세요.
 50 에러: 
-51 CUBRID SQL 수행기
+51 \n\tCUBRID SQL 수행기 (버전 %1$s)\n\n
 52 데이터베이스가 변경 되었습니다. 커밋 하겠습니까 ? (`Y' or `N') 
 53 커밋은 'Y', 철회는 'N' 입력. 
 54 커밋 되었습니다.
@@ -114,6 +114,7 @@ $ These 3 should be blank
 196 미정의 에러 발생.
 197 출력이 재지정된 경우에는 ';edit' 명령어를 사용할 수 없습니다.
 198 포맷 실패.
+199 프롬프트에서 멀티바이트 문자 사용 불가: LANG 및 DB 코드 세트 설정을 확인하세요.
 
 203 <%1$s> 
 204 <상위 클래스> 
@@ -151,7 +152,7 @@ $ csql help messages
    ;PRINT                       - 명령어 버퍼 내용을 프린트.\n\
    ;SHELL                       - 쉘 수행.\n\
    ;CD                          - 현재 작업 디렉터리 변경.\n\
-   ;EXit                        - 종료.\n\
+   ;EXit (or Ctrl+d)            - 종료.\n\
 \n\
    ;CLear                       - 명령어 버퍼 내용을 지움.\n\
    ;EDIT   [format/fmt]         - 명령어 버퍼 [포맷 후] 편집.\n\
@@ -177,12 +178,13 @@ $ csql help messages
    ;SChema class-name           - 클래스의 스키마 정보 출력.\n\
    ;TRIgger [`*'|trigger-name]  - 트리거 정의 출력.\n\
    ;Get system_parameter        - 시스템 파라메터 보기.\n\
-   ;SEt system_parameter=value  - 시스템 파라메터 설정.\n\
+   ;SET system_parameter=value  - 시스템 파라메터 설정.\n\
    ;STring-width [width]        - 각 문자열 컬럼 값을 출력할 길이를 설정.\n\
    ;COLumn-width [name]=[width] - 명시한 컬럼 값을 출력할 길이를 설정.\n\
    ;PLan [simple|detail|off]    - 쿼리 플랜 보기 설정.\n\
    ;Info <command>              - 내부 정보 출력.\n\
    ;TIme [ON/OFF]               - 쿼리 수행 시간 보기 설정|해제\n\
+   ;SERver-output [ON/OFF]      - DBMS_OUTPUT 버퍼에 저장된 서버 메시지 출력 활성화|비활성화.\n\
    ;LINe-output [ON/OFF]        - 한 라인 내에 값 표시 설정|해제\n\
    ;HISTORYList                 - 수행된 쿼리 리스트 보기.\n\
    ;HISTORYRead <history_num>   - 히스토리 번호에 해당되는 쿼리를 명령어 버퍼에 올림.\n\
@@ -212,3 +214,4 @@ $ csql help messages
 235 <분할>
 236 클래스 이름이 필요합니다.
 237 <커맨트>
+238 시스템 카탈로그 클래스 컴파일에 실패했습니다.

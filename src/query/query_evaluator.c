@@ -39,9 +39,12 @@
 #include "xasl.h"
 #include "dbtype.h"
 #include "query_executor.h"
+#include "query_opfunc.h"
 #include "dbtype.h"
 #include "thread_entry.hpp"
 #include "xasl_predicate.hpp"
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 #define UNKNOWN_CARD   -2	/* Unknown cardinality of a set member */
 
@@ -550,7 +553,7 @@ eval_some_list_eval (THREAD_ENTRY * thread_p, DB_VALUE * item, QFILE_LIST_ID * l
   QFILE_TUPLE_RECORD tplrec = { NULL, 0 };
   DB_VALUE list_val;
   SCAN_CODE qp_scan;
-  PR_TYPE *pr_type;
+  const PR_TYPE *pr_type;
   OR_BUF buf;
   int length;
   char *ptr;
@@ -695,7 +698,7 @@ eval_item_card_sort_list (THREAD_ENTRY * thread_p, DB_VALUE * item, QFILE_LIST_I
   QFILE_TUPLE_RECORD tplrec = { NULL, 0 };
   DB_VALUE list_val;
   SCAN_CODE qp_scan;
-  PR_TYPE *pr_type;
+  const PR_TYPE *pr_type;
   OR_BUF buf;
   DB_LOGICAL rc;
   int length;
@@ -909,7 +912,7 @@ eval_sub_sort_list_to_multi_set (THREAD_ENTRY * thread_p, QFILE_LIST_ID * list_i
   QFILE_TUPLE_RECORD tplrec, p_tplrec;
   char *p_tplp;
   SCAN_CODE qp_scan;
-  PR_TYPE *pr_type;
+  const PR_TYPE *pr_type;
   OR_BUF buf;
   int length;
   bool list_on;
@@ -1085,7 +1088,7 @@ eval_sub_sort_list_to_sort_list (THREAD_ENTRY * thread_p, QFILE_LIST_ID * list_i
   QFILE_TUPLE_RECORD tplrec, p_tplrec;
   char *p_tplp;
   SCAN_CODE qp_scan;
-  PR_TYPE *pr_type;
+  const PR_TYPE *pr_type;
   OR_BUF buf;
   int length;
   bool list_on;
@@ -1841,11 +1844,46 @@ eval_pred (THREAD_ENTRY * thread_p, const PRED_EXPR * pr, val_descr * vd, OID * 
 	      if (et_comp->lhs->type == TYPE_LIST_ID)
 		{
 		  /* execute linked query */
-		  EXECUTE_REGU_VARIABLE_XASL (thread_p, et_comp->lhs, vd);
-		  if (CHECK_REGU_VARIABLE_XASL_STATUS (et_comp->lhs) != XASL_SUCCESS)
+		  REGU_VARIABLE *regu_var = et_comp->lhs;
+		  XASL_NODE *xasl = regu_var->xasl;
+		  if (xasl && XASL_IS_FLAGED (xasl, XASL_USES_SQ_CACHE)
+		      && !(SQ_CACHE_HT (xasl) && !SQ_CACHE_ENABLED (xasl)))
 		    {
-		      result = V_ERROR;
-		      goto exit;
+		      if (!sq_get (thread_p, SQ_CACHE_KEY_STRUCT (xasl), xasl, regu_var))
+			{
+			  SQ_KEY *key;
+			  /* execute linked query */
+			  EXECUTE_REGU_VARIABLE_XASL (thread_p, regu_var, vd);
+			  if (CHECK_REGU_VARIABLE_XASL_STATUS (regu_var) != XASL_SUCCESS)
+			    {
+			      result = V_ERROR;
+			      goto exit;
+			    }
+			  if ((key = sq_make_key (thread_p, xasl)) == NULL)
+			    {
+			      XASL_CLEAR_FLAG (xasl, XASL_USES_SQ_CACHE);
+			      result = V_ERROR;
+			      goto exit;
+			    }
+			  if (sq_put (thread_p, key, xasl, regu_var) == ER_FAILED)
+			    {
+			      sq_free_key (thread_p, key);
+			    }
+			}
+		      else
+			{
+			  /* FOUND */
+			  xasl->status = XASL_SUCCESS;
+			}
+		    }
+		  else
+		    {
+		      EXECUTE_REGU_VARIABLE_XASL (thread_p, regu_var, vd);
+		      if (CHECK_REGU_VARIABLE_XASL_STATUS (regu_var) != XASL_SUCCESS)
+			{
+			  result = V_ERROR;
+			  goto exit;
+			}
 		    }
 
 		  srlist_id = et_comp->lhs->value.srlist_id;
@@ -2781,7 +2819,8 @@ eval_data_filter (THREAD_ENTRY * thread_p, OID * oid, RECDES * recdesp, HEAP_SCA
  * Note: evaluate key filter(predicates) given as FILTER_INFO
  */
 DB_LOGICAL
-eval_key_filter (THREAD_ENTRY * thread_p, DB_VALUE * value, FILTER_INFO * filterp)
+eval_key_filter (THREAD_ENTRY * thread_p, DB_VALUE * value, int prefix_size, DB_VALUE * prefix_value,
+		 FILTER_INFO * filterp)
 {
   DB_MIDXKEY *midxkey;
   int i, j;
@@ -2824,6 +2863,8 @@ eval_key_filter (THREAD_ENTRY * thread_p, DB_VALUE * value, FILTER_INFO * filter
     {
       if (DB_VALUE_TYPE (value) == DB_TYPE_MIDXKEY)
 	{
+	  int func_idx_col_id = filterp->func_idx_col_id;
+
 	  midxkey = db_get_midxkey (value);
 
 	  if (filterp->btree_num_attrs <= 0 || !filterp->btree_attr_ids || !midxkey)
@@ -2831,20 +2872,55 @@ eval_key_filter (THREAD_ENTRY * thread_p, DB_VALUE * value, FILTER_INFO * filter
 	      return V_ERROR;
 	    }
 
+	  DB_MIDXKEY *prefix_midxkey = NULL;
+	  if (!prefix_value || prefix_size <= 0)
+	    {
+	      prefix_size = -1;
+	    }
+	  else
+	    {
+	      prefix_midxkey = db_get_midxkey (prefix_value);
+	      if (!prefix_midxkey)
+		{
+		  return V_ERROR;
+		}
+	    }
+
 	  prev_j_index = 0;
 	  prev_j_ptr = NULL;
+
+	  if (func_idx_col_id == -1)
+	    {
+	      func_idx_col_id = filterp->btree_num_attrs + 1;
+	    }
+
+	  bool filled_match_idx = (filterp->matched_attid_idx_4_keyflt && filterp->matched_attid_idx_4_keyflt[0] >= 0);
 
 	  /* for all attributes specified in the filter */
 	  for (i = 0; i < scan_attrsp->num_attrs; i++)
 	    {
-	      /* for the attribute ID array of the index key */
-	      for (j = 0; j < filterp->btree_num_attrs; j++)
+	      if (filled_match_idx)
 		{
-		  if (scan_attrsp->attr_ids[i] != filterp->btree_attr_ids[j])
+		  j = filterp->matched_attid_idx_4_keyflt[i];
+		}
+	      else
+		{
+		  /* for the attribute ID array of the index key */
+		  for (j = 0; j < filterp->btree_num_attrs; j++)
 		    {
-		      continue;
+		      if (scan_attrsp->attr_ids[i] == filterp->btree_attr_ids[j])
+			{
+			  if (filterp->matched_attid_idx_4_keyflt)
+			    {
+			      filterp->matched_attid_idx_4_keyflt[i] = j;
+			    }
+			  break;	/* immediately exit inner-loop */
+			}
 		    }
+		}
 
+	      if (j < filterp->btree_num_attrs)
+		{
 		  /* now, found the attr */
 
 		  attrvalue = heap_attrvalue_locate (scan_attrsp->attr_ids[i], scan_attrsp->attr_cache);
@@ -2859,13 +2935,11 @@ eval_key_filter (THREAD_ENTRY * thread_p, DB_VALUE * value, FILTER_INFO * filter
 		      return V_ERROR;
 		    }
 
-		  if (filterp->func_idx_col_id != -1 && j > filterp->func_idx_col_id)
-		    {
-		      j = j + 1;
-		    }
-
 		  /* get j-th element value from the midxkey */
-		  if (pr_midxkey_get_element_nocopy (midxkey, j, valp, &prev_j_index, &prev_j_ptr) != NO_ERROR)
+		  // TODO: Let's find a way to reuse the value of "j" instead of finding it anew every time.         
+		  if (pr_midxkey_get_element_nocopy (((j < prefix_size) ? prefix_midxkey : midxkey),
+						     ((j < func_idx_col_id) ? j : j + 1),
+						     valp, &prev_j_index, &prev_j_ptr) != NO_ERROR)
 		    {
 		      return V_ERROR;
 		    }
@@ -2892,11 +2966,8 @@ eval_key_filter (THREAD_ENTRY * thread_p, DB_VALUE * value, FILTER_INFO * filter
 		    }
 
 		  attrvalue->state = HEAP_WRITTEN_ATTRVALUE;
-
-		  break;	/* immediately exit inner-loop */
 		}
-
-	      if (j >= filterp->btree_num_attrs)
+	      else
 		{
 		  /*
 		   * the attribute exists in key filter scan cache, but it is

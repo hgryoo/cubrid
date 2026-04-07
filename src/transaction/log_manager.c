@@ -58,12 +58,14 @@
 #include "msgcat_set_log.hpp"
 #include "environment_variable.h"
 #if defined(SERVER_MODE)
+#include "catalog_class.h"
 #include "server_support.h"
 #endif /* SERVER_MODE */
 #include "log_append.hpp"
 #include "log_archives.hpp"
 #include "log_compress.h"
 #include "log_record.hpp"
+#include "log_recovery.h"
 #include "log_system_tran.hpp"
 #include "log_volids.hpp"
 #include "log_writer.h"
@@ -77,7 +79,7 @@
 #include "db_date.h"
 #include "fault_injection.h"
 #if defined (SA_MODE)
-#include "connection_support.h"
+#include "connection_support.hpp"
 #endif /* defined (SA_MODE) */
 #include "db_value_printer.hpp"
 #include "mem_block.hpp"
@@ -94,6 +96,8 @@
 #include "dbtype.h"
 #include "cnv.h"
 #include "flashback.h"
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 #if !defined(SERVER_MODE)
 
@@ -319,7 +323,7 @@ static void log_sysop_do_postpone (THREAD_ENTRY * thread_p, LOG_TDES * tdes, LOG
 				   int data_size, const char *data);
 
 static int logtb_tran_update_stats_online_index_rb (THREAD_ENTRY * thread_p, void *data, void *args);
-
+static void log_build_full_path (const char *input_path, char *full_path);
 /*for CDC */
 static int cdc_log_extract (THREAD_ENTRY * thread_p, LOG_LSA * process_lsa, CDC_LOGINFO_ENTRY * log_info_entry);
 static int cdc_get_overflow_recdes (THREAD_ENTRY * thread_p, LOG_PAGE * log_page_p, RECDES * recdes,
@@ -362,8 +366,6 @@ static cubthread::daemon *cdc_Loginfo_producer_daemon = NULL;
 static void log_daemons_init ();
 static void log_daemons_destroy ();
 
-// used by log_Check_ha_delay_info_daemon
-extern int catcls_get_apply_info_log_record_time (THREAD_ENTRY * thread_p, time_t * log_record_time);
 #endif /* SERVER_MODE */
 
 /*
@@ -667,14 +669,14 @@ log_get_final_restored_lsa (void)
 static bool
 log_verify_dbcreation (THREAD_ENTRY * thread_p, VOLID volid, const INT64 * log_dbcreation)
 {
-  INT64 vol_dbcreation;		/* Database creation time in volume */
+  INT64 db_creation;		/* Database creation time in volume */
 
-  if (disk_get_creation_time (thread_p, volid, &vol_dbcreation) != NO_ERROR)
+  if (disk_get_db_creation (thread_p, volid, &db_creation) != NO_ERROR)
     {
       return false;
     }
 
-  if (difftime ((time_t) vol_dbcreation, (time_t) (*log_dbcreation)) == 0)
+  if (difftime ((time_t) db_creation, (time_t) (*log_dbcreation)) == 0)
     {
       return true;
     }
@@ -1018,6 +1020,18 @@ log_set_no_logging (void)
 }
 
 /*
+ * This function is for an external interface
+ * to process statistical information of the B-tree index header.
+ * In a no logging environment, the statistical information of the B-tree index header
+ * should not depend on the updated log. This is a function to check this.
+ */
+bool
+log_is_no_logging (void)
+{
+  return log_No_logging;
+}
+
+/*
  * log_initialize - Initialize the log manager
  *
  * return: nothing
@@ -1179,6 +1193,7 @@ log_initialize_internal (THREAD_ENTRY * thread_p, const char *db_fullname, const
     {
       r_args->db_creation = log_Gl.hdr.db_creation;
       LSA_COPY (&r_args->restart_repl_lsa, &log_Gl.hdr.smallest_lsa_at_last_chkpt);
+      LSA_COPY (&r_args->restart_committed_lsa, &log_Gl.hdr.append_lsa);
     }
 
   LSA_COPY (&log_Gl.chkpt_redo_lsa, &log_Gl.hdr.chkpt_lsa);
@@ -1355,6 +1370,14 @@ log_initialize_internal (THREAD_ENTRY * thread_p, const char *db_fullname, const
        * System was involved in a crash.
        * Execute the recovery process
        */
+
+#if defined(SERVER_MODE)
+      /* The actions of flushing the page buffer and double write buffer are currently designed to operate in a single thread.
+       * As we parallelize the log recovery redo process, this flush operation can also run in multiple threads.
+       * To prevent this, daemons performing the flush should be activated to flush the pages in single thread.
+       * If recovery is not being performed, these daemons will run after completing the log_initialize () */
+      BO_ENABLE_FLUSH_DAEMONS ();
+#endif /* SERVER_MODE */
       log_recovery (thread_p, ismedia_crash, stopat);
     }
   else
@@ -1769,7 +1792,7 @@ log_final (THREAD_ENTRY * thread_p)
   error_code = pgbuf_flush_all (thread_p, NULL_VOLID);
   if (error_code == NO_ERROR)
     {
-      error_code = fileio_synchronize_all (thread_p, false);
+      error_code = fileio_synchronize_all (thread_p);
     }
 
   logpb_decache_archive_info (thread_p);
@@ -3813,7 +3836,7 @@ log_sysop_commit_internal (THREAD_ENTRY * thread_p, LOG_REC_SYSOP_END * log_reco
     }
 
   if ((LSA_ISNULL (&tdes->tail_lsa) || LSA_LE (&tdes->tail_lsa, LOG_TDES_LAST_SYSOP_PARENT_LSA (tdes)))
-      && log_record->type == LOG_SYSOP_END_COMMIT)
+      && (log_record->type == LOG_SYSOP_END_COMMIT || log_No_logging))
     {
       /* No change. */
       assert (LSA_ISNULL (&LOG_TDES_LAST_SYSOP (tdes)->posp_lsa));
@@ -5650,7 +5673,15 @@ log_complete (THREAD_ENTRY * thread_p, LOG_TDES * tdes, LOG_RECTYPE iscommitted,
 	  state = TRAN_UNACTIVE_ABORTED;
 	}
 
-      logtb_clear_tdes (thread_p, tdes);
+      // TODO: FIXME!! feature/plcsql only
+      if (get_newtrid == LOG_NEED_NEWTRID)
+	{
+	  (void) logtb_get_new_tran_id (thread_p, tdes);
+	}
+      else
+	{
+	  logtb_clear_tdes (thread_p, tdes);
+	}
     }
   else
     {
@@ -5739,6 +5770,7 @@ log_complete_for_2pc (THREAD_ENTRY * thread_p, LOG_TDES * tdes, LOG_RECTYPE isco
 
   state = tdes->state;
 
+#ifdef LOG_2PC_ACK_RECV_REQUIRED
   if (tdes->coord != NULL && tdes->coord->ack_received != NULL)
     {
       /*
@@ -5831,8 +5863,8 @@ log_complete_for_2pc (THREAD_ENTRY * thread_p, LOG_TDES * tdes, LOG_RECTYPE isco
 		   * for only one the new or the old one.
 		   */
 
-		  // todo - this is completely unsafe.
-		  memcpy (new_tdes, tdes, sizeof (*tdes));
+		  (*tdes).copy_to (*new_tdes);
+
 		  new_tdes->tran_index = new_tran_index;
 		  new_tdes->isloose_end = true;
 		  /* new_tdes does not inherit topops fields */
@@ -5874,12 +5906,12 @@ log_complete_for_2pc (THREAD_ENTRY * thread_p, LOG_TDES * tdes, LOG_RECTYPE isco
 	      return state;
 	    }
 	}
-
       /*
        * All acknowledgments of participants have been received, declare the
        * the transaction as completed
        */
     }
+#endif
 
   /*
    * DECLARE THE TRANSACTION AS COMPLETED
@@ -6196,24 +6228,27 @@ log_dump_data (THREAD_ENTRY * thread_p, FILE * out_fp, int length, LOG_LSA * log
 static void
 log_dump_header (FILE * out_fp, LOG_HEADER * log_header_p)
 {
-  time_t tmp_time;
-  char time_val[CTIME_MAX];
+  char db_creation_time_val[CTIME_MAX];
+  char vol_creation_time_val[CTIME_MAX];
+
+  (void) ctime_r ((time_t *) & log_header_p->db_creation, db_creation_time_val);
+  (void) ctime_r ((time_t *) & log_header_p->vol_creation, vol_creation_time_val);
 
   fprintf (out_fp, "\n ** DUMP LOG HEADER **\n");
 
-  tmp_time = (time_t) log_header_p->db_creation;
-  (void) ctime_r (&tmp_time, time_val);
   fprintf (out_fp,
-	   "HDR: Magic Symbol = %s at disk location = %lld\n     Creation_time = %s"
+	   "HDR: Magic Symbol = %s at disk location = %lld\n"
+	   "     Db_creation_time = %s"
+	   "     Vol_creation_time = %s"
 	   "     Release = %s, Compatibility_disk_version = %g,\n"
 	   "     Db_pagesize = %d, log_pagesize= %d, Shutdown = %d,\n"
 	   "     Next_trid = %d, Next_mvcc_id = %llu, Num_avg_trans = %d, Num_avg_locks = %d,\n"
 	   "     Num_active_log_pages = %d, First_active_log_page = %lld,\n"
 	   "     Current_append = %lld|%d, Checkpoint = %lld|%d,\n", log_header_p->magic,
-	   (long long) offsetof (LOG_PAGE, area), time_val, log_header_p->db_release, log_header_p->db_compatibility,
-	   log_header_p->db_iopagesize, log_header_p->db_logpagesize, log_header_p->is_shutdown,
-	   log_header_p->next_trid, (long long int) log_header_p->mvcc_next_id, log_header_p->avg_ntrans,
-	   log_header_p->avg_nlocks, log_header_p->npages, (long long) log_header_p->fpageid,
+	   (long long) offsetof (LOG_PAGE, area), db_creation_time_val, vol_creation_time_val, log_header_p->db_release,
+	   log_header_p->db_compatibility, log_header_p->db_iopagesize, log_header_p->db_logpagesize,
+	   log_header_p->is_shutdown, log_header_p->next_trid, (long long int) log_header_p->mvcc_next_id,
+	   log_header_p->avg_ntrans, log_header_p->avg_nlocks, log_header_p->npages, (long long) log_header_p->fpageid,
 	   LSA_AS_ARGS (&log_header_p->append_lsa), LSA_AS_ARGS (&log_header_p->chkpt_lsa));
 
   fprintf (out_fp,
@@ -7167,22 +7202,23 @@ xlog_dump (THREAD_ENTRY * thread_p, FILE * out_fp, int isforward, LOG_PAGEID sta
 	  log_rec = LOG_GET_LOG_RECORD_HEADER (log_pgptr, &log_lsa);
 	  type = log_rec->type;
 
-	  {
-	    /*
-	     * The following is just for debugging next address calculations
-	     */
-	    LOG_LSA next_lsa;
+	  if (type != LOG_END_OF_LOG)
+	    {
+	      /*
+	       * The following is just for debugging next address calculations
+	       */
+	      LOG_LSA next_lsa;
 
-	    LSA_COPY (&next_lsa, &lsa);
-	    if (log_startof_nxrec (thread_p, &next_lsa, false) == NULL
-		|| (!LSA_EQ (&next_lsa, &log_rec->forw_lsa) && !LSA_ISNULL (&log_rec->forw_lsa)))
-	      {
-		fprintf (out_fp, "\n\n>>>>>****\n");
-		fprintf (out_fp, "Guess next address = %lld|%d for LSA = %lld|%d\n",
-			 LSA_AS_ARGS (&next_lsa), LSA_AS_ARGS (&lsa));
-		fprintf (out_fp, "<<<<<****\n");
-	      }
-	  }
+	      LSA_COPY (&next_lsa, &lsa);
+	      if (log_startof_nxrec (thread_p, &next_lsa, false) == NULL
+		  || (!LSA_EQ (&next_lsa, &log_rec->forw_lsa) && !LSA_ISNULL (&log_rec->forw_lsa)))
+		{
+		  fprintf (out_fp, "\n\n>>>>>****\n");
+		  fprintf (out_fp, "Guess next address = %lld|%d for LSA = %lld|%d\n",
+			   LSA_AS_ARGS (&next_lsa), LSA_AS_ARGS (&lsa));
+		  fprintf (out_fp, "<<<<<****\n");
+		}
+	    }
 
 	  /* Find the next log record to dump .. after current one is dumped */
 	  if (isforward != false)
@@ -8810,7 +8846,7 @@ log_recreate (THREAD_ENTRY * thread_p, const char *db_fullname, const char *logp
   LOG_LSA init_nontemp_lsa;
   int ret = NO_ERROR;
 
-  ret = disk_get_creation_time (thread_p, LOG_DBFIRST_VOLID, &db_creation);
+  ret = disk_get_db_creation (thread_p, LOG_DBFIRST_VOLID, &db_creation);
   if (ret != NO_ERROR)
     {
       return ret;
@@ -8892,7 +8928,7 @@ log_recreate (THREAD_ENTRY * thread_p, const char *db_fullname, const char *logp
     }
 
   (void) pgbuf_flush_all (thread_p, NULL_VOLID);
-  (void) fileio_synchronize_all (thread_p, false);
+  (void) fileio_synchronize_all (thread_p);
   (void) log_commit (thread_p, NULL_TRAN_INDEX, false);
 
   return ret;
@@ -9141,7 +9177,7 @@ log_simulate_crash (THREAD_ENTRY * thread_p, int flush_log, int flush_data_pages
   if (flush_data_pages)
     {
       (void) pgbuf_flush_all (thread_p, NULL_VOLID);
-      (void) fileio_synchronize_all (thread_p, false);
+      (void) fileio_synchronize_all (thread_p);
     }
 
   /* Undefine log buffer pool and transaction table */
@@ -9170,7 +9206,7 @@ log_active_log_header_start_scan (THREAD_ENTRY * thread_p, int show_type, DB_VAL
 				  void **ptr)
 {
   int error = NO_ERROR;
-  const char *path;
+  char path[PATH_MAX];
   int fd = -1;
   ACTIVE_LOG_HEADER_SCAN_CTX *ctx = NULL;
 
@@ -9200,7 +9236,8 @@ log_active_log_header_start_scan (THREAD_ENTRY * thread_p, int show_type, DB_VAL
       LOG_PAGE *page_hdr = (LOG_PAGE *) PTR_ALIGN (buf, MAX_ALIGNMENT);
 
       assert (DB_VALUE_TYPE (arg_values[0]) == DB_TYPE_CHAR);
-      path = db_get_string (arg_values[0]);
+
+      log_build_full_path (db_get_string (arg_values[0]), path);
 
       fd = fileio_open (path, O_RDONLY, 0);
       if (fd == -1)
@@ -9226,7 +9263,8 @@ log_active_log_header_start_scan (THREAD_ENTRY * thread_p, int show_type, DB_VAL
       close (fd);
       fd = -1;
 
-      if (memcmp (ctx->header.magic, CUBRID_MAGIC_LOG_ACTIVE, strlen (CUBRID_MAGIC_LOG_ACTIVE)) != 0)
+      if ((memcmp (ctx->header.magic, CUBRID_MAGIC_LOG_ACTIVE, strlen (CUBRID_MAGIC_LOG_ACTIVE)) != 0) ||
+	  (ctx->header.db_creation != log_Gl.hdr.db_creation))
 	{
 	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_IO_MOUNT_FAIL, 1, path);
 	  error = ER_IO_MOUNT_FAIL;
@@ -9269,7 +9307,7 @@ log_active_log_header_next_scan (THREAD_ENTRY * thread_p, int cursor, DB_VALUE *
   int val;
   const char *str;
   char buf[256];
-  DB_DATETIME time_val;
+  DB_DATETIME vol_creation;
   ACTIVE_LOG_HEADER_SCAN_CTX *ctx = (ACTIVE_LOG_HEADER_SCAN_CTX *) ptr;
   LOG_HEADER *header = &ctx->header;
 
@@ -9293,8 +9331,8 @@ log_active_log_header_next_scan (THREAD_ENTRY * thread_p, int cursor, DB_VALUE *
   db_make_int (out_values[idx], val);
   idx++;
 
-  db_localdatetime ((time_t *) (&header->db_creation), &time_val);
-  error = db_make_datetime (out_values[idx], &time_val);
+  db_localdatetime ((time_t *) (&header->vol_creation), &vol_creation);
+  error = db_make_datetime (out_values[idx], &vol_creation);
   idx++;
   if (error != NO_ERROR)
     {
@@ -9528,8 +9566,8 @@ log_archive_log_header_start_scan (THREAD_ENTRY * thread_p, int show_type, DB_VA
 				   void **ptr)
 {
   int error = NO_ERROR;
-  const char *path;
-  int fd;
+  char path[PATH_MAX];
+  int fd = -1;
   char buf[IO_MAX_PAGE_SIZE + MAX_ALIGNMENT];
   LOG_PAGE *page_hdr;
   ARCHIVE_LOG_HEADER_SCAN_CTX *ctx = NULL;
@@ -9546,7 +9584,7 @@ log_archive_log_header_start_scan (THREAD_ENTRY * thread_p, int show_type, DB_VA
       goto exit_on_error;
     }
 
-  path = db_get_string (arg_values[0]);
+  log_build_full_path (db_get_string (arg_values[0]), path);
 
   page_hdr = (LOG_PAGE *) PTR_ALIGN (buf, MAX_ALIGNMENT);
 
@@ -9571,7 +9609,8 @@ log_archive_log_header_start_scan (THREAD_ENTRY * thread_p, int show_type, DB_VA
 
   ctx->header.magic[sizeof (ctx->header.magic) - 1] = 0;
 
-  if (memcmp (ctx->header.magic, CUBRID_MAGIC_LOG_ARCHIVE, strlen (CUBRID_MAGIC_LOG_ARCHIVE)) != 0)
+  if ((memcmp (ctx->header.magic, CUBRID_MAGIC_LOG_ARCHIVE, strlen (CUBRID_MAGIC_LOG_ARCHIVE)) != 0) ||
+      (ctx->header.db_creation != log_Gl.hdr.db_creation))
     {
       er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_IO_MOUNT_FAIL, 1, path);
       error = ER_IO_MOUNT_FAIL;
@@ -9582,6 +9621,11 @@ log_archive_log_header_start_scan (THREAD_ENTRY * thread_p, int show_type, DB_VA
   ctx = NULL;
 
 exit_on_error:
+  if (fd != -1)
+    {
+      close (fd);
+    }
+
   if (ctx != NULL)
     {
       db_private_free_and_init (thread_p, ctx);
@@ -9606,7 +9650,7 @@ log_archive_log_header_next_scan (THREAD_ENTRY * thread_p, int cursor, DB_VALUE 
   int error = NO_ERROR;
   int idx = 0;
   int val;
-  DB_DATETIME time_val;
+  DB_DATETIME vol_creation;
 
   ARCHIVE_LOG_HEADER_SCAN_CTX *ctx = (ARCHIVE_LOG_HEADER_SCAN_CTX *) ptr;
   LOG_ARV_HEADER *header = &ctx->header;
@@ -9631,8 +9675,8 @@ log_archive_log_header_next_scan (THREAD_ENTRY * thread_p, int cursor, DB_VALUE 
   db_make_int (out_values[idx], val);
   idx++;
 
-  db_localdatetime ((time_t *) (&header->db_creation), &time_val);
-  error = db_make_datetime (out_values[idx], &time_val);
+  db_localdatetime ((time_t *) (&header->vol_creation), &vol_creation);
+  error = db_make_datetime (out_values[idx], &vol_creation);
   idx++;
   if (error != NO_ERROR)
     {
@@ -10354,6 +10398,8 @@ log_flush_execute (cubthread::entry & thread_ref)
 /*
  * log_checkpoint_daemon_init () - initialize checkpoint daemon
  */
+REGISTER_DAEMON (log_checkpoint);
+
 void
 log_checkpoint_daemon_init ()
 {
@@ -10363,7 +10409,7 @@ log_checkpoint_daemon_init ()
   cubthread::entry_callable_task *daemon_task = new cubthread::entry_callable_task (log_checkpoint_execute);
 
   // create checkpoint daemon thread
-  log_Checkpoint_daemon = cubthread::get_manager ()->create_daemon (looper, daemon_task, "log_checkpoint");
+  log_Checkpoint_daemon = cubthread::get_manager ()->create_daemon (looper, daemon_task, "log-checkpoint");
 }
 #endif /* SERVER_MODE */
 
@@ -10371,6 +10417,8 @@ log_checkpoint_daemon_init ()
 /*
  * log_remove_log_archive_daemon_init () - initialize remove log archive daemon
  */
+REGISTER_DAEMON (log_remove_log_archive);
+
 void
 log_remove_log_archive_daemon_init ()
 {
@@ -10386,8 +10434,7 @@ log_remove_log_archive_daemon_init ()
   cubthread::looper looper = cubthread::looper (setup_period_function);
 
   // create log archive remover daemon thread
-  log_Remove_log_archive_daemon = cubthread::get_manager ()->create_daemon (looper, daemon_task,
-                                                                            "log_remove_log_archive");
+  log_Remove_log_archive_daemon = cubthread::get_manager ()->create_daemon (looper, daemon_task, "log-rm-archive");
 }
 #endif /* SERVER_MODE */
 
@@ -10395,6 +10442,8 @@ log_remove_log_archive_daemon_init ()
 /*
  * log_clock_daemon_init () - initialize log clock daemon
  */
+REGISTER_DAEMON (log_clock);
+
 void
 log_clock_daemon_init ()
 {
@@ -10402,8 +10451,7 @@ log_clock_daemon_init ()
 
   cubthread::looper looper = cubthread::looper (std::chrono::milliseconds (200));
   log_Clock_daemon =
-    cubthread::get_manager ()->create_daemon (looper, new cubthread::entry_callable_task (log_clock_execute),
-                                              "log_clock");
+    cubthread::get_manager ()->create_daemon (looper, new cubthread::entry_callable_task (log_clock_execute), "log-clock");
 }
 #endif /* SERVER_MODE */
 
@@ -10411,6 +10459,8 @@ log_clock_daemon_init ()
 /*
  * log_check_ha_delay_info_daemon_init () - initialize check ha delay info daemon
  */
+REGISTER_DAEMON (ha_delay_check);
+
 void
 log_check_ha_delay_info_daemon_init ()
 {
@@ -10426,8 +10476,7 @@ log_check_ha_delay_info_daemon_init ()
   cubthread::looper looper = cubthread::looper (std::chrono::seconds (1));
   cubthread::entry_callable_task *daemon_task = new cubthread::entry_callable_task (log_check_ha_delay_info_execute);
 
-  log_Check_ha_delay_info_daemon = cubthread::get_manager ()->create_daemon (looper, daemon_task,
-                                                                             "log_check_ha_delay_info");
+  log_Check_ha_delay_info_daemon = cubthread::get_manager ()->create_daemon (looper, daemon_task, "ha-delay-check");
 }
 #endif /* SERVER_MODE */
 
@@ -10435,6 +10484,8 @@ log_check_ha_delay_info_daemon_init ()
 /*
  * log_flush_daemon_init () - initialize log flush daemon
  */
+REGISTER_DAEMON (log_flush);
+
 void
 log_flush_daemon_init ()
 {
@@ -10443,7 +10494,7 @@ log_flush_daemon_init ()
   cubthread::looper looper = cubthread::looper (log_get_log_group_commit_interval);
   cubthread::entry_callable_task *daemon_task = new cubthread::entry_callable_task (log_flush_execute);
 
-  log_Flush_daemon = cubthread::get_manager ()->create_daemon (looper, daemon_task, "log_flush");
+  log_Flush_daemon = cubthread::get_manager ()->create_daemon (looper, daemon_task, "log-flush");
 }
 #endif /* SERVER_MODE */
 
@@ -10579,6 +10630,25 @@ logtb_tran_update_stats_online_index_rb (THREAD_ENTRY * thread_p, void *data, vo
 					       false);
 
   return error_code;
+}
+
+/*
+ * log_build_full_path() - Build a full path by combining the base path and input path
+ *   return: void
+ *   input_path(in): Input path (relative or absolute)
+ *   full_path(out): Output buffer for the full path
+ */
+static void
+log_build_full_path (const char *input_path, char *full_path)
+{
+  if (IS_ABS_PATH (input_path))
+    {
+      snprintf (full_path, PATH_MAX, "%s", input_path);
+    }
+  else
+    {
+      snprintf (full_path, PATH_MAX, "%s%s%s", log_Path, FILEIO_PATH_SEPARATOR (log_Path), input_path);
+    }
 }
 
 static int
@@ -11047,10 +11117,14 @@ cdc_loginfo_producer_execute (cubthread::entry & thread_ref)
 
       nxio_lsa = log_Gl.append.get_nxio_lsa ();
 
-      if (LSA_GE (&cdc_Gl.producer.next_extraction_lsa, &nxio_lsa))
+      pthread_mutex_lock (&cdc_Gl.producer.lock);
+
+      if (LSA_ISNULL (&cdc_Gl.producer.next_extraction_lsa) || LSA_GE (&cdc_Gl.producer.next_extraction_lsa, &nxio_lsa))
 	{
 	  /* LOG_HA_DUMMY_SERVER_STATUS is appended every 1 seconds and flushed.
 	   * So it is expected to be woken up by looper within period of looper */
+
+	  pthread_mutex_unlock (&cdc_Gl.producer.lock);
 
 	  cdc_log
 	    ("cdc_loginfo_producer_execute : next_extraction_lsa (%lld | %d)  is greater or equal than nxio_lsa (%lld | %d)",
@@ -11065,8 +11139,19 @@ cdc_loginfo_producer_execute (cubthread::entry & thread_ref)
       LSA_SET_NULL (&log_info_entry.next_lsa);
       log_info_entry.log_info = NULL;
 
-      LSA_COPY (&cur_log_rec_lsa, &cdc_Gl.producer.next_extraction_lsa);
-      LSA_COPY (&process_lsa, &cur_log_rec_lsa);
+      if (LSA_ISNULL (&process_lsa))
+	{
+	  LSA_COPY (&process_lsa, &cdc_Gl.producer.next_extraction_lsa);
+	}
+      else
+	{
+	  LSA_COPY (&cdc_Gl.producer.next_extraction_lsa, &process_lsa);
+	}
+
+      assert (!LSA_ISNULL (&process_lsa));
+      LSA_COPY (&cur_log_rec_lsa, &process_lsa);
+
+      pthread_mutex_unlock (&cdc_Gl.producer.lock);
 
       error = cdc_log_extract (thread_p, &process_lsa, &log_info_entry);
       if (!(error == NO_ERROR || error == ER_CDC_LOGINFO_ENTRY_GENERATED))
@@ -11122,8 +11207,6 @@ cdc_loginfo_producer_execute (cubthread::entry & thread_ref)
 	  cdc_log ("cdc_loginfo_producer_execute : log info is produced on LOG_LSA (%lld | %d)",
 		   LSA_AS_ARGS (&process_lsa));
 	}
-
-      LSA_COPY (&cdc_Gl.producer.next_extraction_lsa, &process_lsa);
     }
 
   cdc_Gl.producer.state = CDC_PRODUCER_STATE_DEAD;
@@ -11217,7 +11300,7 @@ cdc_get_undo_record (THREAD_ENTRY * thread_p, LOG_PAGE * log_page_p, LOG_LSA lsa
  * preserved  (in/out)        : preserve existing log page if needed
  */
 static int
-cdc_log_read_advance_and_preserve_if_needed (THREAD_ENTRY * thread_p, size_t size, LOG_LSA * lsa, LOG_PAGE * log_page_p,
+cdc_log_read_advance_and_preserve_if_needed (THREAD_ENTRY * thread_p, int size, LOG_LSA * lsa, LOG_PAGE * log_page_p,
 					     LOG_PAGE * preserved)
 {
   if (lsa->offset + size >= (int) LOGAREA_SIZE)
@@ -12100,7 +12183,7 @@ cdc_get_ovfdata_from_log (THREAD_ENTRY * thread_p, LOG_PAGE * log_page_p,
 {
   LOG_REC_REDO *redo = NULL;
   LOG_REC_UNDO *undo = NULL;
-  int length;
+  int length = -2;
   char *data = NULL;
 
   LOG_ZIP *zip_ptr = NULL;
@@ -12642,12 +12725,6 @@ cdc_get_attribute_size (DB_VALUE * value)
     case DB_TYPE_VARCHAR:
       size = db_get_string_size (value);
       break;
-    case DB_TYPE_NCHAR:
-    case DB_TYPE_VARNCHAR:
-      /* size of string "N''" is 4
-       * e.g. N'string' */
-      size = db_get_string_size (value) + 3;
-      break;
     case DB_TYPE_TIME:
       /* precision in data types related to DATE/TIME means the size the string converted from the date/time data */
       size = DB_TIME_PRECISION;
@@ -12742,7 +12819,7 @@ cdc_make_dml_loginfo (THREAD_ENTRY * thread_p, int trid, char *user, CDC_DML_TYP
   /*this is for constructing dml data item */
   int has_pk = 0;
   int *pk_attr_index = NULL;	/*not attr_id, def_order array */
-  int num_pk_attr;
+  int num_pk_attr = 0;
 
   CDC_DATAITEM_TYPE dataitem_type = CDC_DML;
   char *ptr, *start_ptr;
@@ -13549,6 +13626,8 @@ cdc_put_value_to_loginfo (db_value * new_value, char **data_ptr)
   char line[1025] = "\0";
   int line_length = 0;
   int func_type = 0;
+  int error_status = NO_ERROR;
+  int flag = 0;
 
   /*DATE, TIME */
   DB_VALUE format;
@@ -13564,7 +13643,9 @@ cdc_put_value_to_loginfo (db_value * new_value, char **data_ptr)
   const char *timestamp_frmt = "YYYY-MM-DD HH24:MI:SS";
   const char *timestamptz_frmt = "YYYY-MM-DD HH24:MI:SS TZH:TZM";
   const char *timestampltz_frmt = "YYYY-MM-DD HH24:MI:SS TZR";
-  db_make_int (&lang_str, 1);
+
+  lang_set_flag_from_lang (NULL, false, false, &flag);
+  db_make_int (&lang_str, flag);
   db_make_null (&result);
 
   char *ptr = *data_ptr;
@@ -13676,47 +13757,16 @@ cdc_put_value_to_loginfo (db_value * new_value, char **data_ptr)
       ptr = or_pack_int (ptr, func_type);
       ptr = or_pack_string (ptr, db_get_string (new_value));
       break;
-    case DB_TYPE_NCHAR:
-    case DB_TYPE_VARNCHAR:
-      {
-	int size = 0;
-	int length = 0;
-	char *result = NULL;
-	const char *temp_string = NULL;
-
-	temp_string = db_get_nchar (new_value, &length);
-	size = db_get_string_size (new_value);
-
-	if (temp_string != NULL)
-	  {
-	    result = (char *) malloc (size + 4);
-	    if (result == NULL)
-	      {
-		er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, size + 4);
-		return ER_OUT_OF_VIRTUAL_MEMORY;
-	      }
-
-	    snprintf (result, size + 3, "N'%s", temp_string);
-	    result[size + 2] = '\'';
-	    result[size + 3] = '\0';
-	  }
-
-	func_type = 7;
-	ptr = or_pack_int (ptr, func_type);
-	ptr = or_pack_string (ptr, result);
-
-	if (result != NULL)
-	  {
-	    free_and_init (result);
-	  }
-
-	break;
-      }
 #define TOO_BIG_TO_MATTER       1024
     case DB_TYPE_TIME:
       db_make_char (&format, strlen (time_format), time_format,
 		    strlen (time_format), format_codeset, LANG_GET_BINARY_COLLATION (format_codeset));
-      db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+
+      error_status = db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+      if (error_status != NO_ERROR)
+	{
+	  return error_status;
+	}
 
       line_length = db_get_string_length (&result);
       strncpy (line, db_get_string (&result), line_length);
@@ -13731,7 +13781,12 @@ cdc_put_value_to_loginfo (db_value * new_value, char **data_ptr)
     case DB_TYPE_TIMESTAMP:
       db_make_char (&format, strlen (timestamp_frmt), timestamp_frmt,
 		    strlen (timestamp_frmt), format_codeset, LANG_GET_BINARY_COLLATION (format_codeset));
-      db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+
+      error_status = db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+      if (error_status != NO_ERROR)
+	{
+	  return error_status;
+	}
 
       line_length = db_get_string_length (&result);
       strncpy (line, db_get_string (&result), line_length);
@@ -13746,7 +13801,12 @@ cdc_put_value_to_loginfo (db_value * new_value, char **data_ptr)
     case DB_TYPE_DATETIME:
       db_make_char (&format, strlen (datetime_frmt), datetime_frmt,
 		    strlen (datetime_frmt), format_codeset, LANG_GET_BINARY_COLLATION (format_codeset));
-      db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+
+      error_status = db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+      if (error_status != NO_ERROR)
+	{
+	  return error_status;
+	}
 
       line_length = db_get_string_length (&result);
       strncpy (line, db_get_string (&result), line_length);
@@ -13761,7 +13821,12 @@ cdc_put_value_to_loginfo (db_value * new_value, char **data_ptr)
     case DB_TYPE_TIMESTAMPTZ:
       db_make_char (&format, strlen (timestamptz_frmt), timestamptz_frmt,
 		    strlen (timestamptz_frmt), format_codeset, LANG_GET_BINARY_COLLATION (format_codeset));
-      db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+
+      error_status = db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+      if (error_status != NO_ERROR)
+	{
+	  return error_status;
+	}
 
       line_length = db_get_string_length (&result);
       strncpy (line, db_get_string (&result), line_length);
@@ -13776,7 +13841,13 @@ cdc_put_value_to_loginfo (db_value * new_value, char **data_ptr)
     case DB_TYPE_DATETIMETZ:
       db_make_char (&format, strlen (datetimetz_frmt), datetimetz_frmt,
 		    strlen (datetimetz_frmt), format_codeset, LANG_GET_BINARY_COLLATION (format_codeset));
-      db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+
+      error_status = db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+      if (error_status != NO_ERROR)
+	{
+	  return error_status;
+	}
+
       line_length = db_get_string_length (&result);
       strncpy (line, db_get_string (&result), line_length);
 
@@ -13792,7 +13863,11 @@ cdc_put_value_to_loginfo (db_value * new_value, char **data_ptr)
       db_make_char (&format, strlen (timestampltz_frmt), timestampltz_frmt,
 		    strlen (timestampltz_frmt), format_codeset, LANG_GET_BINARY_COLLATION (format_codeset));
 
-      db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+      error_status = db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+      if (error_status != NO_ERROR)
+	{
+	  return error_status;
+	}
 
       line_length = db_get_string_length (&result);
       strncpy (line, db_get_string (&result), line_length);
@@ -13808,7 +13883,12 @@ cdc_put_value_to_loginfo (db_value * new_value, char **data_ptr)
       db_make_char (&format, strlen (datetimeltz_frmt), datetimeltz_frmt,
 		    strlen (datetimeltz_frmt), format_codeset, LANG_GET_BINARY_COLLATION (format_codeset));
 
-      db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+      error_status = db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+      if (error_status != NO_ERROR)
+	{
+	  return error_status;
+	}
+
       line_length = db_get_string_length (&result);
       strncpy (line, db_get_string (&result), line_length);
 
@@ -13820,10 +13900,14 @@ cdc_put_value_to_loginfo (db_value * new_value, char **data_ptr)
 
       break;
     case DB_TYPE_DATE:
-
       db_make_char (&format, strlen (date_format), date_format,
 		    strlen (date_format), format_codeset, LANG_GET_BINARY_COLLATION (format_codeset));
-      db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+
+      error_status = db_to_char (new_value, &format, &lang_str, &result, &tp_Char_domain);
+      if (error_status != NO_ERROR)
+	{
+	  return error_status;
+	}
 
       line_length = db_get_string_length (&result);
       strncpy (line, db_get_string (&result), line_length);
@@ -13937,6 +14021,8 @@ cdc_min_log_pageid_to_keep ()
 }
 
 #if defined (SERVER_MODE)
+REGISTER_DAEMON (cdc_loginfo_producer);
+
 void
 cdc_loginfo_producer_daemon_init ()
 {
@@ -13954,7 +14040,7 @@ cdc_loginfo_producer_daemon_init ()
   cubthread::looper looper = cubthread::looper (std::chrono::milliseconds (10)); /* 주석 처리  */
   cubthread::entry_callable_task *daemon_task = new cubthread::entry_callable_task (cdc_loginfo_producer_execute);
 
-  cdc_Loginfo_producer_daemon = cubthread::get_manager ()->create_daemon (looper, daemon_task, "cdc_loginfo_producer"); 
+  cdc_Loginfo_producer_daemon = cubthread::get_manager ()->create_daemon (looper, daemon_task, "cdc-loginfo-producer"); 
   /* *INDENT-ON* */
 }
 
@@ -14375,7 +14461,10 @@ cdc_validate_lsa (THREAD_ENTRY * thread_p, LOG_LSA * lsa)
 int
 cdc_set_extraction_lsa (LOG_LSA * lsa)
 {
+  pthread_mutex_lock (&cdc_Gl.producer.lock);
   LSA_COPY (&cdc_Gl.producer.next_extraction_lsa, lsa);
+  pthread_mutex_unlock (&cdc_Gl.producer.lock);
+
   LSA_COPY (&cdc_Gl.consumer.next_lsa, lsa);
 
   cdc_log ("cdc_set_extraction_lsa : set LOG_LSA (%lld | %d) to produce ", LSA_AS_ARGS (lsa));
@@ -14387,7 +14476,7 @@ void
 cdc_reinitialize_queue (LOG_LSA * start_lsa)
 {
   assert (cdc_Gl.loginfo_queue != NULL);
-  CDC_LOGINFO_ENTRY *consume;
+  CDC_LOGINFO_ENTRY *consume = NULL;
 
   if (cdc_Gl.producer.produced_queue_size == 0)
     {
@@ -14408,6 +14497,7 @@ cdc_reinitialize_queue (LOG_LSA * start_lsa)
       while (LSA_LT (&next_consume_lsa, start_lsa))
 	{
 	  cdc_Gl.loginfo_queue->consume (consume);
+	  // TODO: please check consume is NULL
 	  cdc_Gl.consumer.consumed_queue_size += consume->length;
 	  LSA_COPY (&next_consume_lsa, &consume->next_lsa);
 
@@ -14427,7 +14517,7 @@ cdc_reinitialize_queue (LOG_LSA * start_lsa)
       while (!cdc_Gl.loginfo_queue->is_empty ())
 	{
 	  cdc_Gl.loginfo_queue->consume (consume);
-
+	  // TODO: please check consume is NULL
 	  if (consume->log_info != NULL)
 	    {
 	      free_and_init (consume->log_info);
@@ -14471,8 +14561,10 @@ cdc_get_start_point_from_file (THREAD_ENTRY * thread_p, int arv_num, LOG_LSA * r
 
   LOG_LSA process_lsa = LSA_INITIALIZER;
   LOG_LSA forw_lsa = LSA_INITIALIZER;
+  LOG_LSA cur_log_lsa = LSA_INITIALIZER;
 
   LOG_RECORD_HEADER *log_rec_header;
+  LOG_RECTYPE log_type;
   LOG_REC_DONETIME *donetime;
   LOG_REC_HA_SERVER_STATE *dummy;
 
@@ -14567,31 +14659,33 @@ cdc_get_start_point_from_file (THREAD_ENTRY * thread_p, int arv_num, LOG_LSA * r
 
   while (!LSA_ISNULL (&process_lsa))
     {
+      LSA_COPY (&cur_log_lsa, &process_lsa);	// save the current log record lsa
+
       log_rec_header = LOG_GET_LOG_RECORD_HEADER (log_pgptr, &process_lsa);
       LSA_COPY (&forw_lsa, &log_rec_header->forw_lsa);
+      log_type = log_rec_header->type;
 
       LOG_READ_ADD_ALIGN (thread_p, sizeof (*log_rec_header), &process_lsa, log_pgptr);
 
-      if (log_rec_header->type == LOG_COMMIT || log_rec_header->type == LOG_ABORT)
+      if (log_type == LOG_COMMIT || log_type == LOG_ABORT)
 	{
 	  LOG_READ_ADVANCE_WHEN_DOESNT_FIT (thread_p, sizeof (*donetime), &process_lsa, log_pgptr);
 	  donetime = (LOG_REC_DONETIME *) (log_pgptr->area + process_lsa.offset);
 
-	  LOG_READ_ADD_ALIGN (thread_p, sizeof (*donetime), &process_lsa, log_pgptr);
-	  LSA_COPY (ret_lsa, &process_lsa);
-
+	  LSA_COPY (ret_lsa, &cur_log_lsa);
 	  *time = donetime->at_time;
+
 	  return NO_ERROR;
 	}
 
-      if (log_rec_header->type == LOG_DUMMY_HA_SERVER_STATE)
+      if (log_type == LOG_DUMMY_HA_SERVER_STATE)
 	{
 	  LOG_READ_ADVANCE_WHEN_DOESNT_FIT (thread_p, sizeof (*dummy), &process_lsa, log_pgptr);
 	  dummy = (LOG_REC_HA_SERVER_STATE *) (log_pgptr->area + process_lsa.offset);
 
-	  LOG_READ_ADD_ALIGN (thread_p, sizeof (*dummy), &process_lsa, log_pgptr);
-	  LSA_COPY (ret_lsa, &process_lsa);
+	  LSA_COPY (ret_lsa, &cur_log_lsa);
 	  *time = dummy->at_time;
+
 	  return NO_ERROR;
 	}
 
@@ -14610,6 +14704,7 @@ cdc_get_start_point_from_file (THREAD_ENTRY * thread_p, int arv_num, LOG_LSA * r
 	      return error_code;
 	    }
 	}
+
       LSA_COPY (&process_lsa, &forw_lsa);
     }
 
@@ -14630,10 +14725,11 @@ cdc_get_lsa_with_start_point (THREAD_ENTRY * thread_p, time_t * time, LOG_LSA * 
   LOG_LSA process_lsa;
   LOG_LSA current_lsa;
 
-  LOG_RECORD_HEADER *log_rec_header;
   LOG_PAGE *log_page_p = NULL;
   char *log_pgbuf[IO_MAX_PAGE_SIZE + MAX_ALIGNMENT];
 
+  LOG_RECORD_HEADER *log_rec_header;
+  LOG_RECTYPE log_type;
   LOG_REC_DONETIME *donetime;
   LOG_REC_HA_SERVER_STATE *dummy;
   time_t at_time;
@@ -14643,15 +14739,12 @@ cdc_get_lsa_with_start_point (THREAD_ENTRY * thread_p, time_t * time, LOG_LSA * 
   log_page_p = (LOG_PAGE *) PTR_ALIGN (log_pgbuf, MAX_ALIGNMENT);
   log_page_p->hdr.logical_pageid = NULL_PAGEID;
   log_page_p->hdr.offset = NULL_OFFSET;
-  bool is_active = false;
 
   char ctime_buf[CTIME_MAX];
   int error = NO_ERROR;
 
-  if (LSA_ISNULL (start_lsa))
-    {
-      is_active = true;
-    }
+  assert (!LSA_ISNULL (start_lsa));
+  cdc_log ("%s : start point LSA = %3lld|%3d", __func__, LSA_AS_ARGS (start_lsa));
 
   LSA_COPY (&process_lsa, start_lsa);
 
@@ -14667,10 +14760,11 @@ cdc_get_lsa_with_start_point (THREAD_ENTRY * thread_p, time_t * time, LOG_LSA * 
 
       LSA_COPY (&current_lsa, &process_lsa);
       LSA_COPY (&forw_lsa, &log_rec_header->forw_lsa);
+      log_type = log_rec_header->type;
 
       LOG_READ_ADD_ALIGN (thread_p, sizeof (*log_rec_header), &process_lsa, log_page_p);
 
-      if (log_rec_header->type == LOG_COMMIT || log_rec_header->type == LOG_ABORT)
+      if (log_type == LOG_COMMIT || log_type == LOG_ABORT)
 	{
 	  LOG_READ_ADVANCE_WHEN_DOESNT_FIT (thread_p, sizeof (*donetime), &process_lsa, log_page_p);
 	  donetime = (LOG_REC_DONETIME *) (log_page_p->area + process_lsa.offset);
@@ -14682,11 +14776,9 @@ cdc_get_lsa_with_start_point (THREAD_ENTRY * thread_p, time_t * time, LOG_LSA * 
 
 	      return NO_ERROR;
 	    }
-
-	  LOG_READ_ADD_ALIGN (thread_p, sizeof (*donetime), &process_lsa, log_page_p);
 	}
 
-      if (log_rec_header->type == LOG_DUMMY_HA_SERVER_STATE)
+      if (log_type == LOG_DUMMY_HA_SERVER_STATE)
 	{
 	  LOG_READ_ADVANCE_WHEN_DOESNT_FIT (thread_p, sizeof (*dummy), &process_lsa, log_page_p);
 	  dummy = (LOG_REC_HA_SERVER_STATE *) (log_page_p->area + process_lsa.offset);
@@ -14699,8 +14791,6 @@ cdc_get_lsa_with_start_point (THREAD_ENTRY * thread_p, time_t * time, LOG_LSA * 
 
 	      return NO_ERROR;
 	    }
-
-	  LOG_READ_ADD_ALIGN (thread_p, sizeof (*dummy), &process_lsa, log_page_p);
 	}
 
       if (process_lsa.pageid != forw_lsa.pageid)
@@ -14941,7 +15031,7 @@ cdc_cleanup ()
 
   while (!cdc_Gl.loginfo_queue->is_empty ())
     {
-      CDC_LOGINFO_ENTRY *tmp;
+      CDC_LOGINFO_ENTRY *tmp = NULL;
       cdc_Gl.loginfo_queue->consume (tmp);
 
       if (tmp->log_info != NULL)
@@ -14961,7 +15051,9 @@ cdc_cleanup ()
   LSA_SET_NULL (&cdc_Gl.first_loginfo_queue_lsa);
   LSA_SET_NULL (&cdc_Gl.last_loginfo_queue_lsa);
 
+  pthread_mutex_lock (&cdc_Gl.producer.lock);
   LSA_SET_NULL (&cdc_Gl.producer.next_extraction_lsa);
+  pthread_mutex_unlock (&cdc_Gl.producer.lock);
 
   /*communication buffer from server to client initialization */
   cdc_cleanup_consumer ();
@@ -15011,16 +15103,15 @@ cdc_finalize ()
     {
       while (!cdc_Gl.loginfo_queue->is_empty ())
 	{
-	  CDC_LOGINFO_ENTRY *tmp;
+	  CDC_LOGINFO_ENTRY *tmp = NULL;
 	  cdc_Gl.loginfo_queue->consume (tmp);
-
-	  if (tmp->log_info != NULL)
-	    {
-	      free_and_init (tmp->log_info);
-	    }
 
 	  if (tmp != NULL)
 	    {
+	      if (tmp->log_info != NULL)
+		{
+		  free_and_init (tmp->log_info);
+		}
 	      free_and_init (tmp);
 	    }
 	}
@@ -15034,7 +15125,10 @@ cdc_finalize ()
   cdc_Gl.consumer.consumed_queue_size = 0;
   cdc_Gl.producer.produced_queue_size = 0;
 
+  pthread_mutex_lock (&cdc_Gl.producer.lock);
   LSA_SET_NULL (&cdc_Gl.producer.next_extraction_lsa);
+  pthread_mutex_unlock (&cdc_Gl.producer.lock);
+
   LSA_SET_NULL (&cdc_Gl.last_loginfo_queue_lsa);
   LSA_SET_NULL (&cdc_Gl.first_loginfo_queue_lsa);
 

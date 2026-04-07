@@ -33,6 +33,8 @@
 #include "language_support.h"
 #include "string_opfunc.h"
 #include "unicode_support.h"
+#include "string_buffer.hpp"
+#include "db_value_printer.hpp"
 
 #include "dbtype.h"
 
@@ -49,7 +51,7 @@
 #define FORMERBYTE(x)   ((UX_CHAR)(((unsigned)(x) & 0xff00) >> 8))
 #define LATTERBYTE(x)   ((UX_CHAR)((x) & 0xff))
 
-#define COMMAS_OFFSET(COND, N)   (COND == TRUE ? (N / 3) : 0)
+#define COMMAS_OFFSET(COND, N)   ((COND) == TRUE ? ((N) / 3) : 0)
 
 #define TIME_STRING_MAX         20
 
@@ -84,6 +86,7 @@ struct db_type_double_profile
 /* double conversion 'format' macros */
 #define DOUBLE_FORMAT_SCIENTIFIC   'e'
 #define DOUBLE_FORMAT_DECIMAL      'f'
+#define DOUBLE_FORMAT_GENERAL      'g'
 
 static DB_TYPE_DOUBLE_PROFILE default_double_profile = {
   DOUBLE_FORMAT_SCIENTIFIC, 0, DBL_DIG, false, false, true, false
@@ -96,7 +99,6 @@ static DB_TYPE_FLOAT_PROFILE default_float_profile = {
 static DB_TYPE_NUMERIC_PROFILE default_numeric_profile = {
   DOUBLE_FORMAT_DECIMAL, -1, -1, false, false, true, true
 };
-
 
 /*
  * integer, short type conversion profile
@@ -279,7 +281,7 @@ static char *object_to_string (DB_OBJECT * object, int format);
 static char *numeric_to_string (DB_VALUE * value, bool commas);
 static char *bit_to_string (DB_VALUE * value, char string_delimiter, bool plain_string);
 static char *set_to_string (DB_VALUE * value, char begin_notation, char end_notation, int max_entries,
-			    bool plain_string, CSQL_OUTPUT_TYPE output_type, char column_encolser);
+			    const CSQL_ARGUMENT * csql_arg);
 static char *duplicate_string (const char *string);
 static int get_object_print_format (void);
 
@@ -345,31 +347,39 @@ add_commas (char *string)
   if (num_of_commas)
     {
       char *temp;
-      int l1, l2;
+      int src_idx, dest_idx;
 
-      l1 = string_len;
-      l2 = string_len + num_of_commas;
+      src_idx = string_len;
+      dest_idx = string_len + num_of_commas;
 
       temp = string;
 
-      do
-	{
-	  temp[l2--] = string[l1--];
-	}
-      while (string[l1] != '.');
+      temp[dest_idx--] = '\0';
+      src_idx--;
 
-      temp[l2--] = string[l1--];
+      /* Checks for a decimal point to avoid double-free core dumps in the scenarios described below
+       *  select cast(23421.234 as numeric(7,0));  
+       */
+      if (string[last_digit + 1] == '.')
+	{
+	  do
+	    {
+	      temp[dest_idx--] = string[src_idx--];
+	    }
+	  while (string[src_idx] != '.');
+	  temp[dest_idx--] = string[src_idx--];
+	}
 
       for (i = 0; num_of_commas; i++)
 	{
 	  if (i && !(i % 3) && num_of_commas)
 	    {
-	      temp[l2--] = COMMA_CHAR;
+	      temp[dest_idx--] = COMMA_CHAR;
 	      --num_of_commas;
 	    }
-	  if (l1 && l2)
+	  if (src_idx && dest_idx)
 	    {
-	      temp[l2--] = string[l1--];
+	      temp[dest_idx--] = string[src_idx--];
 	    }
 	}
     }
@@ -903,30 +913,36 @@ numeric_to_string (DB_VALUE * value, bool commas)
 {
   char str_buf[NUMERIC_MAX_STRING_SIZE];
   char *return_string;
-  int prec;
-  int comma_length;
-  int max_length;
+  int comma_length = 0;
+  int str_length = 0;
 
-  /*
-   * Allocate string length based on precision plus the commas plus a
-   * character for each of the sign, decimal point, and NULL terminator.
-   */
-  prec = DB_VALUE_PRECISION (value);
-  comma_length = COMMAS_OFFSET (commas, prec);
-  max_length = prec + comma_length + 3;
-  return_string = (char *) malloc (max_length);
+  do
+    {
+      /* Force-disable commas to preserve legacy behavior.
+       * TODO: Once the comma display requirement is finalized, update default_numeric_profile.commas and delete this block.
+       */
+      commas = false;
+    }
+  while (0);
+
+  numeric_db_value_print (value, str_buf);
+
+  comma_length = COMMAS_OFFSET (commas, DB_VALUE_PRECISION (value));
+  str_length = strlen (str_buf) + 1;	// include '\0'
+
+
+  return_string = (char *) malloc (str_length + comma_length + 1);
   if (return_string == NULL)
     {
       return (NULL);
     }
 
-  numeric_db_value_print (value, str_buf);
-  if (strlen (str_buf) > max_length - 1)
+  memcpy (return_string, str_buf, str_length);
+
+  if (commas == true)
     {
-      free_and_init (return_string);
-      return (duplicate_string ("NUM OVERFLOW"));
+      add_commas (return_string);
     }
-  strcpy (return_string, str_buf);
 
   return return_string;
 }
@@ -981,8 +997,8 @@ bit_to_string (DB_VALUE * value, char string_delimiter, bool plain_string)
  *   column_enclosure(in): column enclosure for query output
  */
 static char *
-set_to_string (DB_VALUE * value, char begin_notation, char end_notation, int max_entries, bool plain_string,
-	       CSQL_OUTPUT_TYPE output_type, char column_enclosure)
+set_to_string (DB_VALUE * value, char begin_notation, char end_notation, int max_entries,
+	       const CSQL_ARGUMENT * csql_arg)
 {
   int cardinality, total_string_length, i;
   char **string_array;
@@ -1045,7 +1061,7 @@ set_to_string (DB_VALUE * value, char begin_notation, char end_notation, int max
 	{
 	  goto finalize;
 	}
-      string_array[i] = csql_db_value_as_string (&element, NULL, plain_string, output_type, column_enclosure);
+      string_array[i] = csql_db_value_as_string (&element, NULL, csql_arg);
       db_value_clear (&element);
       if (string_array[i] == NULL)
 	{
@@ -1321,6 +1337,69 @@ string_to_string (const char *string_value, char string_delimiter, char string_i
   return return_string;
 }
 
+
+#define MAX_DOUBLE_STRING 512
+/*
+ * convert double value to string for only oracle_number_compat
+ */
+static char *
+conv_double_to_string (char *double_str, int *length)
+{
+  char return_str[MAX_DOUBLE_STRING] = { '-', '0', '.', '\0', };
+  int exp_num, offset, p, sign = 0;
+
+  char *dot, *exp, *sp = return_str + 1;
+
+  dot = strchr (double_str, '.');
+  exp = strchr (double_str, 'e');
+
+  if (!exp)
+    {
+      *length = strlen (double_str);
+      return strdup (double_str);
+    }
+
+  if (double_str[0] == '-')
+    {
+      double_str = double_str + 1;	/* for skip the sign */
+      sign = -1;
+    }
+  exp_num = atoi (exp + 1);
+
+  if (exp_num > 0)
+    {
+      if (dot)
+	{
+	  memcpy (sp, double_str, offset = (int) (dot - double_str));
+	  memcpy (sp + offset, dot + 1, p = (int) (exp - dot) - 1);
+	  memset (sp + offset + p, '0', exp_num - (int) (exp - dot) + 1);
+	}
+      else
+	{
+	  memcpy (sp, double_str, p = (int) (exp - double_str));
+	  memset (sp + p, '0', exp_num);
+	}
+    }
+  else
+    {
+      exp_num = -exp_num;
+      memset (sp + 2, '0', offset = exp_num - 1);
+      if (dot)
+	{
+	  memcpy (sp + 2 + offset, double_str, p = (int) (dot - double_str));
+	  memcpy (sp + 2 + offset + p, dot + 1, (int) (exp - dot) - 1);
+	}
+      else
+	{
+	  memcpy (sp + 2 + offset, double_str, (int) (exp - double_str));
+	}
+    }
+
+  *length = (sign < 0) ? strlen (return_str) : strlen (return_str + 1);
+
+  return (sign < 0) ? strdup (return_str) : strdup (return_str + 1);
+}
+
 /*
  * csql_db_value_as_string() - convert DB_VALUE to string
  *   return: formatted string
@@ -1331,15 +1410,63 @@ string_to_string (const char *string_value, char string_delimiter, char string_i
  *   column_enclosure(in): column enclosure for query output
  */
 char *
-csql_db_value_as_string (DB_VALUE * value, int *length, bool plain_string, CSQL_OUTPUT_TYPE output_type,
-			 char column_enclosure)
+csql_db_value_as_string (DB_VALUE * value, int *length, const CSQL_ARGUMENT * csql_arg)
 {
   char *result = NULL;
   char *json_body = NULL;
   int len = 0;
-  char string_delimiter =
-    (output_type != CSQL_UNKNOWN_OUTPUT) ? column_enclosure : default_string_profile.string_delimiter;
-  bool change_single_quote = (output_type != CSQL_UNKNOWN_OUTPUT && column_enclosure == '\'');
+  char double_format = default_double_profile.format;
+  bool trailingzeros = true;
+
+  bool plain_string = csql_arg->plain_output;
+  char column_enclosure = csql_arg->column_enclosure;
+
+  static bool oracle_compat_number = prm_get_bool_value (PRM_ID_ORACLE_COMPAT_NUMBER_BEHAVIOR);
+  char string_delimiter = csql_arg->column_enclosure;
+  bool change_single_quote = (bool) (csql_arg->column_enclosure == '\'');
+
+  CSQL_OUTPUT_TYPE output_type;
+
+  if (csql_arg->query_output == true)
+    {
+      output_type = CSQL_QUERY_OUTPUT;
+    }
+  else if (csql_arg->loaddb_output == true)
+    {
+      output_type = CSQL_LOADDB_OUTPUT;
+    }
+  else
+    {
+      output_type = CSQL_UNKNOWN_OUTPUT;
+      string_delimiter = default_string_profile.string_delimiter;
+      change_single_quote = false;
+    }
+
+  /* oracle compatible */
+  if (oracle_compat_number)
+    {
+      /* try to convert numeric */
+      if (DB_VALUE_TYPE (value) == DB_TYPE_FLOAT || DB_VALUE_TYPE (value) == DB_TYPE_DOUBLE)
+	{
+	  char double_str[MAX_DOUBLE_STRING];
+
+	  double_format = DOUBLE_FORMAT_GENERAL;
+	  trailingzeros = false;
+
+	  if (DB_VALUE_TYPE (value) == DB_TYPE_FLOAT)
+	    {
+	      sprintf (double_str, "%.7g", db_get_float (value));
+	    }
+	  else
+	    {
+	      sprintf (double_str, "%.16g", db_get_double (value));
+	    }
+
+	  result = conv_double_to_string (double_str, length);
+
+	  return result;
+	}
+    }
 
   if (value == NULL)
     {
@@ -1381,8 +1508,8 @@ csql_db_value_as_string (DB_VALUE * value, int *length, bool plain_string, CSQL_
       result =
 	double_to_string ((double) db_get_float (value), default_float_profile.fieldwidth,
 			  default_float_profile.precision, default_float_profile.leadingsign, nullptr, nullptr,
-			  default_float_profile.leadingzeros, default_float_profile.trailingzeros,
-			  default_float_profile.commas, default_float_profile.format);
+			  default_float_profile.leadingzeros, trailingzeros, default_float_profile.commas,
+			  double_format);
       if (result)
 	{
 	  len = strlen (result);
@@ -1390,10 +1517,10 @@ csql_db_value_as_string (DB_VALUE * value, int *length, bool plain_string, CSQL_
       break;
     case DB_TYPE_DOUBLE:
       result =
-	double_to_string (db_get_double (value), default_double_profile.fieldwidth, default_double_profile.precision,
-			  default_double_profile.leadingsign, nullptr, nullptr, default_double_profile.leadingzeros,
-			  default_double_profile.trailingzeros, default_double_profile.commas,
-			  default_double_profile.format);
+	double_to_string (db_get_double (value), default_double_profile.fieldwidth,
+			  default_double_profile.precision, default_double_profile.leadingsign, nullptr, nullptr,
+			  default_double_profile.leadingzeros, trailingzeros, default_double_profile.commas,
+			  double_format);
       if (result)
 	{
 	  len = strlen (result);
@@ -1438,53 +1565,14 @@ csql_db_value_as_string (DB_VALUE * value, int *length, bool plain_string, CSQL_
 	      }
 	  }
 
-	result = string_to_string (str, string_delimiter, '\0', bytes_size, &len, plain_string, change_single_quote);
+	result =
+	  string_to_string (str, string_delimiter, '\0', bytes_size, &len, csql_arg->plain_output, change_single_quote);
 
 	if (decomposed != NULL)
 	  {
 	    free_and_init (decomposed);
 	  }
 
-      }
-      break;
-    case DB_TYPE_VARNCHAR:
-    case DB_TYPE_NCHAR:
-      {
-	int dummy, bytes_size, decomp_size;
-	bool need_decomp = false;
-	const char *str;
-	char *decomposed = NULL;
-
-	str = db_get_char (value, &dummy);
-	bytes_size = db_get_string_size (value);
-	if (bytes_size > 0 && db_get_string_codeset (value) == INTL_CODESET_UTF8)
-	  {
-	    need_decomp =
-	      unicode_string_need_decompose (str, bytes_size, &decomp_size, lang_get_generic_unicode_norm ());
-	  }
-
-	if (need_decomp)
-	  {
-	    decomposed = (char *) malloc (decomp_size * sizeof (char));
-	    if (decomposed != NULL)
-	      {
-		unicode_decompose_string (str, bytes_size, decomposed, &decomp_size, lang_get_generic_unicode_norm ());
-
-		str = decomposed;
-		bytes_size = decomp_size;
-	      }
-	    else
-	      {
-		return NULL;
-	      }
-	  }
-
-	result = string_to_string (str, string_delimiter, 'N', bytes_size, &len, plain_string, change_single_quote);
-
-	if (decomposed != NULL)
-	  {
-	    free_and_init (decomposed);
-	  }
       }
       break;
     case DB_TYPE_VARBIT:
@@ -1544,7 +1632,7 @@ csql_db_value_as_string (DB_VALUE * value, int *length, bool plain_string, CSQL_
     case DB_TYPE_SEQUENCE:
       result =
 	set_to_string (value, default_set_profile.begin_notation, default_set_profile.end_notation,
-		       default_set_profile.max_entries, plain_string, output_type, column_enclosure);
+		       default_set_profile.max_entries, csql_arg);
       if (result)
 	{
 	  len = strlen (result);
@@ -1843,6 +1931,27 @@ csql_db_value_as_string (DB_VALUE * value, int *length, bool plain_string, CSQL_
 	  }
       }
       break;
+
+    case DB_TYPE_MIDXKEY:
+      {
+	if (csql_arg->midxkey_print)
+	  {
+	    string_buffer sb;
+
+	    sb.clear ();
+	    db_sprint_value (value, sb);
+
+	    /*  Make sure it has the same format as the result of using cast().
+	     *  '{1, 'abc'}'  or  '{1, ''abc''}'  (depends on change_single_quote)
+	     */
+	    result =
+	      string_to_string (sb.get_buffer (), string_delimiter, '\0', sb.len (), &len, plain_string,
+				change_single_quote);
+	    sb.clear ();
+	    break;		/* escape switch */
+	  }
+      }
+      [[fallthrough]];
 
     default:
       {

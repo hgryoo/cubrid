@@ -119,10 +119,12 @@ namespace cubload
       void stats_update_last_committed_line (int64_t last_committed_line);
       void stats_update_current_line (int64_t current_line);
 
-      void update_class_statistics (cubthread::entry &thread_ref);
       const load_args &get_args ();
 
       class_registry &get_class_registry ();
+
+      void set_client_type (int client_type);
+      int get_client_type ();
 
       template<typename... Args>
       void append_log_msg (MSGCAT_LOADDB_MSG msg_id, Args &&... args);
@@ -145,6 +147,8 @@ namespace cubload
       std::atomic<size_t> m_active_task_count;    // note: all decrements need to be protected by mutex
 
       class_registry m_class_registry;
+
+      std::atomic<int> m_load_client_type;	/* ADMIN_LOADDB_COMPAT_UNDER_11_2 or ADMIN_LOADDB_COMPAT_UNDER_11_4 */
 
       stats m_stats; // load db stats
       bool m_is_failed;

@@ -27,15 +27,14 @@
 #error Wrong module
 #endif // not SERVER_MODE and not SA_MODE
 
+#include "thread_entry.hpp"
 #include "thread_task.hpp"
+#include "transaction_global.hpp"
 
 #include <cassert>
 
 namespace cubthread
 {
-
-  // forward definition
-  class entry;
 
   // cubthread::entry_task
   //
@@ -60,24 +59,48 @@ namespace cubthread
   // cubthread::entry_manager
   //
   //  description:
-  //    entry_manager abstract class is a cubthread::context_manager specialization using entry as Context.
-  //    the entry pool is managed by thread_manager. entry_manager acts as an base for specialized context managers
-  //    that may need to do additional operations on entry contexts during create, retire and recycle context
-  //    operations.
+  //    entry_manager is the base class for managing thread execution contexts (cubthread::entry).
+  //    complex tasks may require bulky context that can take a long time to construct/destruct.
+  //    entry_manager is designed to pool context and hand them quickly on demand.
+  //    entry_manager acts as a base for specialized context managers that may need to do additional
+  //    operations on entry contexts during create, retire and recycle context operations.
   //
   //  how to use:
-  //    create a context manager derived from entry manager and override on_create, on_retire and on_recycle functions.
-  //    create worker pools using derived context manager
+  //    1. derive from entry_manager and override on_create, on_retire and on_recycle functions.
+  //       create worker pools using derived entry_manager.
   //
-  class entry_manager : public context_manager<entry>
+  //    2. execute multiple tasks using same context:
+  //          custom_entry_manager entry_mgr;
+  //          entry& context_ref = entry_mgr.create_context ();
+  //          entry_task* task_p = NULL;
+  //
+  //          for (task_p = get_task (); task_p != NULL; task_p = get_task ())
+  //            {
+  //              task_p->execute (context_ref);
+  //              task_p->retire (); // this will delete task_p
+  //              // entry_mgr.recycle_context ();    // optional operation before reusing context
+  //            }
+  //
+  //          entry_mgr.retire_context (context_ref);
+  //
+  //    [optional]
+  //    3. if task execution can take a very long time and you need to force stop it, you can use stop_execution:
+  //        3.1. implement entry_manager::stop_execution; should notify context to stop.
+  //        3.2. you have to check stop notifications in entry_task::execute
+  //        3.3. call entry_mgr.stop_execution (context_ref).
+  //
+  class entry_manager
   {
     public:
-      entry_manager (void) = default;
+      using context_type = entry;
 
-      entry &create_context (void) final;
-      void retire_context (entry &context) final;
-      void recycle_context (entry &context) final;
-      void stop_execution (entry &context) override;
+      entry_manager (void) = default;
+      virtual ~entry_manager () = default;
+
+      virtual context_type &create_context (void);
+      virtual void retire_context (context_type &context);
+      virtual void recycle_context (context_type &context);
+      virtual void stop_execution (context_type &context);
 
     protected:
 
@@ -133,6 +156,31 @@ namespace cubthread
       }
   };
 
+  // system_worker_entry_manager
+  //
+  // description:
+  //    - generic entry manager implementation can be used to provide custom
+  //      thread type and transaction index
+  //    - useful in scenarios where there is no actual transaction and perf logging
+  //      still needs a non-null transaction index
+  //
+  class system_worker_entry_manager : public entry_manager
+  {
+    public:
+      system_worker_entry_manager (thread_type a_thread_type);
+      system_worker_entry_manager (const system_worker_entry_manager &) = delete;
+      system_worker_entry_manager (system_worker_entry_manager &&) = delete;
+
+      system_worker_entry_manager &operator = (const system_worker_entry_manager &) = delete;
+      system_worker_entry_manager &operator = (system_worker_entry_manager &&) = delete;
+
+    public:
+      void on_create (entry &context) override;
+      void on_recycle (entry &context) override;
+
+    private:
+      const thread_type m_thread_type;
+  };
 } // namespace cubthread
 
 #endif // _THREAD_ENTRY_TASK_HPP_

@@ -38,7 +38,6 @@
 #include "connection_sr.h"
 #include "critical_section.h"
 #include "event_log.h"
-#include "internal_tasks_worker_pool.hpp"
 #include "log_impl.h"
 #include "memory_alloc.h"
 #include "message_catalog.h"
@@ -60,10 +59,11 @@
 #include "thread_manager.hpp"
 #include "session.h"
 #include "network_request_def.hpp"
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 static void net_server_init (void);
 static int net_server_request (THREAD_ENTRY * thread_p, unsigned int rid, int request, int size, char *buffer);
-static int net_server_conn_down (THREAD_ENTRY * thread_p, CSS_THREAD_ARG arg);
 
 static struct net_request net_Requests[NET_SERVER_REQUEST_END];
 
@@ -329,14 +329,22 @@ net_server_init (void)
   req_p->action_attribute = (CHECK_AUTHORIZATION | CHECK_DB_MODIFICATION | IN_TRANSACTION);
   req_p->processing_function = shf_heap_reclaim_addresses;
 
+  req_p = &net_Requests[NET_SERVER_HEAP_GET_MAXSLOTTED_RECLENGTH];
+  req_p->processing_function = shf_get_maxslotted_reclength;
+
   /* file */
   req_p = &net_Requests[NET_SERVER_FILE_APPLY_TDE_TO_CLASS_FILES];
   req_p->action_attribute = (CHECK_DB_MODIFICATION | IN_TRANSACTION);
   req_p->processing_function = sfile_apply_tde_to_class_files;
 
-  /* dblink */
-  req_p = &net_Requests[NET_SERVER_DBLINK_GET_CRYPT_KEY];
-  req_p->processing_function = sdblink_get_crypt_keys;
+  /* lob */
+  req_p = &net_Requests[NET_SERVER_LOB_CREATE_DIR];
+  req_p->action_attribute = IN_TRANSACTION;
+  req_p->processing_function = slob_create_dir;
+
+  req_p = &net_Requests[NET_SERVER_LOB_REMOVE_DIR];
+  req_p->action_attribute = IN_TRANSACTION;
+  req_p->processing_function = slob_remove_dir;
 
   /* tde */
   req_p = &net_Requests[NET_SERVER_TDE_IS_LOADED];
@@ -448,10 +456,6 @@ net_server_init (void)
   req_p->action_attribute = (CHECK_DB_MODIFICATION | IN_TRANSACTION);
   req_p->processing_function = sqst_update_statistics;
 
-  req_p = &net_Requests[NET_SERVER_QST_UPDATE_ALL_STATISTICS];
-  req_p->action_attribute = (CHECK_DB_MODIFICATION | IN_TRANSACTION);
-  req_p->processing_function = sqst_update_all_statistics;
-
   /* query manager */
   req_p = &net_Requests[NET_SERVER_QM_QUERY_PREPARE];
   req_p->action_attribute = IN_TRANSACTION;
@@ -471,6 +475,9 @@ net_server_init (void)
 
   req_p = &net_Requests[NET_SERVER_QM_QUERY_DROP_ALL_PLANS];
   req_p->processing_function = sqmgr_drop_all_query_plans;
+
+  req_p = &net_Requests[NET_SERVER_QM_QUERY_DROP_SHA1_PLANS];
+  req_p->processing_function = sqmgr_drop_query_plans_by_sha1;
 
   req_p = &net_Requests[NET_SERVER_QM_QUERY_DUMP_PLANS];
   req_p->processing_function = sqmgr_dump_query_plans;
@@ -551,7 +558,7 @@ net_server_init (void)
   /* JSP */
   req_p = &net_Requests[NET_SERVER_JSP_GET_SERVER_PORT];
   req_p->action_attribute = IN_TRANSACTION;
-  req_p->processing_function = sjsp_get_server_port;
+  req_p->processing_function = spl_get_server_port;
 
   /* replication */
   req_p = &net_Requests[NET_SERVER_REPL_INFO];
@@ -708,9 +715,9 @@ net_server_init (void)
   req_p = &net_Requests[NET_SERVER_VACUUM_DUMP];
   req_p->processing_function = svacuum_dump;
 
-  req_p = &net_Requests[NET_SERVER_METHOD_FOLD_CONSTANTS];
+  req_p = &net_Requests[NET_SERVER_PL_CALL];
   req_p->action_attribute = IN_TRANSACTION;
-  req_p->processing_function = smethod_invoke_fold_constants;
+  req_p->processing_function = spl_call;
 
   req_p = &net_Requests[NET_SERVER_SUPPLEMENT_STMT];
   req_p->processing_function = slog_supplement_statement;
@@ -737,6 +744,38 @@ net_server_init (void)
 
   req_p = &net_Requests[NET_SERVER_FLASHBACK_GET_LOGINFO];
   req_p->processing_function = sflashback_get_loginfo;
+
+  /* PL/CSQL */
+  req_p = &net_Requests[NET_SERVER_PLCSQL_TRANSFER_FILE];
+  req_p->processing_function = splcsql_transfer_file;
+
+  /* memmon */
+  req_p = &net_Requests[NET_SERVER_MMON_GET_SERVER_INFO];
+  req_p->processing_function = smmon_get_server_info;
+
+  req_p = &net_Requests[NET_SERVER_MMON_DISABLE_FORCE];
+  req_p->processing_function = smmon_disable_force;
+
+  /* tdes */
+  req_p = &net_Requests[NET_SERVER_TDES_SET_QUERY_START_INFO];
+  req_p->action_attribute = IN_TRANSACTION;
+  req_p->processing_function = stdes_set_query_start_info;
+
+  req_p = &net_Requests[NET_SERVER_TDES_RESET_QUERY_START_INFO];
+  req_p->action_attribute = IN_TRANSACTION;
+  req_p->processing_function = stdes_reset_query_start_info;
+
+  /* file manager */
+  req_p = &net_Requests[NET_SERVER_CLEANFILEDB_DUMP_FILE_LIST];
+  req_p->processing_function = sfile_tracker_dump_file_list;
+
+  req_p = &net_Requests[NET_SERVER_CLEANFILEDB_CLEAN_INVALID_FILE];
+  req_p->processing_function = sfile_tracker_clean_invalid_file;
+
+#if !defined(NDEBUG)
+  req_p = &net_Requests[NET_SERVER_CLEANFILEDB_DELETE_TARGET_FILE];
+  req_p->processing_function = sfile_tracker_delete_target_file;
+#endif
 }
 
 /*
@@ -755,6 +794,16 @@ net_server_request (THREAD_ENTRY * thread_p, unsigned int rid, int request, int 
   int status = CSS_NO_ERRORS;
   int error_code;
   CSS_CONN_ENTRY *conn;
+
+  conn = thread_p->conn_entry;
+  assert (conn != NULL);
+
+  /* check if the conn is valid */
+  if (IS_INVALID_SOCKET (conn->fd) || conn->status != CONN_OPEN)
+    {
+      /* have nothing to do because the client has gone */
+      goto end;
+    }
 
   if (buffer == NULL && size > 0)
     {
@@ -784,19 +833,10 @@ net_server_request (THREAD_ENTRY * thread_p, unsigned int rid, int request, int 
       return_error_to_client (thread_p, rid);
       goto end;
     }
-  conn = thread_p->conn_entry;
-  assert (conn != NULL);
-  /* check if the conn is valid */
-  if (IS_INVALID_SOCKET (conn->fd) || conn->status != CONN_OPEN)
-    {
-      /* have nothing to do because the client has gone */
-      goto end;
-    }
 
   /* check the defined action attribute */
   if (net_Requests[request].action_attribute & CHECK_DB_MODIFICATION)
     {
-      int client_type;
       bool check = true;
 
       if (request == NET_SERVER_TM_SERVER_COMMIT)
@@ -807,7 +847,6 @@ net_server_request (THREAD_ENTRY * thread_p, unsigned int rid, int request, int 
 	    }
 	}
       /* check if DB modification is allowed */
-      client_type = logtb_find_client_type (thread_p->tran_index);
       if (check)
 	{
 	  CHECK_MODIFICATION_NO_RETURN (thread_p, error_code);
@@ -875,7 +914,7 @@ net_server_request (THREAD_ENTRY * thread_p, unsigned int rid, int request, int 
 end:
   if (buffer != NULL && size > 0)
     {
-      free_and_init (buffer);
+      thread_p->release_packet (buffer);
     }
 
   /* clear memory to be used at request handling */
@@ -884,62 +923,17 @@ end:
   return (status);
 }
 
-/*
- * net_server_conn_down () - CSS callback function used when a connection to a
- *                       particular client went down
- *   return: 0
- *   arg(in): transaction id
- */
-static int
-net_server_conn_down (THREAD_ENTRY * thread_p, CSS_THREAD_ARG arg)
+void
+net_server_wakeup_workers (THREAD_ENTRY * thread_p, int tran_index, int client_id)
 {
-  int tran_index;
-  CSS_CONN_ENTRY *conn_p;
-  size_t prev_thrd_cnt, thrd_cnt;
-  bool continue_check;
-  int client_id;
-  int local_tran_index;
   THREAD_ENTRY *suspended_p;
-  size_t loop_count_for_pending_request = 0;
+  size_t active_workers;
+  bool continue_check;
 
-  if (thread_p == NULL)
+  /* count and interrupt if possible */
+  active_workers = css_count_transaction_worker_threads (thread_p, tran_index, client_id);
+  if (active_workers > 0)
     {
-      thread_p = thread_get_thread_entry_info ();
-      if (thread_p == NULL)
-	{
-	  return 0;
-	}
-    }
-
-  local_tran_index = thread_p->tran_index;
-
-  conn_p = (CSS_CONN_ENTRY *) arg;
-  tran_index = conn_p->get_tran_index ();
-  client_id = conn_p->client_id;
-
-  css_set_thread_info (thread_p, client_id, 0, tran_index, NET_SERVER_SHUTDOWN);
-  pthread_mutex_unlock (&thread_p->tran_index_lock);
-
-  css_end_server_request (conn_p);
-
-  /* avoid infinite waiting with xtran_wait_server_active_trans() */
-  thread_p->m_status = cubthread::entry::status::TS_CHECK;
-
-  if (conn_p->session_p != NULL)
-    {
-      ssession_stop_attached_threads (conn_p->session_p);
-    }
-
-loop:
-  prev_thrd_cnt = css_count_transaction_worker_threads (thread_p, tran_index, client_id);
-  if (prev_thrd_cnt > 0)
-    {
-      if (tran_index == NULL_TRAN_INDEX)
-	{
-	  /* the connected client does not yet finished boot_client_register */
-	  thread_sleep (50);	/* 50 msec */
-	  tran_index = conn_p->get_tran_index ();
-	}
       if (!logtb_is_interrupted_tran (thread_p, false, &continue_check, tran_index))
 	{
 	  logtb_set_tran_index_interrupt (thread_p, tran_index, true);
@@ -963,7 +957,6 @@ loop:
 		    case THREAD_CSECT_WRITER_SUSPENDED:
 		    case THREAD_CSECT_PROMOTER_SUSPENDED:
 		    case THREAD_LOCK_SUSPENDED:
-		    case THREAD_PGBUF_SUSPENDED:
 		    case THREAD_JOB_QUEUE_SUSPENDED:
 		      /* never try to wake thread up while the thread is waiting for a critical section or a lock. */
 		      wakeup_now = false;
@@ -973,6 +966,7 @@ loop:
 		    case THREAD_LOGWR_SUSPENDED:
 		    case THREAD_ALLOC_BCB_SUSPENDED:
 		    case THREAD_DWB_QUEUE_SUSPENDED:
+		    case THREAD_PGBUF_SUSPENDED:
 		      wakeup_now = true;
 		      break;
 
@@ -1008,47 +1002,49 @@ loop:
 	    }
 	}
     }
+}
 
-  while ((thrd_cnt = css_count_transaction_worker_threads (thread_p, tran_index, client_id)) >= prev_thrd_cnt
-	 && thrd_cnt > 0)
+int
+net_server_active_workers (THREAD_ENTRY * thread_p, void *arg, int tran_index, int client_id)
+{
+  size_t active_workers;
+  CSS_CONN_ENTRY *conn;
+
+  assert (arg);
+
+  conn = (CSS_CONN_ENTRY *) arg;
+  active_workers = css_count_transaction_worker_threads (thread_p, tran_index, client_id);
+  if (active_workers > 0)
     {
-      /* Some threads may wait for data from the m-driver. It's possible from the fact that css_server_thread() is
-       * responsible for receiving every data from which is sent by a client and all m-drivers. We must have chance to
-       * receive data from them. */
-      thread_sleep (50);	/* 50 msec */
+      /* retry */
+      return active_workers;
     }
 
-  if (thrd_cnt > 0)
+  if (conn->has_pending_request () && !css_is_shutdowning_server ())
     {
-      goto loop;
+      /* need to wait for pending request */
+      /* retry */
+      return 1;
     }
 
-  if (conn_p->has_pending_request () && !css_is_shutdowning_server ())
-    {
-      // need to wait for pending request
-      thread_sleep (50);	/* 50 msec */
-      if (++loop_count_for_pending_request >= 10)
-	{
-	  // too long...
-	  assert (false);
-	}
-      else
-	{
-	  goto loop;
-	}
-    }
+  return 0;
+}
+
+/*
+ * net_server_conn_down () - CSS callback function used when a connection to a
+ *                       particular client went down
+ *   return: 0
+ *   arg(in): transaction id
+ */
+int
+net_server_conn_down (THREAD_ENTRY * thread_p, int tran_index)
+{
+  assert (thread_p && tran_index != NULL_TRAN_INDEX);
 
   logtb_set_tran_index_interrupt (thread_p, tran_index, false);
 
-  if (tran_index != NULL_TRAN_INDEX)
-    {
-      (void) xboot_unregister_client (thread_p, tran_index);
-      session_remove_query_entry_all (thread_p);
-    }
-  css_free_conn (conn_p);
-
-  css_set_thread_info (thread_p, -1, 0, local_tran_index, -1);
-  thread_p->m_status = cubthread::entry::status::TS_RUN;
+  (void) xboot_unregister_client (thread_p, tran_index);
+  session_remove_query_entry_all (thread_p);
 
   return NO_ERROR;
 }
@@ -1076,7 +1072,6 @@ net_server_start (const char *server_name)
     }
 
   cubthread::initialize (thread_p);
-  cubthread::internal_tasks_worker_pool::initialize ();
   assert (thread_p == thread_get_thread_entry_info ());
 
 #if defined(WINDOWS)
@@ -1102,7 +1097,7 @@ net_server_start (const char *server_name)
       goto end;
     }
 
-  sysprm_load_and_init (NULL, NULL, SYSPRM_LOAD_ALL);
+  sysprm_load_and_init (server_name, NULL, SYSPRM_LOAD_ALL);
   sysprm_set_er_log_file (server_name);
 
   if (sync_initialize_sync_stats () != NO_ERROR)
@@ -1129,8 +1124,17 @@ net_server_start (const char *server_name)
       goto end;
     }
 
+#if !defined(WINDOWS)
+  if (mmon_initialize (server_name) != NO_ERROR)
+    {
+      PRINT_AND_LOG_ERR_MSG ("Failed to initialize memory_monitor\n");
+      status = -1;
+      goto end;
+    }
+#endif /* !WINDOWS */
+
   net_server_init ();
-  css_initialize_server_interfaces (net_server_request, net_server_conn_down);
+  css_initialize_server_interfaces (net_server_request);
 
   if (boot_restart_server (thread_p, true, server_name, false, &check_coll_and_timezone, NULL, false) != NO_ERROR)
     {
@@ -1174,7 +1178,9 @@ net_server_start (const char *server_name)
     }
 
   cubthread::finalize ();
-  cubthread::internal_tasks_worker_pool::finalize ();
+#if !defined(WINDOWS)
+  mmon_finalize ();
+#endif /* !WINDOWS */
   er_final (ER_ALL_FINAL);
   csect_finalize_static_critical_sections ();
   (void) sync_finalize_sync_stats ();

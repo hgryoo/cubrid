@@ -62,7 +62,6 @@
 #define	MAX_MONETARY_DISPLAY_LENGTH	  20
 #define	MAX_DEFAULT_DISPLAY_LENGTH	  20
 #define STRING_TYPE_PREFIX_SUFFIX_LENGTH  2
-#define NSTRING_TYPE_PREFIX_SUFFIX_LENGTH 3
 #define BIT_TYPE_PREFIX_SUFFIX_LENGTH     3
 
 /* structure for current query result information */
@@ -166,14 +165,12 @@ static jmp_buf csql_Jmp_buf;
 
 static const char *csql_cmd_string (CUBRID_STMT_TYPE stmt_type, const char *default_string);
 static void display_empty_result (int stmt_type, int line_no);
-static char **get_current_result (int **len, const CUR_RESULT_INFO * result_info, bool plain_output, bool query_output,
-				  bool loaddb_output, char column_enclosure);
+static char **get_current_result (int **len, const CUR_RESULT_INFO * result_info, const CSQL_ARGUMENT * csql_arg);
 static int write_results_to_stream (const CSQL_ARGUMENT * csql_arg, FILE * fp, const CUR_RESULT_INFO * result_info);
 static char *uncontrol_strdup (const char *from);
 static char *uncontrol_strndup (const char *from, int length);
 static int calculate_width (int column_width, int string_width, int origin_width, DB_TYPE attr_type, bool is_null);
 static bool is_string_type (DB_TYPE type);
-static bool is_nstring_type (DB_TYPE type);
 static bool is_bit_type (DB_TYPE type);
 static bool is_cuttable_type_by_string_width (DB_TYPE type);
 static bool is_type_that_has_suffix (DB_TYPE type);
@@ -500,8 +497,7 @@ display_empty_result (int stmt_type, int line_no)
  *   Caller should be responsible for free the return array and its elements.
  */
 static char **
-get_current_result (int **lengths, const CUR_RESULT_INFO * result_info, bool plain_output, bool query_output,
-		    bool loaddb_output, char column_enclosure)
+get_current_result (int **lengths, const CUR_RESULT_INFO * result_info, const CSQL_ARGUMENT * csql_arg)
 {
   int i;
   char **val = NULL;		/* temporary array for values */
@@ -561,7 +557,8 @@ get_current_result (int **lengths, const CUR_RESULT_INFO * result_info, bool pla
       assert (value_type == DB_TYPE_NULL
 	      /* UNKNOWN, maybe host variable */
 	      || result_info->attr_types[i] == DB_TYPE_NULL || result_info->attr_types[i] == DB_TYPE_VARIABLE
-	      || value_type == result_info->attr_types[i]);
+	      || value_type == result_info->attr_types[i]
+	      || (TP_IS_CHAR_TYPE (value_type) && TP_IS_CHAR_TYPE (result_info->attr_types[i])));
 
       switch (value_type)
 	{
@@ -637,22 +634,8 @@ get_current_result (int **lengths, const CUR_RESULT_INFO * result_info, bool pla
 	  else
 	    {
 	      char *temp;
-	      CSQL_OUTPUT_TYPE output_type;
 
-	      if (query_output == true)
-		{
-		  output_type = CSQL_QUERY_OUTPUT;
-		}
-	      else if (loaddb_output == true)
-		{
-		  output_type = CSQL_LOADDB_OUTPUT;;
-		}
-	      else
-		{
-		  output_type = CSQL_UNKNOWN_OUTPUT;
-		}
-
-	      temp = csql_db_value_as_string (&db_value, &len[i], plain_output, output_type, column_enclosure);
+	      temp = csql_db_value_as_string (&db_value, &len[i], csql_arg);
 	      if (temp == NULL)
 		{
 		  csql_Error_code = CSQL_ERR_NO_MORE_MEMORY;
@@ -878,9 +861,7 @@ write_results_to_stream (const CSQL_ARGUMENT * csql_arg, FILE * fp, const CUR_RE
 		}
 	      int *len = NULL;
 
-	      val =
-		get_current_result (&len, result_info, csql_arg->plain_output, csql_arg->query_output,
-				    csql_arg->loaddb_output, csql_arg->column_enclosure);
+	      val = get_current_result (&len, result_info, csql_arg);
 	      if (val == NULL)
 		{
 		  csql_Error_code = CSQL_ERR_SQL_ERROR;
@@ -1045,10 +1026,6 @@ calculate_width (int column_width, int string_width, int origin_width, DB_TYPE a
 	{
 	  result = column_width + STRING_TYPE_PREFIX_SUFFIX_LENGTH;
 	}
-      else if (is_nstring_type (attr_type))
-	{
-	  result = column_width + NSTRING_TYPE_PREFIX_SUFFIX_LENGTH;
-	}
       else if (is_bit_type (attr_type))
 	{
 	  result = column_width + BIT_TYPE_PREFIX_SUFFIX_LENGTH;
@@ -1067,10 +1044,6 @@ calculate_width (int column_width, int string_width, int origin_width, DB_TYPE a
       else if (is_string_type (attr_type))
 	{
 	  result = string_width + STRING_TYPE_PREFIX_SUFFIX_LENGTH;
-	}
-      else if (is_nstring_type (attr_type))
-	{
-	  result = string_width + NSTRING_TYPE_PREFIX_SUFFIX_LENGTH;
 	}
       else if (is_bit_type (attr_type))
 	{
@@ -1119,26 +1092,6 @@ is_string_type (DB_TYPE type)
 }
 
 /*
- * is_nstring_type() - check whether it is a nstring type or not
- *   return: bool
- *   type(in): type
- */
-static bool
-is_nstring_type (DB_TYPE type)
-{
-  switch (type)
-    {
-    case DB_TYPE_NCHAR:
-      return true;
-    case DB_TYPE_VARNCHAR:
-      return true;
-    default:
-      return false;
-    }
-  return false;
-}
-
-/*
  * is_bit_type() - check whether it is a bit type or not
  *   return: bool
  *   type(in): type
@@ -1166,7 +1119,17 @@ is_bit_type (DB_TYPE type)
 static bool
 is_cuttable_type_by_string_width (DB_TYPE type)
 {
-  return (is_string_type (type) || is_nstring_type (type) || is_bit_type (type));
+  switch (type)
+    {
+    case DB_TYPE_STRING:
+    case DB_TYPE_CHAR:
+    case DB_TYPE_BIT:
+    case DB_TYPE_VARBIT:
+      return true;
+    default:
+      break;
+    }
+  return false;
 }
 
 /*
@@ -1177,7 +1140,17 @@ is_cuttable_type_by_string_width (DB_TYPE type)
 static bool
 is_type_that_has_suffix (DB_TYPE type)
 {
-  return (is_string_type (type) || is_nstring_type (type) || is_bit_type (type));
+  switch (type)
+    {
+    case DB_TYPE_STRING:
+    case DB_TYPE_CHAR:
+    case DB_TYPE_BIT:
+    case DB_TYPE_VARBIT:
+      return true;
+    default:
+      break;
+    }
+  return false;
 }
 
 /*

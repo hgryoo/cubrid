@@ -24,6 +24,8 @@
 #include "binaryheap.h"
 #include "memory_alloc.h"
 #include "error_manager.h"
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 #define BH_PARENT(i)	((i - 1)/2)
 #define BH_LEFT(i)	(2*(i) + 1)
@@ -403,7 +405,7 @@ bh_to_sorted_array (BINARY_HEAP * heap)
  * return : true if the heap is consistent, false otherwise
  * heap (in) : heap
  */
-int
+bool
 bh_tests_consistent (BINARY_HEAP * heap)
 {
   int i;

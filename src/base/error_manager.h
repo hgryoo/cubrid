@@ -42,6 +42,7 @@
 #include "error_code.h"
 
 #define ARG_FILE_LINE           __FILE__, __LINE__
+#define ARG_FILE_LINE_FUNC      __FILE__, __LINE__, __func__
 #define NULL_LEVEL              0
 
 /* Shorthand for simple warnings and errors */
@@ -187,8 +188,13 @@
 #define STRINGIZE(s) #s
 #define assert_release(e) \
   ((e) ? (void) 0  : er_set (ER_NOTIFICATION_SEVERITY, ARG_FILE_LINE, ER_FAILED_ASSERTION, 1, STRINGIZE (e)))
+#define assert_release_notify(e) assert_release(e)
+#define assert_release_error(e) \
+  ((e) ? (void) 0  : er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_FAILED_ASSERTION, 1, STRINGIZE (e)))
 #else
 #define assert_release(e) assert(e)
+#define assert_release_notify(e) assert_release(e)
+#define assert_release_error(e) assert(e)
 #endif
 
 enum er_exit_ask
@@ -245,7 +251,8 @@ typedef void (*PTR_FNERLOG) (int err_id);
   ((err) == ER_TM_SERVER_DOWN_UNILATERALLY_ABORTED \
    || (err) == ER_NET_SERVER_CRASHED \
    || (err) == ER_OBJ_NO_CONNECT \
-   || (err) == ER_BO_CONNECT_FAILED)
+   || (err) == ER_BO_CONNECT_FAILED \
+   || (err) == ER_NET_CANT_CONNECT_SERVER)
 
 /* Macros to assert that error is set. */
 #define ASSERT_ERROR() \
@@ -267,6 +274,9 @@ typedef void (*PTR_FNERLOG) (int err_id);
 /* Macro that checks no error was set. */
 #define ASSERT_NO_ERROR() \
   assert (er_errid () == NO_ERROR);
+
+#define ASSERT_NO_ERROR_OR_INTERRUPTED() \
+  assert (er_errid () == NO_ERROR || er_errid () == ER_INTERRUPTED);
 
 #ifdef __cplusplus
 extern "C"
@@ -319,6 +329,7 @@ extern "C"
 #if defined (CS_MODE)
   extern void er_set_ignore_uninit (bool ignore);
 #endif
+  extern void er_print_crash_callstack (int sig);
 
 #ifdef __cplusplus
 }

@@ -114,6 +114,10 @@ struct filter_info
   /* filter information */
   SCAN_PRED *scan_pred;		/* predicates of the filter */
   SCAN_ATTRS *scan_attrs;	/* attributes scanning info */
+
+  int *matched_attid_idx_4_keyflt;
+  int *matched_attid_idx_4_readval;
+
   val_list_node *val_list;	/* value list */
   VAL_DESCR *val_descr;		/* value descriptor */
 
@@ -126,10 +130,6 @@ struct filter_info
   ATTR_ID *vstr_ids;		/* attribute id array of variable string */
   int btree_num_attrs;		/* number of attributes of the index key */
   int func_idx_col_id;		/* function expression column position, if this is a function index */
-
-  // *INDENT-OFF*
-  filter_info () = default;
-  // *INDENT-ON*
 };
 
 extern DB_LOGICAL eval_pred (THREAD_ENTRY * thread_p, const PRED_EXPR * pr, val_descr * vd, OID * obj_oid);
@@ -144,7 +144,8 @@ extern DB_LOGICAL eval_pred_rlike7 (THREAD_ENTRY * thread_p, const PRED_EXPR * p
 extern PR_EVAL_FNC eval_fnc (THREAD_ENTRY * thread_p, const PRED_EXPR * pr, DB_TYPE * single_node_type);
 extern DB_LOGICAL eval_data_filter (THREAD_ENTRY * thread_p, OID * oid, RECDES * recdes, HEAP_SCANCACHE * scan_cache,
 				    FILTER_INFO * filter);
-extern DB_LOGICAL eval_key_filter (THREAD_ENTRY * thread_p, DB_VALUE * value, FILTER_INFO * filter);
+extern DB_LOGICAL eval_key_filter (THREAD_ENTRY * thread_p, DB_VALUE * value, int prefix_size, DB_VALUE * prefix_value,
+				   FILTER_INFO * filter);
 extern DB_LOGICAL update_logical_result (THREAD_ENTRY * thread_p, DB_LOGICAL ev_res, int *qualification);
 
 #endif /* _QUERY_EVALUATOR_H_ */

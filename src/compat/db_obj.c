@@ -49,9 +49,10 @@
 #include "parser.h"
 #include "view_transform.h"
 #include "network_interface_cl.h"
-#include "transform.h"
+#include "schema_system_catalog_constants.h"
 #include "dbtype.h"
 #include "printer.hpp"
+#include "jsp_cl.h"
 
 /*
  * OBJECT CREATION/DELETION
@@ -1912,4 +1913,82 @@ db_get_serial_next_value_ex (const char *serial_name, DB_VALUE * serial_value, i
     }
 
   return result;
+}
+
+/*
+ * db_find_procedure() - This function locates a procedure (function) with the given name.
+ *    NULL is returned if a procedure by this name does not exist, or it the
+ *    user does not have the appropriate access privilege for the procedure.
+ *    If NULL is returned, the system sets the global error status to a value
+ *    that indicates the exact nature of the error.
+ * return : procedure object (NULL if error)
+ * name(in): procedure name
+ */
+
+DB_OBJECT *
+db_find_procedure (const char *name)
+{
+  DB_OBJECT *retval;
+
+  CHECK_CONNECT_NULL ();
+  CHECK_1ARG_NULL (name);
+
+  retval = jsp_find_stored_procedure (name, DB_AUTH_NONE);
+
+  return retval;
+}
+
+int
+db_set_otmpl_timestamps (DB_OTMPL * otmpl)
+{
+  DB_VALUE current_datetime;
+
+  if (db_sys_datetime (&current_datetime) != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+
+  if (dbt_put_internal (otmpl, "created_time", &current_datetime) != NO_ERROR ||
+      dbt_put_internal (otmpl, "updated_time", &current_datetime) != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+
+  return NO_ERROR;
+}
+
+int
+db_update_otmpl_timestamp (DB_OTMPL * otmpl)
+{
+  DB_VALUE current_datetime;
+
+  if (db_sys_datetime (&current_datetime) != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+
+  if (dbt_put_internal (otmpl, "updated_time", &current_datetime) != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+
+  return NO_ERROR;
+}
+
+int
+db_update_obj_timestamp (DB_OBJECT * obj)
+{
+  DB_VALUE current_datetime;
+
+  if (db_sys_datetime (&current_datetime) != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+
+  if (db_put (obj, "updated_time", &current_datetime) != NO_ERROR)
+    {
+      return ER_FAILED;
+    }
+
+  return NO_ERROR;
 }

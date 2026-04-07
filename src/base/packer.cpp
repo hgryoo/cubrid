@@ -33,6 +33,8 @@
 #include <cstring>
 #include <vector>
 #include <string>
+// XXX: SHOULD BE THE LAST INCLUDE HEADER
+#include "memory_wrapper.hpp"
 
 namespace cubpacking
 {
@@ -40,21 +42,11 @@ namespace cubpacking
 #define LARGE_STRING_CODE 0xff
 
   //
-  // static function declarations
-  //
-  static void check_range (const char *ptr, const char *endptr, const size_t amount);
-
-  //
   // static function definitions
-  static void
-  check_range (const char *ptr, const char *endptr, const size_t amount)
+  static inline int check_range (const char *ptr, const char *endptr, const size_t amount)
   {
     assert (ptr + amount <= endptr);
-    if (ptr + amount > endptr)
-      {
-	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
-	abort ();
-      }
+    return (ptr + amount <= endptr) ? NO_ERROR : ER_FAILED;
   }
 
   //
@@ -64,11 +56,13 @@ namespace cubpacking
   packer::packer (void)
   {
     // all pointers are initialized to NULL
+    m_error_code = NO_ERROR;
   }
 
   packer::packer (char *storage, const size_t amount)
   {
     set_buffer (storage, amount);
+    m_error_code = NO_ERROR;
   }
 
   void
@@ -82,11 +76,13 @@ namespace cubpacking
   unpacker::unpacker (const char *storage, const size_t amount)
   {
     set_buffer (storage, amount);
+    m_error_code = NO_ERROR;
   }
 
   unpacker::unpacker (const cubmem::block &blk)
   {
     set_buffer (blk.ptr, blk.dim);
+    m_error_code = NO_ERROR;
   }
 
   void
@@ -95,6 +91,18 @@ namespace cubpacking
     m_start_ptr = storage;
     m_ptr = storage;
     m_end_ptr = m_start_ptr + amount;
+  }
+
+  bool
+  packer::has_error (void) const
+  {
+    return m_error_code != NO_ERROR;
+  }
+
+  bool
+  unpacker::has_error (void) const
+  {
+    return m_error_code != NO_ERROR;
   }
 
   size_t
@@ -107,7 +115,12 @@ namespace cubpacking
   packer::pack_int (const int value)
   {
     align (INT_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, OR_INT_SIZE);
+    if (check_range (m_ptr, m_end_ptr, OR_INT_SIZE) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     OR_PUT_INT (m_ptr, value);
     m_ptr += OR_INT_SIZE;
@@ -120,7 +133,7 @@ namespace cubpacking
   }
 
   void
-  packer::pack_overloaded (int value)
+  packer::pack_overloaded (const int value)
   {
     pack_int (value);
   }
@@ -129,7 +142,12 @@ namespace cubpacking
   unpacker::unpack_int (int &value)
   {
     align (INT_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, OR_INT_SIZE);
+    if (check_range (m_ptr, m_end_ptr, OR_INT_SIZE) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     value = OR_GET_INT (m_ptr);
     m_ptr += OR_INT_SIZE;
@@ -145,7 +163,12 @@ namespace cubpacking
   unpacker::peek_unpack_int (int &value)
   {
     align (INT_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, OR_INT_SIZE);
+    if (check_range (m_ptr, m_end_ptr, OR_INT_SIZE) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     value = OR_GET_INT (m_ptr);
   }
@@ -157,7 +180,7 @@ namespace cubpacking
   }
 
   void
-  packer::pack_bool (bool value)
+  packer::pack_bool (const bool value)
   {
     pack_int (value ? 1 : 0);
   }
@@ -169,7 +192,7 @@ namespace cubpacking
   }
 
   void
-  packer::pack_overloaded (bool value)
+  packer::pack_overloaded (const bool value)
   {
     pack_bool (value);
   }
@@ -199,7 +222,12 @@ namespace cubpacking
   packer::pack_short (const short value)
   {
     align (SHORT_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, OR_SHORT_SIZE);
+    if (check_range (m_ptr, m_end_ptr, OR_SHORT_SIZE) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     OR_PUT_SHORT (m_ptr, value);
     m_ptr += OR_SHORT_SIZE;
@@ -221,7 +249,12 @@ namespace cubpacking
   unpacker::unpack_short (short &value)
   {
     align (SHORT_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, OR_SHORT_SIZE);
+    if (check_range (m_ptr, m_end_ptr, OR_SHORT_SIZE) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     value = OR_GET_SHORT (m_ptr);
     m_ptr += OR_SHORT_SIZE;
@@ -243,7 +276,12 @@ namespace cubpacking
   packer::pack_bigint (const std::int64_t &value)
   {
     align (MAX_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, OR_BIGINT_SIZE);
+    if (check_range (m_ptr, m_end_ptr, OR_BIGINT_SIZE) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     OR_PUT_INT64 (m_ptr, &value);
     m_ptr += OR_BIGINT_SIZE;
@@ -253,7 +291,12 @@ namespace cubpacking
   unpacker::unpack_bigint (std::int64_t &value)
   {
     align (MAX_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, OR_BIGINT_SIZE);
+    if (check_range (m_ptr, m_end_ptr, OR_BIGINT_SIZE) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     OR_GET_INT64 (m_ptr, &value);
     m_ptr += OR_BIGINT_SIZE;
@@ -263,7 +306,12 @@ namespace cubpacking
   packer::pack_bigint (const std::uint64_t &value)
   {
     align (MAX_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, OR_BIGINT_SIZE);
+    if (check_range (m_ptr, m_end_ptr, OR_BIGINT_SIZE) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     OR_PUT_INT64 (m_ptr, &value);
     m_ptr += OR_BIGINT_SIZE;
@@ -297,7 +345,12 @@ namespace cubpacking
   unpacker::unpack_bigint (std::uint64_t &value)
   {
     align (MAX_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, OR_BIGINT_SIZE);
+    if (check_range (m_ptr, m_end_ptr, OR_BIGINT_SIZE) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     OR_GET_INT64 (m_ptr, &value);
     m_ptr += OR_BIGINT_SIZE;
@@ -319,7 +372,12 @@ namespace cubpacking
   packer::pack_int_array (const int *array, const int count)
   {
     align (INT_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, (OR_INT_SIZE * (count + 1)));
+    if (check_range (m_ptr, m_end_ptr, (OR_INT_SIZE * (count + 1))) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     OR_PUT_INT (m_ptr, count);
     m_ptr += OR_INT_SIZE;
@@ -334,7 +392,12 @@ namespace cubpacking
   unpacker::unpack_int_array (int *array, int &count)
   {
     align (INT_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, OR_INT_SIZE);
+    if (check_range (m_ptr, m_end_ptr, OR_INT_SIZE) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     count = OR_GET_INT (m_ptr);
     m_ptr += OR_INT_SIZE;
@@ -344,7 +407,12 @@ namespace cubpacking
 	return;
       }
 
-    check_range (m_ptr, m_end_ptr, OR_INT_SIZE * count);
+    if (check_range (m_ptr, m_end_ptr, OR_INT_SIZE * count) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     for (int i = 0; i < count; i++)
       {
@@ -354,46 +422,9 @@ namespace cubpacking
   }
 
   size_t
-  packer::get_packed_int_vector_size (size_t curr_offset, const size_t count)
+  packer::get_packed_int_array_size (size_t curr_offset, const size_t count)
   {
     return DB_ALIGN (curr_offset, INT_ALIGNMENT) - curr_offset + (OR_INT_SIZE * (count + 1));
-  }
-
-  void
-  packer::pack_int_vector (const std::vector<int> &array)
-  {
-    const size_t count = array.size ();
-
-    align (INT_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, (OR_INT_SIZE * (count + 1)));
-
-    OR_PUT_INT (m_ptr, count);
-    m_ptr += OR_INT_SIZE;
-    for (size_t i = 0; i < count; ++i)
-      {
-	OR_PUT_INT (m_ptr, array[i]);
-	m_ptr += OR_INT_SIZE;
-      }
-  }
-
-  void
-  unpacker::unpack_int_vector (std::vector<int> &array)
-  {
-    int count;
-
-    align (INT_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, OR_INT_SIZE);
-
-    count = OR_GET_INT (m_ptr);
-    m_ptr += OR_INT_SIZE;
-
-    check_range (m_ptr, m_end_ptr, OR_INT_SIZE * count);
-
-    for (int i = 0; i < count; i++)
-      {
-	array.push_back (OR_GET_INT (m_ptr));
-	m_ptr += OR_INT_SIZE;
-      }
   }
 
   size_t
@@ -411,13 +442,23 @@ namespace cubpacking
     size_t value_size = or_packed_value_size (&value, 1, 1, 0);
 
     align (MAX_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, value_size);
+    if (check_range (m_ptr, m_end_ptr, value_size) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     OR_BUF orbuf;
     delegate_to_or_buf (value_size, orbuf);
     or_put_value (&orbuf, (db_value *) &value, 1, 1, 0);
 
-    check_range (m_ptr, m_end_ptr, 0);
+    if (check_range (m_ptr, m_end_ptr, 0) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
   }
 
   size_t
@@ -444,7 +485,12 @@ namespace cubpacking
     size_t value_size = or_packed_value_size (&value, 1, 1, 0);
     assert (old_ptr + value_size == m_ptr);
 
-    check_range (m_ptr, m_end_ptr, 0);
+    if (check_range (m_ptr, m_end_ptr, 0) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
   }
 
   void
@@ -453,90 +499,27 @@ namespace cubpacking
     unpack_db_value (value);
   }
 
-  size_t
-  packer::get_packed_small_string_size (const char *string, const size_t curr_offset)
-  {
-    size_t entry_size;
-
-    entry_size = OR_BYTE_SIZE + strlen (string);
-
-    return DB_ALIGN (curr_offset + entry_size, INT_ALIGNMENT) - curr_offset;
-  }
-
   void
-  packer::pack_small_string (const char *string, const size_t str_size)
+  packer::pack_small_c_string (const char *string, const size_t str_size)
   {
-    size_t len;
+    assert (str_size < MAX_SMALL_STRING_SIZE);
 
-    if (str_size == 0)
+    if (check_range (m_ptr, m_end_ptr, str_size + 1) != NO_ERROR)
       {
-	len = strlen (string);
-      }
-    else
-      {
-	len = str_size;
-      }
-
-    if (len > MAX_SMALL_STRING_SIZE)
-      {
-	assert (false);
-	pack_c_string (string, len);
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
 	return;
       }
 
-    check_range (m_ptr, m_end_ptr, len + 1);
-
-    OR_PUT_BYTE (m_ptr, len);
+    OR_PUT_BYTE (m_ptr, str_size);
     m_ptr += OR_BYTE_SIZE;
-    if (len > 0)
+    if (str_size > 0)
       {
-	std::memcpy (m_ptr, string, len);
-	m_ptr += len;
+	std::memcpy (m_ptr, string, str_size);
+	m_ptr += str_size;
       }
 
     align (INT_ALIGNMENT);
-  }
-
-  void
-  unpacker::unpack_small_string (char *string, const size_t max_size)
-  {
-    size_t len;
-
-    check_range (m_ptr, m_end_ptr, OR_BYTE_SIZE);
-
-    len = OR_GET_BYTE (m_ptr);
-    if (len > max_size)
-      {
-	assert (false);
-	return;
-      }
-
-    m_ptr += OR_BYTE_SIZE;
-
-    check_range (m_ptr, m_end_ptr, len);
-    if (len > 0)
-      {
-	std::memcpy (string, m_ptr, len);
-	string[len] = '\0';
-	m_ptr += len;
-      }
-    else
-      {
-	*string = '\0';
-      }
-
-    align (INT_ALIGNMENT);
-  }
-
-
-  size_t
-  packer::get_packed_large_string_size (const std::string &str, const size_t curr_offset)
-  {
-    size_t entry_size;
-
-    entry_size = OR_INT_SIZE + str.size ();
-
-    return DB_ALIGN (curr_offset + entry_size, INT_ALIGNMENT) - curr_offset;
   }
 
   void
@@ -554,7 +537,12 @@ namespace cubpacking
       }
 
     align (INT_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, len + OR_INT_SIZE);
+    if (check_range (m_ptr, m_end_ptr, len + OR_INT_SIZE) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     OR_PUT_INT (m_ptr, len);
     m_ptr += OR_INT_SIZE;
@@ -566,26 +554,30 @@ namespace cubpacking
   }
 
   void
-  packer::pack_large_string (const std::string &str)
-  {
-    pack_large_c_string (str.c_str (), str.size ());
-  }
-
-  void
   unpacker::unpack_large_string (std::string &str)
   {
     size_t len;
 
     align (INT_ALIGNMENT);
 
-    check_range (m_ptr, m_end_ptr, OR_INT_SIZE);
+    if (check_range (m_ptr, m_end_ptr, OR_INT_SIZE) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     len = OR_GET_INT (m_ptr);
     m_ptr += OR_INT_SIZE;
 
     if (len > 0)
       {
-	check_range (m_ptr, m_end_ptr, len);
+	if (check_range (m_ptr, m_end_ptr, len) != NO_ERROR)
+	  {
+	    er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	    m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	    return;
+	  }
 	str = std::string (m_ptr, len);
 	m_ptr += len;
       }
@@ -602,9 +594,7 @@ namespace cubpacking
   void
   packer::pack_string (const std::string &str)
   {
-    size_t len = str.size ();
-
-    pack_c_string (str.c_str (), len);
+    pack_c_string (str.c_str (), str.size ());
   }
 
   size_t
@@ -619,12 +609,29 @@ namespace cubpacking
     pack_string (str);
   }
 
+  size_t
+  packer::get_packed_size_overloaded (const char *value, size_t curr_offset)
+  {
+    return get_packed_c_string_size (value, strlen (value), curr_offset);
+  }
+
+  void
+  packer::pack_overloaded (const char *str)
+  {
+    pack_c_string (str, strlen (str));
+  }
+
   void
   unpacker::unpack_string (std::string &str)
   {
     size_t len;
 
-    check_range (m_ptr, m_end_ptr, 1);
+    if (check_range (m_ptr, m_end_ptr, 1) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     len = OR_GET_BYTE (m_ptr);
 
@@ -672,11 +679,16 @@ namespace cubpacking
   {
     if (str_size < MAX_SMALL_STRING_SIZE)
       {
-	pack_small_string (str, str_size);
+	pack_small_c_string (str, str_size);
       }
     else
       {
-	check_range (m_ptr, m_end_ptr, str_size + 1 + OR_INT_SIZE);
+	if (check_range (m_ptr, m_end_ptr, str_size + 1 + OR_INT_SIZE) != NO_ERROR)
+	  {
+	    er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	    m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	    return;
+	  }
 
 	OR_PUT_BYTE (m_ptr, LARGE_STRING_CODE);
 	m_ptr++;
@@ -688,7 +700,12 @@ namespace cubpacking
   void
   unpacker::unpack_string_size (size_t &len)
   {
-    check_range (m_ptr, m_end_ptr, 1);
+    if (check_range (m_ptr, m_end_ptr, 1) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
     len = OR_GET_BYTE (m_ptr);
     if (len == LARGE_STRING_CODE)
       {
@@ -705,7 +722,12 @@ namespace cubpacking
       }
     if (len > 0)
       {
-	check_range (m_ptr, m_end_ptr, len);
+	if (check_range (m_ptr, m_end_ptr, len) != NO_ERROR)
+	  {
+	    er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	    m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	    return;
+	  }
       }
   }
 
@@ -718,7 +740,8 @@ namespace cubpacking
 
     if (len >= max_str_size)
       {
-	assert (false);
+	assert (max_str_size == 0);
+	align (INT_ALIGNMENT);
 	return;
       }
     if (len > 0)
@@ -781,7 +804,12 @@ namespace cubpacking
   packer::pack_oid (const OID &oid)
   {
     align (INT_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, OR_OID_SIZE);
+    if (check_range (m_ptr, m_end_ptr, OR_OID_SIZE) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     OR_PUT_OID (m_ptr, &oid);
     m_ptr += OR_OID_SIZE;
@@ -803,7 +831,12 @@ namespace cubpacking
   unpacker::unpack_oid (OID &oid)
   {
     align (INT_ALIGNMENT);
-    check_range (m_ptr, m_end_ptr, OR_OID_SIZE);
+    if (check_range (m_ptr, m_end_ptr, OR_OID_SIZE) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     OR_GET_OID (m_ptr, &oid);
     m_ptr += OR_OID_SIZE;
@@ -813,11 +846,6 @@ namespace cubpacking
   unpacker::unpack_overloaded (OID &oid)
   {
     return unpack_oid (oid);
-  }
-
-  void unpacker::peek_unpack_block_length (int &value)
-  {
-    return peek_unpack_int (value);
   }
 
   size_t
@@ -894,7 +922,12 @@ namespace cubpacking
   {
     align (INT_ALIGNMENT);
 
-    check_range (m_ptr, m_end_ptr, length + OR_INT_SIZE);
+    if (check_range (m_ptr, m_end_ptr, length + OR_INT_SIZE) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     OR_PUT_INT (m_ptr, length);
     m_ptr += OR_INT_SIZE;
@@ -933,7 +966,12 @@ namespace cubpacking
     assert (actual_len <= max_length);
     copy_length = std::min (actual_len, max_length);
 
-    check_range (m_ptr, m_end_ptr, actual_len);
+    if (check_range (m_ptr, m_end_ptr, actual_len) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
 
     if (copy_length > 0)
       {
@@ -948,7 +986,12 @@ namespace cubpacking
   void
   packer::delegate_to_or_buf (const size_t size, or_buf &buf)
   {
-    check_range (m_ptr, m_end_ptr, size);
+    if (check_range (m_ptr, m_end_ptr, size) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
     or_init (&buf, m_ptr, size);
     m_ptr += size;
   }
@@ -992,7 +1035,12 @@ namespace cubpacking
   void
   unpacker::delegate_to_or_buf (const size_t size, or_buf &buf)
   {
-    check_range (m_ptr, m_end_ptr, size);
+    if (check_range (m_ptr, m_end_ptr, size) != NO_ERROR)
+      {
+	er_set (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERFACE_NOT_ENOUGH_DATA_SIZE, 0);
+	m_error_code = ER_INTERFACE_NOT_ENOUGH_DATA_SIZE;
+	return;
+      }
     // promise you won't write on it!
     or_init (&buf, const_cast <char *> (m_ptr), size);
     m_ptr += size;
