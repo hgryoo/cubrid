@@ -52,6 +52,7 @@
 #include "query_hash_scan.h"
 #include "rtree.h"
 #include "statistics.h"
+#include "db_geometry.hpp"
 #include "px_heap_scan.hpp"
 // XXX: SHOULD BE THE LAST INCLUDE HEADER
 #include "memory_wrapper.hpp"
@@ -8812,11 +8813,12 @@ scan_open_rtree_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 		      regu_variable_list_node * regu_list_rest,
 		      int num_attrs_pred, ATTR_ID * attrids_pred, HEAP_CACHE_ATTRINFO * cache_pred,
 		      int num_attrs_rest, ATTR_ID * attrids_rest, HEAP_CACHE_ATTRINFO * cache_rest,
-		      double *search_bounds, int search_mode)
+		      struct regu_variable_node * search_geom, int search_mode)
 {
   RTREE_SCAN_ID *rtsidp;
   RTREE_MBR search_mbr;
   RTREE_COLLECT_ARG ctx;
+  DB_VALUE *geom_val = NULL;
   int error_code = NO_ERROR;
 
   scan_id->type = S_RTREE_SCAN;
@@ -8827,7 +8829,6 @@ scan_open_rtree_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
   rtsidp->btid = *btid;
   rtsidp->cls_oid = *cls_oid;
   rtsidp->hfid = *hfid;
-  memcpy (rtsidp->search_bounds, search_bounds, 4 * sizeof (double));
   rtsidp->search_mode = search_mode;
   rtsidp->oid_buf = NULL;
   rtsidp->oid_buf_capacity = 0;
@@ -8841,8 +8842,21 @@ scan_open_rtree_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 			  ((pr) ? eval_fnc (thread_p, pr, &single_node_type) : NULL));
   }
 
-  /* Build search MBR */
-  memcpy (search_mbr.bounds, search_bounds, 4 * sizeof (double));
+  /* Evaluate search geometry regu var to obtain the spatial MBR */
+  RTREE_MBR_SET_EMPTY (&search_mbr);
+  if (search_geom != NULL)
+    {
+      error_code = fetch_peek_dbval (thread_p, search_geom, vd, NULL, NULL, NULL, &geom_val);
+      if (error_code != NO_ERROR || geom_val == NULL)
+	{
+	  return (error_code != NO_ERROR) ? error_code : ER_FAILED;
+	}
+      if (db_spatial_get_mbr (geom_val, search_mbr.bounds) != NO_ERROR)
+	{
+	  return ER_FAILED;
+	}
+    }
+  memcpy (rtsidp->search_bounds, search_mbr.bounds, 4 * sizeof (double));
 
   /* Collect all matching OIDs from the R-tree */
   ctx.capacity = 64;

@@ -692,16 +692,28 @@ stx_restore_rtree_spec_info (THREAD_ENTRY * thread_p, char *ptr)
       return NULL;
     }
 
+  int tmp, geom_offset;
+
   ptr = or_unpack_btid (ptr, &rtree_spec->btid);
   ptr = or_unpack_oid (ptr, &rtree_spec->class_oid);
-  ptr = or_unpack_double (ptr, &rtree_spec->search_bounds[0]);
-  ptr = or_unpack_double (ptr, &rtree_spec->search_bounds[1]);
-  ptr = or_unpack_double (ptr, &rtree_spec->search_bounds[2]);
-  ptr = or_unpack_double (ptr, &rtree_spec->search_bounds[3]);
-
-  int tmp;
   ptr = or_unpack_int (ptr, &tmp);
   rtree_spec->search_mode = tmp;
+  ptr = or_unpack_int (ptr, &geom_offset);
+
+  if (geom_offset == 0)
+    {
+      rtree_spec->search_geom = NULL;
+    }
+  else
+    {
+      XASL_UNPACK_INFO *xasl_unpack_info = get_xasl_unpack_info_ptr (thread_p);
+      rtree_spec->search_geom =
+	stx_restore_regu_variable (thread_p, &xasl_unpack_info->packed_xasl[geom_offset]);
+      if (rtree_spec->search_geom == NULL)
+	{
+	  return NULL;
+	}
+    }
 
   return rtree_spec;
 }

@@ -12409,6 +12409,110 @@ pt_get_mvcc_reev_range_data (PARSER_CONTEXT * parser, TABLE_INFO * table_info, P
 }
 
 /*
+ * pt_find_rtree_predicate - scan predicate tree for a top-level spatial predicate
+ * of the form ST_Intersects/ST_Contains/ST_Within(col, geom_expr).
+ *
+ * If found, set *col_name_out to the column name, *geom_arg_out to the geometry
+ * expression node, and *mode_out to the corresponding RTREE_SEARCH_MODE value.
+ * Returns true if a usable spatial predicate was found.
+ */
+static bool
+pt_find_rtree_predicate (PT_NODE * where_part, const char **col_name_out,
+			 PT_NODE ** geom_arg_out, int *mode_out)
+{
+  PT_NODE *node;
+
+  for (node = where_part; node != NULL; node = node->next)
+    {
+      PT_NODE *term = node;
+
+      /* Unwrap AND chains: AND is represented as a PT_EXPR with op=PT_AND */
+      while (term && term->node_type == PT_EXPR && term->info.expr.op == PT_AND)
+	{
+	  term = term->info.expr.arg1;
+	}
+
+      if (term == NULL || term->node_type != PT_FUNCTION)
+	{
+	  continue;
+	}
+
+      FUNC_CODE ftype = term->info.function.function_type;
+      int mode = -1;
+
+      if (ftype == F_ST_INTERSECTS)
+	{
+	  mode = 0;			/* RTREE_SEARCH_INTERSECTS */
+	}
+      else if (ftype == F_ST_CONTAINS)
+	{
+	  mode = 2;			/* RTREE_SEARCH_CONTAINS */
+	}
+      else if (ftype == F_ST_WITHIN)
+	{
+	  mode = 1;			/* RTREE_SEARCH_CONTAINED */
+	}
+      else
+	{
+	  continue;
+	}
+
+      PT_NODE *arg1 = term->info.function.arg_list;
+      if (arg1 == NULL)
+	{
+	  continue;
+	}
+      PT_NODE *arg2 = arg1->next;
+      if (arg2 == NULL)
+	{
+	  continue;
+	}
+
+      /* arg1 must be a column reference (PT_NAME) */
+      if (arg1->node_type != PT_NAME)
+	{
+	  continue;
+	}
+
+      *col_name_out = arg1->info.name.original;
+      *geom_arg_out = arg2;
+      *mode_out = mode;
+      return true;
+    }
+
+  return false;
+}
+
+/*
+ * pt_find_rtree_index_for_col - find an R-tree index on class_obj whose first
+ * attribute matches col_name.  Returns the SM_CLASS_CONSTRAINT* if found,
+ * NULL otherwise.
+ */
+static SM_CLASS_CONSTRAINT *
+pt_find_rtree_index_for_col (MOP class_obj, const char *col_name)
+{
+  SM_CLASS_CONSTRAINT *con;
+
+  for (con = sm_class_constraints (class_obj); con != NULL; con = con->next)
+    {
+      if (con->type != SM_CONSTRAINT_RTREE_INDEX)
+	{
+	  continue;
+	}
+      if (con->attributes == NULL || con->attributes[0] == NULL)
+	{
+	  continue;
+	}
+      if (strcmp (con->attributes[0]->header.name, col_name) == 0)
+	{
+	  return con;
+	}
+    }
+
+  return NULL;
+}
+
+/*
  * pt_to_class_spec_list () - Convert a PT_NODE flat class list to
  *     an ACCESS_SPEC_LIST list of representing the classes to be selected from
  *   return:
@@ -12479,6 +12583,127 @@ pt_to_class_spec_list (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * where_
 
 	  if (index_pred == NULL)
 	    {
+	      /* Check if a spatial predicate can use an R-tree index */
+	      {
+		const char *spatial_col_name = NULL;
+		PT_NODE *spatial_geom_arg = NULL;
+		int rtree_mode = 0;
+
+		if (!PT_IS_SPEC_FLAG_SET (spec, PT_SPEC_FLAG_RECORD_INFO_SCAN)
+		    && !PT_IS_SPEC_FLAG_SET (spec, PT_SPEC_FLAG_SAMPLING_SCAN)
+		    && !PT_IS_SPEC_FLAG_SET (spec, PT_SPEC_FLAG_PAGE_INFO_SCAN)
+		    && !PT_IS_VALUE_QUERY (spec)
+		    && spec->info.spec.meta_class != PT_META_CLASS
+		    && where_part != NULL
+		    && pt_find_rtree_predicate (where_part, &spatial_col_name, &spatial_geom_arg, &rtree_mode))
+		  {
+		    MOP class_mop = class_->info.name.db_object;
+		    SM_CLASS_CONSTRAINT *rtree_con = pt_find_rtree_index_for_col (class_mop, spatial_col_name);
+
+		    if (rtree_con != NULL)
+		      {
+			/* Build an RTREE_SPEC_INFO for this access */
+			RTREE_SPEC_INFO *rtree_spec;
+			regu_alloc (rtree_spec);
+			if (rtree_spec == NULL)
+			  {
+			    goto exit_on_error_rtree;
+			  }
+
+			BTID_COPY (&rtree_spec->btid, &rtree_con->index_btid);
+			OID_COPY (&rtree_spec->class_oid, WS_OID (class_mop));
+			rtree_spec->search_mode = rtree_mode;
+
+			/* Convert geometry argument PT_NODE → REGU_VARIABLE */
+			symbols->current_class = class_;
+			rtree_spec->search_geom =
+			  pt_to_regu_variable (parser, spatial_geom_arg, UNBOX_AS_VALUE);
+			symbols->current_class = NULL;
+
+			if (rtree_spec->search_geom == NULL || pt_has_error (parser))
+			  {
+			    goto exit_on_error_rtree;
+			  }
+
+			/* Build pred/rest attribute lists for heap fetch after index lookup */
+			PRED_EXPR *rtree_where = NULL;
+			REGU_VARIABLE_LIST rtree_pred_attrs_regu = NULL;
+			REGU_VARIABLE_LIST rtree_rest_attrs_regu = NULL;
+			OUTPTR_LIST *rtree_outlist = NULL;
+			REGU_VARIABLE_LIST rtree_regu_var_list = NULL;
+			PT_NODE *rtree_pred_attrs = NULL, *rtree_rest_attrs = NULL;
+			int *rtree_pred_offsets = NULL, *rtree_rest_offsets = NULL;
+			HEAP_CACHE_ATTRINFO *rtree_cache_pred = NULL, *rtree_cache_rest = NULL;
+
+			if (pt_split_attrs (parser, table_info, where_part, &rtree_pred_attrs, &rtree_rest_attrs,
+					    NULL, &rtree_pred_offsets, &rtree_rest_offsets, NULL) != NO_ERROR)
+			  {
+			    goto exit_on_error_rtree;
+			  }
+
+			regu_alloc (rtree_cache_pred);
+			regu_alloc (rtree_cache_rest);
+
+			symbols->current_class = class_;
+			symbols->cache_attrinfo = rtree_cache_pred;
+			rtree_where = pt_to_pred_expr (parser, where_part);
+			rtree_pred_attrs_regu =
+			  pt_to_regu_variable_list (parser, rtree_pred_attrs, UNBOX_AS_VALUE,
+						    table_info->value_list, rtree_pred_offsets);
+			symbols->cache_attrinfo = rtree_cache_rest;
+			rtree_rest_attrs_regu =
+			  pt_to_regu_variable_list (parser, rtree_rest_attrs, UNBOX_AS_VALUE,
+						    table_info->value_list, rtree_rest_offsets);
+			symbols->current_class = NULL;
+			symbols->cache_attrinfo = NULL;
+
+			rtree_outlist = pt_make_outlist_from_vallist (parser, table_info->value_list);
+			rtree_regu_var_list =
+			  pt_to_position_regu_variable_list (parser, rtree_rest_attrs, table_info->value_list,
+							     rtree_rest_offsets);
+
+			parser_free_tree (parser, rtree_pred_attrs);
+			parser_free_tree (parser, rtree_rest_attrs);
+			if (rtree_pred_offsets != NULL)
+			  {
+			    free_and_init (rtree_pred_offsets);
+			  }
+			if (rtree_rest_offsets != NULL)
+			  {
+			    free_and_init (rtree_rest_offsets);
+			  }
+
+			access =
+			  pt_make_class_access_spec (parser, flat, class_mop, TARGET_CLASS,
+						     ACCESS_METHOD_INDEX_RTREE, NULL, NULL, rtree_where, NULL, NULL,
+						     rtree_pred_attrs_regu, rtree_rest_attrs_regu, NULL,
+						     rtree_outlist, rtree_regu_var_list, NULL,
+						     rtree_cache_pred, rtree_cache_rest, NULL,
+						     NO_SCHEMA, NULL, NULL);
+			if (access == NULL)
+			  {
+			    goto exit_on_error_rtree;
+			  }
+
+			access->rtree_specptr = rtree_spec;
+
+			if (spec->info.spec.flag & PT_SPEC_FLAG_FOR_UPDATE_CLAUSE)
+			  {
+			    ACCESS_SPEC_SET_FLAG (access, ACCESS_SPEC_FLAG_FOR_UPDATE);
+			  }
+			access->next = access_list;
+			access_list = access;
+
+			/* Skip heap scan — use R-tree */
+			continue;
+
+		      exit_on_error_rtree:
+			access_list = NULL;
+			break;
+		      }
+		  }
+	      }
+
 	      /* Heap scan */
 	      TARGET_TYPE scan_type;
 	      ACCESS_METHOD access_method = ACCESS_METHOD_SEQUENTIAL;

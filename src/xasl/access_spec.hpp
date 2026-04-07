@@ -107,10 +107,10 @@ struct indx_info
 typedef struct rtree_spec_info RTREE_SPEC_INFO;
 struct rtree_spec_info
 {
-  BTID btid;			/* R-tree index identifier */
-  OID class_oid;		/* owning class OID */
-  double search_bounds[4];	/* [xmin, ymin, xmax, ymax] of the spatial query MBR */
-  int search_mode;		/* RTREE_SEARCH_MODE value (INTERSECTS / CONTAINED / CONTAINS) */
+  BTID btid;				/* R-tree index identifier */
+  OID class_oid;			/* owning class OID */
+  int search_mode;			/* RTREE_SEARCH_MODE value (INTERSECTS / CONTAINED / CONTAINS) */
+  regu_variable_node *search_geom;	/* geometry argument regu var; MBR extracted at scan open time */
 };
 
 // TODO - move access specification code here; note - this is supposed to be common to both client and server.

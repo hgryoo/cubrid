@@ -114,8 +114,8 @@ struct rtree_scan_id
   HFID hfid;		/* heap file (for predicate evaluation) */
   SCAN_PRED scan_pred;	/* filter predicate applied after index lookup */
 
-  /* Search MBR: populated from the index access spec at open time */
-  double search_bounds[4];  /* [xmin, ymin, xmax, ymax] */
+  /* Search MBR: bounds computed at scan open time from the search_geom regu var */
+  double search_bounds[4];  /* [xmin, ymin, xmax, ymax] — filled by scan_open_rtree_scan */
   int search_mode;	    /* RTREE_SEARCH_MODE value */
 
   /* Result OID buffer (heap-allocated, freed at close) */
@@ -501,7 +501,8 @@ extern int scan_open_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 				 HEAP_CACHE_ATTRINFO * cache_range, bool iscan_oid_order, QUERY_ID query_id,
 				 bool min_max_optimzied_scan);
 /* Open an R-tree spatial index scan.
- * search_bounds[4] = {xmin, ymin, xmax, ymax} defines the query window.
+ * search_geom is a regu_variable_node* that evaluates to a geometry DB_VALUE
+ * at scan open time; the MBR is extracted from it via db_spatial_get_mbr().
  * search_mode is one of the RTREE_SEARCH_MODE enum values. */
 extern int scan_open_rtree_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 				 bool mvcc_select_lock_needed, SCAN_OPERATION_TYPE scan_op_type, int fixed, int grouped,
@@ -512,7 +513,7 @@ extern int scan_open_rtree_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 				 regu_variable_list_node * regu_list_rest,
 				 int num_attrs_pred, ATTR_ID * attrids_pred, HEAP_CACHE_ATTRINFO * cache_pred,
 				 int num_attrs_rest, ATTR_ID * attrids_rest, HEAP_CACHE_ATTRINFO * cache_rest,
-				 double *search_bounds, int search_mode);
+				 struct regu_variable_node * search_geom, int search_mode);
 
 extern int scan_open_index_key_info_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 					  /* fields of SCAN_ID */

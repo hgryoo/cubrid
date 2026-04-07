@@ -7467,7 +7467,7 @@ qexec_open_scan (THREAD_ENTRY * thread_p, ACCESS_SPEC_TYPE * curr_spec, VAL_LIST
 					       curr_spec->s.cls_node.num_attrs_rest,
 					       curr_spec->s.cls_node.attrids_rest,
 					       curr_spec->s.cls_node.cache_rest,
-					       curr_spec->rtree_specptr->search_bounds,
+					       curr_spec->rtree_specptr->search_geom,
 					       curr_spec->rtree_specptr->search_mode);
 	    if (error_code != NO_ERROR)
 	      {

@@ -1109,14 +1109,15 @@ end:
  * Layout (inline, fixed size):
  *   OR_BTID_ALIGNED_SIZE  -- btid
  *   OR_OID_SIZE           -- class_oid
- *   4 * OR_DOUBLE_SIZE    -- search_bounds[4]
  *   OR_INT_SIZE           -- search_mode
+ *   OR_INT_SIZE           -- search_geom regu var offset (0 = NULL)
  */
 static int
 xts_save_rtree_spec_info (const RTREE_SPEC_INFO * rtree_spec)
 {
   int offset;
   int size;
+  int geom_offset;
   char *buf_p;
 
   if (rtree_spec == NULL)
@@ -1130,7 +1131,7 @@ xts_save_rtree_spec_info (const RTREE_SPEC_INFO * rtree_spec)
       return offset;
     }
 
-  size = OR_BTID_ALIGNED_SIZE + OR_OID_SIZE + 4 * OR_DOUBLE_SIZE + OR_INT_SIZE;
+  size = OR_BTID_ALIGNED_SIZE + OR_OID_SIZE + OR_INT_SIZE + OR_INT_SIZE;
 
   offset = xts_reserve_location_in_stream (size);
   if (offset == ER_FAILED || xts_mark_ptr_visited (rtree_spec, offset) == ER_FAILED)
@@ -1138,15 +1139,26 @@ xts_save_rtree_spec_info (const RTREE_SPEC_INFO * rtree_spec)
       return ER_FAILED;
     }
 
+  /* Serialize the search_geom regu var (may be NULL for no-geometry case) */
+  if (rtree_spec->search_geom != NULL)
+    {
+      geom_offset = xts_save_regu_variable (rtree_spec->search_geom);
+      if (geom_offset == ER_FAILED)
+	{
+	  return ER_FAILED;
+	}
+    }
+  else
+    {
+      geom_offset = 0;
+    }
+
   buf_p = &xts_Stream_buffer[offset];
 
   buf_p = or_pack_btid (buf_p, &rtree_spec->btid);
   buf_p = or_pack_oid (buf_p, &rtree_spec->class_oid);
-  buf_p = or_pack_double (buf_p, rtree_spec->search_bounds[0]);
-  buf_p = or_pack_double (buf_p, rtree_spec->search_bounds[1]);
-  buf_p = or_pack_double (buf_p, rtree_spec->search_bounds[2]);
-  buf_p = or_pack_double (buf_p, rtree_spec->search_bounds[3]);
   buf_p = or_pack_int (buf_p, rtree_spec->search_mode);
+  buf_p = or_pack_int (buf_p, geom_offset);
 
   return offset;
 }
