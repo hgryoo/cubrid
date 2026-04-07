@@ -57,6 +57,7 @@ static QFILE_SORTED_LIST_ID *stx_restore_srlist_id (THREAD_ENTRY * thread_p, cha
 static QFILE_LIST_ID *stx_restore_list_id (THREAD_ENTRY * thread_p, char *ptr);
 static ARITH_TYPE *stx_restore_arith_type (THREAD_ENTRY * thread_p, char *ptr);
 static INDX_INFO *stx_restore_indx_info (THREAD_ENTRY * thread_p, char *ptr);
+static RTREE_SPEC_INFO *stx_restore_rtree_spec_info (THREAD_ENTRY * thread_p, char *ptr);
 static OUTPTR_LIST *stx_restore_outptr_list (THREAD_ENTRY * thread_p, char *ptr);
 static SELUPD_LIST *stx_restore_selupd_list (THREAD_ENTRY * thread_p, char *ptr);
 static UPDDEL_CLASS_INFO *stx_restore_update_class_info_array (THREAD_ENTRY * thread_p, char *ptr, int num_classes);
@@ -661,6 +662,48 @@ stx_restore_indx_info (THREAD_ENTRY * thread_p, char *ptr)
     }
 
   return indx_info;
+}
+
+static RTREE_SPEC_INFO *
+stx_restore_rtree_spec_info (THREAD_ENTRY * thread_p, char *ptr)
+{
+  RTREE_SPEC_INFO *rtree_spec;
+
+  if (ptr == NULL)
+    {
+      return NULL;
+    }
+
+  rtree_spec = (RTREE_SPEC_INFO *) stx_get_struct_visited_ptr (thread_p, ptr);
+  if (rtree_spec != NULL)
+    {
+      return rtree_spec;
+    }
+
+  rtree_spec = (RTREE_SPEC_INFO *) stx_alloc_struct (thread_p, sizeof (*rtree_spec));
+  if (rtree_spec == NULL)
+    {
+      stx_set_xasl_errcode (thread_p, ER_OUT_OF_VIRTUAL_MEMORY);
+      return NULL;
+    }
+
+  if (stx_mark_struct_visited (thread_p, ptr, rtree_spec) == ER_FAILED)
+    {
+      return NULL;
+    }
+
+  ptr = or_unpack_btid (ptr, &rtree_spec->btid);
+  ptr = or_unpack_oid (ptr, &rtree_spec->class_oid);
+  ptr = or_unpack_double (ptr, &rtree_spec->search_bounds[0]);
+  ptr = or_unpack_double (ptr, &rtree_spec->search_bounds[1]);
+  ptr = or_unpack_double (ptr, &rtree_spec->search_bounds[2]);
+  ptr = or_unpack_double (ptr, &rtree_spec->search_bounds[3]);
+
+  int tmp;
+  ptr = or_unpack_int (ptr, &tmp);
+  rtree_spec->search_mode = tmp;
+
+  return rtree_spec;
 }
 
 static OUTPTR_LIST *
@@ -4552,7 +4595,25 @@ stx_build_access_spec_type (THREAD_ENTRY * thread_p, char *ptr, ACCESS_SPEC_TYPE
   access_spec->access = (ACCESS_METHOD) tmp;
 
   ptr = or_unpack_int (ptr, &offset);
-  if (offset == 0)
+  if (access_spec->access == ACCESS_METHOD_INDEX_RTREE)
+    {
+      access_spec->indexptr = NULL;
+      if (offset != 0)
+	{
+	  access_spec->rtree_specptr =
+	    stx_restore_rtree_spec_info (thread_p, &xasl_unpack_info->packed_xasl[offset]);
+	  if (access_spec->rtree_specptr == NULL)
+	    {
+	      goto error;
+	    }
+	  access_spec->btid = access_spec->rtree_specptr->btid;
+	}
+      else
+	{
+	  access_spec->rtree_specptr = NULL;
+	}
+    }
+  else if (offset == 0)
     {
       access_spec->indexptr = NULL;
     }

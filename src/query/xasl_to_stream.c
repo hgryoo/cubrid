@@ -84,6 +84,7 @@ static int xts_save_srlist_id (const QFILE_SORTED_LIST_ID * sort_list_id);
 static int xts_save_list_id (const QFILE_LIST_ID * list_id);
 static int xts_save_arith_type (const ARITH_TYPE * arithmetic);
 static int xts_save_indx_info (const INDX_INFO * indx_info);
+static int xts_save_rtree_spec_info (const RTREE_SPEC_INFO * rtree_spec);
 static int xts_save_outptr_list (const OUTPTR_LIST * outptr_list);
 static int xts_save_selupd_list (const SELUPD_LIST * selupd_list);
 static int xts_save_pred_expr (const PRED_EXPR * ptr);
@@ -1098,6 +1099,54 @@ end:
     {
       free_and_init (buf_p);
     }
+
+  return offset;
+}
+
+/*
+ * xts_save_rtree_spec_info - serialize RTREE_SPEC_INFO into the XASL stream.
+ *
+ * Layout (inline, fixed size):
+ *   OR_BTID_ALIGNED_SIZE  -- btid
+ *   OR_OID_SIZE           -- class_oid
+ *   4 * OR_DOUBLE_SIZE    -- search_bounds[4]
+ *   OR_INT_SIZE           -- search_mode
+ */
+static int
+xts_save_rtree_spec_info (const RTREE_SPEC_INFO * rtree_spec)
+{
+  int offset;
+  int size;
+  char *buf_p;
+
+  if (rtree_spec == NULL)
+    {
+      return NO_ERROR;
+    }
+
+  offset = xts_get_offset_visited_ptr (rtree_spec);
+  if (offset != ER_FAILED)
+    {
+      return offset;
+    }
+
+  size = OR_BTID_ALIGNED_SIZE + OR_OID_SIZE + 4 * OR_DOUBLE_SIZE + OR_INT_SIZE;
+
+  offset = xts_reserve_location_in_stream (size);
+  if (offset == ER_FAILED || xts_mark_ptr_visited (rtree_spec, offset) == ER_FAILED)
+    {
+      return ER_FAILED;
+    }
+
+  buf_p = &xts_Stream_buffer[offset];
+
+  buf_p = or_pack_btid (buf_p, &rtree_spec->btid);
+  buf_p = or_pack_oid (buf_p, &rtree_spec->class_oid);
+  buf_p = or_pack_double (buf_p, rtree_spec->search_bounds[0]);
+  buf_p = or_pack_double (buf_p, rtree_spec->search_bounds[1]);
+  buf_p = or_pack_double (buf_p, rtree_spec->search_bounds[2]);
+  buf_p = or_pack_double (buf_p, rtree_spec->search_bounds[3]);
+  buf_p = or_pack_int (buf_p, rtree_spec->search_mode);
 
   return offset;
 }
@@ -4551,6 +4600,16 @@ xts_process_access_spec_type (char *ptr, const ACCESS_SPEC_TYPE * access_spec)
       || access_spec->access == ACCESS_METHOD_SEQUENTIAL_SAMPLING_SCAN)
     {
       ptr = or_pack_int (ptr, 0);
+    }
+  else if (access_spec->access == ACCESS_METHOD_INDEX_RTREE)
+    {
+      /* Pack RTREE_SPEC_INFO as the index descriptor */
+      offset = xts_save_rtree_spec_info (access_spec->rtree_specptr);
+      if (offset == ER_FAILED)
+	{
+	  return NULL;
+	}
+      ptr = or_pack_int (ptr, offset);
     }
   else
     {

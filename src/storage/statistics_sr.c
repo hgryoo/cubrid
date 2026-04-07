@@ -36,6 +36,8 @@
 #include "partition_sr.h"
 #include "object_primitive.h"
 #include "object_representation.h"
+#include "object_representation_sr.h"
+#include "rtree.h"
 #include "thread_entry.hpp"
 #include "system_parameter.h"
 #include "catalog_class.h"
@@ -122,6 +124,8 @@ xstats_update_statistics (THREAD_ENTRY * thread_p, OID * class_id_p, bool with_f
   int count = 0, error_code = NO_ERROR;
   int lk_grant_code = 0;
   CATALOG_ACCESS_INFO catalog_access_info = CATALOG_ACCESS_INFO_INITIALIZER;
+  OR_CLASSREP *cls_rep = NULL;
+  int cls_rep_cache = 0;
 
   thread_p->push_resource_tracks ();
 
@@ -251,6 +255,9 @@ xstats_update_statistics (THREAD_ENTRY * thread_p, OID * class_id_p, bool with_f
 
   /* update the index statistics for each attribute */
 
+  /* Load class representation once so we can look up index types (RTREE_INDEX vs BTREE_INDEX) */
+  cls_rep = heap_classrepr_get (thread_p, class_id_p, NULL, NULL_REPRID, &cls_rep_cache);
+
   for (i = 0; i < disk_repr_p->n_fixed + disk_repr_p->n_variable; i++)
     {
       if (i < disk_repr_p->n_fixed)
@@ -264,13 +271,41 @@ xstats_update_statistics (THREAD_ENTRY * thread_p, OID * class_id_p, bool with_f
 
       for (j = 0, btree_stats_p = disk_attr_p->bt_stats; j < disk_attr_p->n_btstats; j++, btree_stats_p++)
 	{
+	  bool is_rtree = false;
+	  int k;
+
 	  assert_release (!BTID_IS_NULL (&btree_stats_p->btid));
 	  assert_release (btree_stats_p->pkeys_size > 0);
 	  assert_release (btree_stats_p->pkeys_size <= BTREE_STATS_PKEYS_NUM);
 
-	  if (btree_get_stats (thread_p, btree_stats_p, with_fullscan) != NO_ERROR)
+	  /* Detect R-tree index by matching BTID against OR_CLASSREP index list */
+	  if (cls_rep != NULL)
 	    {
-	      goto error;
+	      for (k = 0; k < cls_rep->n_indexes; k++)
+		{
+		  if (BTID_IS_EQUAL (&cls_rep->indexes[k].btid, &btree_stats_p->btid)
+		      && cls_rep->indexes[k].type == RTREE_INDEX)
+		    {
+		      is_rtree = true;
+		      break;
+		    }
+		}
+	    }
+
+	  if (is_rtree)
+	    {
+	      /* Use R-tree-specific statistics collection */
+	      if (rtree_get_stats (thread_p, btree_stats_p, with_fullscan) != NO_ERROR)
+		{
+		  goto error;
+		}
+	    }
+	  else
+	    {
+	      if (btree_get_stats (thread_p, btree_stats_p, with_fullscan) != NO_ERROR)
+		{
+		  goto error;
+		}
 	    }
 
 	  assert_release (btree_stats_p->keys >= 0);
@@ -324,6 +359,11 @@ end:
   (void) catalog_end_access_with_dir_oid (thread_p, &catalog_access_info, error_code);
 
   lock_unlock_object (thread_p, class_id_p, oid_Root_class_oid, SCH_S_LOCK, false);
+
+  if (cls_rep != NULL)
+    {
+      heap_classrepr_free_and_init (cls_rep, &cls_rep_cache);
+    }
 
   if (disk_repr_p)
     {
