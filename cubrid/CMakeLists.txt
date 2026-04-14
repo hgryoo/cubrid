@@ -536,6 +536,8 @@ else()
   set(VECTOR_INTRINSICS_FILE ${INDEX_HNSW_DIR}/vector_distance_intrinsics_fallback.cpp)
   set(VECTOR_INTRINSICS_ISA_FLAGS "")
 endif()
+# COMPILE_OPTIONS expects semicolon-separated elements; convert space-separated ISA flags.
+string(REPLACE " " ";" VECTOR_INTRINSICS_ISA_FLAGS "${VECTOR_INTRINSICS_ISA_FLAGS}")
 list(APPEND STORAGE_SOURCES ${VECTOR_INTRINSICS_FILE})
 
 if(USE_SIMD_NATIVE)
