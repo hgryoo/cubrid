@@ -1004,14 +1004,15 @@ namespace cubhnsw
 	top_candidates_t &top_for_refine = context.m_top_for_refine;
 	top_for_refine.clear ();
 
-	// n.distance already holds distance(value, close_slot) from seek_on_layer_/refine_.
-	distance_t dist = n.distance;
-
-	top_for_refine.insert_reserved (candidate_t (dist, new_slot));
-
 	// Hoist close_vec lookup outside the inner loop — close_slot is invariant.
 	const cached_vector *close_vec =
 		m_storage->get_cached_vector_by_slot_id (context, close_slot, lock_mode::shared);
+
+	// Always use fp32 distance for consistency with the inner loop's compute_distance_().
+	// n.distance may hold i8 distance in m_i8_only_build mode, so recompute here.
+	distance_t dist = compute_distance_ (context, value, close_vec->values);
+
+	top_for_refine.insert_reserved (candidate_t (dist, new_slot));
 	std::size_t close_header_size = close_header.size ();
 	for (std::size_t i = 0; i < close_header_size; i++)
 	  {

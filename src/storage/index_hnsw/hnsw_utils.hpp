@@ -293,7 +293,7 @@ class max_heap_gt
     /// @brief Invalidates the "max-heap" property, transforming into ascending range.
     inline void sort_ascending() noexcept
     {
-      std::sort_heap (elements_, elements_ + size_, &less);
+      std::sort_heap (elements_, elements_ + size_, comparator_t{});
     }
 
     /**
@@ -551,7 +551,7 @@ class sorted_buffer_gt
 
     inline void insert_reserved (element_t &&element) noexcept
     {
-      std::size_t slot = size_ ? std::lower_bound (elements_, elements_ + size_, element, &less) - elements_ : 0;
+      std::size_t slot = size_ ? std::lower_bound (elements_, elements_ + size_, element, comparator_t{}) - elements_ : 0;
 
       if (size_ > slot)
 	{
@@ -570,7 +570,7 @@ class sorted_buffer_gt
     */
     inline bool insert (element_t &&element, std::size_t limit) noexcept
     {
-      std::size_t slot = size_ ? std::lower_bound (elements_, elements_ + size_, element, &less) - elements_ : 0;
+      std::size_t slot = size_ ? std::lower_bound (elements_, elements_ + size_, element, comparator_t{}) - elements_ : 0;
       if (slot == limit)
 	{
 	  return false;
