@@ -397,7 +397,9 @@ namespace cubhnsw
       }
     const float scale = (max_abs > 0.0f) ? max_abs / 127.0f : 1.0f;
 
-    std::vector<std::int8_t> i8_buf (dim);
+    constexpr std::size_t MAX_DIM_STACK = 1024;
+    alignas (64) std::int8_t i8_buf[MAX_DIM_STACK];
+    assert (dim <= MAX_DIM_STACK);
     for (std::size_t i = 0; i < dim; ++i)
       {
 	float s = vector[i] / scale;
@@ -407,7 +409,7 @@ namespace cubhnsw
       }
 
     const float *float_ptr = append_vector_copy_ (vector);
-    const std::int8_t *i8_ptr = append_i8_copy_ (i8_buf.data ());
+    const std::int8_t *i8_ptr = append_i8_copy_ (i8_buf);
 
     cached_vector cv;
     cv.values = float_ptr;

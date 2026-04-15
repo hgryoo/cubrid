@@ -664,7 +664,15 @@ namespace cubhnsw
 		__builtin_prefetch (vec->values, 0, 0);
 		__builtin_prefetch (vec->values + 16, 0, 0);
 		if (vec->values_i8.values)
-		  __builtin_prefetch (vec->values_i8.values, 0, 0);
+		  {
+		    __builtin_prefetch (vec->values_i8.values, 0, 0);
+		    if (m_dimension > 64)
+		      __builtin_prefetch (vec->values_i8.values + 64, 0, 0);
+		    if (m_dimension > 128)
+		      __builtin_prefetch (vec->values_i8.values + 128, 0, 0);
+		    if (m_dimension > 192)
+		      __builtin_prefetch (vec->values_i8.values + 192, 0, 0);
+		  }
 		resolved_vecs[n_resolved] = vec;
 		resolved_slots[n_resolved] = successor_slot;
 		++n_resolved;
@@ -842,7 +850,15 @@ namespace cubhnsw
 		    __builtin_prefetch (vec->values, 0, 0);
 		    __builtin_prefetch (vec->values + 16, 0, 0);
 		    if (vec->values_i8.values)
-		      __builtin_prefetch (vec->values_i8.values, 0, 0);
+		      {
+			__builtin_prefetch (vec->values_i8.values, 0, 0);
+			if (m_dimension > 64)
+			  __builtin_prefetch (vec->values_i8.values + 64, 0, 0);
+			if (m_dimension > 128)
+			  __builtin_prefetch (vec->values_i8.values + 128, 0, 0);
+			if (m_dimension > 192)
+			  __builtin_prefetch (vec->values_i8.values + 192, 0, 0);
+		      }
 		    resolved_vecs[n_resolved] = vec;
 		    resolved_slots[n_resolved] = neighbor_id;
 		    ++n_resolved;
@@ -988,15 +1004,21 @@ namespace cubhnsw
 	top_candidates_t &top_for_refine = context.m_top_for_refine;
 	top_for_refine.clear ();
 
-	distance_t dist = compute_distance_from_query_ (context, value, close_slot);
+	// n.distance already holds distance(value, close_slot) from seek_on_layer_/refine_.
+	distance_t dist = n.distance;
 
 	top_for_refine.insert_reserved (candidate_t (dist, new_slot));
 
+	// Hoist close_vec lookup outside the inner loop — close_slot is invariant.
+	const cached_vector *close_vec =
+		m_storage->get_cached_vector_by_slot_id (context, close_slot, lock_mode::shared);
 	std::size_t close_header_size = close_header.size ();
 	for (std::size_t i = 0; i < close_header_size; i++)
 	  {
 	    slot_id_t successor_slot = close_header.at (i);
-	    dist = compute_distance_between (context, close_slot, successor_slot);
+	    const cached_vector *succ_vec =
+		    m_storage->get_cached_vector_by_slot_id (context, successor_slot, lock_mode::shared);
+	    dist = compute_distance_ (context, close_vec->values, succ_vec->values);
 	    top_for_refine.insert_reserved (candidate_t (dist, successor_slot));
 	  }
 
