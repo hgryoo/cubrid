@@ -1,0 +1,23 @@
+{
+  "active": true,
+  "current_phase": "deep-interview",
+  "state": {
+    "interview_id": "di-copy-stmt-20260415",
+    "type": "brownfield",
+    "initial_idea": "Support COPY statement to transfer data between a table and STDIN on server-side for better performance to load data.",
+    "rounds": [],
+    "current_ambiguity": 1.0,
+    "threshold": 0.2,
+    "codebase_context": {
+      "existing_loaddb": "src/loaddb/ — standalone utility with custom object file grammar (load_grammar.yy), batch transport via NET_SERVER_LD_* requests, multi-threaded worker pool",
+      "sql_parser": "src/parser/csql_grammar.y — no COPY or LOAD DATA syntax exists",
+      "network_protocol": "src/communication/network.h — 7 loaddb request types (LD_INIT, LD_INSTALL_CLASS, LD_LOAD_BATCH, etc.)",
+      "batch_serialization": "src/loaddb/load_common.hpp — cubload::batch with pack/unpack, cubload::load_args",
+      "server_session": "src/loaddb/load_session.hpp — session class with load_file() and load_batch() modes",
+      "no_stdin_handling": "No server-side stdin/pipe mechanism exists currently",
+      "no_sql_copy": "No COPY or LOAD DATA statement in csql_grammar.y"
+    },
+    "challenge_modes_used": [],
+    "ontology_snapshots": []
+  }
+}

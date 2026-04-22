@@ -1,0 +1,5 @@
+run 1 wall=3.020s
+run 2 wall=3.020s
+run 3 wall=3.020s
+run 4 wall=3.021s
+run 5 wall=3.020s

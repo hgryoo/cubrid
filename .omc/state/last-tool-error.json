@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"stat -c '%y %n' /home/hgryoo/dev/cubrid_dev/build_preset_debug/bin/cub_server /home/hgryoo/dev/cubrid_dev/src/base/boot_perf_trace.c /home/hgryoo/dev/cubrid_dev/src/transaction/boot_sr.c /...",
+  "error": "Exit code 2\n2026-04-18 23:56:35.157062821 +0900 /home/hgryoo/dev/cubrid_dev/build_preset_debug/bin/cub_server\n2026-04-18 23:46:13.551694908 +0900 /home/hgryoo/dev/cubrid_dev/src/base/boot_perf_trace.c\n2026-04-18 23:49:24.959853246 +0900 /home/hgryoo/dev/cubrid_dev/src/transaction/boot_sr.c\n2026-04-18 23:50:16.236705781 +0900 /home/hgryoo/dev/cubrid_dev/src/storage/page_buffer.c\n---",
+  "timestamp": "2026-04-19T02:45:54.204Z",
+  "retry_count": 1
+}

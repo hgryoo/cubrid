@@ -1,0 +1,10 @@
+@ cubrid master start
+++ cubrid master start: success
+@ cubrid server start: perfboot
+
+This may take a long time depending on the amount of recovery works to do.
+
+CUBRID 11.5.0 (11.5.0.2339) (64 debug build)
+
+cub_server: /home/hgryoo/dev/cubrid_dev/src/connection/connection_pool.cpp:290: void cubconn::connection::pool::initialize_workers(uint32_t, uint32_t): Assertion `cores.size () >= max_connection_workers' failed.
+++ cubrid server start: fail

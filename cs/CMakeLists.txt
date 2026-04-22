@@ -130,7 +130,6 @@ set(BASE_SOURCES
   ${BASE_DIR}/string_buffer.cpp
   ${BASE_DIR}/system_parameter.c
   ${BASE_DIR}/tsc_timer.c
-  ${BASE_DIR}/boot_perf_trace.c
   ${BASE_DIR}/tz_support.c
   ${BASE_DIR}/uca_support.c
   ${BASE_DIR}/unicode_support.c

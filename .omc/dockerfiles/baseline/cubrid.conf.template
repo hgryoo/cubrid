@@ -1,0 +1,27 @@
+# Step 2 baseline cubrid.conf template.
+# Rendered by run-baseline.sh into /data/databases/conf/cubrid.conf on each run.
+#
+# Invariants:
+#   - data_buffer_size is fixed at 16G (per spec; do NOT reduce)
+#   - er_log_debug=yes and boot_perf_trace=yes enable the Step 1 phase dump
+#   - No THP / huge pages tweaks (rejected per feedback_thp_rejected.md)
+
+[service]
+service=server
+server=boot_baseline
+
+[common]
+data_buffer_size=16G
+log_buffer_size=64M
+sort_buffer_size=16M
+max_clients=100
+cubrid_port_id=1523
+db_volume_size=512M
+log_volume_size=512M
+
+# Boot-trace instrumentation (Step 1)
+er_log_debug=yes
+boot_perf_trace=yes
+
+# Error log routing — keep it visible to the measurement script
+error_log=server_boot.err

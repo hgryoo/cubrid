@@ -356,49 +356,113 @@ def setup_demo_db() -> None:
     run_cmd(["cubrid", "server", "start", DB_NAME])
 
 
+def _create_schema_via_csql() -> None:
+    """Create the three tables via csql (CS mode). Schema-only; data via COPY."""
+    sanitize_schema_file()
+    load_schema_file = Path(tempfile.mktemp(prefix="nytimes_load_schema.", dir="/tmp"))
+    try:
+        write_load_schema_file(load_schema_file)
+        subprocess.run(
+            ["csql", "-u", DB_USER, DB_NAME, "-i", str(load_schema_file)],
+            check=True,
+        )
+    finally:
+        load_schema_file.unlink(missing_ok=True)
+
+
+def _copy_load_from_hdf5(conn) -> None:
+    """Stream HDF5 rows into the three tables via COPY FROM STDIN (FORMAT BINARY).
+    Exercises the copy_session.cpp bulk path that wraps file_alloc_skip_sysop
+    with log_sysop_start_atomic."""
+    import numpy as np
+
+    train_limit = int(TRAIN_ROW_LIMIT) if TRAIN_ROW_LIMIT else None
+
+    with h5py.File(str(DATASET_HDF5), "r") as f:
+        # --- train ---
+        train = f["train"]
+        n_train = train.shape[0] if train_limit is None else min(train_limit, train.shape[0])
+        log(f"COPY nytimes_256_angular_train: {n_train} rows")
+        with conn.copy(
+            "COPY nytimes_256_angular_train FROM STDIN WITH (FORMAT BINARY)",
+            types=["BIGINT", "VECTOR"],
+        ) as w:
+            chunk = 8192
+            for start in range(0, n_train, chunk):
+                end = min(start + chunk, n_train)
+                block = np.asarray(train[start:end], dtype="<f4")
+                for i in range(end - start):
+                    row = block[i]
+                    if not np.isfinite(row).all():
+                        w.write_row((start + i, None))
+                    else:
+                        w.write_row((start + i, row))
+        log(f"  rows_loaded={w.rows_loaded}")
+
+        # --- test ---
+        test = f["test"]
+        n_test = test.shape[0]
+        log(f"COPY nytimes_256_angular_test: {n_test} rows")
+        with conn.copy(
+            "COPY nytimes_256_angular_test FROM STDIN WITH (FORMAT BINARY)",
+            types=["BIGINT", "VECTOR"],
+        ) as w:
+            chunk = 8192
+            for start in range(0, n_test, chunk):
+                end = min(start + chunk, n_test)
+                block = np.asarray(test[start:end], dtype="<f4")
+                for i in range(end - start):
+                    row = block[i]
+                    if not np.isfinite(row).all():
+                        w.write_row((start + i, None))
+                    else:
+                        w.write_row((start + i, row))
+        log(f"  rows_loaded={w.rows_loaded}")
+
+        # --- answer (flatten (n_test, 100) into n_test*100 rows) ---
+        neighbors = f["neighbors"]
+        distances = f["distances"]
+        assert neighbors.shape == distances.shape
+        n_q, k = neighbors.shape
+        log(f"COPY nytimes_256_angular_answer: {n_q * k} rows")
+        with conn.copy(
+            "COPY nytimes_256_angular_answer FROM STDIN WITH (FORMAT BINARY)",
+            types=["BIGINT", "BIGINT", "DOUBLE"],
+        ) as w:
+            chunk = 512
+            for start in range(0, n_q, chunk):
+                end = min(start + chunk, n_q)
+                nbrs = np.asarray(neighbors[start:end])
+                dists = np.asarray(distances[start:end])
+                for i in range(end - start):
+                    qid = start + i
+                    for j in range(k):
+                        d = float(dists[i, j])
+                        w.write_row((qid, int(nbrs[i, j]), None if not math.isfinite(d) else d))
+        log(f"  rows_loaded={w.rows_loaded}")
+
+    conn.commit()
+
+
 def load_dataset() -> None:
-    def load_schema_and_object_files() -> None:
-        sanitize_schema_file()
-        sanitize_object_file()
-        load_schema_file = Path(tempfile.mktemp(prefix="nytimes_load_schema.", dir="/tmp"))
-        load_object_file = Path(tempfile.mktemp(prefix="nytimes_load_object.", dir="/tmp"))
-        try:
-            write_load_schema_file(load_schema_file)
-            object_input_file = write_load_object_file(load_object_file)
-            log(f"loading dataset from {SCHEMA_FILE} / {OBJECT_FILE}")
-            run_cmd(
-                [
-                    "cubrid",
-                    "loaddb",
-                    "-s",
-                    str(load_schema_file),
-                    "-d",
-                    str(object_input_file),
-                    "-C",
-                    "-u",
-                    DB_USER,
-                    DB_NAME,
-                    "-v",
-                    "--no-statistics",
-                ]
-            )
-        finally:
-            load_schema_file.unlink(missing_ok=True)
-            load_object_file.unlink(missing_ok=True)
+    if not ensure_dataset_hdf5():
+        raise SystemExit(f"dataset not found or download failed: {DATASET_HDF5}")
 
-    if SCHEMA_FILE.exists() and OBJECT_FILE.exists():
-        load_schema_and_object_files()
-        return
-
-    if ensure_dataset_hdf5():
-        log(f"converting hdf5 dataset to loaddb files from {DATASET_HDF5}")
+    if not SCHEMA_FILE.exists():
+        log(f"schema file missing; running 'cubrid loaddb -h' to extract schema only")
         run_cmd(["cubrid", "loaddb", "-h", str(DATASET_HDF5), "-C", "-u", DB_USER, DB_NAME, "--no-statistics"])
-        if SCHEMA_FILE.exists() and OBJECT_FILE.exists():
-            load_schema_and_object_files()
-            return
-        raise SystemExit(f"dataset conversion did not produce expected files: {SCHEMA_FILE}, {OBJECT_FILE}")
+        if not SCHEMA_FILE.exists():
+            raise SystemExit(f"schema extraction did not produce {SCHEMA_FILE}")
 
-    raise SystemExit(f"dataset not found or download failed. checked: {DATASET_HDF5}, {SCHEMA_FILE}, {OBJECT_FILE}")
+    log(f"creating schema via csql")
+    _create_schema_via_csql()
+
+    log(f"loading via COPY FROM STDIN from {DATASET_HDF5}")
+    conn = connect_db()
+    try:
+        _copy_load_from_hdf5(conn)
+    finally:
+        conn.close()
 
 
 def load_hdf5_dataset():

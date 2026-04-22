@@ -1,0 +1,736 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1776496213062,
+  "projectRoot": "/home/hgryoo/dev/cubrid_dev",
+  "techStack": {
+    "languages": [
+      {
+        "name": "C/C++",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "CMakeLists.txt"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "src"
+    ],
+    "gitBranches": {
+      "defaultBranch": "develop",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "3rdparty": {
+      "path": "3rdparty",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1776496213056,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "README.md"
+      ]
+    },
+    "ann_benchmarks_local": {
+      "path": "ann_benchmarks_local",
+      "purpose": null,
+      "fileCount": 17,
+      "lastAccessed": 1776496213056,
+      "keyFiles": [
+        "README.md",
+        "nytimes-256-angular.hdf5",
+        "nytimes-256-angular_ef_search_results.csv",
+        "nytimes-256-angular_ef_search_results.svg",
+        "nytimes-256-angular_excluded_queries.txt"
+      ]
+    },
+    "broker": {
+      "path": "broker",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1776496213056,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "uc"
+      ]
+    },
+    "build_preset_debug": {
+      "path": "build_preset_debug",
+      "purpose": null,
+      "fileCount": 28,
+      "lastAccessed": 1776496213056,
+      "keyFiles": [
+        "CMakeCache.txt",
+        "CPackConfig.cmake",
+        "CPackOptions.cmake",
+        "CPackSourceConfig.cmake",
+        "LICENSE.txt"
+      ]
+    },
+    "build_preset_release": {
+      "path": "build_preset_release",
+      "purpose": null,
+      "fileCount": 37,
+      "lastAccessed": 1776496213056,
+      "keyFiles": [
+        "CMakeCache.txt",
+        "CPackConfig.cmake",
+        "CPackOptions.cmake",
+        "CPackSourceConfig.cmake",
+        "LICENSE.txt"
+      ]
+    },
+    "build_preset_release_avx2": {
+      "path": "build_preset_release_avx2",
+      "purpose": null,
+      "fileCount": 28,
+      "lastAccessed": 1776496213056,
+      "keyFiles": [
+        "CMakeCache.txt",
+        "CPackConfig.cmake",
+        "CPackOptions.cmake",
+        "CPackSourceConfig.cmake",
+        "LICENSE.txt"
+      ]
+    },
+    "build_x86_64_release": {
+      "path": "build_x86_64_release",
+      "purpose": null,
+      "fileCount": 26,
+      "lastAccessed": 1776496213059,
+      "keyFiles": [
+        "CMakeCache.txt",
+        "CPackConfig.cmake",
+        "CPackOptions.cmake",
+        "CPackSourceConfig.cmake",
+        "LICENSE.txt"
+      ]
+    },
+    "cm_common": {
+      "path": "cm_common",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1776496213060,
+      "keyFiles": [
+        "CMakeLists.txt"
+      ]
+    },
+    "cmake": {
+      "path": "cmake",
+      "purpose": null,
+      "fileCount": 14,
+      "lastAccessed": 1776496213060,
+      "keyFiles": [
+        "3rdparty_util.cmake",
+        "CPack.STGZ_Header.sh.in",
+        "CPackOptions.cmake.in",
+        "CPackWixPatch.cmake.in",
+        "CPack_postinstall.sh.in"
+      ]
+    },
+    "conf": {
+      "path": "conf",
+      "purpose": null,
+      "fileCount": 15,
+      "lastAccessed": 1776496213060,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "cas_ssl_cert.crt",
+        "cas_ssl_cert.key",
+        "cubrid.conf",
+        "cubrid.conf.large"
+      ]
+    },
+    "contrib": {
+      "path": "contrib",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1776496213060,
+      "keyFiles": [
+        "CMakeLists.txt"
+      ]
+    },
+    "cs": {
+      "path": "cs",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1776496213060,
+      "keyFiles": [
+        "CMakeLists.txt"
+      ]
+    },
+    "cubrid": {
+      "path": "cubrid",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1776496213060,
+      "keyFiles": [
+        "CMakeLists.txt"
+      ]
+    },
+    "cubrid-cci": {
+      "path": "cubrid-cci",
+      "purpose": null,
+      "fileCount": 9,
+      "lastAccessed": 1776496213060,
+      "keyFiles": [
+        "BUILD_NUMBER",
+        "CCI-VERSION-DIST",
+        "CMakeLists.txt",
+        "COPYING",
+        "CREDITS"
+      ]
+    },
+    "cubrid-jdbc": {
+      "path": "cubrid-jdbc",
+      "purpose": null,
+      "fileCount": 15,
+      "lastAccessed": 1776496213060,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "COPYING",
+        "CREDITS",
+        "KEYS",
+        "README.md"
+      ]
+    },
+    "cubridmanager": {
+      "path": "cubridmanager",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1776496213060,
+      "keyFiles": []
+    },
+    "cubvec_examples": {
+      "path": "cubvec_examples",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1776496213060,
+      "keyFiles": [
+        "random_xs_20_angular_train.sql",
+        "test.sh",
+        "test.sql"
+      ]
+    },
+    "debian": {
+      "path": "debian",
+      "purpose": null,
+      "fileCount": 13,
+      "lastAccessed": 1776496213060,
+      "keyFiles": [
+        "changelog",
+        "compat",
+        "conffiles",
+        "control",
+        "copyright"
+      ]
+    },
+    "demo": {
+      "path": "demo",
+      "purpose": null,
+      "fileCount": 5,
+      "lastAccessed": 1776496213060,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "demodb_objects",
+        "demodb_schema",
+        "make_cubrid_demo.bat",
+        "make_cubrid_demo.sh"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 2,
+      "lastAccessed": 1776496213060,
+      "keyFiles": [
+        "install_build_requirements.md",
+        "tangram_24.svg"
+      ]
+    },
+    "include": {
+      "path": "include",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1776496213060,
+      "keyFiles": [
+        "system.h"
+      ]
+    },
+    "install.out": {
+      "path": "install.out",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1776496213061,
+      "keyFiles": [
+        "COPYING",
+        "CREDITS",
+        "README.md",
+        "README_TAR_INSTALL"
+      ]
+    },
+    "locales": {
+      "path": "locales",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1776496213061,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "make_locale.sh",
+        "make_locale_Win32.bat",
+        "make_locale_x64.bat"
+      ]
+    },
+    "log": {
+      "path": "log",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1776496213061,
+      "keyFiles": [
+        "cub_server.access",
+        "cub_server.err"
+      ]
+    },
+    "msg": {
+      "path": "msg",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1776496213061,
+      "keyFiles": [
+        "CMakeLists.txt"
+      ]
+    },
+    "pl_engine": {
+      "path": "pl_engine",
+      "purpose": null,
+      "fileCount": 7,
+      "lastAccessed": 1776496213061,
+      "keyFiles": [
+        "AGENTS.md",
+        "CMakeLists.txt",
+        "gradlew",
+        "gradlew.bat",
+        "settings.gradle.kts"
+      ]
+    },
+    "sa": {
+      "path": "sa",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1776496213061,
+      "keyFiles": [
+        "CMakeLists.txt"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 1,
+      "lastAccessed": 1776496213061,
+      "keyFiles": [
+        "AGENTS.md"
+      ]
+    },
+    "timezones": {
+      "path": "timezones",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1776496213061,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "make_tz.sh",
+        "make_tz_Win32.bat",
+        "make_tz_x64.bat"
+      ]
+    },
+    "unit_tests": {
+      "path": "unit_tests",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1776496213061,
+      "keyFiles": [
+        "AGENTS.md",
+        "CMakeLists.txt",
+        "CMakeLists.txt.orig"
+      ]
+    },
+    "util": {
+      "path": "util",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1776496213061,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "start_cubrid",
+        "stop_cubrid"
+      ]
+    },
+    "win": {
+      "path": "win",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1776496213061,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "build.bat"
+      ]
+    },
+    "install.out/bin": {
+      "path": "install.out/bin",
+      "purpose": "Executable scripts",
+      "fileCount": 29,
+      "lastAccessed": 1776496213061,
+      "keyFiles": [
+        "broker_changer",
+        "broker_log_converter",
+        "broker_log_runner"
+      ]
+    },
+    "locales/data": {
+      "path": "locales/data",
+      "purpose": "Data files",
+      "fileCount": 2,
+      "lastAccessed": 1776496213062,
+      "keyFiles": [
+        "ducet.txt",
+        "unicodedata.txt"
+      ]
+    },
+    "src/api": {
+      "path": "src/api",
+      "purpose": "API routes",
+      "fileCount": 2,
+      "lastAccessed": 1776496213062,
+      "keyFiles": [
+        "cubrid_log.c",
+        "cubrid_log.h"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/query/execute_statement.c",
+      "accessCount": 99,
+      "lastAccessed": 1776396814916,
+      "type": "directory"
+    },
+    {
+      "path": "src/parser/csql_grammar.y",
+      "accessCount": 72,
+      "lastAccessed": 1776348604658,
+      "type": "directory"
+    },
+    {
+      "path": "src",
+      "accessCount": 66,
+      "lastAccessed": 1776572098279,
+      "type": "directory"
+    },
+    {
+      "path": "src/broker/cas_execute.c",
+      "accessCount": 63,
+      "lastAccessed": 1776397697538,
+      "type": "directory"
+    },
+    {
+      "path": "src/parser/keyword.c",
+      "accessCount": 40,
+      "lastAccessed": 1776347385668,
+      "type": "directory"
+    },
+    {
+      "path": "src/parser/parse_tree_cl.c",
+      "accessCount": 35,
+      "lastAccessed": 1776265343429,
+      "type": "directory"
+    },
+    {
+      "path": "src/communication/network_interface_cl.c",
+      "accessCount": 31,
+      "lastAccessed": 1776347743520,
+      "type": "directory"
+    },
+    {
+      "path": "src/parser/parse_tree.h",
+      "accessCount": 29,
+      "lastAccessed": 1776347289180,
+      "type": "directory"
+    },
+    {
+      "path": "src/broker/cas.c",
+      "accessCount": 29,
+      "lastAccessed": 1776397651859,
+      "type": "directory"
+    },
+    {
+      "path": "src/communication/network_interface_sr.cpp",
+      "accessCount": 28,
+      "lastAccessed": 1776415086754,
+      "type": "file"
+    },
+    {
+      "path": "src/session/session.c",
+      "accessCount": 23,
+      "lastAccessed": 1776386802179,
+      "type": "directory"
+    },
+    {
+      "path": "src/broker",
+      "accessCount": 23,
+      "lastAccessed": 1776397648098,
+      "type": "directory"
+    },
+    {
+      "path": "src/loaddb/load_server_loader.cpp",
+      "accessCount": 23,
+      "lastAccessed": 1776414660343,
+      "type": "file"
+    },
+    {
+      "path": "src/broker/cas_function.c",
+      "accessCount": 22,
+      "lastAccessed": 1776397675495,
+      "type": "directory"
+    },
+    {
+      "path": "",
+      "accessCount": 19,
+      "lastAccessed": 1776567541463,
+      "type": "directory"
+    },
+    {
+      "path": "src/compat/dbi_compat.h",
+      "accessCount": 18,
+      "lastAccessed": 1776271703318,
+      "type": "directory"
+    },
+    {
+      "path": "cubrid/CMakeLists.txt",
+      "accessCount": 16,
+      "lastAccessed": 1776523582038,
+      "type": "file"
+    },
+    {
+      "path": "src/compat/dbtype_def.h",
+      "accessCount": 14,
+      "lastAccessed": 1776271978909,
+      "type": "directory"
+    },
+    {
+      "path": "src/parser",
+      "accessCount": 14,
+      "lastAccessed": 1776347278137,
+      "type": "directory"
+    },
+    {
+      "path": "src/communication/network_sr.c",
+      "accessCount": 13,
+      "lastAccessed": 1776270999198,
+      "type": "directory"
+    },
+    {
+      "path": "src/compat/db_vdb.c",
+      "accessCount": 13,
+      "lastAccessed": 1776348504139,
+      "type": "directory"
+    },
+    {
+      "path": "cubrid-cci/src/cci/cas_cci.h",
+      "accessCount": 11,
+      "lastAccessed": 1776341450246,
+      "type": "directory"
+    },
+    {
+      "path": "src/broker/cas_protocol.h",
+      "accessCount": 11,
+      "lastAccessed": 1776349395671,
+      "type": "directory"
+    },
+    {
+      "path": "sa/CMakeLists.txt",
+      "accessCount": 11,
+      "lastAccessed": 1776523586376,
+      "type": "directory"
+    },
+    {
+      "path": "src/object/authenticate_cache.cpp",
+      "accessCount": 10,
+      "lastAccessed": 1776234508141,
+      "type": "file"
+    },
+    {
+      "path": "src/session/session.h",
+      "accessCount": 9,
+      "lastAccessed": 1776270628710,
+      "type": "directory"
+    },
+    {
+      "path": "src/communication",
+      "accessCount": 9,
+      "lastAccessed": 1776348864203,
+      "type": "directory"
+    },
+    {
+      "path": "src/loaddb",
+      "accessCount": 8,
+      "lastAccessed": 1776396800576,
+      "type": "directory"
+    },
+    {
+      "path": "src/communication/network.h",
+      "accessCount": 7,
+      "lastAccessed": 1776262607211,
+      "type": "file"
+    },
+    {
+      "path": "src/parser/parser_support.c",
+      "accessCount": 7,
+      "lastAccessed": 1776348427134,
+      "type": "file"
+    },
+    {
+      "path": "src/communication/network_interface_cl.h",
+      "accessCount": 6,
+      "lastAccessed": 1776270966717,
+      "type": "file"
+    },
+    {
+      "path": "src/storage",
+      "accessCount": 6,
+      "lastAccessed": 1776343450750,
+      "type": "directory"
+    },
+    {
+      "path": "cubrid-cci",
+      "accessCount": 6,
+      "lastAccessed": 1776348036291,
+      "type": "directory"
+    },
+    {
+      "path": "src/loaddb/load_common.hpp",
+      "accessCount": 4,
+      "lastAccessed": 1776261229622,
+      "type": "file"
+    },
+    {
+      "path": "src/broker/cas_function.h",
+      "accessCount": 4,
+      "lastAccessed": 1776271267738,
+      "type": "directory"
+    },
+    {
+      "path": "src/parser/semantic_check.c",
+      "accessCount": 3,
+      "lastAccessed": 1776261836801,
+      "type": "directory"
+    },
+    {
+      "path": "src/session",
+      "accessCount": 3,
+      "lastAccessed": 1776272521874,
+      "type": "directory"
+    },
+    {
+      "path": "src/transaction/locator_sr.h",
+      "accessCount": 3,
+      "lastAccessed": 1776396805673,
+      "type": "directory"
+    },
+    {
+      "path": "src/loaddb/load_session.hpp",
+      "accessCount": 2,
+      "lastAccessed": 1776261040113,
+      "type": "file"
+    },
+    {
+      "path": "cs/CMakeLists.txt",
+      "accessCount": 2,
+      "lastAccessed": 1776261738923,
+      "type": "directory"
+    },
+    {
+      "path": "unit_tests/loaddb/CMakeLists.txt",
+      "accessCount": 2,
+      "lastAccessed": 1776274002544,
+      "type": "file"
+    },
+    {
+      "path": "src/object/authenticate_cache.hpp",
+      "accessCount": 1,
+      "lastAccessed": 1776220870187,
+      "type": "file"
+    },
+    {
+      "path": "src/object/class_object.h",
+      "accessCount": 1,
+      "lastAccessed": 1776220875691,
+      "type": "directory"
+    },
+    {
+      "path": "src/loaddb/load_db.c",
+      "accessCount": 1,
+      "lastAccessed": 1776254708612,
+      "type": "file"
+    },
+    {
+      "path": "src/loaddb/load_grammar.yy",
+      "accessCount": 1,
+      "lastAccessed": 1776254708780,
+      "type": "file"
+    },
+    {
+      "path": "src/loaddb/load_sa_loader.cpp",
+      "accessCount": 1,
+      "lastAccessed": 1776254709518,
+      "type": "directory"
+    },
+    {
+      "path": "src/loaddb/load_lexer.l",
+      "accessCount": 1,
+      "lastAccessed": 1776254731783,
+      "type": "file"
+    },
+    {
+      "path": "src/communication/network_request_def.hpp",
+      "accessCount": 1,
+      "lastAccessed": 1776254736164,
+      "type": "file"
+    },
+    {
+      "path": "src/loaddb/load_driver.hpp",
+      "accessCount": 1,
+      "lastAccessed": 1776254747881,
+      "type": "file"
+    },
+    {
+      "path": "src/loaddb/load_common.cpp",
+      "accessCount": 1,
+      "lastAccessed": 1776254751059,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
