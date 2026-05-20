@@ -3557,6 +3557,29 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 
   while (state != LK_S_DONE)
     {
+      /* State-machine dispatch. Until step 4b splits each region into its
+       * own case body, the four non-entry states (EXISTING_HOLDER /
+       * SUSPENDED / POST_GRANT, plus the placeholder NEW_REQUESTER) jump
+       * into the existing labels that live inside the FIND_RESOURCE body
+       * below. LK_S_FIND_RESOURCE falls through to the body. */
+      switch (state)
+	{
+	case LK_S_FIND_RESOURCE:
+	  break;
+	case LK_S_EXISTING_HOLDER:
+	  goto lock_tran_lk_entry;
+	case LK_S_SUSPENDED:
+	  goto blocked;
+	case LK_S_POST_GRANT:
+	  goto lock_conversion_treatement;
+	case LK_S_NEW_REQUESTER:
+	case LK_S_DONE:
+	default:
+	  assert (0);
+	  state = LK_S_DONE;
+	  continue;
+	}
+
   /* LK_S_FIND_RESOURCE entry: assertion holds on first entry and on every
    * MANY_LOCK_WAIT_TRAN retry (the helper releases res_mutex and clears
    * the flag before returning with *out_retry_from_start = true). */
@@ -3593,7 +3616,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
       if (entry_ptr != NULL)
 	{
 	  res_ptr = entry_ptr->res_head;
-	  goto lock_tran_lk_entry;
+	  state = LK_S_EXISTING_HOLDER;
+	  continue;
 	}
     }
 
@@ -3846,7 +3870,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
       res_ptr->total_waiters_mode = lock_conv (lock, res_ptr->total_waiters_mode);
       assert (res_ptr->total_waiters_mode != NA_LOCK);
 
-      goto blocked;
+      state = LK_S_SUSPENDED;
+      continue;
     }				/* end of a new lock request */
 
 lock_tran_lk_entry:
@@ -3926,7 +3951,8 @@ lock_tran_lk_entry:
       assert (is_res_mutex_locked);
       pthread_mutex_unlock (&res_ptr->res_mutex);
 
-      goto lock_conversion_treatement;
+      state = LK_S_POST_GRANT;
+      continue;
     }
 
   /* I am a holder & my request cannot be granted. */
