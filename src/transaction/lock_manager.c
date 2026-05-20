@@ -3364,8 +3364,7 @@ lock_find_my_waiter_entry (LK_RES * res_ptr, int tran_index)
 /*
  * LK_PERFORM_STATE - States of the acquisition state machine driving
  *   lock_internal_perform_lock_object. File-local; do not expose in a
- *   header. The naming follows the design doc (CBRD-26511 DESIGN.md
- *   §Proposed Design).
+ *   header.
  *
  *   LK_S_FIND_RESOURCE   - entry state; runs through find_or_insert.
  *   LK_S_NEW_REQUESTER   - res_ptr held, I am not a holder yet.
@@ -3394,9 +3393,9 @@ typedef enum
  *   post-suspend return path — the post-suspend status inspection (resume
  *   reason: THREAD_LOCK_RESUMED / INTERRUPT / other) stays at the call
  *   site because the two callers (new-requester / conversion) wrap that
- *   check differently for historical reasons (G4 bit-for-bit preservation).
+ *   check differently for historical reasons (bit-for-bit preservation).
  *
- *   Re-entry contract — see DESIGN §F3:
+ *   Re-entry contract:
  *     On *out_retry_from_start == true, the helper has *only* released
  *     res_mutex and cleared *is_res_mutex_locked_p; it does NOT reset
  *     `entry_ptr` / `wait_entry_ptr` / `is_instant_duration`. Caller must
@@ -3583,7 +3582,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 	  LOG_TDES *tdes = LOG_FIND_TDES (tran_index);
 	  if (tdes && tdes->tran_abort_reason == TRAN_ABORT_DUE_ROLLBACK_ON_ESCALATION)
 	    {
-	      goto end;
+	      state = LK_S_DONE;
+	      break;
 	    }
 	}
 
@@ -3592,7 +3592,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 	{
 	  perfmon_inc_stat (thread_p, PSTAT_LK_NUM_RE_REQUESTED_ON_OBJECTS);	/* monitoring */
 	  ret_val = LK_GRANTED;
-	  goto end;
+	  state = LK_S_DONE;
+	  break;
 	}
     }
   else
@@ -3634,7 +3635,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 	  pthread_mutex_unlock (&res_ptr->res_mutex);
 	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_LK_ALLOC_RESOURCE, 1, "lock heap entry");
 	  ret_val = LK_NOTGRANTED_DUE_ERROR;
-	  goto end;
+	  state = LK_S_DONE;
+	  break;
 	}
 
       /* initialize the lock entry as granted state */
@@ -3670,7 +3672,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
       *entry_addr_ptr = entry_ptr;
 
       ret_val = LK_GRANTED;
-      goto end;
+      state = LK_S_DONE;
+      break;
     }
 
   /* the lockable object existed in the hash chain So, check whether I am a holder of the object. */
@@ -3696,7 +3699,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_LK_ALLOC_RESOURCE, 1, "lock heap entry");
 
 	      ret_val = LK_NOTGRANTED_DUE_ERROR;
-	      goto end;
+	      state = LK_S_DONE;
+	      break;
 	    }
 
 	  /* initialize the lock entry as granted state */
@@ -3735,7 +3739,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 	  *entry_addr_ptr = entry_ptr;
 
 	  ret_val = LK_GRANTED;
-	  goto end;
+	  state = LK_S_DONE;
+	  break;
 	}
 
       /* 2. I am not a holder & my request cannot be granted. */
@@ -3752,7 +3757,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 		    {
 		      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_LK_ALLOC_RESOURCE, 1, "lock heap entry");
 		      ret_val = LK_NOTGRANTED_DUE_ERROR;
-		      goto end;
+		      state = LK_S_DONE;
+		      break;
 		    }
 		  lock_initialize_entry_as_blocked (entry_ptr, thread_p, tran_index, res_ptr, lock);
 		  if (is_instant_duration
@@ -3768,7 +3774,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 	    }
 
 	  ret_val = LK_NOTGRANTED_DUE_TIMEOUT;
-	  goto end;
+	  state = LK_S_DONE;
+	  break;
 	}
 
       /* check if another thread is waiting for the same resource */
@@ -3788,7 +3795,7 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 
 	  /* Historically the instance path wraps the post-suspend resume_status check in `if (entry_ptr)` even
 	   * though entry_ptr is NULL at this point (we entered via the `entry_ptr == NULL` branch). The block
-	   * is dead code; preserved verbatim per G4 bit-for-bit (DESIGN.md §F3 / §Failure Modes). */
+	   * is dead code; preserved verbatim (bit-for-bit). */
 	  if (entry_ptr)
 	    {
 	      if (entry_ptr->thrd_entry->resume_status == THREAD_RESUME_DUE_TO_INTERRUPT)
@@ -3797,7 +3804,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 		  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERRUPTED, 0);
 
 		  ret_val = LK_NOTGRANTED_DUE_ERROR;
-		  goto end;
+		  state = LK_S_DONE;
+		  break;
 		}
 	      else if (entry_ptr->thrd_entry->resume_status != THREAD_LOCK_RESUMED)
 		{
@@ -3809,7 +3817,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 		      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERRUPTED, 0);
 		    }
 		  ret_val = LK_NOTGRANTED_DUE_ERROR;
-		  goto end;
+		  state = LK_S_DONE;
+		  break;
 		}
 	      else
 		{
@@ -3829,7 +3838,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 	  pthread_mutex_unlock (&res_ptr->res_mutex);
 	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_LK_ALLOC_RESOURCE, 1, "lock heap entry");
 	  ret_val = LK_NOTGRANTED_DUE_ERROR;
-	  goto end;
+	  state = LK_S_DONE;
+	  break;
 	}
       /* initialize the lock entry as blocked state */
       lock_initialize_entry_as_blocked (entry_ptr, thread_p, tran_index, res_ptr, lock);
@@ -3905,7 +3915,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
       *entry_addr_ptr = entry_ptr;
 
       ret_val = LK_GRANTED;
-      goto end;
+      state = LK_S_DONE;
+      break;
     }
 
   if (!is_res_mutex_locked)
@@ -3968,7 +3979,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 	}
 
       ret_val = LK_NOTGRANTED_DUE_TIMEOUT;
-      goto end;
+      state = LK_S_DONE;
+      break;
     }
 
   /* Upgrader Positioning Rule (UPR) */
@@ -3991,7 +4003,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 	  /* a shutdown thread wakes me up */
 	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERRUPTED, 0);
 	  ret_val = LK_NOTGRANTED_DUE_ERROR;
-	  goto end;
+	  state = LK_S_DONE;
+	  break;
 	}
       else if (thrd_entry->resume_status != THREAD_LOCK_RESUMED)
 	{
@@ -4003,7 +4016,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_INTERRUPTED, 0);
 	    }
 	  ret_val = LK_NOTGRANTED_DUE_ERROR;
-	  goto end;
+	  state = LK_S_DONE;
+	  break;
 	}
       else
 	{
@@ -4091,17 +4105,20 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
       if (ret_val == LOCK_RESUMED_ABORTED)
 	{
 	  ret_val = LK_NOTGRANTED_DUE_ABORTED;
-	  goto end;
+	  state = LK_S_DONE;
+	  break;
 	}
       else if (ret_val == LOCK_RESUMED_INTERRUPT)
 	{
 	  ret_val = LK_NOTGRANTED_DUE_ERROR;
-	  goto end;
+	  state = LK_S_DONE;
+	  break;
 	}
       else			/* LOCK_RESUMED_TIMEOUT || LOCK_SUSPENDED */
 	{
 	  ret_val = LK_NOTGRANTED_DUE_TIMEOUT;
-	  goto end;
+	  state = LK_S_DONE;
+	  break;
 	}
     }
 
@@ -4167,7 +4184,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 	}			/* end of switch (state) */
     }				/* end of while (state != LK_S_DONE) */
 
-end:
+  /* cleanup tail — single firing point for the lock-acquire-end probe.
+   * Reached only by while-loop exit (state = LK_S_DONE). */
 #if defined(ENABLE_SYSTEMTAP)
   CUBRID_LOCK_ACQUIRE_END (oid_for_marker_p, class_oid_for_marker_p, lock, ret_val != LK_GRANTED);
 #endif /* ENABLE_SYSTEMTAP */
