@@ -3557,33 +3557,20 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 
   while (state != LK_S_DONE)
     {
-      /* State-machine dispatch. Until step 4b splits each region into its
-       * own case body, the four non-entry states (EXISTING_HOLDER /
-       * SUSPENDED / POST_GRANT, plus the placeholder NEW_REQUESTER) jump
-       * into the existing labels that live inside the FIND_RESOURCE body
-       * below. LK_S_FIND_RESOURCE falls through to the body. */
       switch (state)
 	{
-	case LK_S_FIND_RESOURCE:
-	  break;
-	case LK_S_EXISTING_HOLDER:
-	  goto lock_tran_lk_entry;
-	case LK_S_SUSPENDED:
-	  goto blocked;
-	case LK_S_POST_GRANT:
-	  goto lock_conversion_treatement;
+	default:
 	case LK_S_NEW_REQUESTER:
 	case LK_S_DONE:
-	default:
 	  assert (0);
 	  state = LK_S_DONE;
-	  continue;
-	}
+	  break;
 
-  /* LK_S_FIND_RESOURCE entry: assertion holds on first entry and on every
-   * MANY_LOCK_WAIT_TRAN retry (the helper releases res_mutex and clears
-   * the flag before returning with *out_retry_from_start = true). */
-  assert (!is_res_mutex_locked);
+	case LK_S_FIND_RESOURCE:
+	  /* LK_S_FIND_RESOURCE entry: assertion holds on first entry and on every
+	   * MANY_LOCK_WAIT_TRAN retry (the helper releases res_mutex and clears
+	   * the flag before returning with *out_retry_from_start = true). */
+	  assert (!is_res_mutex_locked);
 
   if (class_oid != NULL && !OID_IS_ROOTOID (class_oid))
     {
@@ -3617,7 +3604,7 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 	{
 	  res_ptr = entry_ptr->res_head;
 	  state = LK_S_EXISTING_HOLDER;
-	  continue;
+	  break;
 	}
     }
 
@@ -3795,7 +3782,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 					 &retry_from_start);
 	  if (retry_from_start)
 	    {
-	      state = LK_S_FIND_RESOURCE; continue;
+	      state = LK_S_FIND_RESOURCE;
+	  break;
 	    }
 
 	  /* Historically the instance path wraps the post-suspend resume_status check in `if (entry_ptr)` even
@@ -3829,7 +3817,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 		}
 	    }
 
-	  state = LK_S_FIND_RESOURCE; continue;
+	  state = LK_S_FIND_RESOURCE;
+	  break;
 	}
 
       /* allocate a lock entry. */
@@ -3871,10 +3860,16 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
       assert (res_ptr->total_waiters_mode != NA_LOCK);
 
       state = LK_S_SUSPENDED;
-      continue;
+      break;
     }				/* end of a new lock request */
 
-lock_tran_lk_entry:
+	  /* implicit fall-through from FIND_RESOURCE when entry_ptr != NULL —
+	   * I am already a holder of the resource and the request is a
+	   * conversion. */
+	  state = LK_S_EXISTING_HOLDER;
+	  break;
+
+	case LK_S_EXISTING_HOLDER:
   /* The object exists in the hash chain & I am a lock holder of the lockable object. */
   lock_conversion = true;
   old_mode = entry_ptr->granted_mode;
@@ -3952,7 +3947,7 @@ lock_tran_lk_entry:
       pthread_mutex_unlock (&res_ptr->res_mutex);
 
       state = LK_S_POST_GRANT;
-      continue;
+      break;
     }
 
   /* I am a holder & my request cannot be granted. */
@@ -3987,7 +3982,8 @@ lock_tran_lk_entry:
 				     &retry_from_start);
       if (retry_from_start)
 	{
-	  state = LK_S_FIND_RESOURCE; continue;
+	  state = LK_S_FIND_RESOURCE;
+	  break;
 	}
 
       if (thrd_entry->resume_status == THREAD_RESUME_DUE_TO_INTERRUPT)
@@ -4014,7 +4010,8 @@ lock_tran_lk_entry:
 	  assert (thrd_entry->resume_status == THREAD_LOCK_RESUMED);
 	}
 
-      state = LK_S_FIND_RESOURCE; continue;
+      state = LK_S_FIND_RESOURCE;
+	  break;
     }
 
   entry_ptr->blocked_mode = new_mode;
@@ -4051,7 +4048,13 @@ lock_tran_lk_entry:
   /* position the lock entry in the holder list according to UPR */
   lock_position_holder_entry (res_ptr, entry_ptr);
 
-blocked:
+	  /* implicit fall-through from EXISTING_HOLDER (conversion enqueue):
+	   * the conversion could not grant immediately and the request has
+	   * been positioned in the holder list according to UPR — now suspend. */
+	  state = LK_S_SUSPENDED;
+	  break;
+
+	case LK_S_SUSPENDED:
 
   if (perfmon_is_perf_tracking_and_active (PERFMON_ACTIVATION_FLAG_LOCK_OBJECT))
     {
@@ -4103,7 +4106,13 @@ blocked:
     }
 
   /* The transaction now got the lock on the object */
-lock_conversion_treatement:
+	  /* implicit fall-through from SUSPENDED after a granted wake-up:
+	   * the transaction now holds the lock and class-conversion cleanup
+	   * runs next. */
+	  state = LK_S_POST_GRANT;
+	  break;
+
+	case LK_S_POST_GRANT:
 
   if (entry_ptr->res_head->key.type == LOCK_RESOURCE_CLASS && lock_conversion == true)
     {
@@ -4153,7 +4162,9 @@ lock_conversion_treatement:
   *entry_addr_ptr = entry_ptr;
   ret_val = LK_GRANTED;
 
-  state = LK_S_DONE;
+	  state = LK_S_DONE;
+	  break;
+	}			/* end of switch (state) */
     }				/* end of while (state != LK_S_DONE) */
 
 end:
