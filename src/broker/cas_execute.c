@@ -80,6 +80,7 @@
 #include "cas_optimization.h"
 #include "cas_db_inc.h"
 #include "cas_common_vars.h"
+#include "network_interface_cl.h"
 
 
 #if defined (SUPPRESS_STRLEN_WARNING)
@@ -10249,4 +10250,41 @@ recompile_statement (T_SRV_HANDLE * srv_handle)
   srv_handle->q_result->stmt_id = stmt_id;
 
   return err_code;
+}
+
+int
+ux_stream_send_data (char *data, int data_len, T_NET_BUF * net_buf)
+{
+  int err_code;
+
+  err_code = stream_from_send_data (data, data_len);
+  if (err_code < 0)
+    {
+      errors_in_transaction++;
+      err_code = ERROR_INFO_SET (err_code, DBMS_ERROR_INDICATOR);
+      NET_BUF_ERR_SET (net_buf);
+      return err_code;
+    }
+
+  net_buf_cp_int (net_buf, 0, NULL);
+  return 0;
+}
+
+int
+ux_stream_end (T_NET_BUF * net_buf)
+{
+  int err_code;
+  int rows_loaded = 0;
+
+  err_code = stream_from_end (&rows_loaded);
+  if (err_code < 0)
+    {
+      errors_in_transaction++;
+      err_code = ERROR_INFO_SET (err_code, DBMS_ERROR_INDICATOR);
+      NET_BUF_ERR_SET (net_buf);
+      return err_code;
+    }
+
+  net_buf_cp_int (net_buf, rows_loaded, NULL);
+  return 0;
 }

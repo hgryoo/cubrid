@@ -598,6 +598,7 @@ set(LOADDB_HEADERS
   ${LOADDB_DIR}/load_object_table.h
   ${LOADDB_DIR}/load_sa_loader.hpp
   ${LOADDB_DIR}/load_semantic_helper.hpp
+  ${LOADDB_DIR}/stream_session.hpp
   )
 
 if(UNIX)

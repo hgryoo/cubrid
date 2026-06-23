@@ -411,4 +411,8 @@ extern int file_clean_invalid_file (int *heap, int *heap_ovf, int *btree, int *b
 extern int file_delete_target_file (const char *target_vfid_str);
 #endif
 
+/* stream session transport */
+extern int stream_from_send_data (const char *data, int data_len);
+extern int stream_from_end (int *rows_loaded);
+
 #endif /* _NETWORK_INTERFACE_CL_H_ */

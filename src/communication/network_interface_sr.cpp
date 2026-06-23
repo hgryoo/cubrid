@@ -81,6 +81,7 @@
 #include "thread_manager.hpp"	// for thread_get_thread_entry_info
 #include "compile_context.h"
 #include "load_session.hpp"
+#include "stream_session.hpp"
 #include "session.h"
 #include "xasl.h"
 #include "xasl_cache.h"
@@ -12226,3 +12227,83 @@ sfile_tracker_delete_target_file (THREAD_ENTRY *thread_p, unsigned int rid, char
   css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
 }
 #endif
+
+/*
+ * sstream_send_data () - Receive binary data chunk for the stream session
+ *   request format: raw binary data
+ *   reply format: error_code (int)
+ */
+void
+sstream_send_data (THREAD_ENTRY *thread_p, unsigned int rid, char *request, int reqlen)
+{
+  int error_code = NO_ERROR;
+
+  stream_session *session = NULL;
+  error_code = session_get_stream_session (thread_p, session);
+  if (error_code != NO_ERROR || session == NULL)
+    {
+      if (error_code == NO_ERROR)
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_DB_UNIMPLEMENTED, 1, "No active stream session");
+	  error_code = ER_DB_UNIMPLEMENTED;
+	}
+      goto reply;
+    }
+
+  error_code = session->receive_chunk (thread_p, request, reqlen);
+  if (error_code != NO_ERROR)
+    {
+      session->abort (thread_p);
+      delete session;
+      session_set_stream_session (thread_p, NULL);
+    }
+
+reply:
+  {
+    OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
+    char *reply = OR_ALIGNED_BUF_START (a_reply);
+
+    or_pack_int (reply, error_code);
+    css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
+  }
+}
+
+/*
+ * sstream_end () - Finalize the stream session and return its result
+ *   request format: (empty)
+ *   reply format: error_code (int), result (int)
+ */
+void
+sstream_end (THREAD_ENTRY *thread_p, unsigned int rid, char *request, int reqlen)
+{
+  int error_code = NO_ERROR;
+  int rows_loaded = 0;
+
+  stream_session *session = NULL;
+  error_code = session_get_stream_session (thread_p, session);
+  if (error_code != NO_ERROR || session == NULL)
+    {
+      if (error_code == NO_ERROR)
+	{
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_DB_UNIMPLEMENTED, 1, "No active stream session");
+	  error_code = ER_DB_UNIMPLEMENTED;
+	}
+      goto reply;
+    }
+
+  error_code = session->finish (thread_p, &rows_loaded);
+
+  delete session;
+  session_set_stream_session (thread_p, NULL);
+
+reply:
+  {
+    OR_ALIGNED_BUF (2 * OR_INT_SIZE) a_reply;
+    char *reply = OR_ALIGNED_BUF_START (a_reply);
+    char *ptr;
+
+    ptr = or_pack_int (reply, error_code);
+    ptr = or_pack_int (ptr, rows_loaded);
+    css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
+  }
+}

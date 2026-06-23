@@ -703,6 +703,15 @@ net_server_init (void)
   req_p = &net_Requests[NET_SERVER_LD_UPDATE_STATS];
   req_p->processing_function = sloaddb_update_stats;
 
+  /* stream session transport server requests */
+  req_p = &net_Requests[NET_SERVER_STREAM_SEND_DATA];
+  req_p->action_attribute = IN_TRANSACTION;
+  req_p->processing_function = sstream_send_data;
+
+  req_p = &net_Requests[NET_SERVER_STREAM_END];
+  req_p->action_attribute = IN_TRANSACTION;
+  req_p->processing_function = sstream_end;
+
   /* checksumdb replication */
   req_p = &net_Requests[NET_SERVER_CHKSUM_REPL];
   req_p->action_attribute = IN_TRANSACTION;
