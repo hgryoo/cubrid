@@ -415,4 +415,7 @@ extern int file_delete_target_file (const char *target_vfid_str);
 extern int stream_from_send_data (const char *data, int data_len);
 extern int stream_from_end (int *rows_loaded);
 
+/* copy from stdin */
+extern int copy_from_init (const char *table_name, const DB_TYPE * col_types, int ncols);
+
 #endif /* _NETWORK_INTERFACE_CL_H_ */

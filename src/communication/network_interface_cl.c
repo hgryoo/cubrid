@@ -11702,6 +11702,57 @@ file_delete_target_file (const char *target_vfid_str)
 #endif
 
 /*
+ * copy_from_init () - Initialize a COPY FROM STDIN session on the server
+ *   return: error code
+ *   table_name(in): target table name
+ *   col_types(in): array of column DB_TYPE values
+ *   ncols(in): number of columns
+ */
+int
+copy_from_init (const char *table_name, const DB_TYPE * col_types, int ncols)
+{
+#if defined(CS_MODE)
+  int rc = ER_FAILED;
+  int request_size;
+  char *request = NULL;
+  char *ptr;
+
+  /* calculate request buffer size: string + int (ncols) + ncols * int */
+  request_size = or_packed_string_length (table_name, NULL) + OR_INT_SIZE + (ncols * OR_INT_SIZE);
+
+  request = (char *) malloc (request_size);
+  if (request == NULL)
+    {
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, (size_t) request_size);
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+
+  ptr = or_pack_string (request, table_name);
+  ptr = or_pack_int (ptr, ncols);
+  for (int i = 0; i < ncols; i++)
+    {
+      ptr = or_pack_int (ptr, (int) col_types[i]);
+    }
+
+  OR_ALIGNED_BUF (OR_INT_SIZE) a_reply;
+  char *reply = OR_ALIGNED_BUF_START (a_reply);
+
+  int req_error = net_client_request (NET_SERVER_COPY_INIT, request, request_size, reply,
+				      OR_ALIGNED_BUF_SIZE (a_reply), NULL, 0, NULL, 0);
+  if (!req_error)
+    {
+      or_unpack_int (reply, &rc);
+    }
+
+  free_and_init (request);
+
+  return rc;
+#else /* CS_MODE */
+  return NO_ERROR;
+#endif /* !CS_MODE */
+}
+
+/*
  * stream_from_send_data () - Send a chunk of binary data to the stream session
  *   return: error code
  *   data(in): binary data buffer

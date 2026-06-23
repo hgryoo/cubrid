@@ -10195,6 +10195,12 @@ do_commit_after_execute (const t_srv_handle & server_handle)
       return false;
     }
 
+  /* COPY FROM STDIN: data transfer follows, do not commit yet */
+  if (server_handle.q_result != NULL && server_handle.q_result->stmt_type == CUBRID_STMT_COPY)
+    {
+      return false;
+    }
+
   // safe-guard: do not commit an aborted query; this function should not be called for error cases.
   assert (!tran_was_latest_query_aborted ());
 
