@@ -41,10 +41,11 @@
 #include "boot_sr.h"
 #include "critical_section.h"
 #include "environment_variable.h"
-#include "event_log.h"
 #include "locator.h"
 #include "lock_free.h"
 #include "lock_manager.h"
+#include "lock_manager_internal.hpp"
+#include "lock_manager_resource_table.hpp"
 #include "log_impl.h"
 #include "log_manager.h"
 #include "memory_alloc.h"
@@ -63,15 +64,11 @@
 #include "server_support.h"
 #include "storage_common.h"
 #include "system_parameter.h"
-#include "thread_daemon.hpp"
-#include "thread_entry_task.hpp"
-#include "thread_lockfree_hash_map.hpp"
-#include "thread_manager.hpp"
+#include "thread_compat.hpp"
 #include "transaction_sr.h"
 #include "tsc_timer.h"
 #include "wait_for_graph.h"
 #include "xserver_interface.h"
-#include "xasl.h"
 
 #include <array>
 // XXX: SHOULD BE THE LAST INCLUDE HEADER
@@ -147,31 +144,10 @@
     } \
   while (0)
 
-#define SET_EMULATE_THREAD_WITH_LOCK_ENTRY(th,lock_entry) \
-  do \
-    { \
-      THREAD_ENTRY *locked_thread_entry_p; \
-      assert ((th)->emulate_tid == thread_id_t ()); \
-      locked_thread_entry_p = logtb_find_thread_by_tran_index ((lock_entry)->tran_index); \
-      if (locked_thread_entry_p != NULL) \
-	{ \
-	  (th)->emulate_tid = locked_thread_entry_p->get_id (); \
-	} \
-    } \
-   while (0)
-
-#define CLEAR_EMULATE_THREAD(th) \
-  do \
-    { \
-      (th)->emulate_tid = thread_id_t (); \
-    } \
-   while (0)
-
 #endif /* SERVER_MODE */
 
 #define RESOURCE_ALLOC_WAIT_TIME 10	/* 10 msec */
 #define KEY_LOCK_ESCALATION_THRESHOLD 10	/* key lock escalation threshold */
-#define MAX_NUM_LOCKS_DUMP_TO_EVENT_LOG 100
 
 /* state of suspended threads */
 typedef enum
@@ -250,33 +226,6 @@ struct lk_lockinfo
   LOCK lock;
 };
 
-
-/* TWFG (transaction wait-for graph) entry and edge */
-typedef struct lk_WFG_node LK_WFG_NODE;
-struct lk_WFG_node
-{
-  int first_edge;
-  bool candidate;
-  int current;
-  int ancestor;
-  INT64 thrd_wait_stime;
-  int tran_edge_seq_num;
-  bool checked_by_deadlock_detector;
-  bool DL_victim;
-};
-
-typedef struct lk_WFG_edge LK_WFG_EDGE;
-struct lk_WFG_edge
-{
-  int to_tran_index;
-  int edge_seq_num;
-  int holder_flag;
-  int next;
-  INT64 edge_wait_stime;
-  LK_ENTRY *holder;
-  LK_ENTRY *waiter;
-};
-
 typedef struct lk_deadlock_victim LK_DEADLOCK_VICTIM;
 struct lk_deadlock_victim
 {
@@ -316,104 +265,34 @@ struct lk_res_block
   int count;			/* # of entries in lock res block */
 };
 
-/*
- * Transaction Lock Entry Structure
- */
-typedef struct lk_tran_lock LK_TRAN_LOCK;
-struct lk_tran_lock
-{
-  /* transaction lock hold lists */
-  pthread_mutex_t hold_mutex;	/* mutex for hold lists */
-  LK_ENTRY *inst_hold_list;	/* instance lock hold list */
-  LK_ENTRY *class_hold_list;	/* class lock hold list */
-  LK_ENTRY *root_class_hold;	/* root class lock hold */
-  LK_ENTRY *lk_entry_pool;	/* local pool of lock entries which can be used with no synchronization. */
-  int lk_entry_pool_count;	/* Current count of lock entries in local pool. */
-  int inst_hold_count;		/* # of entries in inst_hold_list */
-  int class_hold_count;		/* # of entries in class_hold_list */
-
-  LK_ENTRY *waiting;		/* waiting lock entry */
-
-  /* non two phase lock list */
-  pthread_mutex_t non2pl_mutex;	/* mutex for non2pl_list */
-  LK_ENTRY *non2pl_list;	/* non2pl list */
-  int num_incons_non2pl;	/* # of inconsistent non2pl */
-
-  /* lock escalation related fields */
-  bool lock_escalation_on;
-
-  /* locking on manual duration */
-  bool is_instant_duration;
-};
 /* Max size of transaction local pool of lock entries. */
 #define LOCK_TRAN_LOCAL_POOL_MAX_SIZE 10
 
-/*
- * Lock Manager Global Data Structure
- */
-// *INDENT-OFF*
-using lk_hashmap_type = cubthread::lockfree_hashmap<LK_RES_KEY, LK_RES>;
-using lk_hashmap_iterator = lk_hashmap_type::iterator;
-// *INDENT-ON*
-
-typedef struct lk_global_data LK_GLOBAL_DATA;
-struct lk_global_data
-{
-  /* object lock table including hash table */
-  int max_obj_locks;		/* max # of object locks */
-
-  lk_hashmap_type m_obj_hash_table;
-  LF_FREELIST obj_free_entry_list;
-
-  /* transaction lock table */
-  int num_trans;		/* # of transactions */
-  LK_TRAN_LOCK *tran_lock_table;	/* transaction lock hold table */
-
-  /* deadlock detection related fields */
-  pthread_mutex_t DL_detection_mutex;
-  struct timeval last_deadlock_run;	/* last deadlock detection time */
-  LK_WFG_NODE *TWFG_node;	/* transaction WFG node */
-  LK_WFG_EDGE *TWFG_edge;	/* transaction WFG edge */
-  int max_TWFG_edge;
-  int TWFG_free_edge_idx;
-  int global_edge_seq_num;
-
-  /* miscellaneous things */
-  short no_victim_case_count;
-  bool verbose_mode;
-  // *INDENT-OFF*
-  std::atomic_int deadlock_and_timeout_detector;
-  // *INDENT-ON*
-#if defined(LK_DUMP)
-  bool dump_level;
-#endif				/* LK_DUMP */
-
-  // *INDENT-OFF*
-  lk_global_data ()
-    : max_obj_locks (0)
-    , m_obj_hash_table {}
-    , obj_free_entry_list LF_FREELIST_INITIALIZER
-    , num_trans (0)
-    , tran_lock_table (NULL)
-    , DL_detection_mutex PTHREAD_MUTEX_INITIALIZER
-    , last_deadlock_run { 0, 0 }
-    , TWFG_node (NULL)
-    , TWFG_edge (NULL)
-    , max_TWFG_edge (0)
-    , TWFG_free_edge_idx (0)
-    , global_edge_seq_num (0)
-    , no_victim_case_count (0)
-    , verbose_mode (false)
-    , deadlock_and_timeout_detector { 0 }
-#if defined(LK_DUMP)
-    , dump_level (0)
-#endif
-  {
-  }
-  // *INDENT-ON*
-};
-
 LK_GLOBAL_DATA lk_Gl;
+
+// *INDENT-OFF*
+lk_global_data::lk_global_data ()
+  : max_obj_locks (0)
+  , m_obj_hash_table {}
+  , obj_free_entry_list LF_FREELIST_INITIALIZER
+  , num_trans (0)
+  , tran_lock_table (NULL)
+  , DL_detection_mutex PTHREAD_MUTEX_INITIALIZER
+  , last_deadlock_run { 0, 0 }
+  , TWFG_node (NULL)
+  , TWFG_edge (NULL)
+  , max_TWFG_edge (0)
+  , TWFG_free_edge_idx (0)
+  , global_edge_seq_num (0)
+  , no_victim_case_count (0)
+  , verbose_mode (false)
+  , deadlock_and_timeout_detector { 0 }
+#if defined(LK_DUMP)
+  , dump_level (0)
+#endif
+{
+}
+// *INDENT-ON*
 
 /* size of each data structure */
 static const int SIZEOF_LK_LOCKINFO = sizeof (LK_LOCKINFO);
@@ -473,11 +352,6 @@ static int lk_Standalone_has_xlock = 0;
   } while (0)
 #endif /* !SERVER_MODE */
 
-const size_t DEFAULT_LOCK_WAITING_THREAD_ARRAY_SIZE = 10;
-// *INDENT-OFF*
-using tran_lock_waiters_array_type = std::array<THREAD_ENTRY *, DEFAULT_LOCK_WAITING_THREAD_ARRAY_SIZE>;
-// *INDENT-ON*
-
 #if defined(SERVER_MODE)
 static void lock_initialize_entry (LK_ENTRY * entry_ptr);
 static void lock_initialize_entry_as_granted (LK_ENTRY * entry_ptr, int tran_index, LK_RES * res, LOCK lock);
@@ -500,9 +374,6 @@ static int lock_delete_from_tran_hold_list (LK_ENTRY * entry_ptr, int owner_tran
 static void lock_insert_into_tran_non2pl_list (LK_ENTRY * non2pl, int owner_tran_index);
 static int lock_delete_from_tran_non2pl_list (LK_ENTRY * non2pl, int owner_tran_index);
 static LK_ENTRY *lock_find_tran_hold_entry (THREAD_ENTRY * thread_p, int tran_index, const OID * oid, bool is_class);
-static bool lock_force_timeout_expired_wait_transactions (void *thrd_entry);
-static bool lock_is_local_deadlock_detection_interval_up (void);
-static void lock_detect_local_deadlock (THREAD_ENTRY * thread_p);
 static bool lock_is_class_lock_escalated (LOCK class_lock, LOCK lock_escalation);
 static LK_ENTRY *lock_add_non2pl_lock (THREAD_ENTRY * thread_p, LK_RES * res_ptr, int tran_index, LOCK lock);
 static void lock_position_holder_entry (LK_RES * res_ptr, LK_ENTRY * entry_ptr);
@@ -511,7 +382,6 @@ static void lock_set_error_for_aborted (LK_ENTRY * entry_ptr);
 static void lock_set_tran_abort_reason (int tran_index, TRAN_ABORT_REASON abort_reason);
 static LOCK_WAIT_STATE lock_suspend (THREAD_ENTRY * thread_p, LK_ENTRY * entry_ptr, int wait_msecs);
 static void lock_resume (LK_ENTRY * entry_ptr, int state);
-static bool lock_wakeup_deadlock_victim_timeout (int tran_index);
 static bool lock_wakeup_deadlock_victim_aborted (int tran_index);
 static void lock_grant_blocked_holder (THREAD_ENTRY * thread_p, LK_RES * res_ptr);
 static int lock_grant_blocked_waiter (THREAD_ENTRY * thread_p, LK_RES * res_ptr);
@@ -548,14 +418,6 @@ static void lock_increment_class_granules (LK_ENTRY * class_entry);
 static void lock_decrement_class_granules (LK_ENTRY * class_entry);
 static LK_ENTRY *lock_find_class_entry (int tran_index, const OID * class_oid);
 
-static void lock_event_log_tran_locks (THREAD_ENTRY * thread_p, FILE * log_fp, int tran_index);
-static void lock_event_log_deadlock_locks (THREAD_ENTRY * thread_p, FILE * log_fp, int tran_index, bool log_trunc,
-					   int log_num_entries, LK_ENTRY ** log_entries);
-static void lock_event_log_blocked_lock (THREAD_ENTRY * thread_p, FILE * log_fp, LK_ENTRY * entry);
-static void lock_event_log_blocking_locks (THREAD_ENTRY * thread_p, FILE * log_fp, LK_ENTRY * wait_entry);
-static void lock_event_log_lock_info (THREAD_ENTRY * thread_p, FILE * log_fp, LK_ENTRY * entry);
-static void lock_event_set_tran_wait_entry (int tran_index, LK_ENTRY * entry);
-static void lock_event_set_xasl_id_to_entry (int tran_index, LK_ENTRY * entry);
 static LK_RES_KEY lock_create_search_key (OID * oid, OID * class_oid);
 #if defined (SERVER_MODE)
 static bool lock_is_safe_lock_with_page (THREAD_ENTRY * thread_p, LK_ENTRY * entry_ptr);
@@ -563,23 +425,6 @@ static bool lock_is_safe_lock_with_page (THREAD_ENTRY * thread_p, LK_ENTRY * ent
 
 static LK_ENTRY *lock_get_new_entry (int tran_index, LF_TRAN_ENTRY * tran_entry, LF_FREELIST * freelist);
 static void lock_free_entry (int tran_index, LF_TRAN_ENTRY * tran_entry, LF_FREELIST * freelist, LK_ENTRY * lock_entry);
-
-static void lock_victimize_first_thread_mapfunc (THREAD_ENTRY & thread_ref, bool & stop_mapper);
-static void lock_check_timeout_expired_and_count_suspended_mapfunc (THREAD_ENTRY & thread_ref, bool & stop_mapper,
-								    size_t & suspend_count);
-static void lock_get_transaction_lock_waiting_threads_mapfunc (THREAD_ENTRY & thread_ref, bool & stop_mapper,
-							       int tran_index,
-							       tran_lock_waiters_array_type & tran_lock_waiters,
-							       size_t & count);
-static void lock_get_transaction_lock_waiting_threads (int tran_index, tran_lock_waiters_array_type & tran_lock_waiters,
-						       size_t & count);
-
-// *INDENT-OFF*
-static cubthread::daemon *lock_Deadlock_detect_daemon = NULL;
-
-static void lock_deadlock_detect_daemon_init ();
-static void lock_deadlock_detect_daemon_destroy ();
-// *INDENT-ON*
 
 /* object lock entry */
 static void *lock_alloc_entry (void);
@@ -911,7 +756,9 @@ lock_initialize_entry (LK_ENTRY * entry_ptr)
   entry_ptr->ngranules = 0;
   entry_ptr->instant_lock_count = 0;
   entry_ptr->bind_index_in_tran = -1;
-  XASL_ID_SET_NULL (&entry_ptr->xasl_id);
+  entry_ptr->xasl_id = XASL_ID
+  {
+  };
 }
 
 /* initialize lock entry as granted state */
@@ -2380,7 +2227,7 @@ lock_resume (LK_ENTRY * entry_ptr, int state)
  *     deadlock detection. The deadlock victim is waked up and noitified of
  *     timeout by this function if the deadlock victim is still suspended.
  */
-static bool
+bool
 lock_wakeup_deadlock_victim_timeout (int tran_index)
 {
   tran_lock_waiters_array_type tran_lock_waiters;
@@ -2390,7 +2237,7 @@ lock_wakeup_deadlock_victim_timeout (int tran_index)
   bool wakeup_first = false;
 
   thrd_count = 0;
-  lock_get_transaction_lock_waiting_threads (tran_index, tran_lock_waiters, thrd_count);
+  lk_get_transaction_lock_waiting_threads (tran_index, tran_lock_waiters, thrd_count);
   thrd_array = tran_lock_waiters.data ();
 
   for (i = 0; i < thrd_count; i++)
@@ -2446,7 +2293,7 @@ lock_wakeup_deadlock_victim_aborted (int tran_index)
   bool wakeup_first = false;
 
   thrd_count = 0;
-  lock_get_transaction_lock_waiting_threads (tran_index, tran_lock_waiters, thrd_count);
+  lk_get_transaction_lock_waiting_threads (tran_index, tran_lock_waiters, thrd_count);
   thrd_array = tran_lock_waiters.data ();
 
   for (i = 0; i < thrd_count; i++)
@@ -5678,7 +5525,7 @@ lock_initialize (void)
     }
 #endif /* LK_DUMP */
 
-  lock_deadlock_detect_daemon_init ();
+  lk_deadlock_daemon_start ();
 
   return error_code;
 
@@ -5725,126 +5572,6 @@ lock_finalize_tran_lock_table (void)
 }
 #endif /* SERVER_MODE */
 
-// *INDENT-OFF*
-#if defined(SERVER_MODE)
-
-//
-// lock_check_timeout_expired_and_count_suspended_mapfunc - function to map over all thread entries to find timed out
-//                                                          locks and suspended threads
-//
-// thread_ref (in)     : thread entry
-// stop_mapper (out)   : ignored
-// suspend_count (out) : count suspended threads
-//
-static void
-lock_check_timeout_expired_and_count_suspended_mapfunc (THREAD_ENTRY & thread_ref, bool & stop_mapper,
-                                                        size_t & suspend_count)
-{
-  (void) stop_mapper;  // suppress unused parameter warning
-
-  // skip dead/free threads
-  if (thread_ref.m_status == cubthread::entry::status::TS_DEAD
-      || thread_ref.m_status == cubthread::entry::status::TS_FREE)
-    {
-      return;
-    }
-  if (thread_ref.lockwait == NULL)
-    {
-      return;
-    }
-  // suspended thread
-
-  /* The transaction, for which the current thread is working, might be interrupted.
-   * lock_force_timeout_expired_wait_transactions() performs not only interrupt but timeout checking.
-   */
-  if (!lock_force_timeout_expired_wait_transactions (&thread_ref))
-    {
-      // not timed out. count as suspended
-      suspend_count++;
-    }
-}
-
-// class deadlock_detect_task
-//
-//  description:
-//    deadlock detect daemon task
-//    It does
-//      (1) to resume an interrupted lock waiter
-//      (2) to resume a timedout lock waiter
-//      (3) to detect and resolve a deadlock.
-//    It operates (1) and (2) for every 100ms and does (3) for every PRM_ID_LK_RUN_DEADLOCK_INTERVAL.
-//
-void
-deadlock_detect_task_execute (cubthread::entry & thread_ref)
-{
-  if (!BO_IS_SERVER_RESTARTED ())
-    {
-      // wait for boot to finish
-      return;
-    }
-
-  if (lk_Gl.deadlock_and_timeout_detector == 0)
-    {
-      // if none of the threads were suspended then just return
-      return;
-    }
-
-  /* check if the lock-wait thread exists */
-  size_t lock_wait_count = 0;
-  thread_get_manager ()->map_entries (lock_check_timeout_expired_and_count_suspended_mapfunc, lock_wait_count);
-
-  if (lock_is_local_deadlock_detection_interval_up () && lock_wait_count >= 2)
-    {
-      lock_detect_local_deadlock (&thread_ref);
-    }
-}
-#endif /* SERVER_MODE */
-
-#if defined(SERVER_MODE)
-/*
- * lock_deadlock_detect_daemon_init () - initialize deadlock detect daemon thread
- */
-REGISTER_DAEMON (lock_deadlock_detect);
-
-void
-lock_deadlock_detect_daemon_init ()
-{
-  assert (lock_Deadlock_detect_daemon == NULL);
-
-  cubthread::looper looper = cubthread::looper (std::chrono::milliseconds (100));
-  cubthread::entry_callable_task *daemon_task = new cubthread::entry_callable_task (deadlock_detect_task_execute);
-
-  // create deadlock detect daemon thread
-  lock_Deadlock_detect_daemon = cubthread::get_manager ()->create_daemon (looper, daemon_task, "deadlock-detect");
-}
-#endif /* SERVER_MODE */
-
-#if defined(SERVER_MODE)
-/*
- * lock_deadlock_detect_daemon_destroy () - destroy deadlock detect daemon thread
- */
-void
-lock_deadlock_detect_daemon_destroy ()
-{
-  cubthread::get_manager ()->destroy_daemon (lock_Deadlock_detect_daemon);
-}
-#endif /* SERVER_MODE */
-
-#if defined(SERVER_MODE)
-/*
- * lock_deadlock_detect_daemon_get_stats - get deadlock detector daemon thread statistics into statsp
- */
-void
-lock_deadlock_detect_daemon_get_stats (UINT64 * statsp)
-{
-  if (lock_Deadlock_detect_daemon != NULL)
-    {
-      lock_Deadlock_detect_daemon->get_stats (statsp);
-    }
-}
-#endif /* SERVER_MODE */
-// *INDENT-ON*
-
 /*
  * lock_finalize - Finalize the lock manager
  *
@@ -5879,7 +5606,7 @@ lock_finalize (void)
   lk_Gl.m_obj_hash_table.destroy ();
   lf_freelist_destroy (&lk_Gl.obj_free_entry_list);
 
-  lock_deadlock_detect_daemon_destroy ();
+  lk_deadlock_daemon_stop ();
 #endif /* !SERVER_MODE */
 }
 
@@ -6988,7 +6715,7 @@ lock_get_object_lock (const OID * oid, const OID * class_oid)
   if (thread_p->type == thread_type::TT_LOADDB)
     {
       /* Loaddb workers does not acquire locks. Get tran_index of loaddb workers manager thread. */
-      tran_index = thread_p->conn_entry->get_tran_index ();
+      tran_index = lk_resolve_loaddb_tran_index (thread_p);
     }
   else
     {
@@ -7102,7 +6829,7 @@ lock_has_lock_on_object (const OID * oid, const OID * class_oid, LOCK lock)
   if (thread_p->type == thread_type::TT_LOADDB)
     {
       /* Loaddb workers does not acquire locks. Get tran_index of loaddb workers manager thread. */
-      tran_index = thread_p->conn_entry->get_tran_index ();
+      tran_index = lk_resolve_loaddb_tran_index (thread_p);
 
       if (class_oid != NULL && !OID_IS_ROOTOID (class_oid))
 	{
@@ -7300,7 +7027,7 @@ lock_is_waiting_transaction (int tran_index)
   THREAD_ENTRY *thrd_ptr;
 
   thrd_count = 0;
-  lock_get_transaction_lock_waiting_threads (tran_index, tran_lock_waiters, thrd_count);
+  lk_get_transaction_lock_waiting_threads (tran_index, tran_lock_waiters, thrd_count);
   thrd_array = tran_lock_waiters.data ();
 
   for (i = 0; i < thrd_count; i++)
@@ -7366,7 +7093,7 @@ lock_get_class_lock (THREAD_ENTRY * thread_p, const OID * class_oid)
   if (thread_p->type == thread_type::TT_LOADDB)
     {
       /* Loaddb workers does not acquire locks. Get tran_index of loaddb workers manager thread. */
-      tran_index = thread_p->conn_entry->get_tran_index ();
+      tran_index = lk_resolve_loaddb_tran_index (thread_p);
     }
   else
     {
@@ -7437,7 +7164,7 @@ lock_force_thread_timeout_lock (THREAD_ENTRY * thrd)
  *     the thread is timed-out.
  *     If NULL is given, it applies to all threads.
  */
-static bool
+bool
 lock_force_timeout_expired_wait_transactions (void *thrd_entry)
 {
 #if !defined (SERVER_MODE)
@@ -7616,7 +7343,7 @@ end:
  *
  * Note:check if the local deadlock detection should be performed.
  */
-static bool
+bool
 lock_is_local_deadlock_detection_interval_up (void)
 {
 #if defined (SERVER_MODE)
@@ -7640,30 +7367,6 @@ lock_is_local_deadlock_detection_interval_up (void)
 #else /* !SERVER_MODE */
   return false;
 #endif /* SERVER_MODE */
-}
-
-//
-// lock_victimize_first_thread_mapfunc - map function on all entries until one lock waiter is victimized
-//
-// thread_ref (in)  : current thread
-// stop_mapper (in) : output to stop mapper when a thread was victimized
-//
-static void
-lock_victimize_first_thread_mapfunc (THREAD_ENTRY & thread_ref, bool & stop_mapper)
-{
-#if defined (SERVER_MODE)
-  if (thread_ref.lockwait == NULL)
-    {
-      return;
-    }
-  int tran_index = thread_ref.tran_index;
-  if (lock_wakeup_deadlock_victim_timeout (tran_index))
-    {
-      stop_mapper = true;
-      er_set (ER_NOTIFICATION_SEVERITY, ARG_FILE_LINE, ER_LK_NOTENOUGH_ACTIVE_THREADS, 3,
-	      (int) css_get_num_request_workers (), logtb_get_number_assigned_tran_indices (), tran_index);
-    }
-#endif // SERVER_MODE
 }
 
 /*
@@ -7690,7 +7393,7 @@ lock_victimize_first_thread_mapfunc (THREAD_ENTRY & thread_ref, bool & stop_mapp
  *
  *     Last, free WFG framework.
  */
-static void
+void
 lock_detect_local_deadlock (THREAD_ENTRY * thread_p)
 {
 #if !defined (SERVER_MODE)
@@ -7738,7 +7441,7 @@ lock_detect_local_deadlock (THREAD_ENTRY * thread_p)
   rv = pthread_mutex_lock (&lk_Gl.DL_detection_mutex);
 
   // *INDENT-OFF*
-  lk_hashmap_iterator iterator { thread_p, lk_Gl.m_obj_hash_table };
+  lock_manager::resource_table::iterator iterator { thread_p, lk_Gl.m_obj_hash_table };
   // *INDENT-ON*
   for (res_ptr = iterator.iterate (); res_ptr != NULL; res_ptr = iterator.iterate ())
     {
@@ -8024,7 +7727,7 @@ final_:
 	  if (css_are_all_request_handlers_suspended ())
 	    {
 	      /* We must timeout at least one thread, so other clients can execute, otherwise, the server will hang. */
-	      thread_get_manager ()->map_entries (lock_victimize_first_thread_mapfunc);
+	      lk_victimize_first_thread ();
 	    }
 	  lk_Gl.no_victim_case_count = 0;
 	}
@@ -8530,7 +8233,7 @@ xlock_dump (THREAD_ENTRY * thread_p, FILE * outfp, int is_contention)
     }
 
   // *INDENT-OFF*
-  lk_hashmap_iterator iterator { thread_p, lk_Gl.m_obj_hash_table };
+  lock_manager::resource_table::iterator iterator { thread_p, lk_Gl.m_obj_hash_table };
   // *INDENT-ON*
   for (res_ptr = iterator.iterate (); res_ptr != NULL; res_ptr = iterator.iterate ())
     {
@@ -9272,427 +8975,6 @@ lock_wait_state_to_string (int state)
 }
 
 /*
- * lock dump to event log file (lock timeout, deadlock)
- */
-
-#if defined(SERVER_MODE)
-/*
- * lock_event_log_tran_locks - dump transaction locks to event log file
- *   return:
- *   thread_p(in):
- *   log_fp(in):
- *   tran_index(in):
- *
- *   note: for deadlock
- */
-static void
-lock_event_log_tran_locks (THREAD_ENTRY * thread_p, FILE * log_fp, int tran_index)
-{
-  int rv, i, indent = 2;
-  LK_TRAN_LOCK *tran_lock;
-  LK_ENTRY *entry;
-
-  assert (csect_check_own (thread_p, CSECT_EVENT_LOG_FILE) == 1);
-
-  fprintf (log_fp, "hold:\n");
-
-  tran_lock = &lk_Gl.tran_lock_table[tran_index];
-  rv = pthread_mutex_lock (&tran_lock->hold_mutex);
-
-  entry = tran_lock->inst_hold_list;
-  for (i = 0; entry != NULL && i < MAX_NUM_LOCKS_DUMP_TO_EVENT_LOG; entry = entry->tran_next, i++)
-    {
-      assert (tran_index == entry->tran_index);
-
-      fprintf (log_fp, "%*clock: %*s", indent, ' ', LOCK_MODE_STR_MAX_LENGTH,
-	       lock_to_lockmode_string (entry->granted_mode));
-
-      SET_EMULATE_THREAD_WITH_LOCK_ENTRY (thread_p, entry);
-      lock_event_log_lock_info (thread_p, log_fp, entry);
-
-      event_log_sql_string (thread_p, log_fp, &entry->xasl_id, indent);
-      event_log_bind_values (thread_p, log_fp, tran_index, entry->bind_index_in_tran);
-
-      fprintf (log_fp, "\n");
-
-      CLEAR_EMULATE_THREAD (thread_p);
-    }
-
-  if (entry != NULL)
-    {
-      fprintf (log_fp, "%*c...\n", indent, ' ');
-    }
-
-  entry = tran_lock->waiting;
-  if (entry != NULL)
-    {
-      fprintf (log_fp, "wait:\n");
-      fprintf (log_fp, "%*clock: %*s", indent, ' ', LOCK_MODE_STR_MAX_LENGTH,
-	       lock_to_lockmode_string (entry->blocked_mode));
-
-      SET_EMULATE_THREAD_WITH_LOCK_ENTRY (thread_p, entry);
-
-      lock_event_log_lock_info (thread_p, log_fp, entry);
-
-      event_log_sql_string (thread_p, log_fp, &entry->xasl_id, indent);
-      event_log_bind_values (thread_p, log_fp, tran_index, entry->bind_index_in_tran);
-
-      fprintf (log_fp, "\n");
-    }
-  CLEAR_EMULATE_THREAD (thread_p);
-
-  pthread_mutex_unlock (&tran_lock->hold_mutex);
-}
-
-/*
- * lock_event_log_deadlock_locks - dump locks that caused deadlocks to event log file
- *   return: void
- *   thread_p(in): thread
- *   log_fp(in): file pointer (log)
- *   tran_index(in): transaction index selected as victim
- *   log_trunc(in): is the entries truncated
- *   log_num_entries(in): number of the entries
- *   log_entries(in): entries
- *
- *   note: for deadlock
- */
-static void
-lock_event_log_deadlock_locks (THREAD_ENTRY * thread_p, FILE * log_fp, int tran_index, bool log_trunc,
-			       int log_num_entries, LK_ENTRY ** log_entries)
-{
-  const char *prog, *user, *host;
-  int pid;
-  int max_num_locks;
-  int rv, i, indent = 2;
-  LK_TRAN_LOCK *tran_lock;
-  const char *lock_name;
-  LK_ENTRY *entry;
-
-  assert (csect_check_own (thread_p, CSECT_EVENT_LOG_FILE) == 1);
-  assert (log_num_entries && !(log_num_entries % 2));
-  assert (log_entries != NULL);
-
-  for (i = 0; i < log_num_entries; i++)
-    {
-      entry = log_entries[i];
-
-      /* holder and waiter are printed alternately */
-      fprintf (log_fp, i % 2 ? "\nwait:\n" : "hold:\n");
-
-      tran_lock = &lk_Gl.tran_lock_table[entry->tran_index];
-      rv = pthread_mutex_lock (&tran_lock->hold_mutex);
-
-      logtb_find_client_name_host_pid (entry->tran_index, &prog, &user, &host, &pid);
-      fprintf (log_fp, "%*cclient: %s@%s|%s(%d)", indent, ' ', user, host, prog, pid);
-      if (entry->tran_index == tran_index)
-	{
-	  fprintf (log_fp, " (Deadlock Victim)");
-	}
-      fprintf (log_fp, "\n");
-
-      lock_name =
-	(i % 2) ? lock_to_lockmode_string (entry->blocked_mode) : lock_to_lockmode_string (entry->granted_mode);
-      fprintf (log_fp, "%*clock: %s", indent, ' ', lock_name);
-      if (!(i % 2) && entry->blocked_mode != NULL_LOCK)
-	{
-	  lock_name = lock_to_lockmode_string (entry->blocked_mode);
-	  fprintf (log_fp, "|waiting for lock conversion to %s", lock_name);
-	}
-      SET_EMULATE_THREAD_WITH_LOCK_ENTRY (thread_p, entry);
-      lock_event_log_lock_info (thread_p, log_fp, entry);
-
-      event_log_sql_string (thread_p, log_fp, &entry->xasl_id, indent);
-      event_log_bind_values (thread_p, log_fp, entry->tran_index, entry->bind_index_in_tran);
-
-      CLEAR_EMULATE_THREAD (thread_p);
-
-      pthread_mutex_unlock (&tran_lock->hold_mutex);
-
-      fprintf (log_fp, i % 2 ? "\n" : "");
-    }
-
-  if (log_trunc)
-    {
-      fprintf (log_fp, "%*c...\n\n", indent, ' ');
-    }
-}
-
-/*
- * lock_event_log_blocked_lock - dump lock waiter info to event log file
- *   return:
- *   thread_p(in):
- *   log_fp(in):
- *   entry(in):
- *
- *   note: for lock timeout
- */
-static void
-lock_event_log_blocked_lock (THREAD_ENTRY * thread_p, FILE * log_fp, LK_ENTRY * entry)
-{
-  int indent = 2;
-
-  assert (csect_check_own (thread_p, CSECT_EVENT_LOG_FILE) == 1);
-
-  SET_EMULATE_THREAD_WITH_LOCK_ENTRY (thread_p, entry);
-
-  fprintf (log_fp, "waiter:\n");
-  event_log_print_client_info (entry->tran_index, indent);
-
-  fprintf (log_fp, "%*clock: %*s", indent, ' ', LOCK_MODE_STR_MAX_LENGTH,
-	   lock_to_lockmode_string (entry->blocked_mode));
-  lock_event_log_lock_info (thread_p, log_fp, entry);
-
-  event_log_sql_string (thread_p, log_fp, &entry->xasl_id, indent);
-  event_log_bind_values (thread_p, log_fp, entry->tran_index, entry->bind_index_in_tran);
-
-  CLEAR_EMULATE_THREAD (thread_p);
-
-  fprintf (log_fp, "\n");
-}
-
-/*
- * lock_event_log_blocking_locks - dump lock blocker info to event log file
- *   return:
- *   thread_p(in):
- *   log_fp(in):
- *   wait_entry(in):
- *
- *   note: for lock timeout
- */
-static void
-lock_event_log_blocking_locks (THREAD_ENTRY * thread_p, FILE * log_fp, LK_ENTRY * wait_entry)
-{
-  LK_ENTRY *entry;
-  LK_RES *res_ptr = NULL;
-  LOCK_COMPATIBILITY compat1, compat2;
-  int rv, indent = 2;
-  bool is_other_waiter = false;
-
-  assert (csect_check_own (thread_p, CSECT_EVENT_LOG_FILE) == 1);
-
-  res_ptr = wait_entry->res_head;
-  rv = pthread_mutex_lock (&res_ptr->res_mutex);
-
-  fprintf (log_fp, "blocker:\n");
-
-  for (entry = res_ptr->holder; entry != NULL; entry = entry->next)
-    {
-      if (entry == wait_entry)
-	{
-	  continue;
-	}
-
-      compat1 = lock_compat (entry->granted_mode, wait_entry->blocked_mode);
-      compat2 = lock_compat (entry->blocked_mode, wait_entry->blocked_mode);
-      if (compat1 == LOCK_COMPAT_NO || compat2 == LOCK_COMPAT_NO)
-	{
-	  event_log_print_client_info (entry->tran_index, indent);
-
-	  fprintf (log_fp, "%*clock: %*s", indent, ' ', LOCK_MODE_STR_MAX_LENGTH,
-		   lock_to_lockmode_string (entry->granted_mode));
-
-	  SET_EMULATE_THREAD_WITH_LOCK_ENTRY (thread_p, entry);
-
-	  lock_event_log_lock_info (thread_p, log_fp, entry);
-
-	  event_log_sql_string (thread_p, log_fp, &entry->xasl_id, indent);
-	  event_log_bind_values (thread_p, log_fp, entry->tran_index, entry->bind_index_in_tran);
-
-	  CLEAR_EMULATE_THREAD (thread_p);
-
-	  fprintf (log_fp, "\n");
-	}
-    }
-
-  for (entry = res_ptr->waiter; entry != NULL; entry = entry->next)
-    {
-      if (entry == wait_entry)
-	{
-	  is_other_waiter = true;
-	  continue;
-	}
-
-      compat1 = lock_compat (entry->blocked_mode, wait_entry->blocked_mode);
-      if (compat1 == LOCK_COMPAT_NO)
-	{
-	  if (is_other_waiter)
-	    {
-	      /* first time for other waiter */
-	      fprintf (log_fp, "other waiters:\n");
-	      is_other_waiter = false;
-	    }
-
-	  event_log_print_client_info (entry->tran_index, indent);
-
-	  fprintf (log_fp, "%*clock: %*s", indent, ' ', LOCK_MODE_STR_MAX_LENGTH,
-		   lock_to_lockmode_string (entry->blocked_mode));
-
-	  SET_EMULATE_THREAD_WITH_LOCK_ENTRY (thread_p, entry);
-
-	  lock_event_log_lock_info (thread_p, log_fp, entry);
-
-	  event_log_sql_string (thread_p, log_fp, &entry->xasl_id, indent);
-	  event_log_bind_values (thread_p, log_fp, entry->tran_index, entry->bind_index_in_tran);
-
-	  CLEAR_EMULATE_THREAD (thread_p);
-
-	  fprintf (log_fp, "\n");
-	}
-    }
-
-  pthread_mutex_unlock (&res_ptr->res_mutex);
-}
-
-/*
- * lock_event_log_lock_info - dump lock resource info to event log file
- *   return:
- *   thread_p(in):
- *   log_fp(in):
- *   entry(in):
- */
-static void
-lock_event_log_lock_info (THREAD_ENTRY * thread_p, FILE * log_fp, LK_ENTRY * entry)
-{
-  LK_RES *res_ptr;
-  char *classname;
-  OID *oid_rr;
-
-  assert (csect_check_own (thread_p, CSECT_EVENT_LOG_FILE) == 1);
-
-  res_ptr = entry->res_head;
-
-  fprintf (log_fp, " (oid=%d|%d|%d", res_ptr->key.oid.volid, res_ptr->key.oid.pageid, res_ptr->key.oid.slotid);
-
-  switch (res_ptr->key.type)
-    {
-    case LOCK_RESOURCE_ROOT_CLASS:
-      fprintf (log_fp, ", table=db_root");
-      break;
-
-    case LOCK_RESOURCE_CLASS:
-      oid_rr = oid_get_rep_read_tran_oid ();
-      if (oid_rr != NULL && OID_EQ (&res_ptr->key.oid, oid_rr))
-	{
-	  /* This is the generic object for RR transactions */
-	  fprintf (log_fp, ", Generic object for Repeatable Read consistency");
-	}
-      else if (!OID_ISTEMP (&res_ptr->key.oid))
-	{
-	  OID real_class_oid;
-
-	  if (OID_IS_VIRTUAL_CLASS_OF_DIR_OID (&res_ptr->key.oid))
-	    {
-	      OID_GET_REAL_CLASS_OF_DIR_OID (&res_ptr->key.oid, &real_class_oid);
-	    }
-	  else
-	    {
-	      COPY_OID (&real_class_oid, &res_ptr->key.oid);
-	    }
-
-	  /* never propagate an error to get class name and keep the existing error if any. */
-	  er_stack_push ();
-	  (void) heap_get_class_name (thread_p, &real_class_oid, &classname);
-	  er_stack_pop ();
-
-	  if (classname != NULL)
-	    {
-	      fprintf (log_fp, ", table=%s", classname);
-	      free_and_init (classname);
-	    }
-	}
-      break;
-
-    case LOCK_RESOURCE_INSTANCE:
-      if (!OID_ISTEMP (&res_ptr->key.class_oid))
-	{
-	  OID real_class_oid;
-
-	  if (OID_IS_VIRTUAL_CLASS_OF_DIR_OID (&res_ptr->key.class_oid))
-	    {
-	      OID_GET_REAL_CLASS_OF_DIR_OID (&res_ptr->key.class_oid, &real_class_oid);
-	    }
-	  else
-	    {
-	      COPY_OID (&real_class_oid, &res_ptr->key.class_oid);
-	    }
-
-	  /* never propagate an error to get class name and keep the existing error if any. */
-	  er_stack_push ();
-	  (void) heap_get_class_name (thread_p, &real_class_oid, &classname);
-	  er_stack_pop ();
-
-	  if (classname != NULL)
-	    {
-	      fprintf (log_fp, ", table=%s", classname);
-	      free_and_init (classname);
-	    }
-	}
-      break;
-
-    default:
-      break;
-    }
-
-  fprintf (log_fp, ")\n");
-}
-
-/*
- * lock_event_set_tran_wait_entry - save the lock entry tran is waiting
- *   return:
- *   entry(in):
- */
-static void
-lock_event_set_tran_wait_entry (int tran_index, LK_ENTRY * entry)
-{
-  LK_TRAN_LOCK *tran_lock;
-  int rv;
-
-  tran_lock = &lk_Gl.tran_lock_table[tran_index];
-  rv = pthread_mutex_lock (&tran_lock->hold_mutex);
-
-  tran_lock->waiting = entry;
-
-  if (entry != NULL)
-    {
-      lock_event_set_xasl_id_to_entry (tran_index, entry);
-    }
-
-  pthread_mutex_unlock (&tran_lock->hold_mutex);
-}
-
-/*
- * lock_event_set_xasl_id_to_entry - save the xasl id related lock entry
- *   return:
- *   entry(in):
- */
-static void
-lock_event_set_xasl_id_to_entry (int tran_index, LK_ENTRY * entry)
-{
-  LOG_TDES *tdes;
-
-  tdes = LOG_FIND_TDES (tran_index);
-  if (tdes != NULL && !XASL_ID_IS_NULL (&tdes->xasl_id))
-    {
-      if (tdes->num_exec_queries <= MAX_NUM_EXEC_QUERY_HISTORY)
-	{
-	  entry->bind_index_in_tran = tdes->num_exec_queries - 1;
-	}
-      else
-	{
-	  entry->bind_index_in_tran = -1;
-	}
-
-      XASL_ID_COPY (&entry->xasl_id, &tdes->xasl_id);
-    }
-  else
-    {
-      XASL_ID_SET_NULL (&entry->xasl_id);
-      entry->bind_index_in_tran = -1;
-    }
-}
-#endif /* SERVER_MODE */
-
-/*
  * lock_rep_read_tran - lock the object used in RR transaction with ALTER TABLE
  *			ADDCOLUMN NOT NULL scenario
  *   return:
@@ -9896,46 +9178,3 @@ lock_unlock_inst_locks_of_class_by_isolation (THREAD_ENTRY * thread_p, int tran_
     }
 }
 #endif /* SERVER_MODE */
-
-//
-// lock_get_transaction_lock_waiting_threads_mapfunc -
-//
-// thread_ref (in)         : thread entry
-// stop_mapper (out)       : ignored
-// tran_index (in)         : transaction index
-// tran_lock_waiters (out) : output lock waiter threads belonging to transaction
-// count (out)             : output thread count
-//
-static void
-lock_get_transaction_lock_waiting_threads_mapfunc (THREAD_ENTRY & thread_ref, bool & stop_mapper, int tran_index,
-						   tran_lock_waiters_array_type & tran_lock_waiters, size_t & count)
-{
-  (void) stop_mapper;		// suppress unused parameter warning
-
-  if (thread_ref.tran_index != tran_index)
-    {
-      // not the right transaction
-      return;
-    }
-  if (thread_ref.lockwait == NULL)
-    {
-      // not a lock waiter
-      return;
-    }
-  tran_lock_waiters[count++] = &thread_ref;
-}
-
-//
-// lock_get_transaction_lock_waiting_threads - gather all threads belonging to transaction and waiting for lock
-//
-// tran_index (in)         : transaction index
-// tran_lock_waiters (out) : output lock waiter threads belonging to transaction
-// count (out)             : output thread count
-//
-static void
-lock_get_transaction_lock_waiting_threads (int tran_index, tran_lock_waiters_array_type & tran_lock_waiters,
-					   size_t & count)
-{
-  thread_get_manager ()->map_entries (lock_get_transaction_lock_waiting_threads_mapfunc, tran_index,
-				      tran_lock_waiters, count);
-}

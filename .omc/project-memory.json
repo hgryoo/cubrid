@@ -1,0 +1,399 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1779761510291,
+  "projectRoot": "/data/workspace/lock_manager_decouple",
+  "techStack": {
+    "languages": [
+      {
+        "name": "C/C++",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "CMakeLists.txt"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "src"
+    ],
+    "gitBranches": {
+      "defaultBranch": "develop",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "3rdparty": {
+      "path": "3rdparty",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1779761510288,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "README.md"
+      ]
+    },
+    "broker": {
+      "path": "broker",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1779761510288,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "uc"
+      ]
+    },
+    "build_preset_debug": {
+      "path": "build_preset_debug",
+      "purpose": null,
+      "fileCount": 27,
+      "lastAccessed": 1779761510289,
+      "keyFiles": [
+        "CMakeCache.txt",
+        "CPackConfig.cmake",
+        "CPackOptions.cmake",
+        "CPackSourceConfig.cmake",
+        "LICENSE.txt"
+      ]
+    },
+    "cm_common": {
+      "path": "cm_common",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1779761510289,
+      "keyFiles": [
+        "CMakeLists.txt"
+      ]
+    },
+    "cmake": {
+      "path": "cmake",
+      "purpose": null,
+      "fileCount": 12,
+      "lastAccessed": 1779761510289,
+      "keyFiles": [
+        "3rdparty_util.cmake",
+        "CPack.STGZ_Header.sh.in",
+        "CPackOptions.cmake.in",
+        "CPackWixPatch.cmake.in",
+        "CPack_postinstall.sh.in"
+      ]
+    },
+    "conf": {
+      "path": "conf",
+      "purpose": null,
+      "fileCount": 15,
+      "lastAccessed": 1779761510289,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "cas_ssl_cert.crt",
+        "cas_ssl_cert.key",
+        "cubrid.conf",
+        "cubrid.conf.large"
+      ]
+    },
+    "contrib": {
+      "path": "contrib",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "CMakeLists.txt"
+      ]
+    },
+    "cs": {
+      "path": "cs",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "CMakeLists.txt"
+      ]
+    },
+    "cubrid": {
+      "path": "cubrid",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "CMakeLists.txt"
+      ]
+    },
+    "cubrid-cci": {
+      "path": "cubrid-cci",
+      "purpose": null,
+      "fileCount": 9,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "BUILD_NUMBER",
+        "CCI-VERSION-DIST",
+        "CMakeLists.txt",
+        "COPYING",
+        "CREDITS"
+      ]
+    },
+    "cubrid-jdbc": {
+      "path": "cubrid-jdbc",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1779761510290,
+      "keyFiles": []
+    },
+    "cubridmanager": {
+      "path": "cubridmanager",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1779761510290,
+      "keyFiles": []
+    },
+    "debian": {
+      "path": "debian",
+      "purpose": null,
+      "fileCount": 13,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "changelog",
+        "compat",
+        "conffiles",
+        "control",
+        "copyright"
+      ]
+    },
+    "demo": {
+      "path": "demo",
+      "purpose": null,
+      "fileCount": 5,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "demodb_objects",
+        "demodb_schema",
+        "make_cubrid_demo.bat",
+        "make_cubrid_demo.sh"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 2,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "install_build_requirements.md",
+        "tangram_24.svg"
+      ]
+    },
+    "include": {
+      "path": "include",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "system.h"
+      ]
+    },
+    "locales": {
+      "path": "locales",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "make_locale.sh",
+        "make_locale_Win32.bat",
+        "make_locale_x64.bat"
+      ]
+    },
+    "msg": {
+      "path": "msg",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "CMakeLists.txt"
+      ]
+    },
+    "pl_engine": {
+      "path": "pl_engine",
+      "purpose": null,
+      "fileCount": 7,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "AGENTS.md",
+        "CMakeLists.txt",
+        "gradlew",
+        "gradlew.bat",
+        "settings.gradle.kts"
+      ]
+    },
+    "sa": {
+      "path": "sa",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "CMakeLists.txt"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 1,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "AGENTS.md"
+      ]
+    },
+    "timezones": {
+      "path": "timezones",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "make_tz.sh",
+        "make_tz_Win32.bat",
+        "make_tz_x64.bat"
+      ]
+    },
+    "unit_tests": {
+      "path": "unit_tests",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "AGENTS.md",
+        "CMakeLists.txt"
+      ]
+    },
+    "util": {
+      "path": "util",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "start_cubrid",
+        "stop_cubrid"
+      ]
+    },
+    "win": {
+      "path": "win",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "CMakeLists.txt",
+        "build.bat"
+      ]
+    },
+    "locales/data": {
+      "path": "locales/data",
+      "purpose": "Data files",
+      "fileCount": 2,
+      "lastAccessed": 1779761510290,
+      "keyFiles": [
+        "ducet.txt",
+        "unicodedata.txt"
+      ]
+    },
+    "src/api": {
+      "path": "src/api",
+      "purpose": "API routes",
+      "fileCount": 2,
+      "lastAccessed": 1779761510291,
+      "keyFiles": [
+        "cubrid_log.c",
+        "cubrid_log.h"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/transaction/lock_manager.c",
+      "accessCount": 82,
+      "lastAccessed": 1779339594357,
+      "type": "file"
+    },
+    {
+      "path": "src/transaction/lock_manager_daemon.cpp",
+      "accessCount": 8,
+      "lastAccessed": 1779339531119,
+      "type": "file"
+    },
+    {
+      "path": "src/transaction/lock_manager_internal.hpp",
+      "accessCount": 5,
+      "lastAccessed": 1779339474305,
+      "type": "file"
+    },
+    {
+      "path": "src/transaction/lock_manager_conn.cpp",
+      "accessCount": 4,
+      "lastAccessed": 1779339490988,
+      "type": "file"
+    },
+    {
+      "path": "src/transaction/lock_manager_event_log.cpp",
+      "accessCount": 4,
+      "lastAccessed": 1779339539532,
+      "type": "file"
+    },
+    {
+      "path": "cubrid/CMakeLists.txt",
+      "accessCount": 2,
+      "lastAccessed": 1779328945152,
+      "type": "file"
+    },
+    {
+      "path": "sa/CMakeLists.txt",
+      "accessCount": 2,
+      "lastAccessed": 1779328954800,
+      "type": "file"
+    },
+    {
+      "path": "src/transaction/lock_manager_resource_table.cpp",
+      "accessCount": 2,
+      "lastAccessed": 1779339545070,
+      "type": "file"
+    },
+    {
+      "path": "src/transaction/lock_manager_resource_table.hpp",
+      "accessCount": 2,
+      "lastAccessed": 1779339552165,
+      "type": "file"
+    },
+    {
+      "path": "src/storage/storage_common.h",
+      "accessCount": 1,
+      "lastAccessed": 1779328769664,
+      "type": "file"
+    },
+    {
+      "path": "src/query/xasl.h",
+      "accessCount": 1,
+      "lastAccessed": 1779328770460,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

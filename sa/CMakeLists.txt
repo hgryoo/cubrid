@@ -447,6 +447,10 @@ set(TRANSACTION_SOURCES
   ${TRANSACTION_DIR}/locator_cl.c
   ${TRANSACTION_DIR}/locator_sr.c
   ${TRANSACTION_DIR}/lock_manager.c
+  ${TRANSACTION_DIR}/lock_manager_conn.cpp
+  ${TRANSACTION_DIR}/lock_manager_daemon.cpp
+  ${TRANSACTION_DIR}/lock_manager_event_log.cpp
+  ${TRANSACTION_DIR}/lock_manager_resource_table.cpp
   ${TRANSACTION_DIR}/lock_table.c
   ${TRANSACTION_DIR}/log_2pc.c
   ${TRANSACTION_DIR}/log_append.cpp
