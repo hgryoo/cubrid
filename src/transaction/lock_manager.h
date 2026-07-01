@@ -163,6 +163,11 @@ typedef enum
 typedef struct lk_res_key LK_RES_KEY;
 struct lk_res_key
 {
+  /* Packed OID for fast compare/hash on the lock-free hashmap hot path.
+   * Layout: pageid:32 | slotid:16 | volid:16 (mirrors OID's 8 bytes,
+   * equality is bijective with OID_EQ).  Read first by the _ng descriptor
+   * callbacks so a chain walk touches only the first 8 bytes of the key. */
+  UINT64 packed_oid;
   LOCK_RESOURCE_TYPE type;	/* type of resource: class,instance */
   OID oid;
   OID class_oid;

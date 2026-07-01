@@ -60,6 +60,20 @@ namespace lockfree
 	  delete this;
 	}
 
+	// uninit node data only, without returning to available list
+	virtual void reclaim_cleanup ()
+	{
+	  delete this;
+	}
+
+	// batch return reclaimed nodes to their owner (e.g. freelist)
+	virtual void return_to_owner (reclaimable_node *head, reclaimable_node *tail, size_t count)
+	{
+	  (void) head;
+	  (void) tail;
+	  (void) count;
+	}
+
       protected:
 	reclaimable_node *m_retired_next;     // link to next retired node
 	// may be repurposed by derived classes

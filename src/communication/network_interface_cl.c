@@ -3858,11 +3858,11 @@ acl_dump (FILE * outfp)
  *   outfp(in):
  */
 void
-lock_dump (FILE * outfp, int is_contention)
+lock_dump (FILE * outfp, int is_contention, int is_chain_distribution)
 {
 #if defined(CS_MODE)
   int req_error;
-  OR_ALIGNED_BUF (OR_INT_SIZE) a_request;
+  OR_ALIGNED_BUF (OR_INT_SIZE * 2) a_request;
   char *request, *ptr;
 
   if (outfp == NULL)
@@ -3872,7 +3872,8 @@ lock_dump (FILE * outfp, int is_contention)
 
   request = OR_ALIGNED_BUF_START (a_request);
 
-  (void) or_pack_int (request, is_contention);
+  ptr = or_pack_int (request, is_contention);
+  ptr = or_pack_int (ptr, is_chain_distribution);
 
   req_error =
     net_client_request_recv_stream (NET_SERVER_LK_DUMP, request, OR_ALIGNED_BUF_SIZE (a_request), NULL,
@@ -3881,7 +3882,7 @@ lock_dump (FILE * outfp, int is_contention)
 
   THREAD_ENTRY *thread_p = enter_server ();
 
-  xlock_dump (thread_p, outfp, is_contention);
+  xlock_dump (thread_p, outfp, is_contention, is_chain_distribution);
 
   exit_server (*thread_p);
 #endif /* !CS_MODE */

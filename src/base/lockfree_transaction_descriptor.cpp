@@ -135,16 +135,39 @@ namespace lockfree
       id min_tran_id = m_table->get_min_active_tranid ();
       if (min_tran_id <= m_last_reclaim_minid)
 	{
-	  // nothing changed
 	  return;
 	}
+
+      reclaimable_node *batch_head = NULL;
+      reclaimable_node *batch_tail = NULL;
+      size_t batch_count = 0;
+
       while (m_retired_head != NULL && m_retired_head->m_retire_tranid < min_tran_id)
 	{
-	  reclaim_retired_head ();
+	  reclaimable_node *nodep = m_retired_head;
+	  m_retired_head = m_retired_head->m_retired_next;
+
+	  nodep->reclaim_cleanup ();
+
+	  nodep->m_retired_next = batch_head;
+	  if (batch_tail == NULL)
+	    {
+	      batch_tail = nodep;
+	    }
+	  batch_head = nodep;
+
+	  ++batch_count;
+	  ++m_reclaim_count;
 	}
+
       if (m_retired_head == NULL)
 	{
 	  m_retired_tail = NULL;
+	}
+
+      if (batch_head != NULL)
+	{
+	  batch_head->return_to_owner (batch_head, batch_tail, batch_count);
 	}
 
       m_last_reclaim_minid = min_tran_id;

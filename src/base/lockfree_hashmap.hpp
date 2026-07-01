@@ -48,7 +48,7 @@ namespace lockfree
       ~hashmap ();
 
       void init (tran::system &transys, size_t hash_size, size_t freelist_block_size, size_t freelist_block_count,
-		 lf_entry_descriptor &edesc);
+		 lf_entry_descriptor &edesc, bool epoch_mode = false);
       void destroy ();
 
       T *find (tran::index tran_index, Key &key);
@@ -101,6 +101,7 @@ namespace lockfree
       using free_node_type = typename freelist_type::free_node;
 
       freelist_type *m_freelist;
+      tran::table *m_trantable;
 
       T **m_buckets;
       size_t m_size;
@@ -203,6 +204,7 @@ namespace lockfree
   template <class Key, class T>
   hashmap<Key, T>::hashmap ()
     : m_freelist (NULL)
+    , m_trantable (NULL)
     , m_buckets (NULL)
     , m_size (0)
     , m_backbuffer (NULL)
@@ -254,14 +256,16 @@ namespace lockfree
 
     delete m_freelist;
     m_freelist = NULL;
+    m_trantable = NULL;
   }
 
   template <class Key, class T>
   void
   hashmap<Key, T>::init (tran::system &transys, size_t hash_size, size_t freelist_block_size,
-			 size_t freelist_block_count, lf_entry_descriptor &edesc)
+			 size_t freelist_block_count, lf_entry_descriptor &edesc, bool epoch_mode)
   {
-    m_freelist = new freelist_type (transys, freelist_block_size, freelist_block_count);
+    m_freelist = new freelist_type (transys, freelist_block_size, freelist_block_count, epoch_mode);
+    m_trantable = &m_freelist->get_transaction_table ();
 
     m_edesc = &edesc;
 
@@ -483,7 +487,7 @@ namespace lockfree
   tran::descriptor &
   hashmap<Key, T>::get_tran_descriptor (tran::index tran_index)
   {
-    return m_freelist->get_transaction_table ().get_descriptor (tran_index);
+    return m_trantable->get_descriptor (tran_index);
   }
 
   template <class Key, class T>

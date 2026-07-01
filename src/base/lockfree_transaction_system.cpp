@@ -63,5 +63,11 @@ namespace lockfree
     {
       return m_max_tran_per_table;
     }
+
+    const bitmap &
+    system::get_index_bitmap () const
+    {
+      return m_tran_idx_map;
+    }
   } // namespace tran
 } // namespace lockfree

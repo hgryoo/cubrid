@@ -1216,6 +1216,8 @@ typedef struct _ha_config
 #define LOCK_OUTPUT_FILE_L                      "output-file"
 #define LOCK_DISPLAY_CONTENTION_S               'c'
 #define LOCK_DISPLAY_CONTENTION_L               "contention"
+#define LOCK_CHAIN_DISTRIBUTION_S               10751
+#define LOCK_CHAIN_DISTRIBUTION_L               "chain-distribution"
 
 /* optimizedb option list */
 #define OPTIMIZE_CLASS_NAME_S                   'n'

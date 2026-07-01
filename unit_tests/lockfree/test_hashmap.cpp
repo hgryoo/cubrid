@@ -77,7 +77,8 @@ namespace test_lockfree
     offsetof (my_entry, m_key),
     offsetof (my_entry, m_mutex),
 
-    0, // is subject to change
+    0, // using_mutex, is subject to change
+    0, // max_alloc_cnt
 
     alloc_my_entry,
     free_my_entry,
@@ -99,10 +100,12 @@ namespace test_lockfree
   }
 
   using my_hashmap = hashmap<my_key, my_entry>;
+  struct my_hashmap_epoch : public hashmap<my_key, my_entry> {};
   using my_lf_hash_table = lf_hash_table_cpp<my_key, my_entry>;
 
   static void init_lf_hash_table (lf_tran_system &transys, int hash_size, my_lf_hash_table &hash);
   static void init_hashmap (tran::system &transys, size_t hash_size, my_hashmap &hash);
+  static void init_hashmap_epoch (tran::system &transys, size_t hash_size, my_hashmap_epoch &hash);
 
   std::string g_tabs = "";
 
@@ -270,6 +273,7 @@ namespace test_lockfree
   };
   using my_lf_hash_table_tester = hash_tester<my_lf_hash_table, lf_tran_entry *>;
   using my_hashmap_tester = hash_tester<my_hashmap, tran::index>;
+  using my_hashmap_epoch_tester = hash_tester<my_hashmap_epoch, tran::index>;
 
   template <typename Hash, typename Tran>
   void
@@ -696,6 +700,7 @@ namespace test_lockfree
 
   template <> const char *my_lf_hash_table_tester::TEST_MESSAGE_PREFIX = "test lf_hash_table";
   template <> const char *my_hashmap_tester::TEST_MESSAGE_PREFIX = "test lockfree::hashmap";
+  template <> const char *my_hashmap_epoch_tester::TEST_MESSAGE_PREFIX = "test lockfree::hashmap(epoch)";
 
   template <typename Hash, typename Tran>
   hash_tester<Hash, Tran>::hash_tester (test_type tt)
@@ -731,7 +736,7 @@ namespace test_lockfree
   {
     size_t count = tran_array.size ();
     std::vector<std::thread> all_threads;
-    all_threads.reserve (count);
+    all_threads.resize (count);
 
     for (size_t i = 0; i < count; i++)
       {
@@ -800,6 +805,34 @@ namespace test_lockfree
     cout_new_line ();
     std::cout << "hash stats: ";
     l_hash.dump_stats<std::chrono::milliseconds> (std::cout);
+    l_hash.destroy ();
+    for (size_t i = 0; i < thread_count; ++i)
+      {
+	l_transys.free_index (l_indexes[i]);
+      }
+  }
+
+  template <>
+  template <typename F, typename ... Args>
+  void
+  hash_tester<my_hashmap_epoch, tran::index>::build_hash_and_test (test_result &tres, size_t thread_count,
+      size_t hash_size, F &&f, Args &&...args)
+  {
+    tran::system l_transys { thread_count };
+
+    std::vector<tran::index> l_indexes;
+    for (size_t i = 0; i < thread_count; i++)
+      {
+	l_indexes.push_back (l_transys.assign_index ());
+      }
+
+    my_hashmap_epoch l_hash;
+    init_hashmap_epoch (l_transys, hash_size, l_hash);
+
+    tres.m_timer.reset_timer ();
+    start_threads (tres, l_hash, l_indexes, std::forward<F> (f), std::forward<Args> (args)...);
+    tres.m_timer.time ();
+
     l_hash.destroy ();
     for (size_t i = 0; i < thread_count; ++i)
       {
@@ -958,6 +991,7 @@ namespace test_lockfree
 
     test_type tt = test_type::TEST_PERFORMANCE;
     my_hashmap_tester hm_tester { tt };
+    my_hashmap_epoch_tester epoch_tester { tt };
     my_lf_hash_table_tester lfht_tester { tt };
 
     cout_new_line ();
@@ -968,6 +1002,8 @@ namespace test_lockfree
 			  &my_lf_hash_table_tester::testcase_find_insdel_iter_clear, 1000000, 30000, 5000, 1, 1);
     hm_tester.run_test ("testcase_find_insdel_iter_clear=1M,30k,5k,1,1",
 			&my_hashmap_tester::testcase_find_insdel_iter_clear, 1000000, 30000, 5000, 1, 1);
+    epoch_tester.run_test ("testcase_find_insdel_iter_clear=1M,30k,5k,1,1",
+			   &my_hashmap_epoch_tester::testcase_find_insdel_iter_clear, 1000000, 30000, 5000, 1, 1);
 
     decrement_tab_indent ();
     cout_new_line ();
@@ -1074,4 +1110,11 @@ namespace test_lockfree
   {
     hash.init (transys, hash_size, 100, 100, g_edesc);
   }
+
+  static void
+  init_hashmap_epoch (tran::system &transys, size_t hash_size, my_hashmap_epoch &hash)
+  {
+    hash.init (transys, hash_size, 100, 100, g_edesc, true);
+  }
+
 } // namespace test_lockfree

@@ -670,7 +670,7 @@ help_print_info (const char *command, FILE * fpp)
     }
   else if (MATCH_TOKEN (buffer, "lock"))
     {
-      lock_dump (fpp, 0);
+      lock_dump (fpp, 0, 0);
     }
   else if (MATCH_TOKEN (buffer, "stats"))
     {

@@ -45,7 +45,8 @@ namespace lockfree
       class free_node;
 
       freelist () = delete;
-      freelist (tran::system &transys, size_t block_size, size_t initial_block_count = 1);
+      freelist (tran::system &transys, size_t block_size, size_t initial_block_count = 1,
+		bool epoch_mode = false);
       ~freelist ();
 
       free_node *claim (tran::descriptor &tdes);
@@ -83,7 +84,6 @@ namespace lockfree
       std::atomic<size_t> m_alloc_count;
       std::atomic<size_t> m_bb_count;
       std::atomic<size_t> m_forced_alloc_count;
-      std::atomic<size_t> m_retired_count;
 
       void swap_backbuffer ();
       void alloc_backbuffer ();
@@ -110,6 +110,9 @@ namespace lockfree
       T &get_data ();
 
       void reclaim () final override;
+      void reclaim_cleanup () final override;
+      void return_to_owner (tran::reclaimable_node *head, tran::reclaimable_node *tail,
+			    size_t count) final override;
 
     private:
       friend freelist;
@@ -136,9 +139,9 @@ namespace lockfree
   // freelist
   //
   template <class T>
-  freelist<T>::freelist (tran::system &transys, size_t block_size, size_t initial_block_count)
+  freelist<T>::freelist (tran::system &transys, size_t block_size, size_t initial_block_count, bool epoch_mode)
     : m_transys (transys)
-    , m_trantable (new tran::table (transys))
+    , m_trantable (new tran::table (transys, epoch_mode))
     , m_block_size (block_size)
     , m_available_list { NULL }
     , m_backbuffer_head { NULL }
@@ -147,7 +150,6 @@ namespace lockfree
     , m_alloc_count { 0 }
     , m_bb_count { 0 }
     , m_forced_alloc_count { 0 }
-    , m_retired_count { 0 }
   {
     assert (block_size > 1);
     // minimum two blocks
@@ -358,7 +360,6 @@ namespace lockfree
   freelist<T>::retire (tran::descriptor &tdes, free_node &node)
   {
     assert (node.get_freelist_next () == NULL);
-    ++m_retired_count;
     check_my_pointer (&node);
     tdes.retire_node (node);
   }
@@ -410,7 +411,7 @@ namespace lockfree
   size_t
   freelist<T>::get_retired_count () const
   {
-    return m_retired_count;
+    return m_trantable->get_current_retire_count ();
   }
 
   template<class T>
@@ -418,7 +419,7 @@ namespace lockfree
   freelist<T>::get_claimed_count () const
   {
     size_t alloc_count = m_alloc_count;
-    size_t unused_count = m_available_count + m_bb_count + m_retired_count;
+    size_t unused_count = m_available_count + m_bb_count + get_retired_count ();
     if (alloc_count > unused_count)
       {
 	return alloc_count - unused_count;
@@ -525,9 +526,24 @@ namespace lockfree
     m_t.on_reclaim ();
 
     m_retired_next = NULL;
-    --m_owner->m_retired_count;
     ++m_owner->m_available_count;
     m_owner->push_to_list (*this, *this, m_owner->m_available_list);
+  }
+
+  template<class T>
+  void
+  freelist<T>::free_node::reclaim_cleanup ()
+  {
+    m_t.on_reclaim ();
+  }
+
+  template<class T>
+  void
+  freelist<T>::free_node::return_to_owner (tran::reclaimable_node *head, tran::reclaimable_node *tail, size_t count)
+  {
+    m_owner->m_available_count += count;
+    m_owner->push_to_list (*static_cast<free_node *> (head), *static_cast<free_node *> (tail),
+			   m_owner->m_available_list);
   }
 
   template<class T>

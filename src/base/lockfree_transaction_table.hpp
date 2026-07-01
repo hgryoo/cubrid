@@ -57,7 +57,7 @@ namespace lockfree
     class table
     {
       public:
-	table (system &sys);
+	table (system &sys, bool epoch_mode = false);
 	~table ();
 
 	descriptor &get_descriptor (const index &tran_index);
@@ -83,6 +83,7 @@ namespace lockfree
 	descriptor *m_all;
 	std::atomic<id> m_global_tranid;      /* global delete ID for all delete operations */
 	std::atomic<id> m_min_active_tranid;  /* minimum curr_delete_id of all used LF_DTRAN_ENTRY entries */
+	bool m_epoch_mode;
     };
   } // namespace tran
 } // namespace lockfree

@@ -83,6 +83,7 @@ namespace lockfree
 	index assign_index ();
 	void free_index (index idx);
 	size_t get_max_transaction_count () const;
+	const bitmap &get_index_bitmap () const;
 
       private:
 	size_t m_max_tran_per_table;

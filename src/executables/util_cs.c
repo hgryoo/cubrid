@@ -1291,6 +1291,7 @@ lockdb (UTIL_FUNCTION_ARG * arg)
   const char *output_file = NULL;
   FILE *outfp = NULL;
   int is_contention;
+  int is_chain_distribution;
 
   if (utility_get_option_string_table_size (arg_map) != 1)
     {
@@ -1304,6 +1305,7 @@ lockdb (UTIL_FUNCTION_ARG * arg)
     }
 
   is_contention = utility_get_option_bool_value (arg_map, LOCK_DISPLAY_CONTENTION_S);
+  is_chain_distribution = utility_get_option_bool_value (arg_map, LOCK_CHAIN_DISTRIBUTION_S);
   output_file = utility_get_option_string_value (arg_map, LOCK_OUTPUT_FILE_S, 0);
   if (output_file == NULL)
     {
@@ -1342,7 +1344,7 @@ lockdb (UTIL_FUNCTION_ARG * arg)
 
   (void) db_set_isolation (TRAN_READ_COMMITTED);
 
-  lock_dump (outfp, is_contention);
+  lock_dump (outfp, is_contention, is_chain_distribution);
   db_shutdown ();
 
   if (outfp != stdout)

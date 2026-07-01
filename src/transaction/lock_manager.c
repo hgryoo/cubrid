@@ -406,14 +406,32 @@ using lk_hashmap_type = cubthread::lockfree_hashmap<LK_RES_KEY, LK_RES>;
 using lk_hashmap_iterator = lk_hashmap_type::iterator;
 // *INDENT-ON*
 
+/* PG-style hash partitioning of the object lock table.  Each of
+ * NUM_LOCK_PARTITIONS partitions holds a full-size hashmap; routing
+ * by lock_pick_partition(packed_oid) spreads chain depth ~NUM-fold
+ * for typical workloads (Poisson-distributed OIDs).  Partitions all
+ * share the same descriptor (lk_Obj_lock_res_desc_ng) and freelist. */
+#define NUM_LOCK_PARTITIONS 16
+static_assert ((NUM_LOCK_PARTITIONS & (NUM_LOCK_PARTITIONS - 1)) == 0,
+	       "NUM_LOCK_PARTITIONS must be a power of 2 for cheap modulo");
+
+static inline unsigned int
+lock_pick_partition (UINT64 packed_oid)
+{
+  /* Fibonacci hash on the 64-bit packed OID, then shift down to log2(N)
+   * bits.  Multiply+shift is ~3 cycles, gives good distribution even
+   * when packed_oid has structured bias (e.g. dense sequential OIDs). */
+  return (unsigned int) ((packed_oid * UINT64_C (0x9e3779b97f4a7c15)) >> (64 - 4));
+}
+
 typedef struct lk_global_data LK_GLOBAL_DATA;
 struct lk_global_data
 {
   LK_CONFIG config;
   LK_INIT_STATE init_state;
 
-  /* object lock table including hash table */
-  lk_hashmap_type m_obj_hash_table;
+  /* object lock table — sharded across NUM_LOCK_PARTITIONS instances */
+  lk_hashmap_type m_obj_hash_tables[NUM_LOCK_PARTITIONS];
   LF_FREELIST obj_free_entry_list;
 
   /* transaction lock table */
@@ -440,7 +458,7 @@ struct lk_global_data
   lk_global_data ()
     : config {}
     , init_state {}
-    , m_obj_hash_table {}
+    , m_obj_hash_tables {}
     , obj_free_entry_list LF_FREELIST_INITIALIZER
     , tran_lock_table (NULL)
     , DL_detection_mutex PTHREAD_MUTEX_INITIALIZER
@@ -644,6 +662,11 @@ static int lock_res_key_copy (void *src, void *dest);
 static int lock_res_key_compare (void *k1, void *k2);
 static unsigned int lock_res_key_hash (void *key, int htsize);
 
+/* _ng: packed-OID-based callbacks for lk_Obj_lock_res_desc_ng */
+static int lock_res_key_copy_ng (void *src, void *dest);
+static int lock_res_key_compare_ng (void *k1, void *k2);
+static unsigned int lock_res_key_hash_ng (void *key, int htsize);
+
 LF_ENTRY_DESCRIPTOR lk_Obj_lock_res_desc = {
   offsetof (LK_RES, stack),
   offsetof (LK_RES, hash_next),
@@ -661,9 +684,51 @@ LF_ENTRY_DESCRIPTOR lk_Obj_lock_res_desc = {
   lock_res_key_hash,
   NULL				/* no inserts */
 };
+
+/* _ng descriptor: same layout as lk_Obj_lock_res_desc but compares/hashes only
+ * the packed_oid 8-byte head of LK_RES_KEY.  Removes the per-compare switch on
+ * key type and the dead LOCK_RESOURCE_OBJECT branch; relies on the invariant
+ * that the lock-free infra never passes NULL keys so NULL checks are gone too. */
+LF_ENTRY_DESCRIPTOR lk_Obj_lock_res_desc_ng = {
+  offsetof (LK_RES, stack),
+  offsetof (LK_RES, hash_next),
+  offsetof (LK_RES, del_id),
+  offsetof (LK_RES, key),
+  offsetof (LK_RES, res_mutex),
+  LF_EM_USING_MUTEX,
+  LF_ENTRY_DESCRIPTOR_MAX_ALLOC,
+  lock_alloc_resource,
+  lock_dealloc_resource,
+  lock_init_resource,
+  lock_uninit_resource,
+  lock_res_key_copy_ng,
+  lock_res_key_compare_ng,
+  lock_res_key_hash_ng,
+  NULL				/* no inserts */
+};
 #endif /* SERVER_MODE */
 
 #if defined(SERVER_MODE)
+/* Pack an OID (pageid:32, slotid:16, volid:16 = 8 bytes) into a single UINT64
+ * for branch-free equality compare and one-load hashing on the LF chain walk.
+ * Bijection contract: lock_pack_oid(a) == lock_pack_oid(b) iff OID_EQ(a,b),
+ * under (i) 2's-complement signed int (mandated by C++20, true on every
+ * platform CUBRID supports) and (ii) the OID memory layout asserted below. */
+static_assert (sizeof (OID) == 8, "lock_pack_oid assumes sizeof(OID)==8");
+static_assert (offsetof (OID, pageid) == 0, "lock_pack_oid assumes OID.pageid at offset 0");
+static_assert (offsetof (OID, slotid) == 4, "lock_pack_oid assumes OID.slotid at offset 4");
+static_assert (offsetof (OID, volid) == 6, "lock_pack_oid assumes OID.volid at offset 6");
+static_assert (offsetof (LK_RES_KEY, packed_oid) == 0,
+	       "packed_oid must be the first field of LK_RES_KEY so the _ng "
+	       "chain-walk compare touches only the first 8 bytes of the key");
+
+static inline UINT64
+lock_pack_oid (const OID * oid)
+{
+  return ((UINT64) (UINT32) oid->pageid)
+    | (((UINT64) (UINT16) oid->slotid) << 32) | (((UINT64) (UINT16) oid->volid) << 48);
+}
+
 static LK_RES_KEY
 lock_create_search_key (OID * oid, OID * class_oid)
 {
@@ -673,10 +738,12 @@ lock_create_search_key (OID * oid, OID * class_oid)
   if (oid != NULL)
     {
       COPY_OID (&search_key.oid, oid);
+      search_key.packed_oid = lock_pack_oid (oid);
     }
   else
     {
       OID_SET_NULL (&search_key.oid);
+      search_key.packed_oid = lock_pack_oid (&search_key.oid);
     }
 
   if (class_oid != NULL)
@@ -703,6 +770,15 @@ lock_create_search_key (OID * oid, OID * class_oid)
 	{
 	  search_key.type = LOCK_RESOURCE_INSTANCE;
 	}
+    }
+
+  /* Normalize: class_oid is only meaningful for LOCK_RESOURCE_INSTANCE.
+   * Legacy lock_res_key_copy nulls it for CLASS / ROOT_CLASS on every insert;
+   * pre-normalizing here lets the _ng copy stay branch-free while keeping
+   * both descriptors observationally identical (lockdb dumps, etc.). */
+  if (search_key.type != LOCK_RESOURCE_INSTANCE)
+    {
+      OID_SET_NULL (&search_key.class_oid);
     }
 
   /* done! */
@@ -844,6 +920,7 @@ lock_res_key_copy (void *src, void *dest)
     }
 
   dest_k->type = src_k->type;
+  dest_k->packed_oid = src_k->packed_oid;
   switch (src_k->type)
     {
     case LOCK_RESOURCE_INSTANCE:
@@ -865,6 +942,38 @@ lock_res_key_copy (void *src, void *dest)
     }
 
   return NO_ERROR;
+}
+
+/* _ng key copy: branch-free struct assignment.  The caller (lock_create_search_key)
+ * already fills every field of LK_RES_KEY consistently — packed_oid mirrors oid,
+ * class_oid is OID_SET_NULL for non-INSTANCE types, type is well-formed — so the
+ * legacy switch is redundant and we just copy the whole key. */
+static int
+lock_res_key_copy_ng (void *src, void *dest)
+{
+  *(LK_RES_KEY *) dest = *(LK_RES_KEY *) src;
+  return NO_ERROR;
+}
+
+/* _ng key compare: single 64-bit equality on packed_oid.  No NULL checks
+ * (LF infra never feeds NULL keys); no switch on type (OID alone uniquely
+ * identifies a resource — see the `assert (k1->type == k2->type)` invariant
+ * that the legacy compare relied on after a positive OID match).  Returns
+ * 0 on match, non-zero on miss — the LF list-walk treats any non-zero as
+ * "not this entry" (cf. lf_list_find at lock_free.c:1245). */
+static inline int
+lock_res_key_compare_ng (void *k1, void *k2)
+{
+  return ((LK_RES_KEY *) k1)->packed_oid != ((LK_RES_KEY *) k2)->packed_oid;
+}
+
+/* _ng key hash: identical semantics to LK_OBJ_LOCK_HASH (preserves temp-OID
+ * handling and the existing slot/page-derived bucket assignment), just without
+ * the legacy NULL key guard. */
+static inline unsigned int
+lock_res_key_hash_ng (void *key, int htsize)
+{
+  return LK_OBJ_LOCK_HASH (&((LK_RES_KEY *) key)->oid, htsize);
 }
 
 static int
@@ -1010,6 +1119,10 @@ lock_initialize_resource (LK_RES * res_ptr)
   res_ptr->key.type = LOCK_RESOURCE_OBJECT;
   OID_SET_NULL (&(res_ptr->key.oid));
   OID_SET_NULL (&(res_ptr->key.class_oid));
+  /* keep packed_oid in sync with the NULL oid above so the _ng compare
+   * invariant ("every LK_RES_KEY producer fills every field") is preserved
+   * even if ENABLE_UNUSED_FUNCTION is ever turned on. */
+  res_ptr->key.packed_oid = lock_pack_oid (&(res_ptr->key.oid));
   res_ptr->total_holders_mode = NULL_LOCK;
   res_ptr->total_waiters_mode = NULL_LOCK;
   res_ptr->holder = NULL;
@@ -1246,18 +1359,28 @@ lock_make_runtime_config (void)
 static int
 lock_initialize_object_lock_structures (void)
 {
-  const int obj_hash_size = MAX (lk_Gl.config.initial_object_locks, lk_Gl.config.min_object_locks);
+  const int obj_hash_size = 400000; /* C-1 experiment: decoupled per-partition floor F */
 
-  lk_Obj_lock_res_desc.max_alloc_cnt = prm_get_integer_value (PRM_ID_LK_ESCALATION_AT);
-  lk_Gl.m_obj_hash_table.init (obj_lock_res_Ts, THREAD_TS_OBJ_LOCK_RES, obj_hash_size,
-			       lk_Gl.config.object_res_block_size, lk_Gl.config.object_res_block_count,
-			       lk_Obj_lock_res_desc);
+  /* Use the packed-OID descriptor on the hot chain-walk path; partition
+   * the hashmap NUM_LOCK_PARTITIONS-way to spread chain depth.  Each
+   * partition holds a full-size hashmap (total memory ~+NUM × bucket
+   * array, negligible vs LK_RES allocations). */
+  lk_Obj_lock_res_desc_ng.max_alloc_cnt = prm_get_integer_value (PRM_ID_LK_ESCALATION_AT);
+  for (int p = 0; p < NUM_LOCK_PARTITIONS; ++p)
+    {
+      lk_Gl.m_obj_hash_tables[p].init (obj_lock_res_Ts, THREAD_TS_OBJ_LOCK_RES, obj_hash_size,
+				       lk_Gl.config.object_res_block_size,
+				       lk_Gl.config.object_res_block_count, lk_Obj_lock_res_desc_ng);
+    }
 
   obj_lock_entry_desc.max_alloc_cnt = prm_get_integer_value (PRM_ID_LK_ESCALATION_AT);
   if (lf_freelist_init (&lk_Gl.obj_free_entry_list, lk_Gl.config.object_entry_block_count,
 			lk_Gl.config.object_entry_block_size, &obj_lock_entry_desc, &obj_lock_ent_Ts) != NO_ERROR)
     {
-      lk_Gl.m_obj_hash_table.destroy ();
+      for (int p = 0; p < NUM_LOCK_PARTITIONS; ++p)
+	{
+	  lk_Gl.m_obj_hash_tables[p].destroy ();
+	}
       return ER_FAILED;
     }
   lk_Gl.init_state.object_lock_structures_initialized = true;
@@ -1344,7 +1467,8 @@ lock_remove_resource (THREAD_ENTRY * thread_p, LK_RES * res_ptr)
 {
   assert (res_ptr != NULL);
 
-  if (!lk_Gl.m_obj_hash_table.erase_locked (thread_p, res_ptr->key, res_ptr))
+  if (!lk_Gl.m_obj_hash_tables[lock_pick_partition (res_ptr->key.packed_oid)].erase_locked (thread_p, res_ptr->key,
+											    res_ptr))
     {
       /* this should not happen, as the hash entry is mutex protected and no clear operations are performed on the hash
        * table */
@@ -3236,7 +3360,7 @@ lock_internal_hold_lock_object_instant (THREAD_ENTRY * thread_p, int tran_index,
 
   /* search hash table */
   search_key = lock_create_search_key ((OID *) oid, (OID *) class_oid);
-  res_ptr = lk_Gl.m_obj_hash_table.find (thread_p, search_key);
+  res_ptr = lk_Gl.m_obj_hash_tables[lock_pick_partition (search_key.packed_oid)].find (thread_p, search_key);
   if (res_ptr == NULL)
     {
       /* the lockable object is NOT in the hash chain */
@@ -3611,7 +3735,8 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, cons
 
   /* find or add the lockable object in the lock table */
   search_key = lock_create_search_key ((OID *) oid, (OID *) class_oid);
-  (void) lk_Gl.m_obj_hash_table.find_or_insert (thread_p, search_key, res_ptr);
+  (void) lk_Gl.m_obj_hash_tables[lock_pick_partition (search_key.packed_oid)].find_or_insert (thread_p, search_key,
+											      res_ptr);
   if (res_ptr == NULL)
     {
       assert (false);
@@ -5535,7 +5660,7 @@ lock_dump_deadlock_victims (THREAD_ENTRY * thread_p, FILE * outfile)
 	}
     }
 
-  xlock_dump (thread_p, outfile, 0 /* is_contention */ );
+  xlock_dump (thread_p, outfile, 0 /* is_contention */ , 0 /* is_chain_distribution */ );
 }
 #endif /* SERVER_MODE */
 
@@ -5991,7 +6116,10 @@ lock_finalize_object_lock_structures (void)
 {
   if (lk_Gl.init_state.object_lock_structures_initialized)
     {
-      lk_Gl.m_obj_hash_table.destroy ();
+      for (int p = 0; p < NUM_LOCK_PARTITIONS; ++p)
+	{
+	  lk_Gl.m_obj_hash_tables[p].destroy ();
+	}
       lf_freelist_destroy (&lk_Gl.obj_free_entry_list);
       lk_Gl.init_state.object_lock_structures_initialized = false;
     }
@@ -7232,7 +7360,7 @@ lock_find_tran_hold_entry (THREAD_ENTRY * thread_p, int tran_index, const OID * 
       /* override type; we don't insert here, so class_oid is neither passed to us nor needed for the search */
       search_key.type = (is_class ? LOCK_RESOURCE_CLASS : LOCK_RESOURCE_INSTANCE);
     }
-  res_ptr = lk_Gl.m_obj_hash_table.find (thread_p, search_key);
+  res_ptr = lk_Gl.m_obj_hash_tables[lock_pick_partition (search_key.packed_oid)].find (thread_p, search_key);
   if (res_ptr == NULL)
     {
       /* not found */
@@ -8034,8 +8162,10 @@ lock_detect_local_deadlock (THREAD_ENTRY * thread_p)
   /* hold the deadlock detection mutex */
   rv = pthread_mutex_lock (&lk_Gl.DL_detection_mutex);
 
+  for (int p = 0; p < NUM_LOCK_PARTITIONS; ++p)
+    {
   // *INDENT-OFF*
-  lk_hashmap_iterator iterator { thread_p, lk_Gl.m_obj_hash_table };
+  lk_hashmap_iterator iterator { thread_p, lk_Gl.m_obj_hash_tables[p] };
   // *INDENT-ON*
   for (res_ptr = iterator.iterate (); res_ptr != NULL; res_ptr = iterator.iterate ())
     {
@@ -8139,6 +8269,7 @@ lock_detect_local_deadlock (THREAD_ENTRY * thread_p)
 	    }
 	}
     }
+    }	/* close NUM_LOCK_PARTITIONS loop */
 
   /* release DL detection mutex */
   pthread_mutex_unlock (&lk_Gl.DL_detection_mutex);
@@ -8727,7 +8858,7 @@ lock_dump_acquired (FILE * fp, LK_ACQUIRED_LOCKS * acqlocks)
  *              level or modify the design of the application.
  */
 void
-xlock_dump (THREAD_ENTRY * thread_p, FILE * outfp, int is_contention)
+xlock_dump (THREAD_ENTRY * thread_p, FILE * outfp, int is_contention, int is_chain_distribution)
 {
 #if !defined (SERVER_MODE)
   return;
@@ -8803,9 +8934,14 @@ xlock_dump (THREAD_ENTRY * thread_p, FILE * outfp, int is_contention)
       fprintf (outfp, msgcat_message (MSGCAT_CATALOG_CUBRID, MSGCAT_SET_LOCK, MSGCAT_LK_NEWLINE));
     }
 
-  /* compute number of lock res entries */
-  num_locked = (int) lk_Gl.m_obj_hash_table.get_element_count ();
-  num_resource_alloc = (int) lk_Gl.m_obj_hash_table.get_alloc_element_count ();
+  /* compute number of lock res entries, summed across all partitions */
+  num_locked = 0;
+  num_resource_alloc = 0;
+  for (int part = 0; part < NUM_LOCK_PARTITIONS; ++part)
+    {
+      num_locked += (int) lk_Gl.m_obj_hash_tables[part].get_element_count ();
+      num_resource_alloc += (int) lk_Gl.m_obj_hash_tables[part].get_alloc_element_count ();
+    }
   num_entry_alloc = (int) lk_Gl.obj_free_entry_list.alloc_cnt;
   size_alloc = (num_entry_alloc * sizeof (LK_ENTRY)) + (num_resource_alloc * sizeof (LK_RES));
 
@@ -8826,8 +8962,10 @@ xlock_dump (THREAD_ENTRY * thread_p, FILE * outfp, int is_contention)
       fprintf (outfp, "\tCurrent size of objects which are allocated = %" PRIu64 "M\n\n", size_alloc / ONE_M);
     }
 
+  for (int part = 0; part < NUM_LOCK_PARTITIONS; ++part)
+    {
   // *INDENT-OFF*
-  lk_hashmap_iterator iterator { thread_p, lk_Gl.m_obj_hash_table };
+  lk_hashmap_iterator iterator { thread_p, lk_Gl.m_obj_hash_tables[part] };
   // *INDENT-ON*
   for (res_ptr = iterator.iterate (); res_ptr != NULL; res_ptr = iterator.iterate ())
     {
@@ -8835,6 +8973,63 @@ xlock_dump (THREAD_ENTRY * thread_p, FILE * outfp, int is_contention)
 	  || res_ptr->waiter != NULL)
 	{
 	  lock_dump_resource (thread_p, outfp, res_ptr);
+	}
+    }
+    }	/* close NUM_LOCK_PARTITIONS loop */
+
+  /* Hash-chain distribution: per-partition per-bucket entry count, then
+   * histogram of chain lengths.  Each partition has its own htsize-bucket
+   * array — report aggregated across all partitions so the histogram
+   * reflects the actual chain depth a worker pays. */
+  if (is_chain_distribution)
+    {
+      int htsize_per = (int) lk_Gl.m_obj_hash_tables[0].get_size ();
+      int total_buckets = htsize_per * NUM_LOCK_PARTITIONS;
+      int *bucket_counts = (int *) malloc ((size_t) total_buckets * sizeof (int));
+      int max_chain = 0;
+      int *hist = NULL;
+      int i;
+
+      if (bucket_counts != NULL)
+	{
+	  memset (bucket_counts, 0, (size_t) total_buckets * sizeof (int));
+	  for (int part = 0; part < NUM_LOCK_PARTITIONS; ++part)
+	    {
+	      // *INDENT-OFF*
+	      lk_hashmap_iterator chain_iter { thread_p, lk_Gl.m_obj_hash_tables[part] };
+	      // *INDENT-ON*
+	      for (res_ptr = chain_iter.iterate (); res_ptr != NULL; res_ptr = chain_iter.iterate ())
+		{
+		  int b = part * htsize_per + (int) LK_OBJ_LOCK_HASH (&res_ptr->key.oid, htsize_per);
+		  bucket_counts[b]++;
+		  if (bucket_counts[b] > max_chain)
+		    {
+		      max_chain = bucket_counts[b];
+		    }
+		}
+	    }
+
+	  hist = (int *) calloc ((size_t) (max_chain + 1), sizeof (int));
+	  if (hist != NULL)
+	    {
+	      for (i = 0; i < total_buckets; i++)
+		{
+		  hist[bucket_counts[i]]++;
+		}
+	      fprintf (outfp,
+		       "\nHash-chain distribution (partitions=%d, htsize_per=%d, total_buckets=%d, max_chain=%d):\n",
+		       NUM_LOCK_PARTITIONS, htsize_per, total_buckets, max_chain);
+	      fprintf (outfp, "  chain_length    bucket_count\n");
+	      for (i = 0; i <= max_chain; i++)
+		{
+		  if (hist[i] > 0)
+		    {
+		      fprintf (outfp, "  %12d    %d\n", i, hist[i]);
+		    }
+		}
+	      free (hist);
+	    }
+	  free (bucket_counts);
 	}
     }
 
@@ -9159,7 +9354,12 @@ lock_get_number_object_locks (void)
 #if defined(SA_MODE)
   return 0;
 #else
-  return (unsigned int) lk_Gl.m_obj_hash_table.get_element_count ();
+  unsigned int total = 0;
+  for (int part = 0; part < NUM_LOCK_PARTITIONS; ++part)
+    {
+      total += (unsigned int) lk_Gl.m_obj_hash_tables[part].get_element_count ();
+    }
+  return total;
 #endif
 }
 

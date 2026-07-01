@@ -33,11 +33,12 @@ namespace lockfree
     //
     // table
     //
-    table::table (system &sys)
+    table::table (system &sys, bool epoch_mode)
       : m_sys (sys)
       , m_all (new descriptor[m_sys.get_max_transaction_count ()] ())
       , m_global_tranid { 0 }
       , m_min_active_tranid { 0 }
+      , m_epoch_mode (epoch_mode)
     {
       for (size_t i = 0; i < m_sys.get_max_transaction_count (); i++)
 	{
@@ -72,6 +73,19 @@ namespace lockfree
     id
     table::get_new_global_tranid ()
     {
+      if (m_epoch_mode)
+	{
+	  id current = m_global_tranid.load (std::memory_order_relaxed);
+	  id min_active = m_min_active_tranid.load (std::memory_order_relaxed);
+	  if (min_active >= current)
+	    {
+	      m_global_tranid.compare_exchange_strong (current, current + 1,
+						       std::memory_order_release, std::memory_order_relaxed);
+	    }
+	  compute_min_active_tranid ();
+	  return m_global_tranid.load (std::memory_order_relaxed);
+	}
+
       id ret = ++m_global_tranid;
       if (ret % MATI_REFRESH_INTERVAL == 0)
 	{
@@ -89,15 +103,31 @@ namespace lockfree
     void
     table::compute_min_active_tranid ()
     {
-      // note: all transactions are actually claimed from boot. this code is optimized for this case. if we ever
-      //       change how transactions are requested, this must be updated too
-      id minvalue = INVALID_TRANID;  // nothing is bigger than INVALID_TRANID
-      for (size_t it = 0; it < m_sys.get_max_transaction_count (); it++)
+      id minvalue = INVALID_TRANID;
+      const bitmap &bmp = m_sys.get_index_bitmap ();
+      int word_count = (bmp.entry_count + LF_BITFIELD_WORD_SIZE - 1) / LF_BITFIELD_WORD_SIZE;
+      for (int i = 0; i < word_count; i++)
 	{
-	  id tranid = m_all[it].get_transaction_id ();
-	  if (minvalue > tranid)
+	  unsigned int word = bmp.bitfield[i].load (std::memory_order_relaxed);
+	  if (word == 0)
 	    {
-	      minvalue = tranid;
+	      continue;
+	    }
+	  for (int j = 0; j < LF_BITFIELD_WORD_SIZE; j++)
+	    {
+	      if (word & (1U << j))
+		{
+		  size_t pos = (size_t) i * LF_BITFIELD_WORD_SIZE + j;
+		  if (pos >= m_sys.get_max_transaction_count ())
+		    {
+		      break;
+		    }
+		  id tranid = m_all[pos].get_transaction_id ();
+		  if (minvalue > tranid)
+		    {
+		      minvalue = tranid;
+		    }
+		}
 	    }
 	}
       m_min_active_tranid.store (minvalue);
