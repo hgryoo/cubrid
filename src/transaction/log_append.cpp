@@ -1361,10 +1361,13 @@ prior_lsa_next_record_internal (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, LO
   LOG_REC_MVCC_UNDOREDO *mvcc_undoredo = NULL;
   LOG_VACUUM_INFO *vacuum_info = NULL;
   MVCCID mvccid = MVCCID_NULL;
+  PERF_UTIME_TRACKER time_track = PERF_UTIME_TRACKER_INITIALIZER;
 
   if (with_lock == LOG_PRIOR_LSA_WITHOUT_LOCK)
     {
+      PERF_UTIME_TRACKER_START (thread_p, &time_track);
       log_Gl.prior_info.prior_lsa_mutex.lock ();
+      PERF_UTIME_TRACKER_TIME_AND_RESTART (thread_p, &time_track, PSTAT_LOG_PRIOR_MUTEX_ACQUIRE);
     }
 
   prior_lsa_start_append (thread_p, node, tdes);
@@ -1517,6 +1520,7 @@ prior_lsa_next_record_internal (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, LO
 
   if (with_lock == LOG_PRIOR_LSA_WITHOUT_LOCK)
     {
+      PERF_UTIME_TRACKER_TIME (thread_p, &time_track, PSTAT_LOG_PRIOR_MUTEX_HOLD);
       log_Gl.prior_info.prior_lsa_mutex.unlock ();
 
       if (log_Gl.prior_info.list_size >= (INT64) logpb_get_memsize ())
@@ -1526,20 +1530,26 @@ prior_lsa_next_record_internal (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, LO
 #if defined(SERVER_MODE)
 	  if (!log_is_in_crash_recovery ())
 	    {
+	      PERF_UTIME_TRACKER_START (thread_p, &time_track);
 	      log_wakeup_log_flush_daemon ();
 
 	      thread_sleep (1);	/* 1msec */
+	      PERF_UTIME_TRACKER_TIME (thread_p, &time_track, PSTAT_LOG_PRIOR_LIST_MAXED_WAIT);
 	    }
 	  else
 	    {
+	      PERF_UTIME_TRACKER_START (thread_p, &time_track);
 	      LOG_CS_ENTER (thread_p);
 	      logpb_prior_lsa_append_all_list (thread_p);
 	      LOG_CS_EXIT (thread_p);
+	      PERF_UTIME_TRACKER_TIME (thread_p, &time_track, PSTAT_LOG_PRIOR_DRAIN_BACKPRESSURE);
 	    }
 #else
+	  PERF_UTIME_TRACKER_START (thread_p, &time_track);
 	  LOG_CS_ENTER (thread_p);
 	  logpb_prior_lsa_append_all_list (thread_p);
 	  LOG_CS_EXIT (thread_p);
+	  PERF_UTIME_TRACKER_TIME (thread_p, &time_track, PSTAT_LOG_PRIOR_DRAIN_BACKPRESSURE);
 #endif
 	}
     }

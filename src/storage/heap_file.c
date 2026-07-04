@@ -25362,9 +25362,13 @@ heap_get_visible_version_from_log (THREAD_ENTRY * thread_p, RECDES * recdes, LOG
   oldest_prior_lsa = *log_get_append_lsa ();	/* TODO: fix atomicity issue on x86 */
   if (LSA_LT (&oldest_prior_lsa, previous_version_lsa))
     {
+      PERF_UTIME_TRACKER time_track = PERF_UTIME_TRACKER_INITIALIZER;
+
+      PERF_UTIME_TRACKER_START (thread_p, &time_track);
       LOG_CS_ENTER (thread_p);
       logpb_prior_lsa_append_all_list (thread_p);
       LOG_CS_EXIT (thread_p);
+      PERF_UTIME_TRACKER_TIME (thread_p, &time_track, PSTAT_LOG_PRIOR_DRAIN_READER_GUARD);
 
       oldest_prior_lsa = *log_get_append_lsa ();
       assert (!LSA_LT (&oldest_prior_lsa, previous_version_lsa));

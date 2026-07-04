@@ -1772,7 +1772,10 @@ logpb_fetch_page (THREAD_ENTRY * thread_p, const LOG_LSA * req_lsa, LOG_CS_ACCES
        */
       if (LSA_LE (&log_Gl.hdr.append_lsa, req_lsa))	/* retry with mutex */
 	{
+	  PERF_UTIME_TRACKER time_track = PERF_UTIME_TRACKER_INITIALIZER;
+	  PERF_UTIME_TRACKER_START (thread_p, &time_track);
 	  logpb_prior_lsa_append_all_list (thread_p);
+	  PERF_UTIME_TRACKER_TIME (thread_p, &time_track, PSTAT_LOG_PRIOR_DRAIN_FETCH_RETRY);
 	}
 
       LOG_CS_EXIT (thread_p);
@@ -3957,7 +3960,24 @@ logpb_flush_pages_direct (THREAD_ENTRY * thread_p)
 
   assert (LOG_CS_OWN_WRITE_MODE (thread_p));
 
-  logpb_prior_lsa_append_all_list (thread_p);
+  {
+    PERF_UTIME_TRACKER time_track = PERF_UTIME_TRACKER_INITIALIZER;
+
+    PERF_UTIME_TRACKER_START (thread_p, &time_track);
+    logpb_prior_lsa_append_all_list (thread_p);
+#if defined (SERVER_MODE)
+    if (thread_p != NULL && thread_p->type == TT_DAEMON)
+      {
+	PERF_UTIME_TRACKER_TIME (thread_p, &time_track, PSTAT_LOG_PRIOR_DRAIN_FLUSH_DAEMON);
+      }
+    else
+      {
+	PERF_UTIME_TRACKER_TIME (thread_p, &time_track, PSTAT_LOG_PRIOR_DRAIN_FLUSH_DIRECT);
+      }
+#else /* !SERVER_MODE */
+    PERF_UTIME_TRACKER_TIME (thread_p, &time_track, PSTAT_LOG_PRIOR_DRAIN_FLUSH_DIRECT);
+#endif /* !SERVER_MODE */
+  }
   (void) logpb_flush_all_append_pages (thread_p);
   log_Stat.direct_flush_count++;
 }

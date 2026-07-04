@@ -10384,7 +10384,13 @@ log_flush_execute (cubthread::entry & thread_ref)
   // refresh log trace flush time
   thread_ref.event_stats.trace_log_flush_time = prm_get_integer_value (PRM_ID_LOG_TRACE_FLUSH_TIME_MSECS);
 
-  LOG_CS_ENTER (&thread_ref);
+  {
+    PERF_UTIME_TRACKER time_track = PERF_UTIME_TRACKER_INITIALIZER;
+
+    PERF_UTIME_TRACKER_START (&thread_ref, &time_track);
+    LOG_CS_ENTER (&thread_ref);
+    PERF_UTIME_TRACKER_TIME (&thread_ref, &time_track, PSTAT_LOG_CS_WRITE_WAIT_FLUSH);
+  }
   logpb_flush_pages_direct (&thread_ref);
   LOG_CS_EXIT (&thread_ref);
 

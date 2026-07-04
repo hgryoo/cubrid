@@ -316,6 +316,17 @@ PSTAT_METADATA pstat_Metadata[] = {
   PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_PRIOR_LSA_LIST_MAXED, "Num_prior_lsa_list_maxed"),
   PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_PRIOR_LSA_LIST_REMOVED, "Num_prior_lsa_list_removed"),
 
+  /* N30 M0: log insert-path Gap-G diagnostics (caller-attributed) */
+  PSTAT_METADATA_INIT_COUNTER_TIMER (PSTAT_LOG_PRIOR_MUTEX_ACQUIRE, "log_prior_mutex_acquire"),
+  PSTAT_METADATA_INIT_COUNTER_TIMER (PSTAT_LOG_PRIOR_MUTEX_HOLD, "log_prior_mutex_hold"),
+  PSTAT_METADATA_INIT_COUNTER_TIMER (PSTAT_LOG_PRIOR_LIST_MAXED_WAIT, "log_prior_list_maxed_wait"),
+  PSTAT_METADATA_INIT_COUNTER_TIMER (PSTAT_LOG_PRIOR_DRAIN_FLUSH_DAEMON, "log_prior_drain_flush_daemon"),
+  PSTAT_METADATA_INIT_COUNTER_TIMER (PSTAT_LOG_PRIOR_DRAIN_FLUSH_DIRECT, "log_prior_drain_flush_direct"),
+  PSTAT_METADATA_INIT_COUNTER_TIMER (PSTAT_LOG_PRIOR_DRAIN_BACKPRESSURE, "log_prior_drain_backpressure"),
+  PSTAT_METADATA_INIT_COUNTER_TIMER (PSTAT_LOG_PRIOR_DRAIN_READER_GUARD, "log_prior_drain_reader_guard"),
+  PSTAT_METADATA_INIT_COUNTER_TIMER (PSTAT_LOG_PRIOR_DRAIN_FETCH_RETRY, "log_prior_drain_fetch_retry"),
+  PSTAT_METADATA_INIT_COUNTER_TIMER (PSTAT_LOG_CS_WRITE_WAIT_FLUSH, "log_cs_write_wait_flush"),
+
   /* HA replication delay */
   PSTAT_METADATA_INIT_SINGLE_PEEK (PSTAT_HA_REPL_DELAY, "Time_ha_replication_delay"),
 
