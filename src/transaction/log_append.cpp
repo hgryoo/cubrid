@@ -128,6 +128,78 @@ log_append_info::set_copied_lsa (const LOG_LSA &copied)
   copied_lsa.store (copied, std::memory_order_release);
 }
 
+/*
+ * N30 tier-1 in-flight window (measurement stage).
+ *
+ * FIFO bounded ring of registered MVCC-undo nodes. Register runs on the append path
+ * under prior_lsa_mutex (single writer at a time, LSA-monotonic). Unregister runs on
+ * the drain, in the same (LSA) order the nodes were appended -> FIFO. contains() is a
+ * read-only presence probe from the reader; it loads only atomic start_lsa values, so
+ * it never dereferences a node and never races into UB. This stage does not read node
+ * contents and does not change the reader's force-drain behavior; it only measures the
+ * hit rate. Direct node reads + epoch reclamation are the next increment.
+ */
+namespace
+{
+  constexpr int LOG_INFLIGHT_CAPACITY = 1 << 16;   /* 64Ki slots; provisional */
+  struct log_inflight_slot
+  {
+    std::atomic<LOG_LSA> start_lsa;
+    LOG_PRIOR_NODE *node;
+  };
+  log_inflight_slot log_Inflight_slots[LOG_INFLIGHT_CAPACITY];
+  std::atomic<uint64_t> log_Inflight_head {0};   /* advanced by the drain (unregister) */
+  std::atomic<uint64_t> log_Inflight_tail {0};   /* advanced by producers (register), under prior_lsa_mutex */
+}
+
+void
+log_prior_inflight_register (const LOG_LSA &start_lsa, LOG_PRIOR_NODE *node)
+{
+  uint64_t tail = log_Inflight_tail.load (std::memory_order_relaxed);
+  uint64_t head = log_Inflight_head.load (std::memory_order_acquire);
+  if (tail - head >= (uint64_t) LOG_INFLIGHT_CAPACITY)
+    {
+      /* saturation: skip. The reader simply misses and force-drains (today's fallback). */
+      node->in_inflight = false;
+      return;
+    }
+  log_inflight_slot &slot = log_Inflight_slots[tail & (LOG_INFLIGHT_CAPACITY - 1)];
+  slot.node = node;
+  slot.start_lsa.store (start_lsa, std::memory_order_release);
+  node->in_inflight = true;
+  log_Inflight_tail.store (tail + 1, std::memory_order_release);
+}
+
+void
+log_prior_inflight_unregister (LOG_PRIOR_NODE *node)
+{
+  if (!node->in_inflight)
+    {
+      return;
+    }
+  /* FIFO: the drain frees nodes in append (LSA) order, so the oldest registered node is at head. */
+  uint64_t head = log_Inflight_head.load (std::memory_order_relaxed);
+  log_Inflight_slots[head & (LOG_INFLIGHT_CAPACITY - 1)].start_lsa.store (NULL_LSA, std::memory_order_relaxed);
+  log_Inflight_head.store (head + 1, std::memory_order_release);
+  node->in_inflight = false;
+}
+
+bool
+log_prior_inflight_contains (const LOG_LSA &lsa)
+{
+  uint64_t head = log_Inflight_head.load (std::memory_order_acquire);
+  uint64_t tail = log_Inflight_tail.load (std::memory_order_acquire);
+  for (uint64_t i = head; i != tail; ++i)
+    {
+      LOG_LSA s = log_Inflight_slots[i & (LOG_INFLIGHT_CAPACITY - 1)].start_lsa.load (std::memory_order_acquire);
+      if (LSA_EQ (&s, &lsa))
+	{
+	  return true;
+	}
+    }
+  return false;
+}
+
 log_prior_lsa_info::log_prior_lsa_info ()
   : prior_lsa (NULL_LSA)
   , prev_lsa (NULL_LSA)
@@ -300,6 +372,7 @@ prior_lsa_alloc_and_copy_data (THREAD_ENTRY *thread_p, LOG_RECTYPE rec_type, LOG
   node->log_header.type = rec_type;
 
   node->tde_encrypted = false;
+  node->in_inflight = false;
 
   node->data_header_length = 0;
   node->data_header = NULL;
@@ -438,6 +511,7 @@ prior_lsa_alloc_and_copy_crumbs (THREAD_ENTRY *thread_p, LOG_RECTYPE rec_type, L
   node->log_header.type = rec_type;
 
   node->tde_encrypted = false;
+  node->in_inflight = false;
 
   node->data_header_length = 0;
   node->data_header = NULL;
@@ -1442,6 +1516,14 @@ prior_lsa_next_record_internal (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, LO
 		     LSA_AS_ARGS (&node->start_lsa), LSA_AS_ARGS (&log_Gl.hdr.mvcc_op_log_lsa));
 
       prior_update_header_mvcc_info (start_lsa, mvccid);
+
+      /* N30 tier-1: register only the MVCC undo-data classes (the prev_version_lsa targets),
+       * not the SYSOP_END logical-undo subcase. Under prior_lsa_mutex, LSA-monotonic. */
+      if (node->log_header.type == LOG_MVCC_UNDO_DATA || node->log_header.type == LOG_MVCC_UNDOREDO_DATA
+	  || node->log_header.type == LOG_MVCC_DIFF_UNDOREDO_DATA)
+	{
+	  log_prior_inflight_register (start_lsa, node);
+	}
     }
   else if (node->log_header.type == LOG_SYSOP_START_POSTPONE)
     {

@@ -25367,6 +25367,18 @@ heap_get_visible_version_from_log (THREAD_ENTRY * thread_p, RECDES * recdes, LOG
     {
       PERF_UTIME_TRACKER time_track = PERF_UTIME_TRACKER_INITIALIZER;
 
+      /* N30 tier-1 (measurement stage): would the tier-1 in-flight window have served this read
+       * without a drain? Count hit/miss; behavior is unchanged (still force-drain below). The
+       * next increment replaces the drain with a direct node read on a hit. */
+      if (log_prior_inflight_contains (*previous_version_lsa))
+	{
+	  perfmon_inc_stat (thread_p, PSTAT_LOG_TIER1_WOULD_HIT);
+	}
+      else
+	{
+	  perfmon_inc_stat (thread_p, PSTAT_LOG_TIER1_MISS);
+	}
+
       PERF_UTIME_TRACKER_START (thread_p, &time_track);
       LOG_CS_ENTER (thread_p);
       logpb_prior_lsa_append_all_list (thread_p);

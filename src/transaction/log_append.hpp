@@ -111,8 +111,19 @@ struct log_prior_node
   int rlength;
   char *rdata;
 
+  bool in_inflight;   /* N30 tier-1: true if this node was registered in the in-flight window
+                       * (MVCC undo classes only, and not skipped at saturation). */
+
   LOG_PRIOR_NODE *next;
 };
+
+/* N30 tier-1 in-flight window (measurement stage): an LSA-ordered bounded ring of
+ * (start_lsa -> prior node) for MVCC undo records, so a prev-version reader can tell
+ * whether its target is still staged (would be a tier-1 hit) without draining. This
+ * stage only measures the hit rate; direct node reads + epoch reclamation land next. */
+void log_prior_inflight_register (const LOG_LSA &start_lsa, LOG_PRIOR_NODE *node);
+void log_prior_inflight_unregister (LOG_PRIOR_NODE *node);
+bool log_prior_inflight_contains (const LOG_LSA &lsa);
 
 typedef struct log_prior_lsa_info LOG_PRIOR_LSA_INFO;
 struct log_prior_lsa_info

@@ -3060,6 +3060,10 @@ logpb_append_prior_lsa_list (THREAD_ENTRY * thread_p, LOG_PRIOR_NODE * list)
 
       logpb_append_next_record (thread_p, node);
 
+      /* N30 tier-1: unregister from the in-flight window before freeing. The drain frees in append
+       * (LSA) order, so registered nodes leave the FIFO window in order. */
+      log_prior_inflight_unregister (node);
+
       if (node->data_header != NULL)
 	{
 	  free_and_init (node->data_header);
