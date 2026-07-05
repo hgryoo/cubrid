@@ -117,6 +117,14 @@ struct log_prior_node
                              * at registration; the drain retires it instead of freeing the node
                              * directly, so a pinned reader can read the node view without UAF. */
 
+  MVCCID oldest_visible_at_append;  /* N30 Phase-1 (Class-A deferral): the global oldest-visible
+                             * MVCCID captured at this record's append, for the MVCC undo classes.
+                             * The ordered header/vacuum effects are deferred to the completion
+                             * processor (log_prior_complete_mvcc_effects) which runs at drain time
+                             * in LSA order; capturing this one live input per node lets the
+                             * processor reproduce the exact value append-time code would have read
+                             * for the block-first record, so the deferral is behavior-identical. */
+
   LOG_PRIOR_NODE *next;
 };
 
@@ -133,6 +141,15 @@ struct log_prior_node
  *   unpin      - reader: end_tran once done reading the returned node view. */
 void log_prior_inflight_register (const LOG_LSA &start_lsa, LOG_PRIOR_NODE *node);
 void log_prior_inflight_retire (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node);
+
+/* N30 Phase-1 (Class-A deferral): the completion processor. Runs the deferred ordered MVCC/vacuum
+ * header effects (vacuum block-boundary production, the prev_mvcc_op_log_lsa link write, and the
+ * global log-header MVCC mutation) for one prior node, in LSA order, at drain time. Called by the
+ * drain (logpb_append_prior_lsa_list) for every node just before its bytes are copied to the log
+ * page buffer. Replaces the append-time mutation of the four global header fields; because the
+ * drain walks nodes in exact LSA order and the one live input (global oldest-visible) is captured
+ * per node at append, the sequence of header states is identical to today's append-time path. */
+void log_prior_complete_mvcc_effects (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node);
 LOG_PRIOR_NODE *log_prior_inflight_pin_lookup (THREAD_ENTRY *thread_p, const LOG_LSA &lsa);
 void log_prior_inflight_unpin (THREAD_ENTRY *thread_p);
 

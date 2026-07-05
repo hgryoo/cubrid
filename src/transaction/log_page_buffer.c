@@ -3058,6 +3058,12 @@ logpb_append_prior_lsa_list (THREAD_ENTRY * thread_p, LOG_PRIOR_NODE * list)
       node = log_Gl.prior_info.prior_flush_list_header;
       log_Gl.prior_info.prior_flush_list_header = node->next;
 
+      /* N30 Phase-1 (Class-A deferral): this is the ordered completion processor. Run the deferred
+       * MVCC/vacuum header effects for this node, in LSA order (the list is FIFO by LSA), BEFORE
+       * copying its bytes below — the processor writes the node's vacuum_info->prev_mvcc_op_log_lsa
+       * link, which must be in the copied/flushed image. Single writer under LOG_CS. */
+      log_prior_complete_mvcc_effects (thread_p, node);
+
       logpb_append_next_record (thread_p, node);
 
       /* N30 tier-2: publish the record-aligned copied watermark for this node (release) BEFORE

@@ -76,7 +76,7 @@ static void prior_lsa_end_append (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node);
 static void prior_lsa_append_data (int length);
 static LOG_LSA prior_lsa_next_record_internal (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, LOG_TDES *tdes,
     int with_lock);
-static void prior_update_header_mvcc_info (const LOG_LSA &record_lsa, MVCCID mvccid);
+static void prior_update_header_mvcc_info (const LOG_LSA &record_lsa, MVCCID mvccid, MVCCID oldest_visible_captured);
 static char *log_append_get_data_ptr (THREAD_ENTRY *thread_p);
 static bool log_append_realloc_data_ptr (THREAD_ENTRY *thread_p, int length);
 
@@ -489,6 +489,7 @@ prior_lsa_alloc_and_copy_data (THREAD_ENTRY *thread_p, LOG_RECTYPE rec_type, LOG
   node->tde_encrypted = false;
   node->in_inflight = false;
   node->inflight_reclaim = NULL;
+  node->oldest_visible_at_append = MVCCID_NULL;
 
   node->data_header_length = 0;
   node->data_header = NULL;
@@ -629,6 +630,7 @@ prior_lsa_alloc_and_copy_crumbs (THREAD_ENTRY *thread_p, LOG_RECTYPE rec_type, L
   node->tde_encrypted = false;
   node->in_inflight = false;
   node->inflight_reclaim = NULL;
+  node->oldest_visible_at_append = MVCCID_NULL;
 
   node->data_header_length = 0;
   node->data_header = NULL;
@@ -1522,13 +1524,16 @@ prior_lsa_gen_record (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, LOG_RECTYPE 
 }
 
 static void
-prior_update_header_mvcc_info (const LOG_LSA &record_lsa, MVCCID mvccid)
+prior_update_header_mvcc_info (const LOG_LSA &record_lsa, MVCCID mvccid, MVCCID oldest_visible_captured)
 {
   assert (MVCCID_IS_VALID (mvccid));
   if (!log_Gl.hdr.does_block_need_vacuum)
     {
       // first mvcc record for this block
-      log_Gl.hdr.oldest_visible_mvccid = log_Gl.mvcc_table.get_global_oldest_visible ();
+      /* N30 Phase-1: use the global oldest-visible captured at this record's append (in LSA order,
+       * the block-first record is the same record append-time code would read at), instead of a
+       * live read at drain time — keeps the value byte-identical to today's append-time path. */
+      log_Gl.hdr.oldest_visible_mvccid = oldest_visible_captured;
       log_Gl.hdr.newest_block_mvccid = mvccid;
     }
   else
@@ -1550,6 +1555,93 @@ prior_update_header_mvcc_info (const LOG_LSA &record_lsa, MVCCID mvccid)
 }
 
 /*
+ * log_prior_complete_mvcc_effects - N30 Phase-1 (Class-A deferral): the completion processor.
+ *
+ *   Runs the ordered MVCC/vacuum header effects for one prior node, in LSA order, at drain time.
+ *   These effects used to run inside prior_lsa_next_record_internal under prior_lsa_mutex at append
+ *   time; they are the Class-A effects of the Q2 audit (cross-transaction, global, ordered). The
+ *   drain (logpb_append_prior_lsa_list) walks nodes in exact LSA order and calls this for every
+ *   node just before copying the node's bytes to the log page buffer, so the node-local write
+ *   (vacuum_info->prev_mvcc_op_log_lsa) is in the copied/flushed image, and the sequence of global
+ *   header states is identical to today's append-time path (the single live input, global
+ *   oldest-visible, was captured per node at append: node->oldest_visible_at_append).
+ *
+ *   Effects (mirror the append-time order they replaced):
+ *     1. vacuum block-boundary production (all record types, LOG_ISRESTARTED only)
+ *     2. for the MVCC undo classes: link this record to the previous MVCC op, then mutate the global
+ *        MVCC header for the new record/block.
+ *
+ *   Runs single-threaded under LOG_CS (the drain owner), so the running header state is the exact
+ *   ordered value and effects need no lock among themselves.
+ */
+void
+log_prior_complete_mvcc_effects (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node)
+{
+  const LOG_LSA &start_lsa = node->start_lsa;
+  LOG_REC_MVCC_UNDO *mvcc_undo = NULL;
+  LOG_REC_MVCC_UNDOREDO *mvcc_undoredo = NULL;
+  LOG_VACUUM_INFO *vacuum_info = NULL;
+  MVCCID mvccid = MVCCID_NULL;
+
+  /* (1) A completed vacuum block is detected when this record crosses into a new block relative to
+   * the last MVCC op. Produce the completed block's vacuum work item before the header is advanced
+   * for the new record (same guard and order as the append-time check this replaced). */
+  if (LOG_ISRESTARTED () && log_Gl.hdr.does_block_need_vacuum)
+    {
+      assert (!LSA_ISNULL (&log_Gl.hdr.mvcc_op_log_lsa));
+      if (vacuum_get_log_blockid (log_Gl.hdr.mvcc_op_log_lsa.pageid) != vacuum_get_log_blockid (start_lsa.pageid))
+	{
+	  assert (vacuum_get_log_blockid (log_Gl.hdr.mvcc_op_log_lsa.pageid)
+		  <= (vacuum_get_log_blockid (start_lsa.pageid) - 1));
+
+	  vacuum_produce_log_block_data (thread_p);
+	}
+    }
+
+  /* (2) MVCC undo classes (the same set the append-time branch handled): the three MVCC undo-data
+   * types plus the SYSOP_END logical-MVCC-undo subcase. */
+  if (node->log_header.type == LOG_MVCC_UNDO_DATA || node->log_header.type == LOG_MVCC_UNDOREDO_DATA
+      || node->log_header.type == LOG_MVCC_DIFF_UNDOREDO_DATA
+      || (node->log_header.type == LOG_SYSOP_END
+	  && ((LOG_REC_SYSOP_END *) node->data_header)->type == LOG_SYSOP_END_LOGICAL_MVCC_UNDO))
+    {
+      if (node->log_header.type == LOG_MVCC_UNDO_DATA)
+	{
+	  mvcc_undo = (LOG_REC_MVCC_UNDO *) node->data_header;
+	  vacuum_info = &mvcc_undo->vacuum_info;
+	  mvccid = mvcc_undo->mvccid;
+	}
+      else if (node->log_header.type == LOG_SYSOP_END)
+	{
+	  mvcc_undo = & ((LOG_REC_SYSOP_END *) node->data_header)->mvcc_undo;
+	  vacuum_info = &mvcc_undo->vacuum_info;
+	  mvccid = mvcc_undo->mvccid;
+	}
+      else
+	{
+	  assert (node->log_header.type == LOG_MVCC_UNDOREDO_DATA
+		  || node->log_header.type == LOG_MVCC_DIFF_UNDOREDO_DATA);
+
+	  mvcc_undoredo = (LOG_REC_MVCC_UNDOREDO *) node->data_header;
+	  vacuum_info = &mvcc_undoredo->vacuum_info;
+	  mvccid = mvcc_undoredo->mvccid;
+	}
+
+      /* Link the log record to the previous MVCC op (used by vacuum). Written into the node's
+       * data_header here, before the drain copies it to the page buffer, so the flushed image
+       * carries the link. A distinct member from undo.length / undoredo.ulength (the only
+       * data_header field a tier-1 reader reads), so this write does not overlap a reader's read. */
+      LSA_COPY (&vacuum_info->prev_mvcc_op_log_lsa, &log_Gl.hdr.mvcc_op_log_lsa);
+
+      vacuum_er_log (VACUUM_ER_LOG_LOGGING,
+		     "log mvcc op at (%lld, %d) and create link with log_lsa(%lld, %d)",
+		     LSA_AS_ARGS (&start_lsa), LSA_AS_ARGS (&log_Gl.hdr.mvcc_op_log_lsa));
+
+      prior_update_header_mvcc_info (start_lsa, mvccid, node->oldest_visible_at_append);
+    }
+}
+
+/*
  * prior_lsa_next_record_internal -
  *
  * return: start lsa of log record
@@ -1562,10 +1654,6 @@ static LOG_LSA
 prior_lsa_next_record_internal (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, LOG_TDES *tdes, int with_lock)
 {
   LOG_LSA start_lsa;
-  LOG_REC_MVCC_UNDO *mvcc_undo = NULL;
-  LOG_REC_MVCC_UNDOREDO *mvcc_undoredo = NULL;
-  LOG_VACUUM_INFO *vacuum_info = NULL;
-  MVCCID mvccid = MVCCID_NULL;
   PERF_UTIME_TRACKER time_track = PERF_UTIME_TRACKER_INITIALIZER;
 
   if (with_lock == LOG_PRIOR_LSA_WITHOUT_LOCK)
@@ -1579,60 +1667,23 @@ prior_lsa_next_record_internal (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node, LO
 
   LSA_COPY (&start_lsa, &node->start_lsa);
 
-  if (LOG_ISRESTARTED () && log_Gl.hdr.does_block_need_vacuum)
-    {
-      assert (!LSA_ISNULL (&log_Gl.hdr.mvcc_op_log_lsa));
-      if (vacuum_get_log_blockid (log_Gl.hdr.mvcc_op_log_lsa.pageid) != vacuum_get_log_blockid (start_lsa.pageid))
-	{
-	  assert (vacuum_get_log_blockid (log_Gl.hdr.mvcc_op_log_lsa.pageid)
-		  <= (vacuum_get_log_blockid (start_lsa.pageid) - 1));
-
-	  vacuum_produce_log_block_data (thread_p);
-	}
-    }
-
-  /* Is this a valid MVCC operations: 1. node must be undoredo/undo type and must have undo data. 2. record index must
-   * the index of MVCC operations. */
+  /* N30 Phase-1 (Class-A deferral): the ordered MVCC/vacuum header effects — the vacuum
+   * block-boundary production, the prev_mvcc_op_log_lsa link write, and the global MVCC header
+   * mutation — are deferred to the completion processor (log_prior_complete_mvcc_effects), which
+   * the drain runs for every node in LSA order. Here, for the MVCC undo classes, we only (1) capture
+   * the one live input the processor needs (global oldest-visible) so it reproduces the exact value
+   * append-time code would have read, and (2) register the node in the tier-1 in-flight window
+   * (unchanged — the reader index). Class-B per-transaction effects (below) stay at append time.
+   * See 12-design §4.2/§6, ANALYSIS_A1_Q2Q3_gates_ko Class A. */
   if (node->log_header.type == LOG_MVCC_UNDO_DATA || node->log_header.type == LOG_MVCC_UNDOREDO_DATA
       || node->log_header.type == LOG_MVCC_DIFF_UNDOREDO_DATA
       || (node->log_header.type == LOG_SYSOP_END
 	  && ((LOG_REC_SYSOP_END *) node->data_header)->type == LOG_SYSOP_END_LOGICAL_MVCC_UNDO))
     {
-      /* Link the log record to previous MVCC delete/update log record */
-      /* Will be used by vacuum */
-      if (node->log_header.type == LOG_MVCC_UNDO_DATA)
-	{
-	  /* Read from mvcc_undo structure */
-	  mvcc_undo = (LOG_REC_MVCC_UNDO *) node->data_header;
-	  vacuum_info = &mvcc_undo->vacuum_info;
-	  mvccid = mvcc_undo->mvccid;
-	}
-      else if (node->log_header.type == LOG_SYSOP_END)
-	{
-	  /* Read from mvcc_undo structure */
-	  mvcc_undo = & ((LOG_REC_SYSOP_END *) node->data_header)->mvcc_undo;
-	  vacuum_info = &mvcc_undo->vacuum_info;
-	  mvccid = mvcc_undo->mvccid;
-	}
-      else
-	{
-	  /* Read for mvcc_undoredo structure */
-	  assert (node->log_header.type == LOG_MVCC_UNDOREDO_DATA
-		  || node->log_header.type == LOG_MVCC_DIFF_UNDOREDO_DATA);
-
-	  mvcc_undoredo = (LOG_REC_MVCC_UNDOREDO *) node->data_header;
-	  vacuum_info = &mvcc_undoredo->vacuum_info;
-	  mvccid = mvcc_undoredo->mvccid;
-	}
-
-      /* Save previous mvcc operation log lsa to vacuum info */
-      LSA_COPY (&vacuum_info->prev_mvcc_op_log_lsa, &log_Gl.hdr.mvcc_op_log_lsa);
-
-      vacuum_er_log (VACUUM_ER_LOG_LOGGING,
-		     "log mvcc op at (%lld, %d) and create link with log_lsa(%lld, %d)",
-		     LSA_AS_ARGS (&node->start_lsa), LSA_AS_ARGS (&log_Gl.hdr.mvcc_op_log_lsa));
-
-      prior_update_header_mvcc_info (start_lsa, mvccid);
+      /* Capture global oldest-visible at this record's append. Monotonic and read in LSA order, so
+       * the value belonging to the actual block-first record equals what the append-time code read;
+       * the processor uses it only for that record. A cheap atomic load. */
+      node->oldest_visible_at_append = log_Gl.mvcc_table.get_global_oldest_visible ();
 
       /* N30 tier-1: register only the MVCC undo-data classes (the prev_version_lsa targets),
        * not the SYSOP_END logical-undo subcase. Under prior_lsa_mutex, LSA-monotonic. */
