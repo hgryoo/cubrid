@@ -25358,57 +25358,71 @@ heap_get_visible_version_from_log (THREAD_ENTRY * thread_p, RECDES * recdes, LOG
       recdes->data = NULL;
     }
 
-  /* make sure prev_version_lsa is copied out of the prior lsa list into the log page buffer.
-   * N30 tier-2: read the record-aligned copied watermark with acquire ordering (fixes the former
-   * x86 torn-read of the non-atomic append_lsa). If the version is not yet copied, force-drain
-   * (Phase-1 fallback; the tier-1 in-flight window will remove this drain in a later increment). */
-  oldest_prior_lsa = log_Gl.append.get_copied_lsa ();
-  if (LSA_LT (&oldest_prior_lsa, previous_version_lsa))
-    {
-      PERF_UTIME_TRACKER time_track = PERF_UTIME_TRACKER_INITIALIZER;
-
-      /* N30 tier-1 (measurement stage): would the tier-1 in-flight window have served this read
-       * without a drain? Count hit/miss; behavior is unchanged (still force-drain below). The
-       * next increment replaces the drain with a direct node read on a hit. */
-      if (log_prior_inflight_contains (*previous_version_lsa))
-	{
-	  perfmon_inc_stat (thread_p, PSTAT_LOG_TIER1_WOULD_HIT);
-	}
-      else
-	{
-	  perfmon_inc_stat (thread_p, PSTAT_LOG_TIER1_MISS);
-	}
-
-      PERF_UTIME_TRACKER_START (thread_p, &time_track);
-      LOG_CS_ENTER (thread_p);
-      logpb_prior_lsa_append_all_list (thread_p);
-      LOG_CS_EXIT (thread_p);
-      PERF_UTIME_TRACKER_TIME (thread_p, &time_track, PSTAT_LOG_PRIOR_DRAIN_READER_GUARD);
-
-      oldest_prior_lsa = log_Gl.append.get_copied_lsa ();
-      assert (!LSA_LT (&oldest_prior_lsa, previous_version_lsa));
-    }
-
   if (recdes->data == NULL)
     {
       scan_cache->assign_recdes_to_area (*recdes);
     }
 
-  /* check visibility of old versions from log following prev_version_lsa links */
+  /* Check visibility of old versions from log following prev_version_lsa links.
+   *
+   * N30: per-hop tier dispatch replaces the former pre-loop force-drain guard. For each version LSA,
+   * read the record-aligned copied watermark (tier-2, acquire): if the version is already copied
+   * into the log page buffer it is served by the unchanged page path (tiers 2/3). If it is not yet
+   * copied, try a tier-1 direct read out of the still-staged prior node (the in-flight window) with
+   * no drain and no LOG_CS; only on a tier-1 miss fall back to today's force-drain guard. Because
+   * the chain walks toward older versions, later hops can also be pre-flush, so the dispatch runs
+   * per hop rather than once. */
   for (LSA_COPY (&process_lsa, previous_version_lsa); !LSA_ISNULL (&process_lsa);)
     {
-      /* Fetch the page where prev_vesion_lsa is located */
-      log_page_p = (LOG_PAGE *) PTR_ALIGN (log_pgbuf, MAX_ALIGNMENT);
-      log_page_p->hdr.logical_pageid = NULL_PAGEID;
-      log_page_p->hdr.offset = NULL_OFFSET;
-      if (logpb_fetch_page (thread_p, &process_lsa, LOG_CS_SAFE_READER, log_page_p) != NO_ERROR)
+      bool served_by_tier1 = false;
+
+      oldest_prior_lsa = log_Gl.append.get_copied_lsa ();
+      if (LSA_LT (&oldest_prior_lsa, &process_lsa))
 	{
-	  assert (false);
-	  logpb_fatal_error (thread_p, true, ARG_FILE_LINE, "heap_get_visible_version_from_log");
-	  return S_ERROR;
+	  /* not yet copied into the log page buffer: try the tier-1 in-flight window first */
+	  SCAN_CODE tier1_scan = S_SUCCESS;
+
+	  if (log_read_prev_undo_from_tier1 (thread_p, &process_lsa, recdes, &tier1_scan))
+	    {
+	      perfmon_inc_stat (thread_p, PSTAT_LOG_TIER1_HIT);
+	      scan_code = tier1_scan;
+	      served_by_tier1 = true;
+	    }
+	  else
+	    {
+	      /* tier-1 miss (unregistered class, saturation skip, or copied-and-released between the
+	       * watermark read and the probe): Phase-1 fallback = force-drain, then the page path below
+	       * covers the now-copied record. */
+	      PERF_UTIME_TRACKER time_track = PERF_UTIME_TRACKER_INITIALIZER;
+
+	      perfmon_inc_stat (thread_p, PSTAT_LOG_TIER1_MISS);
+	      PERF_UTIME_TRACKER_START (thread_p, &time_track);
+	      LOG_CS_ENTER (thread_p);
+	      logpb_prior_lsa_append_all_list (thread_p);
+	      LOG_CS_EXIT (thread_p);
+	      PERF_UTIME_TRACKER_TIME (thread_p, &time_track, PSTAT_LOG_PRIOR_DRAIN_READER_GUARD);
+
+	      oldest_prior_lsa = log_Gl.append.get_copied_lsa ();
+	      assert (!LSA_LT (&oldest_prior_lsa, &process_lsa));
+	    }
 	}
 
-      scan_code = log_get_undo_record (thread_p, log_page_p, process_lsa, recdes);
+      if (!served_by_tier1)
+	{
+	  /* tier-2/3 page path (record copied into the log page buffer / on disk) */
+	  log_page_p = (LOG_PAGE *) PTR_ALIGN (log_pgbuf, MAX_ALIGNMENT);
+	  log_page_p->hdr.logical_pageid = NULL_PAGEID;
+	  log_page_p->hdr.offset = NULL_OFFSET;
+	  if (logpb_fetch_page (thread_p, &process_lsa, LOG_CS_SAFE_READER, log_page_p) != NO_ERROR)
+	    {
+	      assert (false);
+	      logpb_fatal_error (thread_p, true, ARG_FILE_LINE, "heap_get_visible_version_from_log");
+	      return S_ERROR;
+	    }
+
+	  scan_code = log_get_undo_record (thread_p, log_page_p, process_lsa, recdes);
+	}
+
       if (scan_code != S_SUCCESS)
 	{
 	  if (scan_code == S_DOESNT_FIT && scan_cache->is_recdes_assigned_to_area (*recdes))

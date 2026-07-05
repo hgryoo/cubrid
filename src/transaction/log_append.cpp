@@ -23,9 +23,14 @@
 #include "log_impl.h"
 #include "log_manager.h"
 #include "log_record.hpp"
+#include "lockfree_transaction_descriptor.hpp"
+#include "lockfree_transaction_reclaimable.hpp"
+#include "lockfree_transaction_system.hpp"
+#include "lockfree_transaction_table.hpp"
 #include "page_buffer.h"
 #include "perf_monitor.h"
 #include "thread_entry.hpp"
+#include "thread_lockfree_hash_map.hpp"
 #include "thread_manager.hpp"
 #include "vacuum.h"
 // XXX: SHOULD BE THE LAST INCLUDE HEADER
@@ -129,15 +134,22 @@ log_append_info::set_copied_lsa (const LOG_LSA &copied)
 }
 
 /*
- * N30 tier-1 in-flight window (measurement stage).
+ * N30 tier-1 in-flight window.
  *
- * FIFO bounded ring of registered MVCC-undo nodes. Register runs on the append path
- * under prior_lsa_mutex (single writer at a time, LSA-monotonic). Unregister runs on
- * the drain, in the same (LSA) order the nodes were appended -> FIFO. contains() is a
- * read-only presence probe from the reader; it loads only atomic start_lsa values, so
- * it never dereferences a node and never races into UB. This stage does not read node
- * contents and does not change the reader's force-drain behavior; it only measures the
- * hit rate. Direct node reads + epoch reclamation are the next increment.
+ * FIFO bounded ring of registered MVCC-undo nodes so a prev-version reader can read its target's
+ * undo image directly out of the staged node instead of force-draining. Register runs on the append
+ * path under prior_lsa_mutex (single writer at a time, LSA-monotonic). Retire runs on the drain, in
+ * the same (LSA) order the nodes were appended -> FIFO. pin_lookup() runs on the reader: it pins the
+ * thread's lockfree::tran descriptor, scans [head,tail) for the target start_lsa, and re-validates
+ * the slot after reading the node pointer.
+ *
+ * Node lifetime: a registered node is no longer freed immediately by the drain. Instead the drain
+ * unlinks the slot then retires the node through the engine's epoch-reclamation spine
+ * (lockfree::tran), so a node observed by a pinned reader is not reclaimed until that reader unpins.
+ * The discipline mirrors the proven lockfree hashmap consumer: unlink-before-retire on the drain,
+ * pin(start_tran)-before-slot-read on the reader. Because start_lsa is strictly monotonic it never
+ * repeats, so re-validating start_lsa == target after reading the node pointer is a sufficient
+ * ring-wrap / ABA guard (no separate generation counter is needed).
  */
 namespace
 {
@@ -148,8 +160,50 @@ namespace
     LOG_PRIOR_NODE *node;
   };
   log_inflight_slot log_Inflight_slots[LOG_INFLIGHT_CAPACITY];
-  std::atomic<uint64_t> log_Inflight_head {0};   /* advanced by the drain (unregister) */
+  std::atomic<uint64_t> log_Inflight_head {0};   /* advanced by the drain (retire) */
   std::atomic<uint64_t> log_Inflight_tail {0};   /* advanced by producers (register), under prior_lsa_mutex */
+
+  /* Epoch-reclamation wrapper: retired by the drain in place of an immediate free, so the four
+   * per-node buffers survive until every reader pinned before the retire has unpinned. */
+  class log_inflight_reclaim_node : public lockfree::tran::reclaimable_node
+  {
+    public:
+      explicit log_inflight_reclaim_node (LOG_PRIOR_NODE *node)
+	: m_node (node)
+      {
+      }
+
+      void reclaim () override
+      {
+	if (m_node->data_header != NULL)
+	  {
+	    free_and_init (m_node->data_header);
+	  }
+	if (m_node->udata != NULL)
+	  {
+	    free_and_init (m_node->udata);
+	  }
+	if (m_node->rdata != NULL)
+	  {
+	    free_and_init (m_node->rdata);
+	  }
+	free_and_init (m_node);
+	delete this;
+      }
+
+    private:
+      LOG_PRIOR_NODE *m_node;
+  };
+
+  /* One lockfree::tran table for the window, over the process-wide transaction system. Meyers
+   * singleton: constructed on first use (a register or a reader, both post-boot), lives for the
+   * server lifetime. get_descriptor(index) returns the caller thread's descriptor. */
+  lockfree::tran::table &
+  log_inflight_table ()
+  {
+    static lockfree::tran::table tbl (cubthread::get_thread_entry_lftransys ());
+    return tbl;
+  }
 }
 
 void
@@ -163,6 +217,15 @@ log_prior_inflight_register (const LOG_LSA &start_lsa, LOG_PRIOR_NODE *node)
       node->in_inflight = false;
       return;
     }
+  /* CUBRID's overloaded operator new (memory_wrapper.hpp) is noexcept and returns NULL on OOM. */
+  log_inflight_reclaim_node *wrapper = new log_inflight_reclaim_node (node);
+  if (wrapper == NULL)
+    {
+      /* OOM: degrade like saturation — skip registration, reader force-drains (today's fallback). */
+      node->in_inflight = false;
+      return;
+    }
+  node->inflight_reclaim = wrapper;
   log_inflight_slot &slot = log_Inflight_slots[tail & (LOG_INFLIGHT_CAPACITY - 1)];
   slot.node = node;
   slot.start_lsa.store (start_lsa, std::memory_order_release);
@@ -171,33 +234,85 @@ log_prior_inflight_register (const LOG_LSA &start_lsa, LOG_PRIOR_NODE *node)
 }
 
 void
-log_prior_inflight_unregister (LOG_PRIOR_NODE *node)
+log_prior_inflight_retire (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node)
 {
-  if (!node->in_inflight)
-    {
-      return;
-    }
-  /* FIFO: the drain frees nodes in append (LSA) order, so the oldest registered node is at head. */
+  assert (node->in_inflight);
+  /* FIFO: the drain retires nodes in append (LSA) order, so the oldest registered node is at head.
+   * Unlink the slot (release) before retiring so a reader starting after this cannot reach the node;
+   * a reader that already read the node pointer is protected by its pin (epoch). */
   uint64_t head = log_Inflight_head.load (std::memory_order_relaxed);
-  log_Inflight_slots[head & (LOG_INFLIGHT_CAPACITY - 1)].start_lsa.store (NULL_LSA, std::memory_order_relaxed);
+  log_Inflight_slots[head & (LOG_INFLIGHT_CAPACITY - 1)].start_lsa.store (NULL_LSA, std::memory_order_release);
   log_Inflight_head.store (head + 1, std::memory_order_release);
   node->in_inflight = false;
+
+  log_inflight_reclaim_node *wrapper = (log_inflight_reclaim_node *) node->inflight_reclaim;
+  node->inflight_reclaim = NULL;
+
+  lockfree::tran::index tran_index = (thread_p != NULL) ? thread_p->get_lf_tran_index () : lockfree::tran::INVALID_INDEX;
+  if (tran_index == lockfree::tran::INVALID_INDEX)
+    {
+      /* No usable epoch descriptor (recovery / standalone drain — no concurrent pinned reader can
+       * race this node, design §8). Reclaim in place; wrapper->reclaim () frees the four buffers,
+       * the node, and the wrapper. */
+      wrapper->reclaim ();
+      return;
+    }
+  log_inflight_table ().get_descriptor (tran_index).retire_node (*wrapper);
 }
 
-bool
-log_prior_inflight_contains (const LOG_LSA &lsa)
+LOG_PRIOR_NODE *
+log_prior_inflight_pin_lookup (THREAD_ENTRY *thread_p, const LOG_LSA &lsa)
 {
+  if (thread_p == NULL)
+    {
+      return NULL;
+    }
+  lockfree::tran::index tran_index = thread_p->get_lf_tran_index ();
+  if (tran_index == lockfree::tran::INVALID_INDEX)
+    {
+      return NULL;
+    }
+
+  lockfree::tran::table &tbl = log_inflight_table ();
+  lockfree::tran::descriptor &tdes = tbl.get_descriptor (tran_index);
+
+  /* pin: mark this thread active before reading any slot, so a node it observes cannot be reclaimed
+   * until it unpins (the drain's retire tags a later transaction id). */
+  tdes.start_tran ();
+
   uint64_t head = log_Inflight_head.load (std::memory_order_acquire);
   uint64_t tail = log_Inflight_tail.load (std::memory_order_acquire);
   for (uint64_t i = head; i != tail; ++i)
     {
-      LOG_LSA s = log_Inflight_slots[i & (LOG_INFLIGHT_CAPACITY - 1)].start_lsa.load (std::memory_order_acquire);
+      log_inflight_slot &slot = log_Inflight_slots[i & (LOG_INFLIGHT_CAPACITY - 1)];
+      LOG_LSA s = slot.start_lsa.load (std::memory_order_acquire);
       if (LSA_EQ (&s, &lsa))
 	{
-	  return true;
+	  LOG_PRIOR_NODE *node = slot.node;
+	  /* re-validate: the drain may have unlinked and (ring-wrap) reused this slot between the two
+	   * loads. start_lsa is monotonic so it never re-appears; if it still reads lsa, node is the
+	   * node for lsa and is pinned. */
+	  LOG_LSA s2 = slot.start_lsa.load (std::memory_order_acquire);
+	  if (LSA_EQ (&s2, &lsa))
+	    {
+	      return node;   /* hit: caller reads the node view then calls log_prior_inflight_unpin */
+	    }
+	  break;
 	}
     }
-  return false;
+
+  /* miss: nothing to protect, unpin now */
+  tdes.end_tran ();
+  return NULL;
+}
+
+void
+log_prior_inflight_unpin (THREAD_ENTRY *thread_p)
+{
+  assert (thread_p != NULL);
+  lockfree::tran::index tran_index = thread_p->get_lf_tran_index ();
+  assert (tran_index != lockfree::tran::INVALID_INDEX);
+  log_inflight_table ().get_descriptor (tran_index).end_tran ();
 }
 
 log_prior_lsa_info::log_prior_lsa_info ()
@@ -373,6 +488,7 @@ prior_lsa_alloc_and_copy_data (THREAD_ENTRY *thread_p, LOG_RECTYPE rec_type, LOG
 
   node->tde_encrypted = false;
   node->in_inflight = false;
+  node->inflight_reclaim = NULL;
 
   node->data_header_length = 0;
   node->data_header = NULL;
@@ -512,6 +628,7 @@ prior_lsa_alloc_and_copy_crumbs (THREAD_ENTRY *thread_p, LOG_RECTYPE rec_type, L
 
   node->tde_encrypted = false;
   node->in_inflight = false;
+  node->inflight_reclaim = NULL;
 
   node->data_header_length = 0;
   node->data_header = NULL;

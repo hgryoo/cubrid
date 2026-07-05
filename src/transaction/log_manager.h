@@ -196,6 +196,9 @@ extern SCAN_CODE log_archive_log_header_next_scan (THREAD_ENTRY * thread_p, int 
 extern int log_archive_log_header_end_scan (THREAD_ENTRY * thread_p, void **ptr);
 extern SCAN_CODE log_get_undo_record (THREAD_ENTRY * thread_p, LOG_PAGE * log_page_p, LOG_LSA process_lsa,
 				      RECDES * recdes);
+/* N30 tier-1: serve a prev-version undo image directly from the in-flight window (no force-drain). */
+extern bool log_read_prev_undo_from_tier1 (THREAD_ENTRY * thread_p, const LOG_LSA * lsa, RECDES * recdes,
+					   SCAN_CODE * scan_out);
 
 extern void log_sysop_start (THREAD_ENTRY * thread_p);
 extern void log_sysop_start_atomic (THREAD_ENTRY * thread_p);

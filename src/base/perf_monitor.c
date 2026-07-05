@@ -328,7 +328,7 @@ PSTAT_METADATA pstat_Metadata[] = {
   PSTAT_METADATA_INIT_COUNTER_TIMER (PSTAT_LOG_CS_WRITE_WAIT_FLUSH, "log_cs_write_wait_flush"),
 
   /* N30 tier-1: in-flight window would-hit measurement */
-  PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_LOG_TIER1_WOULD_HIT, "Num_log_tier1_would_hit"),
+  PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_LOG_TIER1_HIT, "Num_log_tier1_hit"),
   PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_LOG_TIER1_MISS, "Num_log_tier1_miss"),
 
   /* HA replication delay */

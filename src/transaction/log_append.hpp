@@ -113,17 +113,28 @@ struct log_prior_node
 
   bool in_inflight;   /* N30 tier-1: true if this node was registered in the in-flight window
                        * (MVCC undo classes only, and not skipped at saturation). */
+  void *inflight_reclaim;   /* N30 tier-1: opaque handle to the epoch-reclamation wrapper allocated
+                             * at registration; the drain retires it instead of freeing the node
+                             * directly, so a pinned reader can read the node view without UAF. */
 
   LOG_PRIOR_NODE *next;
 };
 
-/* N30 tier-1 in-flight window (measurement stage): an LSA-ordered bounded ring of
- * (start_lsa -> prior node) for MVCC undo records, so a prev-version reader can tell
- * whether its target is still staged (would be a tier-1 hit) without draining. This
- * stage only measures the hit rate; direct node reads + epoch reclamation land next. */
+/* N30 tier-1 in-flight window: an LSA-ordered bounded FIFO ring of (start_lsa -> prior node) for
+ * MVCC undo records, so a prev-version reader can read its target's undo image directly out of the
+ * staged node (a tier-1 hit) instead of force-draining. Node lifetime moves from the drain's
+ * immediate free to lockfree::tran epoch reclamation: a reader pins (start_tran) before reading a
+ * slot and unpins (end_tran) after; the drain unlinks the slot then retires the node (deferred
+ * free), so a node observed by a pinned reader is never reclaimed underneath it.
+ *   register   - append path, under prior_lsa_mutex (LSA-monotonic single writer); allocs wrapper.
+ *   retire     - drain, in append (LSA) order (FIFO); unlink slot then defer the free via epoch.
+ *   pin_lookup - reader: start_tran, scan [head,tail) for start_lsa == lsa, re-validate; returns the
+ *                pinned node on a hit (caller must unpin), or NULL on a miss (already unpinned).
+ *   unpin      - reader: end_tran once done reading the returned node view. */
 void log_prior_inflight_register (const LOG_LSA &start_lsa, LOG_PRIOR_NODE *node);
-void log_prior_inflight_unregister (LOG_PRIOR_NODE *node);
-bool log_prior_inflight_contains (const LOG_LSA &lsa);
+void log_prior_inflight_retire (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node);
+LOG_PRIOR_NODE *log_prior_inflight_pin_lookup (THREAD_ENTRY *thread_p, const LOG_LSA &lsa);
+void log_prior_inflight_unpin (THREAD_ENTRY *thread_p);
 
 typedef struct log_prior_lsa_info LOG_PRIOR_LSA_INFO;
 struct log_prior_lsa_info

@@ -404,7 +404,7 @@ typedef enum
   PSTAT_LOG_CS_WRITE_WAIT_FLUSH,
 
   /* N30 tier-1: in-flight window would-hit measurement (reader guard path) */
-  PSTAT_LOG_TIER1_WOULD_HIT,
+  PSTAT_LOG_TIER1_HIT,
   PSTAT_LOG_TIER1_MISS,
 
   /* HA replication delay */

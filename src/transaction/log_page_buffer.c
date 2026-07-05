@@ -3060,24 +3060,38 @@ logpb_append_prior_lsa_list (THREAD_ENTRY * thread_p, LOG_PRIOR_NODE * list)
 
       logpb_append_next_record (thread_p, node);
 
-      /* N30 tier-1: unregister from the in-flight window before freeing. The drain frees in append
-       * (LSA) order, so registered nodes leave the FIFO window in order. */
-      log_prior_inflight_unregister (node);
+      /* N30 tier-2: publish the record-aligned copied watermark for this node (release) BEFORE
+       * releasing its tier-1 slot below, so a reader that misses tier-1 (slot just unlinked) finds
+       * the record already copied and needs no drain (W-before-U). append_lsa is now the end of the
+       * record just copied. Single writer under LOG_CS; monotonic. */
+      log_Gl.append.set_copied_lsa (log_Gl.hdr.append_lsa);
 
-      if (node->data_header != NULL)
+      if (node->in_inflight)
 	{
-	  free_and_init (node->data_header);
+	  /* N30 tier-1: registered node. Unlink its FIFO slot then defer the four-buffer free to epoch
+	   * reclamation (the wrapper's reclaim () does the frees), so a reader pinned on this node can
+	   * still read its undo image without use-after-free. The drain retires in append (LSA) order,
+	   * so registered nodes leave the FIFO window in order. */
+	  log_prior_inflight_retire (thread_p, node);
 	}
-      if (node->udata != NULL)
+      else
 	{
-	  free_and_init (node->udata);
-	}
-      if (node->rdata != NULL)
-	{
-	  free_and_init (node->rdata);
-	}
+	  /* unregistered (non-MVCC-undo class, or skipped at saturation): free immediately as before */
+	  if (node->data_header != NULL)
+	    {
+	      free_and_init (node->data_header);
+	    }
+	  if (node->udata != NULL)
+	    {
+	      free_and_init (node->udata);
+	    }
+	  if (node->rdata != NULL)
+	    {
+	      free_and_init (node->rdata);
+	    }
 
-      free_and_init (node);
+	  free_and_init (node);
+	}
     }
 
   return NO_ERROR;

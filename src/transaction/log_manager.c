@@ -9757,6 +9757,123 @@ log_set_db_restore_time (THREAD_ENTRY * thread_p, INT64 db_restore_time)
 }
 
 /*
+ * log_undo_record_from_data () - N30: shared undo parse core. Decompress a contiguous undo image (if
+ *   zipped) and copy it into recdes, honoring the S_DOESNT_FIT grow-and-retry protocol (a too-small
+ *   recdes returns S_DOESNT_FIT with recdes->length set to the negative needed size). Factored out of
+ *   log_get_undo_record so both the page path and the tier-1 node-view path share it.
+ *   return: S_SUCCESS / S_DOESNT_FIT / S_ERROR
+ *
+ * undo_data (in): contiguous undo bytes (possibly zlib-compressed)
+ * udata_size (in): byte length of undo_data
+ * is_zipped (in): whether undo_data is zlib-compressed
+ * recdes (out): destination record
+ */
+static SCAN_CODE
+log_undo_record_from_data (THREAD_ENTRY * thread_p, char *undo_data, int udata_size, bool is_zipped, RECDES * recdes)
+{
+  SCAN_CODE scan = S_SUCCESS;
+  LOG_ZIP *log_unzip_ptr = NULL;
+
+  if (is_zipped)
+    {
+      log_unzip_ptr = log_zip_alloc (IO_PAGESIZE);
+      if (log_unzip_ptr == NULL)
+	{
+	  logpb_fatal_error (thread_p, true, ARG_FILE_LINE, "log_undo_record_from_data");
+	  return S_ERROR;
+	}
+
+      if (log_unzip (log_unzip_ptr, udata_size, (char *) undo_data))
+	{
+	  udata_size = (int) log_unzip_ptr->data_length;
+	  undo_data = (char *) log_unzip_ptr->log_data;
+	}
+      else
+	{
+	  assert (false);
+	  scan = S_ERROR;
+	  goto exit;
+	}
+    }
+
+  /* copy the record */
+  recdes->type = *(INT16 *) (undo_data);
+  recdes->length = udata_size - sizeof (recdes->type);
+  if (recdes->area_size < 0 || recdes->area_size < (int) recdes->length)
+    {
+      /*
+       * DOES NOT FIT
+       * Give a hint to the user of the needed length. Hint is given as a
+       * negative value
+       */
+      /* do not use unary minus because slot_p->record_length is unsigned */
+      recdes->length *= -1;
+
+      scan = S_DOESNT_FIT;
+      goto exit;
+    }
+
+  memcpy (recdes->data, (char *) (undo_data) + sizeof (recdes->type), recdes->length);
+
+exit:
+  if (log_unzip_ptr != NULL)
+    {
+      log_zip_free (log_unzip_ptr);
+    }
+
+  return scan;
+}
+
+/*
+ * log_undo_record_from_node () - N30 tier-1: parse a still-staged prior node's undo image into recdes
+ *   without touching the log page buffer. node->udata is already a contiguous undo image, byte
+ *   identical to the bytes the drain copies onto the page; the zip flag lives in the node's data
+ *   header exactly as the page path reads it. Node must be pinned by the caller.
+ *   return: S_SUCCESS / S_DOESNT_FIT / S_ERROR
+ */
+static SCAN_CODE
+log_undo_record_from_node (THREAD_ENTRY * thread_p, LOG_PRIOR_NODE * node, RECDES * recdes)
+{
+  int header_ulength;
+
+  switch (node->log_header.type)
+    {
+    case LOG_MVCC_UNDO_DATA:
+      header_ulength = ((LOG_REC_MVCC_UNDO *) node->data_header)->undo.length;
+      break;
+    case LOG_MVCC_UNDOREDO_DATA:
+    case LOG_MVCC_DIFF_UNDOREDO_DATA:
+      header_ulength = ((LOG_REC_MVCC_UNDOREDO *) node->data_header)->undoredo.ulength;
+      break;
+    default:
+      assert (false);
+      return S_ERROR;
+    }
+
+  return log_undo_record_from_data (thread_p, node->udata, node->ulength, ZIP_CHECK (header_ulength), recdes);
+}
+
+/*
+ * log_read_prev_undo_from_tier1 () - N30 tier-1: try to serve a prev-version undo image directly from
+ *   the in-flight window (a still-staged prior node), without force-draining. Pins the window, parses
+ *   the node view, unpins.
+ *   return: true if the window held the record (scan_out set to the node-view parse result), false on
+ *           a tier-1 miss (caller falls back to the page path)
+ */
+bool
+log_read_prev_undo_from_tier1 (THREAD_ENTRY * thread_p, const LOG_LSA * lsa, RECDES * recdes, SCAN_CODE * scan_out)
+{
+  LOG_PRIOR_NODE *node = log_prior_inflight_pin_lookup (thread_p, *lsa);
+  if (node == NULL)
+    {
+      return false;
+    }
+  *scan_out = log_undo_record_from_node (thread_p, node, recdes);
+  log_prior_inflight_unpin (thread_p);
+  return true;
+}
+
+/*
  * log_get_undo_record () - gets undo record from log lsa adress
  *   return: S_SUCCESS or ER_code
  *
@@ -9780,7 +9897,6 @@ log_get_undo_record (THREAD_ENTRY * thread_p, LOG_PAGE * log_page_p, LOG_LSA pro
   LOG_LSA oldest_prior_lsa;
   bool is_zipped = false;
   char log_buf[IO_MAX_PAGE_SIZE + MAX_ALIGNMENT];
-  LOG_ZIP *log_unzip_ptr = NULL;
   char *area = NULL;
   SCAN_CODE scan = S_SUCCESS;
   bool area_was_mallocated = false;
@@ -9889,56 +10005,13 @@ log_get_undo_record (THREAD_ENTRY * thread_p, LOG_PAGE * log_page_p, LOG_LSA pro
       undo_data = area;
     }
 
-  if (is_zipped)
-    {
-      log_unzip_ptr = log_zip_alloc (IO_PAGESIZE);
-      if (log_unzip_ptr == NULL)
-	{
-	  logpb_fatal_error (thread_p, true, ARG_FILE_LINE, "log_get_undo_record");
-	  scan = S_ERROR;
-	  goto exit;
-	}
-
-      if (log_unzip (log_unzip_ptr, udata_size, (char *) undo_data))
-	{
-	  udata_size = (int) log_unzip_ptr->data_length;
-	  undo_data = (char *) log_unzip_ptr->log_data;
-	}
-      else
-	{
-	  assert (false);
-	  scan = S_ERROR;
-	  goto exit;
-	}
-    }
-
-  /* copy the record */
-  recdes->type = *(INT16 *) (undo_data);
-  recdes->length = udata_size - sizeof (recdes->type);
-  if (recdes->area_size < 0 || recdes->area_size < (int) recdes->length)
-    {
-      /*
-       * DOES NOT FIT
-       * Give a hint to the user of the needed length. Hint is given as a
-       * negative value
-       */
-      /* do not use unary minus because slot_p->record_length is unsigned */
-      recdes->length *= -1;
-
-      scan = S_DOESNT_FIT;
-      goto exit;
-    }
-
-  memcpy (recdes->data, (char *) (undo_data) + sizeof (recdes->type), recdes->length);
+  /* decompress (if zipped) and copy into recdes via the shared parse core */
+  scan = log_undo_record_from_data (thread_p, undo_data, udata_size, is_zipped, recdes);
 
 exit:
   if (area_was_mallocated)
     {
       free (area);
-    }
-  if (log_unzip_ptr != NULL)
-    {
-      log_zip_free (log_unzip_ptr);
     }
 
   return scan;
