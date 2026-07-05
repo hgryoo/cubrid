@@ -2548,6 +2548,7 @@ logpb_fetch_start_append_page (THREAD_ENTRY * thread_p)
     }
 
   log_Gl.append.set_nxio_lsa (log_Gl.hdr.append_lsa);
+  log_Gl.append.set_copied_lsa (log_Gl.hdr.append_lsa);  /* N30 tier-2: keep copied_lsa >= nxio_lsa */
   /*
    * Save this log append page as an active page to be flushed at a later
    * time if the page is modified (dirty).
@@ -2599,6 +2600,7 @@ logpb_fetch_start_append_page_new (THREAD_ENTRY * thread_p)
     }
 
   log_Gl.append.set_nxio_lsa (log_Gl.hdr.append_lsa);
+  log_Gl.append.set_copied_lsa (log_Gl.hdr.append_lsa);  /* N30 tier-2: keep copied_lsa >= nxio_lsa */
 
   return log_Gl.append.log_pgptr;
 }
@@ -3125,6 +3127,11 @@ logpb_prior_lsa_append_all_list (THREAD_ENTRY * thread_p)
 
       logpb_append_prior_lsa_list (thread_p, prior_list);
     }
+
+  /* N30 tier-2: publish the record-aligned copied watermark. After the drain copied the detached
+   * list, append_lsa is the end of the last copied record (record-aligned), i.e. everything before
+   * it is now in the log page buffer and readable. Single writer under LOG_CS; monotonic. */
+  log_Gl.append.set_copied_lsa (log_Gl.hdr.append_lsa);
 
   return NO_ERROR;
 }
@@ -3786,6 +3793,7 @@ logpb_flush_all_append_pages (THREAD_ENTRY * thread_p)
 
       /* now we can set the nxio_lsa to append_lsa */
       log_Gl.append.set_nxio_lsa (log_Gl.hdr.append_lsa);
+      log_Gl.append.set_copied_lsa (log_Gl.hdr.append_lsa);  /* N30 tier-2: keep copied_lsa >= nxio_lsa */
 
       log_Pb.partial_append.status = LOGPB_APPENDREC_PARTIAL_FLUSHED_ORIGINAL;
 
@@ -3805,6 +3813,7 @@ logpb_flush_all_append_pages (THREAD_ENTRY * thread_p)
   else if (log_Pb.partial_append.status == LOGPB_APPENDREC_SUCCESS)
     {
       log_Gl.append.set_nxio_lsa (log_Gl.hdr.append_lsa);
+      log_Gl.append.set_copied_lsa (log_Gl.hdr.append_lsa);  /* N30 tier-2: keep copied_lsa >= nxio_lsa */
 
       logpb_log ("logpb_flush_all_append_pages: set nxio_lsa = %lld|%d.\n",
 		 (long long int) log_Gl.append.get_nxio_lsa ().pageid, (int) log_Gl.append.get_nxio_lsa ().offset);

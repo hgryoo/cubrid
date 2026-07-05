@@ -75,6 +75,10 @@ struct log_append_info
   int vdes;			/* Volume descriptor of active log */
   std::atomic<LOG_LSA> nxio_lsa;  /* Lowest log sequence number which has not been written to disk (for WAL). */
   /* todo - not really belonging here. should be part of page buffer. */
+  /* N30 tier-2: record-aligned watermark up to which prior records are copied into the log page
+   * buffer (readable). Published (release) by the drain, read (acquire) by pre-flush readers.
+   * Invariant: nxio_lsa <= copied_lsa <= prior_lsa. Replaces the reader's unfenced append_lsa read. */
+  std::atomic<LOG_LSA> copied_lsa;
   LOG_LSA prev_lsa;		/* Address of last append log record */
   LOG_PAGE *log_pgptr;		/* The log page which is fixed */
 
@@ -85,6 +89,8 @@ struct log_append_info
 
   LOG_LSA get_nxio_lsa () const;
   void set_nxio_lsa (const LOG_LSA &next_io_lsa);
+  LOG_LSA get_copied_lsa () const;
+  void set_copied_lsa (const LOG_LSA &copied);
 };
 
 typedef struct log_prior_node LOG_PRIOR_NODE;

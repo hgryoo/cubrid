@@ -85,6 +85,7 @@ log_data_addr::log_data_addr (const VFID *vfid_arg, PAGE_PTR pgptr_arg, PGLENGTH
 log_append_info::log_append_info ()
   : vdes (NULL_VOLDES)
   , nxio_lsa (NULL_LSA)
+  , copied_lsa (NULL_LSA)
   , prev_lsa (NULL_LSA)
   , log_pgptr (NULL)
   , appending_page_tde_encrypted (false)
@@ -95,6 +96,7 @@ log_append_info::log_append_info ()
 log_append_info::log_append_info (const log_append_info &other)
   : vdes (other.vdes)
   , nxio_lsa {other.nxio_lsa.load ()}
+  , copied_lsa {other.copied_lsa.load ()}
   , prev_lsa (other.prev_lsa)
   , log_pgptr (other.log_pgptr)
   , appending_page_tde_encrypted (other.appending_page_tde_encrypted)
@@ -112,6 +114,18 @@ void
 log_append_info::set_nxio_lsa (const LOG_LSA &next_io_lsa)
 {
   nxio_lsa.store (next_io_lsa);
+}
+
+LOG_LSA
+log_append_info::get_copied_lsa () const
+{
+  return copied_lsa.load (std::memory_order_acquire);
+}
+
+void
+log_append_info::set_copied_lsa (const LOG_LSA &copied)
+{
+  copied_lsa.store (copied, std::memory_order_release);
 }
 
 log_prior_lsa_info::log_prior_lsa_info ()

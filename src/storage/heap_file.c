@@ -25358,8 +25358,11 @@ heap_get_visible_version_from_log (THREAD_ENTRY * thread_p, RECDES * recdes, LOG
       recdes->data = NULL;
     }
 
-  /* make sure prev_version_lsa is flushed from prior lsa list - wake up log flush thread if it's not flushed */
-  oldest_prior_lsa = *log_get_append_lsa ();	/* TODO: fix atomicity issue on x86 */
+  /* make sure prev_version_lsa is copied out of the prior lsa list into the log page buffer.
+   * N30 tier-2: read the record-aligned copied watermark with acquire ordering (fixes the former
+   * x86 torn-read of the non-atomic append_lsa). If the version is not yet copied, force-drain
+   * (Phase-1 fallback; the tier-1 in-flight window will remove this drain in a later increment). */
+  oldest_prior_lsa = log_Gl.append.get_copied_lsa ();
   if (LSA_LT (&oldest_prior_lsa, previous_version_lsa))
     {
       PERF_UTIME_TRACKER time_track = PERF_UTIME_TRACKER_INITIALIZER;
@@ -25370,7 +25373,7 @@ heap_get_visible_version_from_log (THREAD_ENTRY * thread_p, RECDES * recdes, LOG
       LOG_CS_EXIT (thread_p);
       PERF_UTIME_TRACKER_TIME (thread_p, &time_track, PSTAT_LOG_PRIOR_DRAIN_READER_GUARD);
 
-      oldest_prior_lsa = *log_get_append_lsa ();
+      oldest_prior_lsa = log_Gl.append.get_copied_lsa ();
       assert (!LSA_LT (&oldest_prior_lsa, previous_version_lsa));
     }
 
