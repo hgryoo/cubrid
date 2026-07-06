@@ -147,7 +147,16 @@ namespace lockfree
 	  m_retired_tail = NULL;
 	}
 
-      m_last_reclaim_minid = min_tran_id;
+      // Do not latch the fully-idle sentinel: when no transaction is active, get_min_active_tranid()
+      // returns INVALID_TRANID (the max). Storing it into m_last_reclaim_minid would make the
+      // "min <= m_last_reclaim_minid" early-return above permanently true, freezing all future
+      // reclamation on this descriptor (N30: observed as an unbounded tier-1 retired-backlog). We
+      // still reclaimed everything reclaimable this pass; just keep the high-water finite so later
+      // passes make progress. Safe: reclamation only ever frees nodes with retire_tranid < min.
+      if (min_tran_id != INVALID_TRANID)
+	{
+	  m_last_reclaim_minid = min_tran_id;
+	}
     }
 
     void
