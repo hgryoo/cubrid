@@ -1748,7 +1748,14 @@ logpb_fetch_page (THREAD_ENTRY * thread_p, const LOG_LSA * req_lsa, LOG_CS_ACCES
 
   logpb_log ("called logpb_fetch_page with pageid = %lld\n", (long long int) req_lsa->pageid);
 
-  LSA_COPY (&append_lsa, &log_Gl.hdr.append_lsa);
+  /* N30: acquire-read the atomic copied_lsa (the record-aligned "already copied into the log page
+   * buffer, i.e. readable" frontier) instead of the non-atomic, torn-read-prone log_Gl.hdr.append_lsa
+   * for this fast-path pre-check. The drain advances append_lsa per record as it copies and publishes
+   * copied_lsa right after, so copied_lsa <= append_lsa always: using it here is conservative — it can
+   * only make the pre-check enter the LOG_CS block below (and re-check the authoritative append_lsa)
+   * more often, never skip a drain the page actually needs. Same guard-read swap as the heap reader
+   * guard (11-design-detail §13.3). */
+  append_lsa = log_Gl.append.get_copied_lsa ();
   LSA_COPY (&append_prev_lsa, &log_Gl.append.prev_lsa);
 
   /*
