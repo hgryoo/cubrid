@@ -153,6 +153,12 @@ void log_prior_complete_mvcc_effects (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *no
 LOG_PRIOR_NODE *log_prior_inflight_pin_lookup (THREAD_ENTRY *thread_p, const LOG_LSA &lsa);
 void log_prior_inflight_unpin (THREAD_ENTRY *thread_p);
 
+/* N30 tier-1 retired-backlog watchdog: live count of nodes retired to epoch reclamation but not yet
+ * freed (= retire - reclaim). Read at statdump time into the PSTAT peek gauge. A sustained-high value
+ * signals reclamation is not keeping up — a stall regression, or a long-lived reader pinning the
+ * epoch. Healthy steady state is small (the live in-flight window). */
+INT64 log_prior_inflight_backlog ();
+
 typedef struct log_prior_lsa_info LOG_PRIOR_LSA_INFO;
 struct log_prior_lsa_info
 {

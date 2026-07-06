@@ -409,6 +409,8 @@ typedef enum
   /* N30 tier-1: epoch-reclamation retired-backlog gauge (retire - reclaim = deferred-free nodes held) */
   PSTAT_LOG_TIER1_RETIRE,
   PSTAT_LOG_TIER1_RECLAIM,
+  /* N30 tier-1: live retired-backlog watchdog gauge (peek: retire - reclaim, current held count) */
+  PSTAT_LOG_TIER1_BACKLOG,
 
   /* HA replication delay */
   PSTAT_HA_REPL_DELAY,

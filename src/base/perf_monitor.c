@@ -333,6 +333,7 @@ PSTAT_METADATA pstat_Metadata[] = {
   /* N30 tier-1: epoch-reclamation retired-backlog gauge (retire - reclaim = deferred-free held) */
   PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_LOG_TIER1_RETIRE, "Num_log_tier1_retire"),
   PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_LOG_TIER1_RECLAIM, "Num_log_tier1_reclaim"),
+  PSTAT_METADATA_INIT_SINGLE_PEEK (PSTAT_LOG_TIER1_BACKLOG, "Num_log_tier1_retired_backlog"),
 
   /* HA replication delay */
   PSTAT_METADATA_INIT_SINGLE_PEEK (PSTAT_HA_REPL_DELAY, "Time_ha_replication_delay"),
@@ -2025,6 +2026,11 @@ perfmon_server_calc_stats (UINT64 * stats, bool need_pgbuf_stat)
   // *INDENT-OFF*
   cubload::worker_manager_get_stats (&stats[pstat_Metadata[PSTAT_LOAD_THREAD_STATS].start_offset]);
   // *INDENT-ON*
+  {
+    // N30 tier-1 retired-backlog watchdog gauge (live retire - reclaim); defined in log_append.cpp
+    extern INT64 log_prior_inflight_backlog (void);
+    stats[pstat_Metadata[PSTAT_LOG_TIER1_BACKLOG].start_offset] = (UINT64) log_prior_inflight_backlog ();
+  }
 #endif // SERVER_MODE
 
   for (i = 0; i < PSTAT_COUNT; i++)

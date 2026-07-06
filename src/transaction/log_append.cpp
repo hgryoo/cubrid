@@ -163,6 +163,11 @@ namespace
   std::atomic<uint64_t> log_Inflight_head {0};   /* advanced by the drain (retire) */
   std::atomic<uint64_t> log_Inflight_tail {0};   /* advanced by producers (register), under prior_lsa_mutex */
 
+  /* Watchdog gauge: live count of nodes retired to epoch reclamation but not yet freed (= retire -
+   * reclaim). Inc on retire, dec on the wrapper's reclaim(); exposed at statdump via the PSTAT peek
+   * gauge. Sustained-high => reclamation not keeping up (stall regression or a long-lived reader). */
+  std::atomic<INT64> log_Inflight_retired_backlog {0};
+
   /* Epoch-reclamation wrapper: retired by the drain in place of an immediate free, so the four
    * per-node buffers survive until every reader pinned before the retire has unpinned. */
   class log_inflight_reclaim_node : public lockfree::tran::reclaimable_node
@@ -178,6 +183,7 @@ namespace
 	/* backlog gauge: a retired node is now actually freed (deferred or in-place). No thread_p here
 	 * on the deferred path; perfmon_inc_stat is a no-op when tracking is off (recovery/stats off). */
 	perfmon_inc_stat (NULL, PSTAT_LOG_TIER1_RECLAIM);
+	log_Inflight_retired_backlog.fetch_sub (1, std::memory_order_relaxed);
 	if (m_node->data_header != NULL)
 	  {
 	    free_and_init (m_node->data_header);
@@ -243,6 +249,7 @@ log_prior_inflight_retire (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node)
   /* backlog gauge: node leaves the window here (deferred retire below, or in-place reclaim). Counting
    * both paths keeps (retire - reclaim) = nodes currently held in deferred-free limbo, always >= 0. */
   perfmon_inc_stat (thread_p, PSTAT_LOG_TIER1_RETIRE);
+  log_Inflight_retired_backlog.fetch_add (1, std::memory_order_relaxed);
   /* FIFO: the drain retires nodes in append (LSA) order, so the oldest registered node is at head.
    * Unlink the slot (release) before retiring so a reader starting after this cannot reach the node;
    * a reader that already read the node pointer is protected by its pin (epoch). */
@@ -319,6 +326,12 @@ log_prior_inflight_unpin (THREAD_ENTRY *thread_p)
   lockfree::tran::index tran_index = thread_p->get_lf_tran_index ();
   assert (tran_index != lockfree::tran::INVALID_INDEX);
   log_inflight_table ().get_descriptor (tran_index).end_tran ();
+}
+
+INT64
+log_prior_inflight_backlog ()
+{
+  return log_Inflight_retired_backlog.load (std::memory_order_relaxed);
 }
 
 log_prior_lsa_info::log_prior_lsa_info ()
