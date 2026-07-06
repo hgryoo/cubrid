@@ -175,6 +175,9 @@ namespace
 
       void reclaim () override
       {
+	/* backlog gauge: a retired node is now actually freed (deferred or in-place). No thread_p here
+	 * on the deferred path; perfmon_inc_stat is a no-op when tracking is off (recovery/stats off). */
+	perfmon_inc_stat (NULL, PSTAT_LOG_TIER1_RECLAIM);
 	if (m_node->data_header != NULL)
 	  {
 	    free_and_init (m_node->data_header);
@@ -237,6 +240,9 @@ void
 log_prior_inflight_retire (THREAD_ENTRY *thread_p, LOG_PRIOR_NODE *node)
 {
   assert (node->in_inflight);
+  /* backlog gauge: node leaves the window here (deferred retire below, or in-place reclaim). Counting
+   * both paths keeps (retire - reclaim) = nodes currently held in deferred-free limbo, always >= 0. */
+  perfmon_inc_stat (thread_p, PSTAT_LOG_TIER1_RETIRE);
   /* FIFO: the drain retires nodes in append (LSA) order, so the oldest registered node is at head.
    * Unlink the slot (release) before retiring so a reader starting after this cannot reach the node;
    * a reader that already read the node pointer is protected by its pin (epoch). */

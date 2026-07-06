@@ -406,6 +406,9 @@ typedef enum
   /* N30 tier-1: in-flight window would-hit measurement (reader guard path) */
   PSTAT_LOG_TIER1_HIT,
   PSTAT_LOG_TIER1_MISS,
+  /* N30 tier-1: epoch-reclamation retired-backlog gauge (retire - reclaim = deferred-free nodes held) */
+  PSTAT_LOG_TIER1_RETIRE,
+  PSTAT_LOG_TIER1_RECLAIM,
 
   /* HA replication delay */
   PSTAT_HA_REPL_DELAY,

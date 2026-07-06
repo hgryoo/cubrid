@@ -330,6 +330,9 @@ PSTAT_METADATA pstat_Metadata[] = {
   /* N30 tier-1: in-flight window would-hit measurement */
   PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_LOG_TIER1_HIT, "Num_log_tier1_hit"),
   PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_LOG_TIER1_MISS, "Num_log_tier1_miss"),
+  /* N30 tier-1: epoch-reclamation retired-backlog gauge (retire - reclaim = deferred-free held) */
+  PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_LOG_TIER1_RETIRE, "Num_log_tier1_retire"),
+  PSTAT_METADATA_INIT_SINGLE_ACC (PSTAT_LOG_TIER1_RECLAIM, "Num_log_tier1_reclaim"),
 
   /* HA replication delay */
   PSTAT_METADATA_INIT_SINGLE_PEEK (PSTAT_HA_REPL_DELAY, "Time_ha_replication_delay"),
