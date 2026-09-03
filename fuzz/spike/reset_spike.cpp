@@ -1,13 +1,22 @@
 /*
  * reset_spike.cpp - does the engine come back to a known state between inputs?
  *
- * This is the entry gate for the storage-operation-sequence fuzz target
- * (roadmap N66 §9 Q1, cubrid-testkit §6a-E9 §5).  libFuzzer reuses one process
- * for tens of thousands of inputs.  If the engine does not return to a known
- * state at every input boundary then crashes stop reproducing, coverage stops
- * meaning anything, and the corpus stops being worth keeping -- the technique
- * fails quietly while appearing to run.  Whether CUBRID can do that, and at
- * what cost per input, is answerable only by measurement.
+ * SCOPE, corrected 2026-09-03: this was written as the entry gate for the
+ * storage fuzz target and it is not one.  It runs in SA mode, and SA is
+ * single-threaded, while the defects that target exists for are made by
+ * interleavings -- slot reuse under concurrent update, latch acquisition order,
+ * vacuum interfering with a reader.  The storage layer is mode-split code
+ * besides (146 SERVER_MODE branches in page_buffer.c, 53 in log_manager.c, 26
+ * in vacuum.c), so what is observed here does not carry to a SERVER_MODE
+ * server, and that target links libcubrid.so rather than the SA library this
+ * links.
+ *
+ * What it does establish is the *setup* half: whether a transaction boundary
+ * returns the database to a known starting state, deterministically and
+ * cheaply.  It does, and that part is still worth having -- see
+ * cubrid-testkit E9/requirements.md §5.2.  Reproducibility for the real target
+ * has to come from replaying a schedule, not from returning to identical
+ * state, and that is unmeasured.
  *
  * So: boot once, then run the same fixed operation sequence N times, resetting
  * between runs, and check that every run observes exactly the same thing.  One
