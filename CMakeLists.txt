@@ -75,6 +75,27 @@ option(WITH_JDBC "Build with JDBC driver" ON)
 option(WITH_CMSERVER "Build with Manager server" ON)
 option(UNIT_TESTS "Unit tests" OFF)
 option(WITH_CCI "Build with CCI driver" ON)
+option(ENABLE_FUZZING "Build coverage-guided fuzz targets (requires clang; see fuzz/README.md)" OFF)
+set(FUZZ_SANITIZERS "address;undefined" CACHE STRING "Sanitizers to build the fuzz targets and the engine with")
+
+if(ENABLE_FUZZING)
+  # libFuzzer is a clang facility. GCC has -fsanitize=address/undefined but no
+  # -fsanitize=fuzzer, so refuse early rather than fail at link time.
+  if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR
+      "ENABLE_FUZZING requires clang (CMAKE_C_COMPILER_ID is '${CMAKE_C_COMPILER_ID}'). "
+      "Configure with -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++.")
+  endif()
+
+  string(REPLACE ";" "," FUZZ_SANITIZERS_CSV "${FUZZ_SANITIZERS}")
+  # The whole engine is instrumented, not only the harness: libFuzzer needs
+  # coverage counters in the code under test. Linking the fuzzer runtime itself
+  # is left to the fuzz targets (fuzzer-no-link here, fuzzer there).
+  set(FUZZ_INSTRUMENT_FLAGS "-fsanitize=fuzzer-no-link,${FUZZ_SANITIZERS_CSV} -fno-omit-frame-pointer -g")
+  set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} ${FUZZ_INSTRUMENT_FLAGS}")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${FUZZ_INSTRUMENT_FLAGS}")
+  message(STATUS "ENABLE_FUZZING=ON  sanitizers=${FUZZ_SANITIZERS_CSV}  compiler=${CMAKE_C_COMPILER_ID}")
+endif()
 
 # Version info
 # TODO: remove BUILD_NUMBER file and replace with VERSION file
@@ -803,6 +824,10 @@ add_subdirectory(locales)
 add_subdirectory(timezones)
 if(AT_LEAST_ONE_UNIT_TEST)
   add_subdirectory(unit_tests)
+endif()
+
+if(ENABLE_FUZZING)
+  add_subdirectory(fuzz)
 endif()
 
 if(WIN32)
