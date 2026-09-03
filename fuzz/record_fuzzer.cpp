@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 
 #include "config.h"
 #include "dbtype.h"
@@ -37,12 +38,32 @@ LLVMFuzzerInitialize (int *argc, char ***argv)
   (void) argc;
   (void) argv;
 
-  /* Charset and collation tables first: the string domains read them while
-   * decoding, and tp_init () builds domains that refer to them. */
-  if (lang_init () != NO_ERROR)
+  /* The engine's environment layer (envvar_prefix (), environment_variable.c)
+   * refuses to work without $CUBRID and prints to stderr on every miss.  A fuzz
+   * target must not depend on an installed tree, so give it a private one when
+   * the caller has not.  Pointing CUBRID at a real install only improves the
+   * text of error messages; nothing this target reaches loads from it. */
+  if (getenv ("CUBRID") == NULL)
     {
-      abort ();
+      char root[] = "/tmp/cubrid-fuzz-root-XXXXXX";
+      if (mkdtemp (root) == NULL)
+	{
+	  abort ();
+	}
+      setenv ("CUBRID", root, 1);
     }
+
+  /* Collation tables first: the string domains read them while decoding, and
+   * tp_init () builds domains that refer to them.
+   *
+   * lang_init_builtin () rather than lang_init (): the latter also calls
+   * init_user_locales (), which reads $CUBRID/locales, so the target would
+   * depend on an installed tree and would decode differently depending on what
+   * that tree contains.  A fuzz target has to be hermetic -- the same input has
+   * to mean the same thing on every machine -- and the built-in collations are
+   * what the domain system needs. */
+  lang_init_builtin ();
+
   if (tp_init () != NO_ERROR)
     {
       abort ();

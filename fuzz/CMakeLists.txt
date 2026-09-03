@@ -24,6 +24,15 @@ project(Fuzz)
 
 string(REPLACE ";" "," FUZZ_SANITIZERS_CSV "${FUZZ_SANITIZERS}")
 
+# src/storage/bestspace.cpp leaves a call to the generic __atomic_compare_exchange
+# in libcubrid.  GCC links libatomic implicitly, clang does not, so the fuzz
+# executables have to ask for it.  Scoped here rather than on the cubrid target
+# so the ordinary GCC build is untouched.
+set(FUZZ_EXTRA_LIBS "")
+if(UNIX AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  list(APPEND FUZZ_EXTRA_LIBS atomic)
+endif()
+
 set(FUZZ_INCLUDES
   ${EP_INCLUDES}
   ${CMAKE_SOURCE_DIR}/src/base
@@ -54,4 +63,5 @@ target_link_options(fuzz_record PRIVATE
 
 target_link_libraries(fuzz_record LINK_PRIVATE
   cubrid
+  ${FUZZ_EXTRA_LIBS}
   )

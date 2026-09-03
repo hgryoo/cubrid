@@ -88,12 +88,6 @@ if(ENABLE_FUZZING)
   endif()
 
   string(REPLACE ";" "," FUZZ_SANITIZERS_CSV "${FUZZ_SANITIZERS}")
-  # The whole engine is instrumented, not only the harness: libFuzzer needs
-  # coverage counters in the code under test. Linking the fuzzer runtime itself
-  # is left to the fuzz targets (fuzzer-no-link here, fuzzer there).
-  set(FUZZ_INSTRUMENT_FLAGS "-fsanitize=fuzzer-no-link,${FUZZ_SANITIZERS_CSV} -fno-omit-frame-pointer -g")
-  set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} ${FUZZ_INSTRUMENT_FLAGS}")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${FUZZ_INSTRUMENT_FLAGS}")
   message(STATUS "ENABLE_FUZZING=ON  sanitizers=${FUZZ_SANITIZERS_CSV}  compiler=${CMAKE_C_COMPILER_ID}")
 endif()
 
@@ -636,6 +630,25 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux")
   else()
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wformat -Wformat-security -Werror=format-security -Wwrite-strings -Wno-cast-qual -Wmissing-prototypes -Wredundant-decls -Wclobbered -Wextra -Wno-unused -Wno-unused-result -pthread")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wformat -Wformat-security -Werror=format-security -Wwrite-strings -Wno-cast-qual -Wredundant-decls -Wclobbered -Wextra -Wno-unused -Wno-unused-result -Wno-unused-parameter -pthread")
+  endif()
+
+  if(ENABLE_FUZZING)
+    # Appended *after* the warning block above on purpose: that block puts
+    # -Werror in CMAKE_C_FLAGS for the release configurations, and a later
+    # -Wno-error is what turns it back off.
+    #
+    # The whole engine is instrumented, not only the harness -- libFuzzer needs
+    # coverage counters in the code under test.  Linking the fuzzer runtime
+    # itself is left to the fuzz targets (fuzzer-no-link here, fuzzer there).
+    #
+    # The two warning relaxations are about the tree being GCC-shaped, not
+    # about the fuzz code: -Wno-unknown-warning-option for GCC-only flags such
+    # as -Wclobbered, and -Wno-error because clang reports diagnostics GCC does
+    # not (cubrid-cci trips several).  Neither changes the ordinary GCC build.
+    set(FUZZ_INSTRUMENT_FLAGS
+      "-fsanitize=fuzzer-no-link,${FUZZ_SANITIZERS_CSV} -fno-omit-frame-pointer -g -Wno-unknown-warning-option -Wno-error")
+    set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} ${FUZZ_INSTRUMENT_FLAGS}")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${FUZZ_INSTRUMENT_FLAGS}")
   endif()
  
   if(SIZEOF_OFF64_T)
