@@ -158,9 +158,12 @@ is a child process the engine forks during boot (`pl_sr.cpp:365`, from a
 needs it, and it costs a second of every boot. It is *not* what caused the hang
 above -- that was measured, and the hang survived turning it off.
 
-**Each run needs a fresh database.** The spike creates heaps and never drops
-them, so the *before* half of its oracle fails on the leftovers from the run
-before. That is a property of the spike, not of the engine.
+**A database is reusable across runs.** One iteration is a heap's whole life --
+create, fill, then drop or roll back -- so the workload returns the database to
+where it found it and the *before* half of the oracle passes on the second and
+third run of the same database. That was not true of the first version, which
+created heaps and never dropped them; every run then needed a database of its
+own, and the leftovers were what made the oracle fail.
 
 ### Triage, and the baselines
 
@@ -190,8 +193,15 @@ ten-iteration run:
 
 | File | Rules | A clean run with it |
 |---|---:|---|
-| `tsan-baseline.supp` | 38 | 179 reports -> 0 |
+| `tsan-baseline.supp` | 39 | 219 reports -> 0 |
 | `ubsan-baseline.supp` | 3 | 10 reports -> 0 |
+
+The 39th rule is what a baseline is *for*. Widening the workload to drop the
+heaps it creates reached `vacuum_add_dropped_file ()`, which the create-only
+workload never did, and TSan reported a race on `tdes->interrupt`
+(`log_tran_table.c:2967`) 40 times. Against the 179 the old workload already
+produced, that would have been invisible; against a silent baseline it was the
+only thing on the page. It is now rule 39, unadjudicated like the other 38.
 
 ```sh
 DEBUGINFOD_URLS= TSAN_OPTIONS="halt_on_error=0 history_size=4 \

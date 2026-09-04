@@ -42,6 +42,7 @@
 #include "error_manager.h"
 #include "fault_injection.h"
 #include "file_manager.h"
+#include "heap_file.h"
 #include "log_impl.h"
 #include "memory_monitor_sr.hpp"
 #include "message_catalog.h"
@@ -55,8 +56,13 @@
 
 namespace
 {
-  std::atomic<int> g_created { 0 };
+  std::atomic<int> g_created { 0 };     /* heaps created */
+  std::atomic<int> g_dropped { 0 };     /* heaps dropped again */
+  std::atomic<int> g_inserted { 0 };    /* records inserted */
+  std::atomic<int> g_overflow { 0 };    /* of those, ones too big for a page */
+  std::atomic<int> g_aborted { 0 };     /* transactions rolled back on purpose */
   std::atomic<int> g_failed { 0 };
+  std::atomic<bool> g_said_insert_error { false };
 
   double
   now_sec ()
@@ -122,6 +128,85 @@ namespace
     return ok;
   }
 
+  /* Record sizes, chosen so the set straddles the page.  The last one is past
+   * heap_is_big_length (), so heap_insert_logical () promotes it to an overflow
+   * file instead of a home page -- a different set of latches, and the reason
+   * for having more than one size at all. */
+  const int RECORD_SIZES[] = { 64, 512, 4096, 20000 };
+  const int RECORDS_PER_HEAP = 8;
+
+  /* Fill a heap.  Nothing here is derived from fuzzer input: Tier 1 varies the
+   * *interleaving*, not the arguments (§7.2 -- the OS saturates the ordering
+   * space on its own), so records are well-formed by construction and a finding
+   * is about concurrency rather than about a malformed argument.
+   *
+   * The shape is the one boot_sr.c:5057 uses for the same kind of heap -- a
+   * heap with no user class behind it: the root class OID, a NULL scancache,
+   * REC_HOME, and a leading int of zero for the representation id and flag
+   * bits.  That int is zero for the reason tde.c:202 spells out: vacuum reads
+   * it while undoing, so it cannot be left as whatever the allocator returned.
+   *
+   * The class OID is the *root* class rather than NULL, and that is not
+   * cosmetic.  tde.c:210 does pass NULL, but heap_insert_logical () takes an
+   * unconditional IX lock on context->class_oid (heap_file.c:23389) and
+   * lock_internal_perform_lock_object () asserts a lock target is not the null
+   * OID -- tde gets away with it only because it runs at createdb time.  The
+   * root class is lockable and MVCC treats it exactly as it treats NULL
+   * (mvcc_is_mvcc_disabled_class (): 'OID_ISNULL || OID_IS_ROOTOID'), so the
+   * record path is unchanged and the lock is a real one.
+   *
+   * This was the second time §5's hazard bit this harness in one session, and
+   * both times the oracle rather than a reviewer is what caught it. */
+  int
+  fill_heap (THREAD_ENTRY * te, HFID * hfid, int seed)
+  {
+    int inserted = 0;
+
+    for (int k = 0; k < RECORDS_PER_HEAP; k++)
+      {
+	const int size = RECORD_SIZES[(seed + k) % (int) (sizeof (RECORD_SIZES) / sizeof (RECORD_SIZES[0]))];
+	char *buf = (char *) malloc (size);
+	if (buf == NULL)
+	  {
+	    g_failed++;
+	    break;
+	  }
+	memset (buf, (char) ('a' + (k % 26)), size);
+	int repid_and_flag_bits = 0;
+	memcpy (buf, &repid_and_flag_bits, sizeof (int));
+
+	RECDES recdes;
+	recdes.length = recdes.area_size = size;
+	recdes.type = REC_HOME;
+	recdes.data = buf;
+
+	HEAP_OPERATION_CONTEXT ctx;
+	heap_create_insert_context (&ctx, hfid, oid_Root_class_oid, &recdes, NULL);
+	if (heap_insert_logical (te, &ctx, NULL) == NO_ERROR)
+	  {
+	    inserted++;
+	    if (size > 16 * 1024)
+	      {
+		g_overflow++;
+	      }
+	  }
+	else
+	  {
+	    g_failed++;
+	    /* Say why, once.  A silent failure count is how 320 failed inserts
+	     * looked like a working workload for one whole run. */
+	    bool expected = false;
+	    if (g_said_insert_error.compare_exchange_strong (expected, true))
+	      {
+		fprintf (stderr, "insert failed (size %d): %s\n", size, er_msg ()? er_msg () : "no message");
+	      }
+	  }
+	free (buf);
+      }
+
+    return inserted;
+  }
+
   void
   worker (int id, int iterations, int hold_seconds)
   {
@@ -137,9 +222,24 @@ namespace
      * it (entry_manager::create_context, thread_entry_task.cpp) and the engine
      * asserts on the pieces: rmutex_lock () wants the id registered, and
      * thread_suspend_timeout_wakeup_and_unlock_entry () wants m_status == TS_RUN.
-     * A harness thread has to reproduce that setup rather than invent one. */
+     * A harness thread has to reproduce that setup rather than invent one.
+     *
+     * TT_RECOVERY, not TT_WORKER.  TT_WORKER means a thread serving a client
+     * request, and the engine reads that as a promise: log_tran_table.c:2896
+     * says it outright -- "Only TT_WORKER threads use pl_session" -- and
+     * cubpl::get_session () (pl_session.cpp:50) returns quietly for any other
+     * type but goes looking for thread_p->conn_entry->session_p for this one.
+     * There is no conn_entry here, because css_init () is never called, so
+     * every log_sysop_start () set ER_SES_SESSION_EXPIRED as a side effect and
+     * heap_insert_logical () returned it.  Every insert failed that way.
+     *
+     * TT_RECOVERY is what the engine's own connection-less worker pool uses
+     * for exactly this shape (log_recovery_redo_parallel.cpp:608, through
+     * system_worker_entry_manager), and nothing branches on it beyond a
+     * perfmon bucket and a name string.  The transaction index it would also
+     * set is left alone: this harness assigns a real one per iteration. */
     te->register_id ();
-    te->type = TT_WORKER;
+    te->type = TT_RECOVERY;
     te->m_status = cubthread::entry::status::TS_RUN;
     te->shutdown = false;
     te->m_px_orig_thread_entry = NULL;
@@ -172,7 +272,13 @@ namespace
 	    break;
 	  }
 
-	/* xheap_create (), not file_create_heap ().  The latter has exactly one
+	/* One iteration is a heap's whole life: create it, fill it, drop it.
+	 * Dropping is what makes a database reusable between runs -- an earlier
+	 * version of this spike created heaps and never dropped them, so the
+	 * *before* half of the oracle failed on the leftovers and every run
+	 * needed a database of its own.
+	 *
+	 * xheap_create (), not file_create_heap ().  The latter has exactly one
 	 * real caller -- heap_file.c:4793, inside heap creation -- and calling it
 	 * alone produces a file with no sticky first page, which is a heap only
 	 * halfway.  CHECKDB_HEAP_CHECK_ALLHEAPS then trips
@@ -185,15 +291,43 @@ namespace
 	HFID_SET_NULL (&hfid);
 
 	int rc = xheap_create (te, &hfid, &class_oid, false);
-	if (rc == NO_ERROR)
-	  {
-	    g_created++;
-	    xtran_server_commit (te, false);
-	  }
-	else
+	if (rc != NO_ERROR)
 	  {
 	    g_failed++;
 	    (void) xtran_server_abort (te);
+	    logtb_free_tran_index (te, tran_index);
+	    continue;
+	  }
+
+	g_created++;
+	g_inserted += fill_heap (te, &hfid, id + i);
+
+	/* Every fourth iteration rolls back instead, so undo runs against a heap
+	 * another thread is concurrently creating and filling.  Abort also
+	 * undoes the create, so there is nothing left to drop on that path. */
+	if (i % 4 == 3)
+	  {
+	    (void) xtran_server_abort (te);
+	    g_aborted++;
+	  }
+	else
+	  {
+	    xtran_server_commit (te, false);
+
+	    /* The drop is its own transaction, the way DROP TABLE is its own
+	     * statement.  Committing ends the transaction but keeps the index,
+	     * so the next call starts a new one on it -- which is how a client
+	     * connection issues one statement after another. */
+	    if (xheap_destroy (te, &hfid, &class_oid) == NO_ERROR)
+	      {
+		g_dropped++;
+		xtran_server_commit (te, false);
+	      }
+	    else
+	      {
+		g_failed++;
+		(void) xtran_server_abort (te);
+	      }
 	  }
 
 	logtb_free_tran_index (te, tran_index);
@@ -276,6 +410,9 @@ main (int argc, char **argv)
     }
 
   printf ("heaps created  %d\n", g_created.load ());
+  printf ("heaps dropped  %d\n", g_dropped.load ());
+  printf ("records        %d  (%d overflow)\n", g_inserted.load (), g_overflow.load ());
+  printf ("aborted trans  %d\n", g_aborted.load ());
   printf ("failures       %d\n", g_failed.load ());
 
   printf ("oracle, after:\n");
