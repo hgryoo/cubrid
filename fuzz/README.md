@@ -193,15 +193,28 @@ ten-iteration run:
 
 | File | Rules | A clean run with it |
 |---|---:|---|
-| `tsan-baseline.supp` | 39 | 219 reports -> 0 |
+| `tsan-baseline.supp` | 42 | 222 reports -> 0 |
 | `ubsan-baseline.supp` | 3 | 10 reports -> 0 |
 
-The 39th rule is what a baseline is *for*. Widening the workload to drop the
-heaps it creates reached `vacuum_add_dropped_file ()`, which the create-only
-workload never did, and TSan reported a race on `tdes->interrupt`
-(`log_tran_table.c:2967`) 40 times. Against the 179 the old workload already
-produced, that would have been invisible; against a silent baseline it was the
-only thing on the page. It is now rule 39, unadjudicated like the other 38.
+Rules 39-42 are what a baseline is *for*, and each arrived the same way: the
+harness reached code it had not reached before, and against a silent baseline
+the new report was the only thing on the page.
+
+- Dropping the heaps it creates reached `vacuum_add_dropped_file ()`, and TSan
+  reported a race on `tdes->interrupt` (`log_tran_table.c:2967`) 40 times.
+  Against the 179 the create-only workload already produced, that would have
+  been invisible.
+- Giving the harness threads real sessions reached the session layer, and TSan
+  reported three more — two data races and a lock-order-inversion, all inside
+  `session_state_verify_ref_count ()` and `session_set_conn_entry_data ()`. The
+  verifier is `#if !defined (NDEBUG)` only, and the "cycle" is one thread's
+  lock and unlock of the same hand-rolled `sync_rwlock`.
+
+**A lock-order-inversion rule needs care that a race rule does not.** TSan's
+suppression type is `deadlock`, and the top engine frame for such a report is
+always the locking primitive — so keying the rule on it (`deadlock:rwlock_read_lock`)
+would silence *every* future deadlock report in the engine. The tool skips lock
+primitives for this report kind and keys on the caller instead.
 
 ```sh
 DEBUGINFOD_URLS= TSAN_OPTIONS="halt_on_error=0 history_size=4 \

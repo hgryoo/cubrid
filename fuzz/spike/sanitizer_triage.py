@@ -40,6 +40,14 @@ FRAME = re.compile (r"^\s+#(\d+) (.+?) (\S+?):(\d+)(?::\d+)? \(")
 TSAN_WARNING = re.compile (r"^WARNING: ThreadSanitizer: (.+?) \(pid=")
 TSAN_SUMMARY = re.compile (r"^SUMMARY: ThreadSanitizer: (.+?) (?:\(|/)")
 
+# For a lock-order-inversion the top engine frame is always the locking
+# primitive itself, which identifies nothing -- every rwlock in the engine goes
+# through it, so a rule keyed on it would silence every future deadlock report.
+# Skip the primitives and take the caller.
+TSAN_LOCK_PRIMITIVE = re.compile (
+  r"\b(rwlock_(read|write)_(lock|unlock)|rmutex_(lock|unlock)|csect_[a-z_]*(lock|enter|exit)"
+  r"|pthread_(mutex|rwlock)_[a-z]+)\b")
+
 
 def tsan_reports (lines):
   """Reports are fenced by ================== lines; anything outside is the
@@ -68,9 +76,12 @@ def tsan_classify (report):
 
   # The top frame that is engine code.  Everything above it is scaffolding, and
   # everything below it is context.
+  skip_locks = "lock-order-inversion" in kind
   for ln in report:
     m = FRAME.match (ln)
     if not m or TSAN_NOISE.search (ln):
+      continue
+    if skip_locks and TSAN_LOCK_PRIMITIVE.search (ln):
       continue
     func, path, line = m.group (2), m.group (3), m.group (4)
     func = func.split ("(")[0].strip ()
@@ -84,7 +95,13 @@ def tsan_rule (kind, where, func):
   template instantiation's demangled name carries argument types and does not
   match reliably; fall back to the file for those."""
   pat = where.split (":")[0] if "<" in func else func
-  return ("race" if "race" in kind else "mutex") + ":" + pat
+  if "race" in kind:
+    rule = "race"
+  elif "lock-order-inversion" in kind:
+    rule = "deadlock"
+  else:
+    rule = "mutex"
+  return rule + ":" + pat
 
 
 # --------------------------------------------------------------- UBSan

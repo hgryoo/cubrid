@@ -42,6 +42,8 @@
 #include "error_manager.h"
 #include "fault_injection.h"
 #include "file_manager.h"
+#include "connection_sr.h"
+#include "session.h"
 #include "heap_file.h"
 #include "log_impl.h"
 #include "memory_monitor_sr.hpp"
@@ -224,28 +226,67 @@ namespace
      * thread_suspend_timeout_wakeup_and_unlock_entry () wants m_status == TS_RUN.
      * A harness thread has to reproduce that setup rather than invent one.
      *
-     * TT_RECOVERY, not TT_WORKER.  TT_WORKER means a thread serving a client
-     * request, and the engine reads that as a promise: log_tran_table.c:2896
-     * says it outright -- "Only TT_WORKER threads use pl_session" -- and
-     * cubpl::get_session () (pl_session.cpp:50) returns quietly for any other
-     * type but goes looking for thread_p->conn_entry->session_p for this one.
-     * There is no conn_entry here, because css_init () is never called, so
-     * every log_sysop_start () set ER_SES_SESSION_EXPIRED as a side effect and
-     * heap_insert_logical () returned it.  Every insert failed that way.
+     * TT_WORKER is not a label, it is a promise.  log_tran_table.c:2896 states
+     * it -- "Only TT_WORKER threads use pl_session" -- and cubpl::get_session ()
+     * (pl_session.cpp:50) returns quietly for every other type while going to
+     * thread_p->conn_entry->session_p for this one.  log_tdes::lock_topop ()
+     * reaches for the PL session unconditionally, so a TT_WORKER with no
+     * connection entry makes every log_sysop_start () set
+     * ER_SES_SESSION_EXPIRED as a side effect; heap_insert_logical () returns
+     * it, and every insert fails for a reason unrelated to what it was asked
+     * to do.
      *
-     * TT_RECOVERY is what the engine's own connection-less worker pool uses
-     * for exactly this shape (log_recovery_redo_parallel.cpp:608, through
-     * system_worker_entry_manager), and nothing branches on it beyond a
-     * perfmon bucket and a name string.  The transaction index it would also
-     * set is left alone: this harness assigns a real one per iteration. */
+     * The fix is to keep the promise rather than to pick a type that dodges it.
+     * Borrowing TT_RECOVERY would compile and run -- nothing branches on it
+     * today -- but it names startup parallel redo (log_recovery.c,
+     * log_recovery_redo_parallel.cpp), and this harness runs against a booted
+     * server doing ordinary work.  A type that is wrong but currently harmless
+     * is a defect waiting for the first branch on it.
+     *
+     * So the thread gets a real connection entry and a real session.
+     * css_init_conn_list () runs inside boot_restart_server (boot_sr.c:2164),
+     * so the CSS_CONN_ENTRY array exists here even though no listener does, and
+     * css_initialize_conn () only stores the fd -- it never touches the socket
+     * -- so INVALID_SOCKET yields a genuine connection entry with no
+     * connection behind it.  session_state_create () then builds the session,
+     * its PL session and its private LRU, and attaches all of it through
+     * session_set_conn_entry_data (). */
     te->register_id ();
-    te->type = TT_RECOVERY;
+    te->type = TT_WORKER;
     te->m_status = cubthread::entry::status::TS_RUN;
     te->shutdown = false;
     te->m_px_orig_thread_entry = NULL;
     te->m_uses_px_stats = false;
     te->m_px_stats = NULL;
     te->get_error_context ().register_thread_local ();
+
+    /* register_id () first, and not as a matter of taste: the connection list
+     * is guarded by an rmutex, and rmutex_lock () asserts the caller's thread id
+     * is registered (critical_section.c:2175).  Taking a connection before
+     * registering trips that assert. */
+    CSS_CONN_ENTRY *conn = css_make_conn (INVALID_SOCKET);
+    if (conn == NULL)
+      {
+	fprintf (stderr, "[t%d] no connection entry\n", id);
+	g_failed++;
+	te->unregister_id ();
+	cubthread::get_manager ()->retire_entry (*te);
+	return;
+      }
+    /* css_make_conn () takes the entry off the free list; the server puts it on
+     * the active list once the connection is accepted
+     * (master_connector.cpp:1141).  Skipping that is not cosmetic either:
+     * session_state_verify_ref_count () counts references by walking the active
+     * list and asserts outright when it is empty (session.c:3086). */
+    css_insert_into_active_conn_list (conn);
+    te->conn_entry = conn;
+
+    SESSION_ID session_id = DB_EMPTY_SESSION;
+    if (session_state_create (te, &session_id) != NO_ERROR)
+      {
+	fprintf (stderr, "[t%d] no session: %s\n", id, er_msg ()? er_msg () : "");
+	g_failed++;
+      }
 
     /* Thread 0 is the one that holds the volume header open.  The others are
      * what run into it.  FI state is per entry, so this arms only this thread. */
@@ -271,6 +312,9 @@ namespace
 	    g_failed++;
 	    break;
 	  }
+	/* A real request puts its transaction index on the connection, which is
+	 * how css_find_conn_by_tran_index () and the interrupt path find it. */
+	conn->set_tran_index (tran_index);
 
 	/* One iteration is a heap's whole life: create it, fill it, drop it.
 	 * Dropping is what makes a database reusable between runs -- an earlier
@@ -330,11 +374,21 @@ namespace
 	      }
 	  }
 
+	conn->set_tran_index (NULL_TRAN_INDEX);
 	logtb_free_tran_index (te, tran_index);
       }
 
+    if (session_id != DB_EMPTY_SESSION)
+      {
+	(void) session_state_destroy (te, session_id, false);
+      }
     te->get_error_context ().deregister_thread_local ();
     te->end_resource_tracks ();
+    te->conn_entry = NULL;
+    css_prepare_shutdown_conn (conn);
+    css_free_conn (conn);
+    /* unregister_id () last, for the same reason register_id () was first:
+     * css_free_conn () takes the connection-list rmutex. */
     te->unregister_id ();
     cubthread::get_manager ()->retire_entry (*te);
   }

@@ -121,3 +121,12 @@ race:dwb_get_next_block_for_flush
 
 # 1x  use of an invalid mutex (e.g. uninitialized or destroyed)  at double_write_buffer.cpp:670  (dwb_signal_waiting_threads)
 mutex:dwb_signal_waiting_threads
+
+# 1x  data race  at session.c:3086  (session_state_verify_ref_count)
+race:session_state_verify_ref_count
+
+# 1x  lock-order-inversion (potential deadlock)  at session.c:3092  (session_state_verify_ref_count)
+deadlock:session_state_verify_ref_count
+
+# 1x  data race  at session.c:2798  (session_set_conn_entry_data)
+race:session_set_conn_entry_data
