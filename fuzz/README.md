@@ -186,6 +186,34 @@ an oracle failure, or any sanitizer report the baselines do not already cover �
 and prints that session's triage table and log path. Everything else is silence,
 which is what the baselines are for.
 
+**Running out of room is not a finding, and the runner says so differently.**
+The first 32-session soak ended with the filesystem full and reported it as
+though the engine had failed, which is how an unattended runner becomes a boy
+who cried wolf. Three things now separate the two:
+
+| | |
+|---|---|
+| exit 0 | clean |
+| exit 1 | a finding — read the triage table |
+| exit 2 | out of room, or the database outgrew its ceiling. Not a finding. |
+| exit 3 (harness) | the storage layer refused for want of space; the runner turns this into exit 2 |
+
+The harness classifies the storage layer's own out-of-space errors
+(`ER_IO_FORMAT_FAIL`, `ER_IO_FORMAT_OUT_OF_SPACE`, `ER_BO_CANNOT_CREATE_VOL`
+and their siblings) into a separate `out of room` count, and the runner checks
+free space and database size *before* each session rather than discovering the
+problem afterwards:
+
+```sh
+SOAK_MIN_FREE_MB=4096    # stop with this much still free (default)
+SOAK_MAX_DB_MB=16384     # stop if the database outgrows this (default)
+```
+
+The ceiling is not only a safety belt. A database that grows without bound
+means the workload is not reclaiming what it takes, and the run past that point
+measures the disk rather than the engine — which is worth stopping on for its
+own sake.
+
 ### Triage, and the baselines
 
 Every Tier 1 run reports something, in both build shapes: TSan a few hundred

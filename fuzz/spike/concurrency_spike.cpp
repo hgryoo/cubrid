@@ -64,7 +64,30 @@ namespace
   std::atomic<int> g_overflow { 0 };    /* of those, ones too big for a page */
   std::atomic<int> g_aborted { 0 };     /* transactions rolled back on purpose */
   std::atomic<int> g_failed { 0 };
+  std::atomic<int> g_exhausted { 0 };    /* operations the *machine* refused, not the engine */
   std::atomic<bool> g_said_insert_error { false };
+
+  /* An unattended soak has to tell "the engine failed" from "this machine ran
+   * out of room", because only the first is a finding and the second will
+   * happen eventually on any box.  These are the codes the storage layer raises
+   * when it cannot get space -- and they are the reason a 32-session soak
+   * stopped and reported an environment failure as though it were a defect. */
+  bool
+  is_resource_exhaustion (int errid)
+  {
+    switch (errid)
+      {
+      case ER_IO_FORMAT_FAIL:
+      case ER_IO_FORMAT_OUT_OF_SPACE:
+      case ER_IO_WRITE_OUT_OF_SPACE:
+      case ER_IO_EXPAND_OUT_OF_SPACE:
+      case ER_BO_CANNOT_CREATE_VOL:
+      case ER_BO_MAXNUM_VOLS_HAS_BEEN_EXCEEDED:
+	return true;
+      default:
+	return false;
+      }
+  }
 
   double
   now_sec ()
@@ -194,13 +217,23 @@ namespace
 	  }
 	else
 	  {
-	    g_failed++;
+	    const int errid = er_errid ();
+	    if (is_resource_exhaustion (errid))
+	      {
+		g_exhausted++;
+	      }
+	    else
+	      {
+		g_failed++;
+	      }
 	    /* Say why, once.  A silent failure count is how 320 failed inserts
 	     * looked like a working workload for one whole run. */
 	    bool expected = false;
 	    if (g_said_insert_error.compare_exchange_strong (expected, true))
 	      {
-		fprintf (stderr, "insert failed (size %d): %s\n", size, er_msg ()? er_msg () : "no message");
+		fprintf (stderr, "insert %s (size %d, err %d): %s\n",
+			 is_resource_exhaustion (errid) ? "hit the machine's limits" : "failed",
+			 size, errid, er_msg ()? er_msg () : "no message");
 	      }
 	  }
 	free (buf);
@@ -337,8 +370,16 @@ namespace
 	int rc = xheap_create (te, &hfid, &class_oid, false);
 	if (rc != NO_ERROR)
 	  {
-	    g_failed++;
+	    if (is_resource_exhaustion (er_errid ()))
+	      {
+		g_exhausted++;
+	      }
+	    else
+	      {
+		g_failed++;
+	      }
 	    (void) xtran_server_abort (te);
+	    conn->set_tran_index (NULL_TRAN_INDEX);
 	    logtb_free_tran_index (te, tran_index);
 	    continue;
 	  }
@@ -468,6 +509,7 @@ main (int argc, char **argv)
   printf ("records        %d  (%d overflow)\n", g_inserted.load (), g_overflow.load ());
   printf ("aborted trans  %d\n", g_aborted.load ());
   printf ("failures       %d\n", g_failed.load ());
+  printf ("out of room    %d\n", g_exhausted.load ());
 
   printf ("oracle, after:\n");
   bool clean_after = run_checks (thread_p, "after", full);
@@ -479,5 +521,12 @@ main (int argc, char **argv)
   bool ok = xboot_shutdown_server (thread_p, ER_ALL_FINAL);
   cubthread::finalize ();
   printf ("shutdown ok=%d\n", (int) ok);
-  return (g_failed.load () == 0 && ok && clean_after) ? 0 : 1;
+
+  /* Three outcomes, not two.  1 is a finding; 3 says this machine ran out of
+   * room, which is the caller's problem to solve and nobody's defect. */
+  if (g_failed.load () != 0 || !ok || !clean_after)
+    {
+      return 1;
+    }
+  return (g_exhausted.load () != 0) ? 3 : 0;
 }

@@ -18,9 +18,16 @@
 #   ./soak.sh ./concurrency_spike fuzzdb 4 50 60
 #   ./soak.sh ./build_fuzz_tsan/fuzz/concurrency_spike fuzzdb 4 20 120
 #
-# Stops on: a non-zero exit, an oracle failure, or any sanitizer report the
-# baselines do not already cover.  Each of those is a finding; everything else
-# is silence, which is the point of the baselines.
+# Stops on a finding: a non-zero exit, an oracle failure, or any sanitizer
+# report the baselines do not already cover.
+#
+# It also stops when the *machine* runs out of room, and says so differently.
+# That distinction is not pedantry -- the first 32-session soak ended with the
+# filesystem full and reported it as though the engine had failed, which is how
+# an unattended runner becomes a boy who cried wolf.  The harness classifies the
+# storage layer's out-of-space errors and exits 3 for them; this watches free
+# space and the database's own growth besides, because the run should stop
+# before it fills a disk rather than after.
 #
 set -uo pipefail
 
@@ -30,6 +37,14 @@ db="${2:?need a database name}"
 threads="${3:-4}"
 iters="${4:-50}"
 minutes="${5:-60}"
+
+# Stop with this much room still free.  A soak that fills a shared disk has done
+# more harm than the defect it was looking for.
+min_free_mb="${SOAK_MIN_FREE_MB:-4096}"
+# A database that grows without bound is itself worth stopping on: it is either
+# a leak or a workload that never reclaims, and either way the run past that
+# point measures the disk rather than the engine.
+max_db_mb="${SOAK_MAX_DB_MB:-16384}"
 
 [ -x "$bin" ] || { echo "no such binary: $bin" >&2; exit 2; }
 [ -n "${CUBRID:-}" ] || { echo "\$CUBRID is not set" >&2; exit 2; }
@@ -62,7 +77,31 @@ printf 'soak  %s  db=%s  threads=%d  iters=%d  for %d min\n' \
        "$(basename "$bin")" "$db" "$threads" "$iters" "$minutes"
 printf 'logs  %s\n\n' "$out"
 
+dbdir="${CUBRID_DATABASES:-$CUBRID/databases}"
+
+room () {   # free MB on the filesystem holding the databases
+  df -Pm "$dbdir" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+dbsize () { # MB the database occupies, its extra volumes included
+  du -sm "$dbdir"/"$db"* 2>/dev/null | awk '{t+=$1} END {print t+0}'
+}
+
 while [ "$(date +%s)" -lt "$deadline" ]; do
+  free=$(room); used=$(dbsize)
+  if [ -n "$free" ] && [ "$free" -lt "$min_free_mb" ]; then
+    echo; echo
+    echo "=== stopping: ${free} MB free, below the ${min_free_mb} MB floor ==="
+    echo "Not a finding.  Free space or lower SOAK_MIN_FREE_MB and run again."
+    exit 2
+  fi
+  if [ "$used" -gt "$max_db_mb" ]; then
+    echo; echo
+    echo "=== stopping: $db is ${used} MB, past the ${max_db_mb} MB ceiling ==="
+    echo "Not a finding, but worth a look: the workload is not reclaiming what"
+    echo "it takes.  Recreate the database, or raise SOAK_MAX_DB_MB."
+    exit 2
+  fi
+
   session=$(( session + 1 ))
   log="$out/session-$session.log"
   "$bin" "$db" "$threads" "$iters" 0 > "$log" 2>&1
@@ -75,15 +114,26 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   heaps=$(( heaps + ${h:-0} ))
   records=$(( records + ${r:-0} ))
 
-  printf "  session %-5d  heaps %-8d records %-9d  %s left$eol" \
-         "$session" "$heaps" "$records" \
-         "$(date -u -d "@$(( deadline - $(date +%s) ))" +%Hh%Mm 2>/dev/null || echo '?')"
+  left=$(( deadline - $(date +%s) ))
+  [ "$left" -lt 0 ] && left=0
+  printf "  session %-5d  heaps %-8d records %-9d  db %5d MB  %02dh%02dm left$eol" \
+         "$session" "$heaps" "$records" "$used" "$(( left / 3600 ))" "$(( left % 3600 / 60 ))"
+
+  if [ "$rc" -eq 3 ] && [ "$new" -eq 0 ]; then
+    echo; echo
+    echo "=== session $session ran out of room ==="
+    grep -E '^(out of room|heaps|records|failures)' "$log"
+    echo "Not a finding: the harness classified the storage layer's own"
+    echo "out-of-space errors.  $(room) MB free, $db is $(dbsize) MB."
+    echo "full log: $log"
+    exit 2
+  fi
 
   if [ "$rc" -ne 0 ] || [ "$new" -ne 0 ] || grep -q '^FINDING' "$log"; then
     echo
     echo
     echo "=== session $session stopped the soak: exit=$rc, $new sanitizer report(s) ==="
-    grep -E '^(FINDING|  (before|after) |heaps|records|failures|shutdown)' "$log"
+    grep -E '^(FINDING|  (before|after) |heaps|records|failures|out of room|shutdown)' "$log"
     [ "$new" -ne 0 ] && "$here/sanitizer_triage.py" "$log"
     echo
     echo "full log: $log"
@@ -95,3 +145,4 @@ echo
 echo
 printf 'clean.  %d sessions, %d heaps, %d records, nothing the baselines did not cover.\n' \
        "$session" "$heaps" "$records"
+printf '        %s is %d MB, %d MB free.\n' "$db" "$(dbsize)" "$(room)"
