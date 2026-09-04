@@ -103,6 +103,93 @@ report a buffer overrun for every malformed input and say nothing about the
 decoder.  Real disk and network callers bound the `OR_BUF`, and that is the only
 shape in which an overrun is a defect rather than misuse.
 
+## Spikes
+
+`fuzz/spike/` holds measurement programs rather than fuzz targets: each one is a
+`main ()` that boots the engine in-process, does something, and prints numbers.
+They answer a design question and are then kept as the record of the answer.
+
+| Spike | Question | Answer |
+|---|---|---|
+| `server_boot_spike` | can `SERVER_MODE` boot in one process, with no listener? | yes — 15 threads, 1.22 s boot+shutdown |
+| `noise_floor_spike` | does the OS alone cover the ordering space? | yes — 24/24 permutations, near-uniform, with and without engine work |
+| `concurrency_spike` | Tier 1: concurrent storage work under sanitizers, with an oracle | see roadmap N66 §9.2 |
+| `reset_spike` | SA-mode state reset determinism | superseded — SA is single-threaded, out of scope |
+
+They are not CMake targets: they are single translation units linked against
+whatever `libcubrid.so` a build directory produced. `build.sh` reads the flags
+back out of that build's own `flags.make` rather than restating them, because a
+spike compiled with different defines than the library it links (`SERVER_MODE`,
+`_FILE_OFFSET_BITS`) sees different struct layouts and then fails in ways that
+look like engine defects.
+
+```sh
+./fuzz/spike/build.sh build_fuzz                        # -> build_fuzz/fuzz/
+./fuzz/spike/build.sh build_fuzz_tsan                   # TSan, same sources
+./fuzz/spike/build.sh build_fuzz . concurrency_spike    # one, into cwd
+```
+
+`reset_spike` is skipped by the default enumeration: it is `SA_MODE` and
+includes `dbi.h`, which `#error`s under `SERVER_MODE`. Name it explicitly to
+build it, against an SA build directory.
+
+### Running a spike
+
+A spike boots a real database, so it needs a real environment:
+
+```sh
+export CUBRID=$PWD/install.out CUBRID_DATABASES=$CUBRID/databases
+cubrid createdb --db-volume-size=64M --log-volume-size=64M fuzzdb en_US
+./build_fuzz/fuzz/concurrency_spike fuzzdb 4 10 0     # db threads iters hold_s
+```
+
+**`DEBUGINFOD_URLS=` must be set empty.** Without it the first sanitizer report
+hangs the whole process, with *zero* CPU time and no output: `llvm-symbolizer`
+does not find local debug info for a frame, falls back to fetching it over HTTP
+from `debuginfod.ubuntu.com`, and blocks in `curl_multi_poll` inside
+`getOrFindDebugBinary ()`. TSan holds its trace-part semaphore across
+symbolization, so every other thread stalls behind it in `TraceSwitchPartImpl`
+and the run is indistinguishable from a deadlock in the engine. `gdb` prompts
+about the same service; the symbolizer just waits.
+
+**`stored_procedure=no` in `cubrid.conf`, for a smaller reason.** The PL server
+is a child process the engine forks during boot (`pl_sr.cpp:365`, from a
+`pl-monitor` daemon that then `sleep (1)`s). The harness neither drives it nor
+needs it, and it costs a second of every boot. It is *not* what caused the hang
+above -- that was measured, and the hang survived turning it off.
+
+**Each run needs a fresh database.** The spike creates heaps and never drops
+them, so the *before* half of its oracle fails on the leftovers from the run
+before. That is a property of the spike, not of the engine.
+
+### Triage
+
+A Tier 1 run under TSan reports a few hundred warnings, most of them one finding
+seen from several threads. `tsan_triage.py` groups them by kind and by the top
+engine frame, which is the difference between a log and an oracle:
+
+```sh
+DEBUGINFOD_URLS= TSAN_OPTIONS="halt_on_error=0 history_size=4" \
+  ./build_fuzz_tsan/fuzz/concurrency_spike fuzzdb 4 10 0 > run.log 2>&1
+
+./fuzz/spike/tsan_triage.py run.log                     # 179 reports -> 49 rows
+./fuzz/spike/tsan_triage.py run.log --show page_buffer  # full text of one row
+./fuzz/spike/tsan_triage.py run.log --suppress > new.supp
+```
+
+`tsan-baseline.supp` is the 2026-09-04 baseline: 38 rules covering everything a
+clean four-thread run reports. **It is a baseline, not a verdict** -- no rule in
+it has been adjudicated, and CUBRID's page buffer and log append use hand-rolled
+atomics that TSan has no reason to trust. Its only job is to make the next run's
+*new* findings visible. Run with it:
+
+```sh
+TSAN_OPTIONS="suppressions=$PWD/fuzz/spike/tsan-baseline.supp ..." ...
+```
+
+TSan honours `#` only at the start of a line, so each rule's comment sits above
+it; a trailing comment becomes part of the pattern and silently matches nothing.
+
 ## What is not here yet
 
 The ladder this follows is in cubrid-testkit's `docs/ROADMAP.md` (§6a appendix):
