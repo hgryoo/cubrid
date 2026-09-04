@@ -16,6 +16,10 @@
 #   ./soak.sh <binary> <db> [threads] [iters] [minutes]
 #
 #   ./soak.sh ./concurrency_spike fuzzdb 4 50 60
+#
+# The database is recreated whenever it outgrows SOAK_MAX_DB_MB, so a soak runs
+# as long as it is given.  How often that happens is the growth rate, and it is
+# reported at the end.
 #   ./soak.sh ./build_fuzz_tsan/fuzz/concurrency_spike fuzzdb 4 20 120
 #
 # Stops on a finding: a non-zero exit, an oracle failure, or any sanitizer
@@ -41,10 +45,15 @@ minutes="${5:-60}"
 # Stop with this much room still free.  A soak that fills a shared disk has done
 # more harm than the defect it was looking for.
 min_free_mb="${SOAK_MIN_FREE_MB:-4096}"
-# A database that grows without bound is itself worth stopping on: it is either
-# a leak or a workload that never reclaims, and either way the run past that
-# point measures the disk rather than the engine.
-max_db_mb="${SOAK_MAX_DB_MB:-16384}"
+# A database that grows without bound would eventually end the soak, and this
+# workload does grow -- roughly 200 MB a session, because dropping a heap defers
+# the reclaim.  Past this size the run measures the disk rather than the engine,
+# so the database is recreated and the count reported: how often that happens
+# *is* the growth rate, which is worth knowing.  SOAK_RECYCLE=0 stops instead.
+max_db_mb="${SOAK_MAX_DB_MB:-8192}"
+recycle="${SOAK_RECYCLE:-1}"
+vol_size="${SOAK_DB_VOLUME_SIZE:-256M}"
+log_size="${SOAK_LOG_VOLUME_SIZE:-128M}"
 
 [ -x "$bin" ] || { echo "no such binary: $bin" >&2; exit 2; }
 [ -n "${CUBRID:-}" ] || { echo "\$CUBRID is not set" >&2; exit 2; }
@@ -85,6 +94,14 @@ room () {   # free MB on the filesystem holding the databases
 dbsize () { # MB the database occupies, its extra volumes included
   du -sm "$dbdir"/"$db"* 2>/dev/null | awk '{t+=$1} END {print t+0}'
 }
+recreate () {
+  ( cd "$dbdir" \
+    && cubrid deletedb "$db" \
+    && cubrid createdb --db-volume-size="$vol_size" --log-volume-size="$log_size" "$db" en_US
+  ) >/dev/null 2>&1
+}
+
+recycles=0
 
 while [ "$(date +%s)" -lt "$deadline" ]; do
   free=$(room); used=$(dbsize)
@@ -95,11 +112,20 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     exit 2
   fi
   if [ "$used" -gt "$max_db_mb" ]; then
-    echo; echo
-    echo "=== stopping: $db is ${used} MB, past the ${max_db_mb} MB ceiling ==="
-    echo "Not a finding, but worth a look: the workload is not reclaiming what"
-    echo "it takes.  Recreate the database, or raise SOAK_MAX_DB_MB."
-    exit 2
+    if [ "$recycle" = 0 ]; then
+      echo; echo
+      echo "=== stopping: $db is ${used} MB, past the ${max_db_mb} MB ceiling ==="
+      echo "Not a finding, but worth a look: the workload is not reclaiming what"
+      echo "it takes.  Recreate the database, or raise SOAK_MAX_DB_MB."
+      exit 2
+    fi
+    if ! recreate; then
+      echo; echo
+      echo "=== stopping: could not recreate $db (needs cubrid on PATH) ==="
+      exit 2
+    fi
+    recycles=$(( recycles + 1 ))
+    used=$(dbsize)
   fi
 
   session=$(( session + 1 ))
@@ -145,4 +171,5 @@ echo
 echo
 printf 'clean.  %d sessions, %d heaps, %d records, nothing the baselines did not cover.\n' \
        "$session" "$heaps" "$records"
-printf '        %s is %d MB, %d MB free.\n' "$db" "$(dbsize)" "$(room)"
+printf '        %s is %d MB, %d MB free, recreated %d time(s).\n' \
+       "$db" "$(dbsize)" "$(room)" "$recycles"

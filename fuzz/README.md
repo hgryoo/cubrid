@@ -129,6 +129,13 @@ look like engine defects.
 ./fuzz/spike/build.sh build_fuzz . concurrency_spike    # one, into cwd
 ```
 
+The rpath is a `DT_RPATH`, not a `DT_RUNPATH`, and that is deliberate:
+`LD_LIBRARY_PATH` is searched *before* a `DT_RUNPATH`, so a spike run with
+`$CUBRID/lib` on the path — which anything calling the `cubrid` CLI needs —
+would silently load the installed engine instead of the instrumented one it was
+built against. A spike must run against its own engine build or it is measuring
+something else.
+
 `reset_spike` is skipped by the default enumeration: it is `SA_MODE` and
 includes `dbi.h`, which `#error`s under `SERVER_MODE`. Name it explicitly to
 build it, against an SA build directory.
@@ -206,13 +213,17 @@ problem afterwards:
 
 ```sh
 SOAK_MIN_FREE_MB=4096    # stop with this much still free (default)
-SOAK_MAX_DB_MB=16384     # stop if the database outgrows this (default)
+SOAK_MAX_DB_MB=8192      # recreate the database past this size (default)
+SOAK_RECYCLE=0           # stop at the ceiling instead of recreating
 ```
 
-The ceiling is not only a safety belt. A database that grows without bound
-means the workload is not reclaiming what it takes, and the run past that point
-measures the disk rather than the engine — which is worth stopping on for its
-own sake.
+**The workload grows the database, so a long soak recreates it.** Dropping a
+heap defers the reclaim, and the first soak measured roughly 200 MB a session
+that never came back — 256 MB became 7.1 GB over 32 sessions, and
+`file_tracker_check` went from 0.006 s to 0.774 s with it, linearly. Past the
+ceiling a run measures the disk rather than the engine, so the runner recreates
+the database and reports how many times it had to: **that count is the growth
+rate**, and it is the one number to watch across soaks.
 
 ### Triage, and the baselines
 

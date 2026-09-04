@@ -14,6 +14,14 @@
 # directory configured with -DFUZZ_SANITIZERS=thread and the spikes come out
 # under TSan, with no edit here.
 #
+# --disable-new-dtags makes the rpath a DT_RPATH rather than a DT_RUNPATH, and
+# that is not a detail: LD_LIBRARY_PATH is searched *before* DT_RUNPATH, so a
+# spike run with $CUBRID/lib on LD_LIBRARY_PATH -- which anything calling the
+# cubrid CLI needs -- would silently load the installed engine instead of the
+# instrumented one it was built against, and die on the first symbol only the
+# latter has.  DT_RPATH wins over LD_LIBRARY_PATH, which is what a spike needs:
+# it must run against its own engine build or it is measuring something else.
+#
 #   ./build.sh <build_dir> [outdir] [spike ...]
 #
 #   ./build.sh ../../build_fuzz                       # all spikes, ASan+UBSan
@@ -74,7 +82,7 @@ for s in "${spikes[@]}"; do
   "$cxx" -std=c++17 -g -fno-omit-frame-pointer $sanitize \
     $defines $includes \
     -o "$outdir/${s%.cpp}" "$src" \
-    -L"$build_dir/cubrid" -Wl,-rpath,"$build_dir/cubrid" \
+    -L"$build_dir/cubrid" -Wl,--disable-new-dtags,-rpath,"$build_dir/cubrid" \
     -lcubrid -latomic -pthread
   echo "ok"
 done
