@@ -162,33 +162,65 @@ above -- that was measured, and the hang survived turning it off.
 them, so the *before* half of its oracle fails on the leftovers from the run
 before. That is a property of the spike, not of the engine.
 
-### Triage
+### Triage, and the baselines
 
-A Tier 1 run under TSan reports a few hundred warnings, most of them one finding
-seen from several threads. `tsan_triage.py` groups them by kind and by the top
-engine frame, which is the difference between a log and an oracle:
-
-```sh
-DEBUGINFOD_URLS= TSAN_OPTIONS="halt_on_error=0 history_size=4" \
-  ./build_fuzz_tsan/fuzz/concurrency_spike fuzzdb 4 10 0 > run.log 2>&1
-
-./fuzz/spike/tsan_triage.py run.log                     # 179 reports -> 49 rows
-./fuzz/spike/tsan_triage.py run.log --show page_buffer  # full text of one row
-./fuzz/spike/tsan_triage.py run.log --suppress > new.supp
-```
-
-`tsan-baseline.supp` is the 2026-09-04 baseline: 38 rules covering everything a
-clean four-thread run reports. **It is a baseline, not a verdict** -- no rule in
-it has been adjudicated, and CUBRID's page buffer and log append use hand-rolled
-atomics that TSan has no reason to trust. Its only job is to make the next run's
-*new* findings visible. Run with it:
+Every Tier 1 run reports something, in both build shapes: TSan a few hundred
+warnings, UBSan ten. Raw, that is not an oracle -- nobody reads it per run, so
+nobody notices the one report that is new. `sanitizer_triage.py` groups reports
+by kind and site and emits the group as a suppression file, which is the
+difference between a log and an oracle:
 
 ```sh
-TSAN_OPTIONS="suppressions=$PWD/fuzz/spike/tsan-baseline.supp ..." ...
+./fuzz/spike/sanitizer_triage.py run.log                      # the table
+./fuzz/spike/sanitizer_triage.py run.log --show page_buffer   # full text
+./fuzz/spike/sanitizer_triage.py run.log --suppress > new.supp
 ```
 
-TSan honours `#` only at the start of a line, so each rule's comment sits above
-it; a trailing comment becomes part of the pattern and silently matches nothing.
+It reads all three producers. TSan reports are grouped by the top *engine*
+frame, dropping the `std::thread` and `std::__invoke` scaffolding every daemon
+stack goes through. UBSan reports are grouped by check and source line, with the
+check name recovered from the message text -- UBSan prints
+`undefined-behavior` in every `SUMMARY` line regardless of which check fired,
+and the check name is what a suppression is keyed on. **ASan findings are listed
+but never baselined**: an ASan report is a memory error that stops the run, so
+suppressing one hides a defect rather than a noisy site.
+
+Two baselines are checked in, both measured 2026-09-04 on a clean four-thread,
+ten-iteration run:
+
+| File | Rules | A clean run with it |
+|---|---:|---|
+| `tsan-baseline.supp` | 38 | 179 reports -> 0 |
+| `ubsan-baseline.supp` | 3 | 10 reports -> 0 |
+
+```sh
+DEBUGINFOD_URLS= TSAN_OPTIONS="halt_on_error=0 history_size=4 \
+  suppressions=$PWD/fuzz/spike/tsan-baseline.supp" \
+  ./build_fuzz_tsan/fuzz/concurrency_spike fuzzdb 4 10 0
+
+DEBUGINFOD_URLS= FUZZ_FULL_CHECK=1 \
+  ASAN_OPTIONS="detect_leaks=0 alloc_dealloc_mismatch=0" \
+  UBSAN_OPTIONS="print_stacktrace=1 \
+  suppressions=$PWD/fuzz/spike/ubsan-baseline.supp" \
+  ./build_fuzz/fuzz/concurrency_spike fuzzdb 4 10 0
+```
+
+**They are baselines, not verdicts.** No rule in either has been adjudicated.
+The TSan rules sit mostly on `page_buffer.c` and `log_append.cpp`, which use
+hand-rolled atomics TSan has no reason to trust; the UBSan rules cover
+misaligned loads on packed catalog records, a `bindex_t` shift in the bundled
+dlmalloc, and one call through a mismatched function-pointer type. Their only
+job is to make silence mean something.
+
+Two format traps, both of which fail silently:
+
+- `#` is honoured only at the *start* of a line. A trailing comment becomes part
+  of the pattern, which then matches nothing.
+- **UBSan has no line granularity.** A rule is `<check>:<file pattern>`, so one
+  rule silences that check for the whole file -- `alignment:*object_primitive.c`
+  covers all eight sites and any ninth that appears later. TSan's
+  `race:<function>` is tighter. Where that is too blunt, the precise instrument
+  is a compile-time `-fsanitize-ignorelist`, not a suppression file.
 
 ## What is not here yet
 
