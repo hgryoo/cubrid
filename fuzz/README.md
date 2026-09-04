@@ -165,6 +165,27 @@ third run of the same database. That was not true of the first version, which
 created heaps and never dropped them; every run then needed a database of its
 own, and the leftovers were what made the oracle fail.
 
+### Soaking
+
+Tier 1's search *is* time. §7.2 measured that the OS saturates the ordering
+space on its own — repeating one fixed input covers every permutation,
+near-uniformly — so there is nothing to steer, only sessions to run.
+
+```sh
+export CUBRID=$PWD/install.out CUBRID_DATABASES=$CUBRID/databases
+./fuzz/spike/soak.sh $PWD/concurrency_spike soakdb 4 200 60   # 60 minutes
+```
+
+A session is one boot, one before-check, the workload, one after-check, one
+shutdown. Sessions rather than one long run for two reasons: the full
+consistency check costs 7 s and only belongs at a boundary, and a check that ran
+while four threads mutated would report a state that is torn rather than wrong.
+
+The soak stops at the first thing worth a person's attention — a non-zero exit,
+an oracle failure, or any sanitizer report the baselines do not already cover —
+and prints that session's triage table and log path. Everything else is silence,
+which is what the baselines are for.
+
 ### Triage, and the baselines
 
 Every Tier 1 run reports something, in both build shapes: TSan a few hundred
