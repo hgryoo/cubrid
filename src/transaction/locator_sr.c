@@ -4148,8 +4148,10 @@ locator_check_foreign_key (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid
 		  goto error;
 		}
 	    }
-	  ret =
-	    xbtree_find_unique (thread_p, &local_btid, S_SELECT_WITH_LOCK, key_dbvalue, &part_oid, &unique_oid, true);
+	  /* Foreign-key existence check: probe the parent key without locking the parent row (see
+	   * btree_key_find_and_lock_unique_of_unique ()).  The child has already published its foreign-key index
+	   * entries, so a concurrent parent DELETE meets them and waits this child out. */
+	  ret = xbtree_find_unique_fk_existence (thread_p, &local_btid, key_dbvalue, &part_oid, &unique_oid, true);
 	  if (ret == BTREE_KEY_NOTFOUND)
 	    {
 	      char *val_print = NULL;
