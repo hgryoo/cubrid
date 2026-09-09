@@ -182,6 +182,10 @@ static int locator_add_or_remove_index_internal (THREAD_ENTRY * thread_p, RECDES
 						 FUNC_PRED_UNPACK_INFO * func_preds,
 						 LOCATOR_INDEX_ACTION_FLAG idx_action_flag, bool has_BU_lock,
 						 bool skip_checking_fk);
+#if !defined (NDEBUG)
+static bool locator_record_deleted_by_me (THREAD_ENTRY * thread_p, const OID * oid, OID * class_oid,
+					  HEAP_SCANCACHE * scan_cache);
+#endif /* !NDEBUG */
 static int locator_check_foreign_key (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid, OID * inst_oid,
 				      RECDES * recdes, RECDES * new_recdes, bool * is_cached, LC_COPYAREA ** copyarea);
 static int locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_VALUE * key);
@@ -5254,7 +5258,10 @@ locator_insert_force (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid, OID
 	  goto error1;
 	}
 
-      /* check the foreign key constraints */
+      /* check the foreign key constraints.  This stays after locator_add_or_remove_index () above: the check takes no
+       * lock on the parent row, and what keeps a concurrent parent DELETE from missing this child is that the child's
+       * foreign-key index entries are already published when the check runs (btree_key_find_and_lock_unique_of_unique (),
+       * fk_existence). */
       if (has_index && !skip_checking_fk)
 	{
 	  error_code =
@@ -6068,7 +6075,9 @@ locator_update_force (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid, OID
 		}
 	    }
 
-	  /* check the foreign key constraints */
+	  /* check the foreign key constraints.  This stays after the index maintenance above for the same reason as in
+	   * locator_insert_force (): the check takes no lock on the parent row and relies on this row's foreign-key index
+	   * entries being published first. */
 	  if (!not_check_fk && !locator_Dont_check_foreign_key)
 	    {
 	      error_code =
@@ -8124,6 +8133,12 @@ locator_add_or_remove_index_internal (THREAD_ENTRY * thread_p, RECDES * recdes, 
 	    }
 	  else
 	    {
+	      /* The scan for children below stays after the key was delete-marked (btree_mvcc_delete () above) and after
+	       * the caller stamped the heap record: a child's foreign-key existence check takes no lock on this row, and
+	       * what keeps it from missing this delete is that a check running after this scan meets the stamp
+	       * (btree_key_find_and_lock_unique_of_unique (), fk_existence). */
+	      assert (mvcc_is_mvcc_disabled_class (class_oid)
+		      || locator_record_deleted_by_me (thread_p, inst_oid, class_oid, scan_cache));
 	      if (idx_action_flag == FOR_MOVE)
 		{
 		  /* This delete is caused by 'UPDATE ... SET ...' between partitioned tables. It first delete a
@@ -8850,6 +8865,8 @@ locator_update_index (THREAD_ENTRY * thread_p, RECDES * new_recdes, RECDES * old
 		  LSA_SET_NULL (&tdes->repl_insert_lsa);
 		}
 
+	      /* Same ordering rule as in locator_add_or_remove_index_internal (): the old key is delete-marked and the heap
+	       * record stamped before the children are scanned. */
 	      error_code = locator_check_primary_key_update (thread_p, index, old_key);
 	      if (error_code != NO_ERROR)
 		{
@@ -13220,6 +13237,44 @@ locator_has_isolation_conflict (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * cont
 
   return false;
 }
+
+#if !defined (NDEBUG)
+/*
+ * locator_record_deleted_by_me () - Debug check: does the record's last version carry this transaction's DELID?
+ *
+ *   return: true when it does
+ *   thread_p(in): thread entry
+ *   oid(in): record OID
+ *   class_oid(in): its class
+ *   scan_cache(in): scan cache of the caller, may be NULL
+ *
+ * Note: asserts that a parent DELETE (or key change) stamped the record before it scans for referencing children;
+ *	the child's foreign-key existence check relies on that order instead of a parent row lock.
+ */
+static bool
+locator_record_deleted_by_me (THREAD_ENTRY * thread_p, const OID * oid, OID * class_oid, HEAP_SCANCACHE * scan_cache)
+{
+  HEAP_GET_CONTEXT context;
+  RECDES peek_recdes;
+  MVCC_REC_HEADER header;
+  bool ours = false;
+
+  heap_init_get_context (thread_p, &context, oid, class_oid, &peek_recdes, scan_cache, PEEK, NULL_CHN);
+  if (heap_prepare_get_context (thread_p, &context, false, LOG_WARNING_IF_DELETED) == S_SUCCESS
+      && heap_get_mvcc_header (thread_p, &context, &header) == S_SUCCESS)
+    {
+      ours = MVCC_IS_HEADER_DELID_VALID (&header) && logtb_is_current_mvccid (thread_p, MVCC_GET_DELID (&header));
+    }
+
+  if (context.scan_cache != NULL && context.scan_cache->cache_last_fix_page && context.home_page_watcher.pgptr != NULL)
+    {
+      pgbuf_ordered_unfix (thread_p, &context.home_page_watcher);
+    }
+  heap_clean_get_context (thread_p, &context);
+
+  return ours;
+}
+#endif /* !NDEBUG */
 
 /*
  * locator_last_version_is_ours () - Whether the object's last version carries this transaction's own, still
