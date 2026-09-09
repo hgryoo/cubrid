@@ -25286,8 +25286,7 @@ btree_check_foreign_key (THREAD_ENTRY * thread_p, OID * cls_oid, HFID * hfid, OI
 	}
     }
 
-  ret_search =
-    btree_find_unique_internal (thread_p, &local_btid, S_SELECT_WITH_LOCK, keyval, &part_oid, &unique_oid, true, true);
+  ret_search = xbtree_find_unique_fk_existence (thread_p, &local_btid, keyval, &part_oid, &unique_oid, true);
   if (ret_search == BTREE_KEY_NOTFOUND)
     {
       char *val_print = NULL;
@@ -27280,6 +27279,18 @@ xbtree_find_unique (THREAD_ENTRY * thread_p, BTID * btid, SCAN_OPERATION_TYPE sc
 		    OID * class_oid, OID * oid, bool is_all_class_srch)
 {
   return btree_find_unique_internal (thread_p, btid, scan_op_type, key, class_oid, oid, is_all_class_srch, false);
+}
+
+/*
+ * xbtree_find_unique_fk_existence () - Foreign-key existence probe: like xbtree_find_unique () with
+ *					S_SELECT_WITH_LOCK, but it takes no lock on the committed parent it
+ *					finds.  See btree_key_find_and_lock_unique_of_unique ().
+ */
+BTREE_SEARCH
+xbtree_find_unique_fk_existence (THREAD_ENTRY * thread_p, BTID * btid, DB_VALUE * key, OID * class_oid, OID * oid,
+				 bool is_all_class_srch)
+{
+  return btree_find_unique_internal (thread_p, btid, S_SELECT_WITH_LOCK, key, class_oid, oid, is_all_class_srch, true);
 }
 
 /*
