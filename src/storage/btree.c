@@ -27463,8 +27463,10 @@ btree_find_unique_internal (THREAD_ENTRY * thread_p, BTID * btid, SCAN_OPERATION
       COPY_OID (oid, &find_unique_helper.oid);
 
 #if defined (SERVER_MODE)
-      /* Safe guard: object is supposed to be locked. */
-      assert (scan_op_type == S_SELECT || lock_has_lock_on_object (oid, class_oid, find_unique_helper.lock_mode) > 0);
+      /* Safe guard: object is supposed to be locked, unless this is a foreign-key existence probe, which
+       * returns the committed parent without a lock (btree_key_find_and_lock_unique_of_unique ()). */
+      assert (scan_op_type == S_SELECT || find_unique_helper.fk_existence
+	      || lock_has_lock_on_object (oid, class_oid, find_unique_helper.lock_mode) > 0);
 #endif /* SERVER_MODE */
 
       return BTREE_KEY_FOUND;
