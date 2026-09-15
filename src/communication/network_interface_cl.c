@@ -12237,12 +12237,12 @@ stream_from_send_data (const char *data, int data_len)
  *   count(out): the binding's count -- rows for COPY, bytes for a value stream
  */
 int
-stream_from_end (int *count)
+stream_from_end (INT64 * count)
 {
 #if defined(CS_MODE)
   int rc = ER_FAILED;
 
-  OR_ALIGNED_BUF (2 * OR_INT_SIZE) a_reply;
+  OR_ALIGNED_BUF (2 * OR_INT_SIZE + OR_BIGINT_SIZE) a_reply;
   char *reply = OR_ALIGNED_BUF_START (a_reply);
 
   int req_error = net_client_request (NET_SERVER_STREAM_END, NULL, 0, reply,
@@ -12255,7 +12255,7 @@ stream_from_end (int *count)
     {
       char *ptr;
       ptr = or_unpack_int (reply, &rc);
-      ptr = or_unpack_int (ptr, count);
+      ptr = or_unpack_int64 (ptr, count);
     }
   else
     {

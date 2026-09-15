@@ -10539,7 +10539,7 @@ int
 ux_stream_end (T_NET_BUF * net_buf, bool * auto_commit)
 {
   int err_code;
-  int count = 0;
+  INT64 count = 0;
 
   *auto_commit = stream_Deferred_auto_commit;
   stream_Deferred_auto_commit = false;
@@ -10553,6 +10553,6 @@ ux_stream_end (T_NET_BUF * net_buf, bool * auto_commit)
       return err_code;
     }
 
-  net_buf_cp_int (net_buf, count, NULL);
+  net_buf_cp_bigint (net_buf, count, NULL);
   return 0;
 }

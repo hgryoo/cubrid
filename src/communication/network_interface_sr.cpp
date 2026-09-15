@@ -12661,7 +12661,7 @@ void
 sstream_end (THREAD_ENTRY *thread_p, unsigned int rid, char *request, int reqlen)
 {
   int error_code = NO_ERROR;
-  int rows_loaded = 0;
+  INT64 count = 0;
 
   stream_session *session = NULL;
   error_code = session_get_stream_session (thread_p, session);
@@ -12675,7 +12675,7 @@ sstream_end (THREAD_ENTRY *thread_p, unsigned int rid, char *request, int reqlen
       stream_result result;
       result.count = 0;
       error_code = session->finish (thread_p, &result);	/* may flush a trailing CSV record */
-      rows_loaded = (int) result.count;
+      count = result.count;
 
       if (error_code != NO_ERROR)
 	{
@@ -12691,12 +12691,13 @@ sstream_end (THREAD_ENTRY *thread_p, unsigned int rid, char *request, int reqlen
     }
 
   {
-    OR_ALIGNED_BUF (2 * OR_INT_SIZE) a_reply;
+    /* two ints ahead of the count, so or_pack_int64 () lands on its alignment */
+    OR_ALIGNED_BUF (2 * OR_INT_SIZE + OR_BIGINT_SIZE) a_reply;
     char *reply = OR_ALIGNED_BUF_START (a_reply);
     char *ptr;
 
     ptr = or_pack_int (reply, error_code);
-    ptr = or_pack_int (ptr, rows_loaded);
+    ptr = or_pack_int64 (ptr, count);
     css_send_data_to_client (thread_p->conn_entry, rid, reply, OR_ALIGNED_BUF_SIZE (a_reply));
   }
 }
