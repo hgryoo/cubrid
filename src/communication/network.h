@@ -308,10 +308,6 @@ enum net_server_request
   NET_SERVER_PING_WITH_HANDSHAKE = 999
 };
 
-/* Back-compat alias: COPY was the first consumer of the shared stream transport.
- * Identical wire value as NET_SERVER_STREAM_INIT. */
-#define NET_SERVER_COPY_INIT NET_SERVER_STREAM_INIT
-
 /* Server/client capabilities */
 #define NET_CAP_BACKWARD_COMPATIBLE     0x80000000
 #define NET_CAP_FORWARD_COMPATIBLE      0x40000000
