@@ -12611,7 +12611,7 @@ send_reply:
 }
 
 /*
- * sstream_send_data () - Receive binary data chunk for COPY session
+ * sstream_send_data () - Hand one chunk of the byte stream to the open session
  *   request format: raw binary data
  *   reply format: error_code (int)
  */
@@ -12652,9 +12652,10 @@ sstream_send_data (THREAD_ENTRY *thread_p, unsigned int rid, char *request, int 
 }
 
 /*
- * sstream_end () - Finalize COPY session and return row count
+ * sstream_end () - End the stream and report the session's result
  *   request format: (empty)
- *   reply format: error_code (int), rows_loaded (int)
+ *   reply format: error_code (int), count (int) -- rows for COPY, bytes for a
+ *                 value stream; the binding interprets it
  */
 void
 sstream_end (THREAD_ENTRY *thread_p, unsigned int rid, char *request, int reqlen)
