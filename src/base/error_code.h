@@ -1773,13 +1773,17 @@
 
 #define ER_AU_CANT_ALTER_LOGIN                      -1378
 
-#define ER_COPY_NOT_SUPPORTED                       -1379
-#define ER_COPY_BINARY_FORMAT_ERROR                 -1380
+#define ER_CDC_ARCHIVE_KEPT                         -1379
+
+#define ER_SP_PARALLEL_ENABLE_NO_SQL                -1380
+
 #define ER_STREAM_SESSION_ERROR                     -1381
-#define ER_COPY_CSV_FORMAT_ERROR                    -1382
 
-#define ER_LAST_ERROR                               -1383
+#define ER_COPY_NOT_SUPPORTED                       -1382
+#define ER_COPY_BINARY_FORMAT_ERROR                 -1383
+#define ER_COPY_CSV_FORMAT_ERROR                    -1384
 
+#define ER_LAST_ERROR                               -1385
 
 
 /*

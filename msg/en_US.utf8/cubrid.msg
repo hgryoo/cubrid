@@ -1483,16 +1483,19 @@ Check the path of the key file (_keys) and make sure that it includes proper key
 
 1378 Cannot change the login capability of user "%1$s".
 
-1379 COPY FROM is not supported for "%1$s".
+1379 CDC: the extraction position (%1$lld|%2$d) handed to the client keeps archive log volume %3$d.
 
-1380 COPY binary format error: %1$s.
+1380 A stored procedure/function declared PARALLEL_ENABLE cannot execute SQL on the server-side connection or use DBMS_OUTPUT.
 
 1381 stream session error: %1$s.
 
-1382 COPY CSV format error: %1$s.
+1382 COPY FROM is not supported for "%1$s".
 
-1383 Last Error
+1383 COPY binary format error: %1$s.
 
+1384 COPY CSV format error: %1$s.
+
+1385 Last Error
 
 $set 6 MSGCAT_SET_INTERNAL
 1 Error in error subsystem (line %1$d):
@@ -2003,8 +2006,10 @@ $set 8 MSGCAT_SET_PARSER_SEMANTIC
 335 '%1$s' is a CLASS or SHARED attribute but only normal attributes can set visibility.
 336 Numeric scale specifier is out of range -84 to 127
 337 The partition name is too long.
-
 338 Undefined argument. UUID only supports UUIDv4, or UUIDv7; the version argument cannot be NULL.
+341 Column '%1$s' of the SEMI/ANTI JOIN inner table cannot be referenced.
+342 SEMI/ANTI JOIN requires a join predicate that references the outer (left) side.
+343 SEMI/ANTI JOIN is not allowed in a hierarchical query (CONNECT BY).
 
 
 
