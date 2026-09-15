@@ -39,10 +39,12 @@
 /* Consumer kind tag carried on the wire by the generic open path
  * (NET_SERVER_STREAM_INIT). The server factory dispatches on this to build the
  * matching session, so a new consumer is added by appending a value here plus a
- * factory case -- the transport stays unchanged. */
+ * factory registration -- the transport stays unchanged. */
 enum STREAM_KIND
 {
-  STREAM_KIND_COPY = 0		/* room for STREAM_KIND_LOB, etc. */
+  STREAM_KIND_COPY = 0,		/* room for STREAM_KIND_LOB, etc. */
+
+  STREAM_KIND_MAX		/* number of kinds; keep last */
 };
 
 /* Result reported by finish(). The 64-bit count is interpreted by the binding:
@@ -68,5 +70,19 @@ class stream_session
     /* Discard in-flight state so no partial result survives an error. */
     virtual void abort (THREAD_ENTRY *thread_p) = 0;
 };
+
+/* Build a session of one kind from that kind's config blob. The blob comes
+ * straight off the wire, so the factory decodes it bounded by config_len. */
+using stream_session_factory = stream_session *(*) (THREAD_ENTRY *thread_p, const char *config, int config_len,
+    int *error_code);
+
+/* A consumer registers the factory for its own kind; the transport dispatches
+ * through the table and never names a concrete session type. Registration
+ * happens once, at load time, before any connection can open a session. */
+extern void stream_session_register (STREAM_KIND kind, stream_session_factory factory);
+
+/* Open path, called by the transport: dispatch to the registered factory. */
+extern stream_session *stream_session_create (THREAD_ENTRY *thread_p, int kind, const char *config, int config_len,
+    int *error_code);
 
 #endif /* _STREAM_SESSION_HPP_ */

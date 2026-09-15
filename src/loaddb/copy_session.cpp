@@ -481,3 +481,157 @@ copy_session::abort (THREAD_ENTRY *thread_p)
       LSA_SET_NULL (&m_savepoint_lsa);
     }
 }
+
+/*
+ * copy_session_create () - Decode the COPY config blob and build a copy_session.
+ *   config(in): pointer to the COPY config bytes (table/ncols/options/col_types)
+ *   config_len(in): length of the config blob; every read below is bounded by it
+ *   error_code(out): NO_ERROR or the failure code
+ *   return: opened copy_session on success, NULL on error
+ *
+ * COPY config encoding: table_name (string), num_cols (int), format (int),
+ * delimiter (int), quote (int), header (int), bulk (int),
+ * col_types (int[num_cols]), attr_ids (int[num_cols]).
+ */
+static stream_session *
+copy_session_create (THREAD_ENTRY *thread_p, const char *config, int config_len, int *error_code)
+{
+  /* or_unpack_* take a mutable pointer although they only read through it */
+  char *ptr = const_cast<char *> (config);
+  const char *config_end = config + config_len;
+  char *table_name = NULL;
+  int name_len = 0;
+  int num_cols = 0;
+  int format = 0;
+  int delimiter = 0;
+  int quote = 0;
+  int header = 0;
+  int bulk = 0;
+  DB_TYPE *col_types = NULL;
+  int *attr_ids = NULL;
+  copy_session *session = NULL;
+
+  *error_code = NO_ERROR;
+
+  /* The blob comes straight off the wire, so bound every read by config_len
+   * before trusting a length taken from it. */
+  if (config_len < OR_INT_SIZE)
+    {
+      goto invalid_config;
+    }
+
+  name_len = OR_GET_INT (ptr);
+  if (name_len <= 0 || name_len > config_end - ptr - OR_INT_SIZE)
+    {
+      goto invalid_config;
+    }
+
+  ptr = or_unpack_string_nocopy (ptr, &table_name);
+  if (table_name == NULL || table_name[name_len - 1] != '\0')
+    {
+      goto invalid_config;
+    }
+
+  if (config_end - ptr < 6 * OR_INT_SIZE)
+    {
+      goto invalid_config;
+    }
+
+  ptr = or_unpack_int (ptr, &num_cols);
+  /* format: 0 = BINARY, 1 = CSV */
+  ptr = or_unpack_int (ptr, &format);
+  ptr = or_unpack_int (ptr, &delimiter);
+  ptr = or_unpack_int (ptr, &quote);
+  ptr = or_unpack_int (ptr, &header);
+  ptr = or_unpack_int (ptr, &bulk);
+
+  if (num_cols <= 0 || (config_end - ptr) / OR_INT_SIZE / 2 < num_cols)
+    {
+      goto invalid_config;
+    }
+
+  col_types = (DB_TYPE *) db_private_alloc (thread_p, num_cols * sizeof (DB_TYPE));
+  attr_ids = (int *) db_private_alloc (thread_p, num_cols * sizeof (int));
+  if (col_types == NULL || attr_ids == NULL)
+    {
+      *error_code = ER_OUT_OF_VIRTUAL_MEMORY;
+      goto exit;
+    }
+
+  for (int i = 0; i < num_cols; i++)
+    {
+      int type_val;
+      ptr = or_unpack_int (ptr, &type_val);
+      col_types[i] = (DB_TYPE) type_val;
+    }
+
+  for (int i = 0; i < num_cols; i++)
+    {
+      ptr = or_unpack_int (ptr, &attr_ids[i]);
+    }
+
+  {
+    OID class_oid;
+    LC_FIND_CLASSNAME status;
+
+    /* bulk mode pre-acquires a class-level BU_LOCK (like loaddb) so the batch
+     * insert can skip per-row MVCC-id and per-row class/btree locks. */
+    status = xlocator_find_class_oid (thread_p, table_name, &class_oid, (bulk ? BU_LOCK : NULL_LOCK));
+    if (status != LC_CLASSNAME_EXIST)
+      {
+	er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_LC_UNKNOWN_CLASSNAME, 1, table_name);
+	*error_code = ER_LC_UNKNOWN_CLASSNAME;
+	goto exit;
+      }
+
+    session = new copy_session ();
+    if (session == NULL)
+      {
+	*error_code = ER_OUT_OF_VIRTUAL_MEMORY;
+	goto exit;
+      }
+
+    *error_code = session->init (thread_p, &class_oid, col_types, attr_ids, num_cols, format, delimiter, quote,
+				 header, bulk);
+    if (*error_code != NO_ERROR)
+      {
+	delete session;
+	session = NULL;
+	goto exit;
+      }
+  }
+
+  goto exit;
+
+invalid_config:
+  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_STREAM_SESSION_ERROR, 1, "malformed COPY session configuration");
+  *error_code = ER_STREAM_SESSION_ERROR;
+
+exit:
+  if (col_types != NULL)
+    {
+      db_private_free (thread_p, col_types);
+    }
+  if (attr_ids != NULL)
+    {
+      db_private_free (thread_p, attr_ids);
+    }
+
+  return session;
+}
+
+
+/* COPY registers itself with the transport, so no transport source names
+ * copy_session. Runs at load time, before any connection can open a session. */
+namespace
+{
+  struct copy_session_registrar
+  {
+    copy_session_registrar ()
+    {
+      stream_session_register (STREAM_KIND_COPY, copy_session_create);
+    }
+  };
+
+  copy_session_registrar copy_session_registrar_instance;
+}
