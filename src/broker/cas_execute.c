@@ -10539,12 +10539,12 @@ int
 ux_stream_end (T_NET_BUF * net_buf, bool * auto_commit)
 {
   int err_code;
-  int rows_loaded = 0;
+  int count = 0;
 
   *auto_commit = stream_Deferred_auto_commit;
   stream_Deferred_auto_commit = false;
 
-  err_code = stream_from_end (&rows_loaded);
+  err_code = stream_from_end (&count);
   if (err_code < 0)
     {
       errors_in_transaction++;
@@ -10553,6 +10553,6 @@ ux_stream_end (T_NET_BUF * net_buf, bool * auto_commit)
       return err_code;
     }
 
-  net_buf_cp_int (net_buf, rows_loaded, NULL);
+  net_buf_cp_int (net_buf, count, NULL);
   return 0;
 }
