@@ -55,6 +55,11 @@ static const std::size_t COPY_FLUSH_BATCH_ROWS = 4096;
  * field length) would otherwise buffer without limit. */
 static const std::size_t COPY_MAX_ROW_BYTES = 64 * 1024 * 1024;
 
+/* bytes of a new chunk appended at a time while completing a row that straddles
+ * the chunk boundary. It doubles from here, so carrying that row costs O(row)
+ * copies instead of copying the whole chunk. */
+static const std::size_t COPY_CARRY_STEP = 4 * 1024;
+
 /* savepoint taken when the session opens; the whole COPY is undone to it when the
  * stream fails, so a failed COPY leaves no rows behind */
 static const char COPY_SAVEPOINT_NAME[] = "cOPYfROMsTDIN";
@@ -190,32 +195,19 @@ copy_session::receive_chunk (THREAD_ENTRY *thread_p, const char *data, int data_
   HEAP_CACHE_ATTRINFO attrinfo;
   bool attrinfo_started = false;
 
-  if (data_len < 0 || m_leftover.size () + (std::size_t) data_len > COPY_MAX_ROW_BYTES)
+  if (data_len < 0)
     {
       int format_error = (m_format == COPY_FORMAT_CSV) ? ER_COPY_CSV_FORMAT_ERROR : ER_COPY_BINARY_FORMAT_ERROR;
-      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, format_error, 1, "a single row exceeds the maximum buffered size");
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, format_error, 1, "negative chunk length");
       return format_error;
     }
 
-  /* If a previous chunk ended mid-row, prepend the leftover bytes so the
-   * combined buffer starts at a row boundary. */
-  std::vector<char> combined;
-  const char *buf;
-  int buf_len;
-  if (!m_leftover.empty ())
-    {
-      combined.reserve (m_leftover.size () + data_len);
-      combined.insert (combined.end (), m_leftover.begin (), m_leftover.end ());
-      combined.insert (combined.end (), data, data + data_len);
-      m_leftover.clear ();
-      buf = combined.data ();
-      buf_len = (int) combined.size ();
-    }
-  else
-    {
-      buf = data;
-      buf_len = data_len;
-    }
+  /* The chunk is the transport's receive buffer and is decoded where it lies.
+   * Only a row that straddles the boundary is carried, in m_leftover: the tail
+   * of the previous chunk, completed here by appending from this one. */
+  std::size_t carry_head = m_leftover.size ();
+  std::size_t carry_taken = 0;
+  std::size_t carry_step = COPY_CARRY_STEP;
 
   DB_VALUE *vals = (DB_VALUE *) db_private_alloc (thread_p, m_num_cols * sizeof (DB_VALUE));
   if (vals == NULL)
@@ -239,39 +231,99 @@ copy_session::receive_chunk (THREAD_ENTRY *thread_p, const char *data, int data_
     }
   attrinfo_started = true;
 
-  while (pos < buf_len)
+  while (pos < data_len || !m_leftover.empty ())
     {
       int bytes_consumed = 0;
+      bool skipped_header = false;
+      /* a carried row is decoded from m_leftover; every other row in place */
+      const bool from_carry = !m_leftover.empty ();
+      const char *row = from_carry ? m_leftover.data () : data + pos;
+      const int row_len = from_carry ? (int) m_leftover.size () : data_len - pos;
+      int advance;
+
       if (m_format == COPY_FORMAT_CSV)
 	{
 	  /* skip a leading header line (HEADER option) before decoding data rows */
 	  bool skip_only = m_skip_header;
-	  error = decode_csv_row (buf + pos, buf_len - pos, m_col_types.data (), m_col_domains.data (), m_num_cols,
+	  error = decode_csv_row (row, row_len, m_col_types.data (), m_col_domains.data (), m_num_cols,
 				  vals, m_csv_fields, m_csv_quoted, m_delimiter, m_quote, skip_only, &bytes_consumed);
-	  if (skip_only && error == NO_ERROR)
-	    {
-	      m_skip_header = false;
-	      pos += bytes_consumed;
-	      continue;
-	    }
+	  skipped_header = (skip_only && error == NO_ERROR);
 	}
       else
 	{
-	  error = decode_binary_row (buf + pos, buf_len - pos, m_col_types.data (), m_col_domains.data (),
+	  error = decode_binary_row (row, row_len, m_col_types.data (), m_col_domains.data (),
 				     m_num_cols, vals, &bytes_consumed);
-	}
-
-      if (error == COPY_DECODE_FOOTER)
-	{
-	  pos += bytes_consumed;
-	  error = NO_ERROR;
-	  break;
 	}
 
       if (error == COPY_DECODE_NEED_MORE)
 	{
-	  /* partial row at the tail — save it for the next call */
-	  m_leftover.assign (buf + pos, buf + buf_len);
+	  error = NO_ERROR;
+
+	  if (!from_carry)
+	    {
+	      /* partial row at the tail — carry it, and only it, to the next call */
+	      m_leftover.assign (data + pos, data + data_len);
+	      pos = data_len;
+	      carry_head = m_leftover.size ();
+	      break;
+	    }
+
+	  if (pos + (int) carry_taken == data_len)
+	    {
+	      /* the whole chunk went into the row and it is still unfinished */
+	      break;
+	    }
+
+	  {
+	    std::size_t available = (std::size_t) data_len - pos - carry_taken;
+	    std::size_t take = (carry_step < available) ? carry_step : available;
+
+	    if (m_leftover.size () + take > COPY_MAX_ROW_BYTES)
+	      {
+		int format_error = (m_format == COPY_FORMAT_CSV) ? ER_COPY_CSV_FORMAT_ERROR : ER_COPY_BINARY_FORMAT_ERROR;
+		er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, format_error, 1,
+			"a single row exceeds the maximum buffered size");
+		error = format_error;
+		goto cleanup;
+	      }
+
+	    const char *src = data + pos + carry_taken;
+	    m_leftover.insert (m_leftover.end (), src, src + take);
+	    carry_taken += take;
+	    carry_step *= 2;
+	  }
+	  continue;
+	}
+
+      /* A row (or the header line, or the footer) was decoded. What it consumed
+       * of this chunk is its consumed bytes less whatever came from the carry. */
+      if (from_carry)
+	{
+	  advance = bytes_consumed - (int) carry_head;
+	  if (advance < 0)
+	    {
+	      advance = 0;
+	    }
+	  m_leftover.clear ();
+	  carry_head = 0;
+	  carry_taken = 0;
+	  carry_step = COPY_CARRY_STEP;
+	}
+      else
+	{
+	  advance = bytes_consumed;
+	}
+
+      if (skipped_header)
+	{
+	  m_skip_header = false;
+	  pos += advance;
+	  continue;
+	}
+
+      if (error == COPY_DECODE_FOOTER)
+	{
+	  pos += advance;
 	  error = NO_ERROR;
 	  break;
 	}
@@ -281,7 +333,7 @@ copy_session::receive_chunk (THREAD_ENTRY *thread_p, const char *data, int data_
 	  goto cleanup;
 	}
 
-      pos += bytes_consumed;
+      pos += advance;
 
       /* pack the row into a record_descriptor and queue it for batch insert */
       for (int i = 0; i < m_num_cols; i++)
