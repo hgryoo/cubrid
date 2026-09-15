@@ -2184,9 +2184,12 @@ FN_RETURN
 fn_stream_end (SOCKET sock_fd, int argc, void **argv, T_NET_BUF * net_buf, T_REQ_INFO * req_info)
 {
   int err_code;
+  bool auto_commit = false;
 
-  err_code = ux_stream_end (net_buf);
-  if (err_code >= 0)
+  /* The statement that opened the stream deferred its auto-commit to here; it
+   * is owed only if that statement ran in auto-commit mode. */
+  err_code = ux_stream_end (net_buf, &auto_commit);
+  if (err_code >= 0 && auto_commit)
     {
       req_info->need_auto_commit = TRAN_AUTOCOMMIT;
     }

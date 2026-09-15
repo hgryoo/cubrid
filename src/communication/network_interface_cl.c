@@ -11957,6 +11957,27 @@ file_dump_file_list (FILE * outfp, bool invalid_only)
 #endif /* !CS_MODE */
 }
 
+#if defined(CS_MODE)
+/* Whether this connection holds an open stream session. The caller of a
+ * statement that opened one needs to know that bytes are still to come,
+ * without knowing which consumer opened it. */
+static bool stream_Is_open = false;
+#endif /* CS_MODE */
+
+/*
+ * stream_from_is_open () - Is a stream session open on this connection?
+ *   return: true between a successful stream_from_init () and stream_from_end ()
+ */
+bool
+stream_from_is_open (void)
+{
+#if defined(CS_MODE)
+  return stream_Is_open;
+#else /* CS_MODE */
+  return false;
+#endif /* !CS_MODE */
+}
+
 /*
  * stream_from_init () - Open a client->server byte-stream session on the server
  *   return: error code
@@ -12002,6 +12023,8 @@ stream_from_init (int stream_kind, const char *config, int config_len)
     {
       or_unpack_int (reply, &rc);
     }
+
+  stream_Is_open = (rc == NO_ERROR);
 
   free_and_init (request);
 
@@ -12202,6 +12225,12 @@ stream_from_send_data (const char *data, int data_len)
 	}
     }
 
+  if (rc != NO_ERROR)
+    {
+      /* the server drops the session on a failed chunk, so nothing is open here either */
+      stream_Is_open = false;
+    }
+
   return rc;
 #else /* CS_MODE */
   return NO_ERROR;
@@ -12224,6 +12253,10 @@ stream_from_end (int *rows_loaded)
 
   int req_error = net_client_request (NET_SERVER_STREAM_END, NULL, 0, reply,
 				      OR_ALIGNED_BUF_SIZE (a_reply), NULL, 0, NULL, 0);
+
+  /* the server drops the session on END whether or not it reported an error */
+  stream_Is_open = false;
+
   if (!req_error)
     {
       char *ptr;

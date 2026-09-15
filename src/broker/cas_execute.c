@@ -10218,6 +10218,10 @@ encode_ext_type_to_short (T_BROKER_VERSION client_version, unsigned char cas_typ
 // return             : true to commit, false otherwise
 // server_handle (in) : server handle
 //
+/* Auto-commit owed by a statement that opened a stream session; the stream
+ * END pays it once the transfer is done. */
+static bool stream_Deferred_auto_commit = false;
+
 static bool
 do_commit_after_execute (const t_srv_handle & server_handle)
 {
@@ -10236,13 +10240,16 @@ do_commit_after_execute (const t_srv_handle & server_handle)
   //                      one page) and when other conditions are met too, server commits automatically.
   //
 
-  if (server_handle.auto_commit_mode != TRUE)
+  /* A statement that opened a stream session is not finished here: the byte
+   * transfer follows and the stream END ends the statement, so the commit is
+   * deferred to it -- with the mode this statement ran in. */
+  if (stream_from_is_open ())
     {
+      stream_Deferred_auto_commit = (server_handle.auto_commit_mode == TRUE);
       return false;
     }
 
-  /* COPY FROM STDIN: data transfer follows, do not commit yet */
-  if (server_handle.q_result != NULL && server_handle.q_result->stmt_type == CUBRID_STMT_COPY)
+  if (server_handle.auto_commit_mode != TRUE)
     {
       return false;
     }
@@ -10323,10 +10330,13 @@ ux_stream_send_data (char *data, int data_len, T_NET_BUF * net_buf)
 }
 
 int
-ux_stream_end (T_NET_BUF * net_buf)
+ux_stream_end (T_NET_BUF * net_buf, bool * auto_commit)
 {
   int err_code;
   int rows_loaded = 0;
+
+  *auto_commit = stream_Deferred_auto_commit;
+  stream_Deferred_auto_commit = false;
 
   err_code = stream_from_end (&rows_loaded);
   if (err_code < 0)

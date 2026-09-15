@@ -95,7 +95,7 @@ extern int ux_lob_write (DB_VALUE * lob_dbval, int64_t offset, int size, char *d
 extern int ux_lob_read (DB_VALUE * lob_dbval, int64_t offset, int size, T_NET_BUF * net_buf);
 
 extern int ux_stream_send_data (char *data, int data_len, T_NET_BUF * net_buf);
-extern int ux_stream_end (T_NET_BUF * net_buf);
+extern int ux_stream_end (T_NET_BUF * net_buf, bool * auto_commit);
 
 extern int get_tuple_count (T_SRV_HANDLE * srv_handle);
 
