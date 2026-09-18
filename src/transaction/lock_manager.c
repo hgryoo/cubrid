@@ -392,7 +392,6 @@ struct lk_tran_lock
   bool lock_escalation_on;
 
   /* locking on manual duration */
-  bool is_instant_duration;
 };
 
 typedef struct lk_init_state LK_INIT_STATE;
@@ -989,7 +988,6 @@ lock_initialize_entry (LK_ENTRY * entry_ptr)
   entry_ptr->tran_prev = NULL;
   entry_ptr->class_entry = NULL;
   entry_ptr->ngranules = 0;
-  entry_ptr->instant_lock_count = 0;
   entry_ptr->transient_count = 0;
   entry_ptr->bind_index_in_tran = -1;
   XASL_ID_SET_NULL (&entry_ptr->xasl_id);
@@ -1010,7 +1008,6 @@ lock_initialize_entry_as_granted (LK_ENTRY * entry_ptr, int tran_index, LK_RES *
   entry_ptr->tran_prev = NULL;
   entry_ptr->class_entry = NULL;
   entry_ptr->ngranules = 0;
-  entry_ptr->instant_lock_count = 0;
   entry_ptr->transient_count = 0;
 
   lock_event_set_xasl_id_to_entry (tran_index, entry_ptr);
@@ -1032,7 +1029,6 @@ lock_initialize_entry_as_blocked (LK_ENTRY * entry_ptr, THREAD_ENTRY * thread_p,
   entry_ptr->tran_prev = NULL;
   entry_ptr->class_entry = NULL;
   entry_ptr->ngranules = 0;
-  entry_ptr->instant_lock_count = 0;
   entry_ptr->transient_count = 0;
 
   lock_event_set_xasl_id_to_entry (tran_index, entry_ptr);
@@ -1053,7 +1049,6 @@ lock_initialize_entry_as_non2pl (LK_ENTRY * entry_ptr, int tran_index, LK_RES * 
   entry_ptr->tran_prev = NULL;
   entry_ptr->class_entry = NULL;
   entry_ptr->ngranules = 0;
-  entry_ptr->instant_lock_count = 0;
   entry_ptr->transient_count = 0;
 }
 
@@ -3539,7 +3534,6 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, LK_R
   bool lock_conversion = false;
   THREAD_ENTRY *thrd_entry;
   LK_TRAN_LOCK *tran_lock;
-  bool is_instant_duration;
   LOCK_COMPATIBILITY compat1, compat2;
   bool is_res_mutex_locked = false;
   TSC_TICKS start_tick, end_tick;
@@ -3615,7 +3609,6 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, LK_R
 
   /* get current locking phase */
   tran_lock = &lk_Gl.tran_lock_table[tran_index];
-  is_instant_duration = tran_lock->is_instant_duration;
 
   while (state != LK_S_DONE)
     {
@@ -3705,11 +3698,6 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, LK_R
 
 	      /* initialize the lock entry as granted state */
 	      lock_initialize_entry_as_granted (entry_ptr, tran_index, res_ptr, lock);
-	      if (is_instant_duration)
-		{
-		  entry_ptr->instant_lock_count++;
-		  assert (entry_ptr->instant_lock_count > 0);
-		}
 
 	      /* add the lock entry into the holder list */
 	      res_ptr->holder = entry_ptr;
@@ -3779,11 +3767,6 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, LK_R
 
 	      /* initialize the lock entry as granted state */
 	      lock_initialize_entry_as_granted (entry_ptr, tran_index, res_ptr, lock);
-	      if (is_instant_duration)
-		{
-		  entry_ptr->instant_lock_count++;
-		  assert (entry_ptr->instant_lock_count > 0);
-		}
 
 	      /* to manage granules */
 	      entry_ptr->class_entry = class_entry;
@@ -3835,12 +3818,6 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, LK_R
 			  break;
 			}
 		      lock_initialize_entry_as_blocked (entry_ptr, thread_p, tran_index, res_ptr, lock);
-		      if (is_instant_duration
-			  /* && lock_compat (lock, NULL_LOCK) == true */ )
-			{
-			  entry_ptr->instant_lock_count++;
-			  assert (entry_ptr->instant_lock_count > 0);
-			}
 		    }
 		  (void) lock_set_error_for_timeout (thread_p, entry_ptr);
 
@@ -3881,11 +3858,6 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, LK_R
 	    }
 	  /* initialize the lock entry as blocked state */
 	  lock_initialize_entry_as_blocked (entry_ptr, thread_p, tran_index, res_ptr, lock);
-	  if (is_instant_duration)
-	    {
-	      entry_ptr->instant_lock_count++;
-	      assert (entry_ptr->instant_lock_count > 0);
-	    }
 
 	  /* append the lock request at the end of the waiter */
 	  prev = NULL;
@@ -3921,22 +3893,6 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, LK_R
 	    {
 	      /* a request with either a less exclusive or an equal mode of lock */
 	      entry_ptr->count += 1;
-	      if (is_instant_duration)
-		{
-		  compat1 = lock_compat (lock, entry_ptr->granted_mode);
-		  if ((lock >= IX_LOCK && (entry_ptr->instant_lock_count == 0 && entry_ptr->granted_mode >= IX_LOCK))
-		      && compat1 != LOCK_COMPAT_YES)
-		    {
-		      /* if the lock is already acquired with incompatible mode by current transaction, remove instant instance
-		       * locks */
-		      lock_stop_instant_lock_mode (thread_p, tran_index, false);
-		    }
-		  else
-		    {
-		      entry_ptr->instant_lock_count++;
-		      assert (entry_ptr->instant_lock_count > 0);
-		    }
-		}
 
 	      if (is_res_mutex_locked)
 		{
@@ -3974,11 +3930,6 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, LK_R
 	    {
 	      entry_ptr->granted_mode = new_mode;
 	      entry_ptr->count += 1;
-	      if (is_instant_duration)
-		{
-		  entry_ptr->instant_lock_count++;
-		  assert (entry_ptr->instant_lock_count > 0);
-		}
 
 	      assert (lock >= NULL_LOCK && res_ptr->total_holders_mode >= NULL_LOCK);
 	      res_ptr->total_holders_mode = lock_conv (lock, res_ptr->total_holders_mode);
@@ -4061,11 +4012,6 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, LK_R
 
 	  entry_ptr->blocked_mode = new_mode;
 	  entry_ptr->count += 1;
-	  if (is_instant_duration)
-	    {
-	      entry_ptr->instant_lock_count++;
-	      assert (entry_ptr->instant_lock_count > 0);
-	    }
 
 	  entry_ptr->thrd_entry = thread_p;
 
@@ -4281,12 +4227,6 @@ lock_internal_perform_unlock_object (THREAD_ENTRY * thread_p, LK_ENTRY * entry_p
   if (release_flag == false)
     {
       entry_ptr->count--;
-      if (lock_is_instant_lock_mode (tran_index))
-	{
-	  entry_ptr->instant_lock_count--;
-	  assert (entry_ptr->instant_lock_count >= 0);
-	}
-
       if (entry_ptr->blocked_mode == NULL_LOCK && entry_ptr->count > 0)
 	{
 	  return;
@@ -6444,8 +6384,6 @@ lock_object_with_flag (THREAD_ENTRY * thread_p, const OID * oid, const OID * cla
       /* case 3 : resource type is LOCK_RESOURCE_INSTANCE */
       if (lock_is_class_lock_escalated (old_class_lock, lock) == true)
 	{			/* already granted on the class level */
-	  /* if incompatible old class lock with requested lock, remove instant class locks */
-	  lock_stop_instant_lock_mode (thread_p, tran_index, false);
 	  granted = LK_GRANTED;
 	  goto end;
 	}
@@ -9725,123 +9663,6 @@ lock_get_number_object_locks (void)
 #endif
 }
 
-/*
- * lock_start_instant_lock_mode -
- *
- * return:
- *
- *   tran_index(in):
- */
-void
-lock_start_instant_lock_mode (int tran_index)
-{
-#if !defined (SERVER_MODE)
-  return;
-#else /* !SERVER_MODE */
-  LK_TRAN_LOCK *tran_lock;
-
-  tran_lock = &lk_Gl.tran_lock_table[tran_index];
-  tran_lock->is_instant_duration = true;
-  return;
-#endif /* !SERVER_MODE */
-}
-
-/*
- * lock_stop_instant_lock_mode -
- *
- * return:
- *
- *   tran_index(in):
- *   need_unlock(in):
- */
-void
-lock_stop_instant_lock_mode (THREAD_ENTRY * thread_p, int tran_index, bool need_unlock)
-{
-#if !defined (SERVER_MODE)
-  return;
-#else /* !SERVER_MODE */
-  LK_TRAN_LOCK *tran_lock;
-  LK_ENTRY *entry_ptr, *next_ptr;
-  int count;
-
-  tran_lock = &lk_Gl.tran_lock_table[tran_index];
-
-  if (!tran_lock->is_instant_duration)
-    {
-      /* if already stopped, return */
-      return;
-    }
-
-  /* remove instance locks */
-  entry_ptr = tran_lock->inst_hold_list;
-  while (entry_ptr != NULL)
-    {
-      assert (tran_index == entry_ptr->tran_index);
-
-      next_ptr = entry_ptr->tran_next;
-      count = entry_ptr->instant_lock_count;
-      assert_release (count >= 0);
-      if (need_unlock)
-	{
-	  assert_release (count >= 0);
-	  while (count > 0)
-	    {
-	      lock_internal_perform_unlock_object (thread_p, entry_ptr, false, true);
-	      count--;
-	    }
-	}
-      entry_ptr->instant_lock_count = 0;
-      entry_ptr = next_ptr;
-    }
-
-  /* remove class locks */
-  entry_ptr = tran_lock->class_hold_list;
-  while (entry_ptr != NULL)
-    {
-      assert (tran_index == entry_ptr->tran_index);
-
-      next_ptr = entry_ptr->tran_next;
-      count = entry_ptr->instant_lock_count;
-      assert_release (count >= 0);
-      if (need_unlock)
-	{
-	  assert_release (count >= 0);
-	  while (count > 0)
-	    {
-	      lock_internal_perform_unlock_object (thread_p, entry_ptr, false, true);
-	      count--;
-	    }
-	}
-      entry_ptr->instant_lock_count = 0;
-      entry_ptr = next_ptr;
-    }
-
-  /* remove root class lock */
-  entry_ptr = tran_lock->root_class_hold;
-  if (entry_ptr != NULL)
-    {
-      assert (tran_index == entry_ptr->tran_index);
-
-      count = entry_ptr->instant_lock_count;
-      assert_release (count >= 0);
-      if (need_unlock)
-	{
-	  assert_release (count >= 0);
-	  while (count > 0)
-	    {
-	      lock_internal_perform_unlock_object (thread_p, entry_ptr, false, true);
-	      count--;
-	    }
-	}
-      entry_ptr->instant_lock_count = 0;
-    }
-
-  /* change locking phase as normal */
-  tran_lock->is_instant_duration = false;
-  return;
-#endif /* !SERVER_MODE */
-}
-
 /* lock_clear_deadlock_victim:
  *
  * tran_index(in):
@@ -9868,26 +9689,6 @@ lock_clear_deadlock_victim (int tran_index)
       // reset its tran_abort_reason
       lock_set_tran_abort_reason (tran_index, TRAN_NORMAL);
     }
-#endif /* !SERVER_MODE */
-}
-
-/*
- * lock_is_instant_lock_mode -
- *
- * return:
- *
- *   tran_index(in):
- */
-bool
-lock_is_instant_lock_mode (int tran_index)
-{
-#if !defined (SERVER_MODE)
-  return false;
-#else /* !SERVER_MODE */
-  LK_TRAN_LOCK *tran_lock;
-
-  tran_lock = &lk_Gl.tran_lock_table[tran_index];
-  return tran_lock->is_instant_duration;
 #endif /* !SERVER_MODE */
 }
 
