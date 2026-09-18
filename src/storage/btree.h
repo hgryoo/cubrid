@@ -291,6 +291,12 @@ struct btree_scan
   bool is_fk_remake;		/* support for SUPPORT_DEDUPLICATE_KEY_MODE */
   PERF_UTIME_TRACKER time_track;
 
+  bool select_children_for_referential_action;	/* the scan enumerates a parent's children for CASCADE or SET NULL:
+						 * decide on the latest committed state instead of the statement
+						 * snapshot, and wait an in-progress writer out */
+  MVCCID referential_action_wait_mvccid;	/* writer the enumeration met and must wait out before it resumes;
+						 * the wait is taken by the caller, where no page is latched */
+
   void *bts_other;
 };
 
@@ -342,6 +348,8 @@ struct btree_scan
     (bts)->time_track.is_perf_tracking = false;		\
     (bts)->bts_other = NULL;				\
     (bts)->is_fk_remake = false;                        \
+    (bts)->select_children_for_referential_action = false;	\
+    (bts)->referential_action_wait_mvccid = MVCCID_NULL;	\
   } while (0)
 
 #define BTREE_RESET_SCAN(bts)				\
