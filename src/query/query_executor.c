@@ -7581,7 +7581,7 @@ static int
 qexec_open_scan (THREAD_ENTRY * thread_p, ACCESS_SPEC_TYPE * curr_spec, VAL_LIST * val_list, VAL_DESCR * vd,
 		 bool force_select_lock, int fixed, int grouped, bool iscan_oid_order, SCAN_ID * s_id,
 		 QUERY_ID query_id, SCAN_OPERATION_TYPE scan_op_type, bool scan_immediately_stop,
-		 bool * p_mvcc_select_lock_needed, XASL_NODE * xasl, bool upddel_stmt)
+		 bool * p_mvcc_select_lock_needed, XASL_NODE * xasl, bool stmt_scoped_locks)
 {
   bool mvcc_select_lock_needed = false;
   bool upddel_target_scan = false;
@@ -7620,13 +7620,19 @@ qexec_open_scan (THREAD_ENTRY * thread_p, ACCESS_SPEC_TYPE * curr_spec, VAL_LIST
 	}
     }
 
-  /* Whether these row locks are the statement's to give back at its end.  The spec flag does not tell
-   * a DML target from SELECT ... FOR UPDATE (same flag, but FOR UPDATE's locks are the transaction's);
-   * what separates them is upd_del_class_cnt, a statement-level fact the caller passes in rather than
-   * this function reading it -- the node here is one scan-chain level, and the count sits on the top
-   * node alone, so a join's inner class would read 0 and hold its rows to commit.  The class-level
+  /* Whether the row locks this scan is about to take are the statement's to give back at its end rather
+   * than the transaction's to hold to commit.  Two facts decide it.
+   *
+   * The transaction half is read here: read committed, and this statement not nested inside another one
+   * whose scope is already open.
+   *
+   * The statement half is not.  A DML target and a click counter (SELECT ... INCR) both qualify -- the
+   * one feeds the update or delete that follows, the other feeds increments that commit in an autonomous
+   * subtransaction -- but both facts, upd_del_class_cnt and selected_upd_list, sit on the statement's top
+   * XASL node alone, and the node reached here is one scan-chain level.  A join's inner level would read
+   * neither and hold its rows to commit, which is why the caller passes the answer in.  The class-level
    * half is added by the opener, which knows the class (the pruned partition, after a switch). */
-  upddel_target_scan = (mvcc_select_lock_needed && upddel_stmt
+  upddel_target_scan = (mvcc_select_lock_needed && stmt_scoped_locks
 			&& lock_transient_scope_is_outermost (thread_p)
 			&& logtb_find_current_isolation (thread_p) == TRAN_READ_COMMITTED);
 
@@ -14889,7 +14895,7 @@ qexec_execute_selupd_list (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE
   MVCC_SNAPSHOT *mvcc_snapshot = logtb_get_mvcc_snapshot (thread_p);
   bool need_ha_replication = !LOG_CHECK_LOG_APPLIER (thread_p) && log_does_allow_replication () == true;
   bool sysop_started = false;
-  bool in_instant_lock_mode;
+  bool transient_scope_started = false;
 
   // *INDENT-OFF*
   struct incr_info
@@ -14915,6 +14921,10 @@ qexec_execute_selupd_list (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE
 
   tran_index = LOG_FIND_THREAD_TRAN_INDEX (thread_p);
 
+  /* When this function takes the row locks itself they are the statement's: the increments commit in an
+   * autonomous subtransaction below, so nothing after this statement depends on still holding them, and
+   * the scope gives them back at its end -- what the instant lock mode used to do with a global flag.
+   * Otherwise the scan phase took them, inside a scope the caller opened for that and closes itself. */
   if (QEXEC_SEL_UPD_USE_REEVALUATION (xasl))
     {
       /* need reevaluation in this function */
@@ -14927,14 +14937,8 @@ qexec_execute_selupd_list (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE
       /* clear list id if all reevaluations result is false */
       clear_list_id = true;
 
-      /* need lock & reevaluation */
-      lock_start_instant_lock_mode (tran_index);
-      in_instant_lock_mode = true;
-    }
-  else
-    {
-      // locking and evaluation is done at scan phase
-      in_instant_lock_mode = lock_is_instant_lock_mode (tran_index);
+      lock_transient_scope_start (thread_p);
+      transient_scope_started = true;
     }
 
   list = xasl->selected_upd_list;
@@ -15038,7 +15042,7 @@ qexec_execute_selupd_list (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE
 	      scan_code =
 		locator_lock_and_get_object_with_evaluation (thread_p, &crt_incr_info.m_oid, &crt_incr_info.m_class_oid,
 							     NULL, &scan_cache, COPY, NULL_CHN, p_mvcc_reev_data,
-							     LOG_WARNING_IF_DELETED, false, false);
+							     LOG_WARNING_IF_DELETED, true, false);
 	      if (scan_code != S_SUCCESS)
 		{
 		  int er_id = er_errid ();
@@ -15105,22 +15109,18 @@ qexec_execute_selupd_list (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE
   log_sysop_start (thread_p);
   sysop_started = true;
 
-  if (lock_is_instant_lock_mode (tran_index))
+  /* The increments run in an autonomous subtransaction: they commit on their own and survive a rollback
+   * of the enclosing statement, which is what a click counter promises.  That is unconditional -- it used
+   * to be taken only in instant lock mode, but the two were never independent. */
+  if (need_ha_replication)
     {
-      assert (in_instant_lock_mode);
-
       /* in this function, several instances can be updated, so it need to be atomic */
-      if (need_ha_replication)
-	{
-	  repl_start_flush_mark (thread_p);
-	}
-
-      /* Subtransaction case. Locks and MVCCID are acquired/released by subtransaction. */
-      tdes = LOG_FIND_TDES (LOG_FIND_THREAD_TRAN_INDEX (thread_p));
-      assert (tdes != NULL);
-      logtb_get_new_subtransaction_mvccid (thread_p, &tdes->mvccinfo);
-      subtransaction_started = true;
+      repl_start_flush_mark (thread_p);
     }
+  tdes = LOG_FIND_TDES (LOG_FIND_THREAD_TRAN_INDEX (thread_p));
+  assert (tdes != NULL);
+  logtb_get_new_subtransaction_mvccid (thread_p, &tdes->mvccinfo);
+  subtransaction_started = true;
 
   for (selupd = list; selupd; selupd = selupd->next)
     {
@@ -15155,22 +15155,9 @@ qexec_execute_selupd_list (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE
       repl_end_flush_mark (thread_p, false);
     }
 
-  /* Here we need to check instant lock mode, since it may be reseted by qexec_execute_increment. */
-  if (lock_is_instant_lock_mode (tran_index))
-    {
-      /* Subtransaction case. */
-      assert (subtransaction_started);
-      log_sysop_commit (thread_p);
-
-      assert (in_instant_lock_mode);
-    }
-  else
-    {
-      /* Transaction case. */
-      log_sysop_attach_to_outer (thread_p);
-
-      in_instant_lock_mode = false;
-    }
+  /* Commit the autonomous subtransaction. */
+  assert (subtransaction_started);
+  log_sysop_commit (thread_p);
 
 exit:
   /* Release subtransaction resources. */
@@ -15180,15 +15167,12 @@ exit:
       logtb_complete_sub_mvcc (thread_p, tdes);
     }
 
-  if (in_instant_lock_mode)
+  if (transient_scope_started)
     {
-      /* Release instant locks, if not already released. */
-      lock_stop_instant_lock_mode (thread_p, tran_index, true);
-      in_instant_lock_mode = false;
+      /* give back the row locks this statement took */
+      lock_transient_scope_end (thread_p, true);
+      transient_scope_started = false;
     }
-
-  // not hold instant locks any more.
-  assert (!in_instant_lock_mode && !lock_is_instant_lock_mode (tran_index));
 
   if (err != NO_ERROR)
     {
@@ -16135,8 +16119,7 @@ qexec_execute_mainblock_internal (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XAS
   int error;
   bool empty_result = false;
   bool scan_immediately_stop = false;
-  int tran_index = LOG_FIND_THREAD_TRAN_INDEX (thread_p);
-  bool instant_lock_mode_started = false;
+  bool selupd_transient_scope = false;	/* the click counter's scan locks end with the statement */
   bool mvcc_select_lock_needed;
   bool old_no_logging;
 
@@ -16388,9 +16371,11 @@ qexec_execute_mainblock_internal (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XAS
 
 	  if (!QEXEC_SEL_UPD_USE_REEVALUATION (xasl))
 	    {
-	      /* Reevaluate at select since can't reevaluate in execute_selupd_list. Need to start instant lock mode. */
-	      lock_start_instant_lock_mode (tran_index);
-	      instant_lock_mode_started = true;
+	      /* Reevaluate at select since can't reevaluate in execute_selupd_list.  The row locks the scan
+	       * takes are the statement's: the increments commit in an autonomous subtransaction, so the
+	       * scope gives them back at its end. */
+	      lock_transient_scope_start (thread_p);
+	      selupd_transient_scope = true;
 	      force_select_lock = true;
 	    }
 	}
@@ -16843,7 +16828,8 @@ qexec_execute_mainblock_internal (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XAS
 					       force_select_lock, specp->fixed_scan, specp->grouped_scan,
 					       iscan_oid_order, &specp->s_id, xasl_state->query_id, xasl->scan_op_type,
 					       scan_immediately_stop, &mvcc_select_lock_needed, xasl,
-					       xasl->upd_del_class_cnt > 0) != NO_ERROR)
+					       (xasl->upd_del_class_cnt > 0
+						|| xasl->selected_upd_list != NULL)) != NO_ERROR)
 			    {
 			      qexec_clear_mainblock_iterations (thread_p, xasl);
 			      GOTO_EXIT_ON_ERROR;
@@ -16869,7 +16855,9 @@ qexec_execute_mainblock_internal (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XAS
 			  if (qexec_open_scan (thread_p, specp, xptr->val_list, &xasl_state->vd, force_select_lock,
 					       specp->fixed_scan, specp->grouped_scan, iscan_oid_order, &specp->s_id,
 					       xasl_state->query_id, xptr->scan_op_type, scan_immediately_stop,
-					       &mvcc_select_lock_needed, xptr, xasl->upd_del_class_cnt > 0) != NO_ERROR)
+					       &mvcc_select_lock_needed, xptr,
+					       (xasl->upd_del_class_cnt > 0
+						|| xasl->selected_upd_list != NULL)) != NO_ERROR)
 			    {
 			      qexec_clear_mainblock_iterations (thread_p, xasl);
 			      GOTO_EXIT_ON_ERROR;
@@ -17074,8 +17062,11 @@ qexec_execute_mainblock_internal (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XAS
 		  (void) xlogtb_reset_wait_msecs (thread_p, old_wait_msecs);
 		}
 
-	      assert (lock_is_instant_lock_mode (tran_index) == false);
-	      instant_lock_mode_started = false;
+	      if (selupd_transient_scope)
+		{
+		  lock_transient_scope_end (thread_p, true);
+		  selupd_transient_scope = false;
+		}
 
 	      if (error != NO_ERROR)
 		{
@@ -17085,10 +17076,10 @@ qexec_execute_mainblock_internal (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XAS
 	    }
 	  else
 	    {
-	      if (instant_lock_mode_started == true)
+	      if (selupd_transient_scope)
 		{
-		  lock_stop_instant_lock_mode (thread_p, tran_index, true);
-		  instant_lock_mode_started = false;
+		  lock_transient_scope_end (thread_p, true);
+		  selupd_transient_scope = false;
 		}
 	    }
 	}
@@ -17231,11 +17222,11 @@ qexec_execute_mainblock_internal (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XAS
   /*
    * Cleanup and Exit processing
    */
-  if (instant_lock_mode_started == true)
+  if (selupd_transient_scope)
     {
-      assert (lock_is_instant_lock_mode (tran_index) == false);
       /* a safe guard */
-      lock_stop_instant_lock_mode (thread_p, tran_index, true);
+      lock_transient_scope_end (thread_p, true);
+      selupd_transient_scope = false;
     }
 
   if (xasl->type == BUILDLIST_PROC)
@@ -17276,9 +17267,10 @@ exit_on_error:
     }
 #endif
 
-  if (instant_lock_mode_started == true)
+  if (selupd_transient_scope)
     {
-      lock_stop_instant_lock_mode (thread_p, tran_index, true);
+      lock_transient_scope_end (thread_p, true);
+      selupd_transient_scope = false;
     }
   qfile_close_list (thread_p, xasl->list_id);
   if (func_vector)
