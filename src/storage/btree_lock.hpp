@@ -83,6 +83,11 @@ struct btree_find_unique_helper
 #endif /* !SA_MODE */
 
 #if defined (SERVER_MODE)
+/* Which transaction an in-progress verdict points at: the inserter for an insert in progress, the deleter for a
+ * delete in progress.  Whether to wait for it, and where to wait, is the caller's -- a unique probe waits in
+ * place because it owns the pages it must release, a range scan cannot and defers the wait to its caller. */
+extern MVCCID btree_conflicting_writer_mvccid (MVCC_SATISFIES_DELETE_RESULT satisfies_delete,
+    MVCC_REC_HEADER *mvcc_header);
 extern int btree_key_wait_out_conflicting_writer (THREAD_ENTRY *thread_p,
     MVCC_SATISFIES_DELETE_RESULT satisfies_delete,
     MVCC_REC_HEADER *mvcc_header,

@@ -1498,6 +1498,8 @@ static int btree_range_scan_count_oids_leaf_and_one_ovf (THREAD_ENTRY * thread_p
 static int btree_scan_update_range (THREAD_ENTRY * thread_p, BTREE_SCAN * bts, key_val_range * kv_range);
 static int btree_ils_adjust_range (THREAD_ENTRY * thread_p, BTREE_SCAN * bts);
 
+static int btree_select_child_for_referential_action (THREAD_ENTRY * thread_p, BTREE_SCAN * bts,
+						      MVCC_REC_HEADER * mvcc_header, bool * is_child, bool * stop);
 static int btree_select_visible_object_for_range_scan (THREAD_ENTRY * thread_p, BTID_INT * btid_int, RECDES * record,
 						       char *object_ptr, OID * oid, OID * class_oid,
 						       BTREE_MVCC_INFO * mvcc_info, bool * stop, void *args);
@@ -28955,6 +28957,67 @@ btree_range_scan_select_visible_oids (THREAD_ENTRY * thread_p, BTREE_SCAN * bts)
 }
 
 /*
+ * btree_select_child_for_referential_action () - Is this object a child the referential action must act on?
+ *
+ * return	      : Error code.
+ * thread_p (in)      : Thread entry.
+ * bts (in/out)	      : B-tree scan; on an in-progress writer it records whom to wait for and is interrupted.
+ * mvcc_header (in)   : The object's MVCC header.
+ * is_child (out)     : True when the object is a committed child the action must act on.
+ * stop (out)	      : Set to true when the key must stop being processed.
+ *
+ * Note: CASCADE and SET NULL enumerate the children of a parent being deleted or re-keyed.  That answer has to
+ *	 be the one that holds after the statement's wait, not the one its snapshot carried into the wait, or a
+ *	 child committed during the wait is missed and a child that moved away during it is still acted on.  So
+ *	 the question here is the one RESTRICT asks through btree_fk_object_does_exist (): can this object be
+ *	 acted on right now?
+ *
+ *	 The wait itself is not taken here -- this runs under the page latches the key processor holds.  The
+ *	 writer's MVCCID is handed up through bts and the caller waits once the scan has unwound, after which the
+ *	 enumeration resumes at this key and reads it again.
+ */
+static int
+btree_select_child_for_referential_action (THREAD_ENTRY * thread_p, BTREE_SCAN * bts, MVCC_REC_HEADER * mvcc_header,
+					   bool * is_child, bool * stop)
+{
+  MVCC_SATISFIES_DELETE_RESULT satisfies_delete = mvcc_satisfies_delete (thread_p, mvcc_header);
+
+  assert (bts != NULL && mvcc_header != NULL && is_child != NULL && stop != NULL);
+
+  *is_child = false;
+
+  switch (satisfies_delete)
+    {
+    case DELETE_RECORD_DELETED:
+    case DELETE_RECORD_SELF_DELETED:
+      /* Not a child any more. */
+      return NO_ERROR;
+
+    case DELETE_RECORD_INSERT_IN_PROGRESS:
+    case DELETE_RECORD_DELETE_IN_PROGRESS:
+#if defined (SERVER_MODE)
+      bts->referential_action_wait_mvccid = btree_conflicting_writer_mvccid (satisfies_delete, mvcc_header);
+      bts->is_interrupted = true;
+      bts->end_one_iteration = true;
+      *stop = true;
+      return NO_ERROR;
+#else	/* !SERVER_MODE */		 /* SA_MODE */
+      /* Impossible: no other active transactions. */
+      assert_release (false);
+      return ER_FAILED;
+#endif /* SA_MODE */
+
+    case DELETE_RECORD_CAN_DELETE:
+      *is_child = true;
+      return NO_ERROR;
+
+    default:
+      assert_release (false);
+      return ER_FAILED;
+    }
+}
+
+/*
  * btree_select_visible_object_for_range_scan () - BTREE_PROCESS_OBJECT_FUNCTION
  *						   Function handles each found object based on type of index scan.
  *
@@ -29023,9 +29086,26 @@ btree_select_visible_object_for_range_scan (THREAD_ENTRY * thread_p, BTID_INT * 
 	}
     }
 
+  if (bts->select_children_for_referential_action)
+    {
+      bool is_child = false;
+
+      error_code = btree_select_child_for_referential_action (thread_p, bts, &mvcc_header_for_snapshot, &is_child,
+							      stop);
+      if (error_code != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  return error_code;
+	}
+      if (!is_child)
+	{
+	  /* Gone, or the scan stopped to wait for a writer. Either way this object is not saved. */
+	  return NO_ERROR;
+	}
+    }
   /* Check snapshot. */
-  if (snapshot != NULL && snapshot->snapshot_fnc != NULL
-      && snapshot->snapshot_fnc (thread_p, &mvcc_header_for_snapshot, snapshot) != SNAPSHOT_SATISFIED)
+  else if (snapshot != NULL && snapshot->snapshot_fnc != NULL
+	   && snapshot->snapshot_fnc (thread_p, &mvcc_header_for_snapshot, snapshot) != SNAPSHOT_SATISFIED)
     {
       /* Snapshot not satisfied. Ignore object. */
       return NO_ERROR;
