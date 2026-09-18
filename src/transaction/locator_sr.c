@@ -4364,11 +4364,36 @@ locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 	       */
 	      bt_scan.is_key_partially_processed = false;
 #endif
+	      /* CASCADE and SET NULL enumerate the children to act on.  That answer must be the one that holds
+	       * after this statement's wait on the parent, not the one the statement snapshot carried into it --
+	       * otherwise a child committed during the wait is missed and a child that moved away during the wait
+	       * is still acted on.  RESTRICT has always asked the question this way. */
+	      bt_scan.select_children_for_referential_action = true;
+
 	      error_code = btree_range_scan (thread_p, &bt_scan, btree_range_scan_select_visible_oids);
 	      if (error_code != NO_ERROR)
 		{
 		  assert (er_errid () != NO_ERROR);
 		  goto error2;
+		}
+
+	      if (bt_scan.referential_action_wait_mvccid != MVCCID_NULL)
+		{
+		  /* The enumeration met a writer on a child entry and stopped.  No page is latched here, so this is
+		   * where the wait belongs.  The loop then resumes at the same key and re-reads it. */
+		  MVCCID wait_mvccid = bt_scan.referential_action_wait_mvccid;
+
+		  bt_scan.referential_action_wait_mvccid = MVCCID_NULL;
+		  if (logtb_is_active_other_mvccid (thread_p, wait_mvccid))
+		    {
+		      error_code = logtb_wait_for_tran_end (thread_p, wait_mvccid);
+		      if (error_code != NO_ERROR)
+			{
+			  ASSERT_ERROR ();
+			  goto error2;
+			}
+		    }
+		  continue;
 		}
 	      oid_cnt = bt_scan.n_oids_read_last_iteration;
 
@@ -4742,11 +4767,36 @@ locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 	       */
 	      bt_scan.is_key_partially_processed = false;
 #endif
+	      /* CASCADE and SET NULL enumerate the children to act on.  That answer must be the one that holds
+	       * after this statement's wait on the parent, not the one the statement snapshot carried into it --
+	       * otherwise a child committed during the wait is missed and a child that moved away during the wait
+	       * is still acted on.  RESTRICT has always asked the question this way. */
+	      bt_scan.select_children_for_referential_action = true;
+
 	      error_code = btree_range_scan (thread_p, &bt_scan, btree_range_scan_select_visible_oids);
 	      if (error_code != NO_ERROR)
 		{
 		  assert (er_errid () != NO_ERROR);
 		  goto error2;
+		}
+
+	      if (bt_scan.referential_action_wait_mvccid != MVCCID_NULL)
+		{
+		  /* The enumeration met a writer on a child entry and stopped.  No page is latched here, so this is
+		   * where the wait belongs.  The loop then resumes at the same key and re-reads it. */
+		  MVCCID wait_mvccid = bt_scan.referential_action_wait_mvccid;
+
+		  bt_scan.referential_action_wait_mvccid = MVCCID_NULL;
+		  if (logtb_is_active_other_mvccid (thread_p, wait_mvccid))
+		    {
+		      error_code = logtb_wait_for_tran_end (thread_p, wait_mvccid);
+		      if (error_code != NO_ERROR)
+			{
+			  ASSERT_ERROR ();
+			  goto error2;
+			}
+		    }
+		  continue;
 		}
 	      oid_cnt = bt_scan.n_oids_read_last_iteration;
 	      if (oid_cnt < 0)
