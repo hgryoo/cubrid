@@ -182,10 +182,6 @@ static int locator_add_or_remove_index_internal (THREAD_ENTRY * thread_p, RECDES
 						 FUNC_PRED_UNPACK_INFO * func_preds,
 						 LOCATOR_INDEX_ACTION_FLAG idx_action_flag, bool has_BU_lock,
 						 bool skip_checking_fk);
-#if !defined (NDEBUG)
-static bool locator_record_deleted_by_me (THREAD_ENTRY * thread_p, const OID * oid, OID * class_oid,
-					  HEAP_SCANCACHE * scan_cache);
-#endif /* !NDEBUG */
 static int locator_check_foreign_key (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid, OID * inst_oid,
 				      RECDES * recdes, RECDES * new_recdes, bool * is_cached, LC_COPYAREA ** copyarea);
 static int locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_VALUE * key);
@@ -8086,14 +8082,14 @@ locator_add_or_remove_index_internal (THREAD_ENTRY * thread_p, RECDES * recdes, 
 	    }
 	  else
 	    {
-	      /* The scan for children below stays after the key was delete-marked (btree_mvcc_delete () above) and after
-	       * the caller stamped the heap record: a child's foreign-key existence check takes no lock on this row, and
-	       * what keeps it from missing this delete is that a check running after this scan meets the stamp
-	       * (btree_key_find_and_lock_unique_of_unique (), fk_existence).  This is the direction that holds for every
-	       * referential action.  The other one -- this scan meeting a child that has not committed yet -- holds only
-	       * for RESTRICT and NO ACTION; the same comment says why. */
-	      assert (mvcc_is_mvcc_disabled_class (class_oid)
-		      || locator_record_deleted_by_me (thread_p, inst_oid, class_oid, scan_cache));
+	      /* The scan for children below stays after the key was delete-marked (btree_mvcc_delete () above, in this
+	       * same pass over the index): a child's foreign-key existence check takes no lock on this row, and what
+	       * keeps it from missing this delete is that a check running after this scan meets that mark
+	       * (btree_key_find_and_lock_unique_of_unique (), fk_existence).  It is the mark on the key that carries
+	       * this, not the stamp on the heap record -- the child's check never reads the heap -- so the order that
+	       * must not change is the one between the two calls here.  This is the direction that holds for every
+	       * referential action.  The other one -- this scan meeting a child that has not committed yet -- holds
+	       * only for RESTRICT and NO ACTION; the same comment says why. */
 	      if (idx_action_flag == FOR_MOVE)
 		{
 		  /* This delete is caused by 'UPDATE ... SET ...' between partitioned tables. It first delete a
@@ -8820,8 +8816,10 @@ locator_update_index (THREAD_ENTRY * thread_p, RECDES * new_recdes, RECDES * old
 		  LSA_SET_NULL (&tdes->repl_insert_lsa);
 		}
 
-	      /* Same ordering rule as in locator_add_or_remove_index_internal (): the old key is delete-marked and the heap
-	       * record stamped before the children are scanned. */
+	      /* Same ordering rule as in locator_add_or_remove_index_internal (): the old key is delete-marked before the
+	       * children are scanned.  The heap record is not stamped yet at this point -- locator_update_force ()
+	       * updates the index first and the heap after -- and does not have to be: a child's foreign-key existence
+	       * check reads the key, never the heap. */
 	      error_code = locator_check_primary_key_update (thread_p, index, old_key);
 	      if (error_code != NO_ERROR)
 		{
@@ -13192,44 +13190,6 @@ locator_has_isolation_conflict (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * cont
 
   return false;
 }
-
-#if !defined (NDEBUG)
-/*
- * locator_record_deleted_by_me () - Debug check: does the record's last version carry this transaction's DELID?
- *
- *   return: true when it does
- *   thread_p(in): thread entry
- *   oid(in): record OID
- *   class_oid(in): its class
- *   scan_cache(in): scan cache of the caller, may be NULL
- *
- * Note: asserts that a parent DELETE (or key change) stamped the record before it scans for referencing children;
- *	the child's foreign-key existence check relies on that order instead of a parent row lock.
- */
-static bool
-locator_record_deleted_by_me (THREAD_ENTRY * thread_p, const OID * oid, OID * class_oid, HEAP_SCANCACHE * scan_cache)
-{
-  HEAP_GET_CONTEXT context;
-  RECDES peek_recdes;
-  MVCC_REC_HEADER header;
-  bool ours = false;
-
-  heap_init_get_context (thread_p, &context, oid, class_oid, &peek_recdes, scan_cache, PEEK, NULL_CHN);
-  if (heap_prepare_get_context (thread_p, &context, false, LOG_WARNING_IF_DELETED) == S_SUCCESS
-      && heap_get_mvcc_header (thread_p, &context, &header) == S_SUCCESS)
-    {
-      ours = MVCC_IS_HEADER_DELID_VALID (&header) && logtb_is_current_mvccid (thread_p, MVCC_GET_DELID (&header));
-    }
-
-  if (context.scan_cache != NULL && context.scan_cache->cache_last_fix_page && context.home_page_watcher.pgptr != NULL)
-    {
-      pgbuf_ordered_unfix (thread_p, &context.home_page_watcher);
-    }
-  heap_clean_get_context (thread_p, &context);
-
-  return ours;
-}
-#endif /* !NDEBUG */
 
 /*
  * locator_last_version_is_ours () - Whether the object's last version carries this transaction's own, still
