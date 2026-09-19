@@ -26374,10 +26374,18 @@ btree_key_find_and_lock_unique_of_unique (THREAD_ENTRY * thread_p, BTID_INT * bt
 	    {
 	      /* Foreign-key existence check: the committed parent is returned without a row lock.  The child has already
 	       * published its foreign-key index entry (locator_insert_force (), locator_update_force ()), and a parent
-	       * DELETE or key change stamps the key before it scans for children (locator_add_or_remove_index_internal ()),
-	       * so the two cannot miss each other: either that scan meets the child's entry and waits the child out, or
-	       * this probe meets the stamp above and waits the deleter out.  The parent row lock used to close the same
-	       * window, and collided with every parent UPDATE that leaves the key alone. */
+	       * DELETE or key change stamps the key before it scans for children (locator_add_or_remove_index_internal ()).
+	       *
+	       * Under RESTRICT and NO ACTION that closes the window both ways.  The parent's scan for children is
+	       * btree_find_foreign_key (), which carries no snapshot and judges with mvcc_satisfies_delete (), so it meets
+	       * an uncommitted child's entry and waits the child out; and this probe meets the stamp above and waits the
+	       * deleter out.  The parent row lock used to close the same window, and collided with every parent UPDATE
+	       * that leaves the key alone.
+	       *
+	       * CASCADE and SET NULL are outside that argument.  Their scan for children reads the statement's snapshot
+	       * (locator_check_primary_key_delete (), locator_check_primary_key_update ()), so it neither sees an
+	       * uncommitted child nor waits for one.  Dropping the parent row lock does not open that gap -- it is older
+	       * than this change and CBRD-27464 is what closes it -- but only the other direction holds there. */
 	      assert (OID_ISNULL (&find_unique_helper->locked_oid));
 	      COPY_OID (&find_unique_helper->oid, &unique_oid);
 	      find_unique_helper->found_object = true;
@@ -27308,8 +27316,6 @@ btree_find_unique_internal (THREAD_ENTRY * thread_p, BTID * btid, SCAN_OPERATION
 {
   /* Helper used to describe find unique process and to output results. */
   BTREE_FIND_UNIQUE_HELPER find_unique_helper = BTREE_FIND_UNIQUE_HELPER_INITIALIZER;
-
-  find_unique_helper.fk_existence = fk_existence;
   int error_code = NO_ERROR;
   BTREE_ADVANCE_WITH_KEY_FUNCTION *advance_function = btree_advance_and_find_key;
   BTREE_PROCESS_KEY_FUNCTION *key_function = NULL;
@@ -27318,6 +27324,8 @@ btree_find_unique_internal (THREAD_ENTRY * thread_p, BTID * btid, SCAN_OPERATION
   int lock_result;
   LOCK class_lock;
 #endif
+
+  find_unique_helper.fk_existence = fk_existence;
 
   /* Assert expected arguments. */
   assert (btid != NULL);
