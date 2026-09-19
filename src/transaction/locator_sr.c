@@ -7572,6 +7572,34 @@ locator_attribute_info_force (THREAD_ENTRY * thread_p, const HFID * hfid, OID * 
 	  /* an in-place update requires the object to be exclusively held by the current transaction. */
 	  assert (lock_has_xlock_or_self_lock (thread_p, oid, &class_oid));
 	}
+      else if (mvcc_reev_data != NULL && mvcc_reev_data->type == REEV_DATA_UPDDEL
+	       && !mvcc_is_mvcc_disabled_class (&class_oid))
+	{
+	  /* The select phase did not lock this row, so the version locked here need not be the one it evaluated:
+	   * another transaction may have changed the row and committed in between.  When the last version is not the
+	   * one the statement's snapshot sees, reevaluate against it -- the predicate, and the assignments too.
+	   *
+	   * The assignments are why new_recdes is handed over: locator_mvcc_reev_cond_assigns () recomputes them only
+	   * when it is given somewhere to build the record.  What matters of its work is that it rebuilds attr_info
+	   * in place (curr_attrinfo is this attr_info), because the record is built again below from attr_info, the
+	   * same way it is when nothing had to be reevaluated.  The snapshot stays on the scan cache here, unlike in
+	   * the branch below: it is what tells a version that needs the reevaluation from one that does not.
+	   *
+	   * This is the only place an UPDATE reevaluates at force.  locator_update_force () has the same call under
+	   * oldrecdes == NULL, but this function always fills oldrecdes, so that one is never reached from here. */
+	  mvcc_reev_data->upddel_reev_data->new_recdes = &new_recdes;
+	  scan = locator_lock_and_get_object_with_evaluation (thread_p, oid, &class_oid, &copy_recdes, scan_cache, COPY,
+							      NULL_CHN, mvcc_reev_data, LOG_ERROR_IF_DELETED,
+							      LOCATOR_LOCK_IS_TRANSIENT (lock_policy),
+							      LOCATOR_LOCK_IS_TRANSIENT (lock_policy));
+	  /* new_recdes is this call's; the reevaluation data outlives it */
+	  mvcc_reev_data->upddel_reev_data->new_recdes = NULL;
+	  if (scan == S_SUCCESS && mvcc_reev_data->filter_result == V_FALSE)
+	    {
+	      /* the last version no longer satisfies the predicate; the lock was given back with the verdict */
+	      return ER_MVCC_NOT_SATISFIED_REEVALUATION;
+	    }
+	}
       else
 	{
 	  /* The oid has been already locked in select phase, however need to get the last object that may differ by
@@ -13365,6 +13393,14 @@ locator_lock_and_get_object_with_evaluation (THREAD_ENTRY * thread_p, OID * oid,
   bool lock_acquired = false;	/* whether the internal call took the row lock */
   int err = NO_ERROR;
 
+  if (mvcc_reev_data != NULL)
+    {
+      /* The verdict is about this row.  The reevaluation data is one per statement, and a row whose last version
+       * the snapshot sees leaves below without reevaluating and so without writing the verdict -- left alone, the
+       * verdict of the last row that was reevaluated would answer for every row after it. */
+      mvcc_reev_data->filter_result = V_TRUE;
+    }
+
   if (recdes == NULL && mvcc_reev_data != NULL)
     {
       /* peek if only for reevaluation */
@@ -13435,6 +13471,21 @@ locator_lock_and_get_object_with_evaluation (THREAD_ENTRY * thread_p, OID * oid,
 	    {
 	      /* Skip the re-evaluation if last version is visible. It should be the same as the visible version
 	       * which was already evaluated. */
+	      goto exit;
+	    }
+	  else if (mvcc_reev_data->type == REEV_DATA_UPDDEL && mvcc_reev_data->upddel_reev_data != NULL
+		   && mvcc_reev_data->upddel_reev_data->skip_unevaluated_version)
+	    {
+	      /* the DELETE path sets this when the statement has no reevaluation class to re-check with */
+	      mvcc_reev_data->filter_result = V_FALSE;
+	      if (lock_acquired && transient)
+		{
+		  lock_unlock_object_transient (thread_p, oid, class_oid, lock_mode);
+		}
+	      else if (lock_acquired)
+		{
+		  lock_unlock_object_donot_move_to_non2pl (thread_p, oid, class_oid, lock_mode);
+		}
 	      goto exit;
 	    }
 	}
@@ -13854,20 +13905,49 @@ locator_mvcc_reeval_scan_filters (THREAD_ENTRY * thread_p, const OID * oid, HEAP
   cls_oid = &mvcc_cond_reeval->cls_oid;
   if (!is_upddel)
     {
-      /* the class is different than the class to be updated/deleted, so use the latest version of row */
-      recdesp = &temp_recdes;
-      oid_inst = oid;
-      if (heap_scancache_quick_start_with_class_hfid (thread_p, &local_scan_cache, &scan_cache->node.hfid) != NO_ERROR)
+      /* Not the spec being updated/deleted: re-read its own row.  Evaluating this spec's filters against the
+       * target's record instead is what let a join DELETE act on rows whose predicate no longer held. */
+      oid_inst = mvcc_cond_reeval->inst_oid;
+      if (oid_inst == NULL || OID_ISNULL (oid_inst))
 	{
+	  /* the plan flagged this class for reevaluation but the scan bound no row of it to re-read.  The
+	   * caller asserts an error is set on V_ERROR, so say what went wrong rather than return silently. */
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_GENERIC_ERROR, 0);
 	  ev_res = V_ERROR;
 	  goto end;
 	}
-      scan_cache_inited = true;
-      scan_code = heap_get_visible_version (thread_p, oid_inst, NULL, recdesp, &local_scan_cache, PEEK, NULL_CHN);
-      if (scan_code != S_SUCCESS)
+
+      if (OID_EQ (oid_inst, oid))
 	{
-	  ev_res = V_ERROR;
-	  goto end;
+	  /* It is the very row being updated/deleted, reached through a spec that is not the target's: a class
+	   * only an assignment reads comes here (UPDATE t SET v = v + 1 has no condition to make t a condition
+	   * class), and so does the other side of a self join.  That row is locked and settled and recdes is
+	   * its last version, which is the one the assignment has to be recomputed from. */
+	  recdesp = recdes;
+	}
+      else
+	{
+	  /* Another row, and one that was never locked -- only a target's rows are.  Its last version may be
+	   * one another transaction has not committed, and a verdict taken from that is a dirty read: it may
+	   * rest on a value that is rolled back.  So it is read under the statement's snapshot, where it reads
+	   * as the select phase read it; that is all a row that is not a target was ever held to.  The select
+	   * phase found it there, so it is visible and the read cannot come back empty. */
+	  recdesp = &temp_recdes;
+	  if (heap_scancache_quick_start_with_class_hfid (thread_p, &local_scan_cache, &mvcc_cond_reeval->cls_hfid)
+	      != NO_ERROR)
+	    {
+	      ev_res = V_ERROR;
+	      goto end;
+	    }
+	  scan_cache_inited = true;
+	  local_scan_cache.mvcc_snapshot = logtb_get_mvcc_snapshot (thread_p);
+
+	  scan_code = heap_get_visible_version (thread_p, oid_inst, NULL, recdesp, &local_scan_cache, PEEK, NULL_CHN);
+	  if (scan_code != S_SUCCESS)
+	    {
+	      ev_res = V_ERROR;
+	      goto end;
+	    }
 	}
     }
   else

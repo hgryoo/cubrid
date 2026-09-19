@@ -730,7 +730,7 @@ static bool qexec_class_ends_locks_with_statement (THREAD_ENTRY * thread_p,
 static int qexec_upddel_setup_current_class (THREAD_ENTRY * thread_p, UPDDEL_CLASS_INFO * class_,
 					     UPDDEL_CLASS_INFO_INTERNAL * class_info, int op_type, OID * current_oid);
 static int qexec_upddel_mvcc_set_filters (THREAD_ENTRY * thread_p, XASL_NODE * aptr_list,
-					  UPDDEL_MVCC_COND_REEVAL * mvcc_reev_class, OID * class_oid);
+					  UPDDEL_MVCC_COND_REEVAL * mvcc_reev_class, OID * class_oid, bool * has_spec);
 static int qexec_init_agg_hierarchy_helpers (THREAD_ENTRY * thread_p, ACCESS_SPEC_TYPE * spec,
 					     AGGREGATE_TYPE * aggregate_list, HIERARCHY_AGGREGATE_HELPER ** helpers,
 					     int *helpers_countp);
@@ -10369,8 +10369,11 @@ prepare_mvcc_reev_data (THREAD_ENTRY * thread_p, XASL_NODE * aptr, XASL_STATE * 
       return ER_FAILED;
     }
 
-  /* Make sure reev data is initialized, or else it will crash later */
-  memset (reev_data, 0, sizeof (MVCC_UPDDEL_REEV_DATA));
+  /* start from the struct's empty state, so a field this function does not fill cannot carry over */
+  *reev_data = MVCC_UPDDEL_REEV_DATA ();
+
+  /* the value descriptor is bound on every path, including the one that carries no reevaluation class */
+  reev_data->vd = &xasl_state->vd;
 
   if (num_reev_classes == 0)
     {
@@ -10395,6 +10398,7 @@ prepare_mvcc_reev_data (THREAD_ENTRY * thread_p, XASL_NODE * aptr, XASL_STATE * 
       cond_reev_class = &cond_reev_classes[idx];
       cond_reev_class->class_index = mvcc_reev_indexes[idx];
       OID_SET_NULL (&cond_reev_class->cls_oid);
+      HFID_SET_NULL (&cond_reev_class->cls_hfid);
       cond_reev_class->inst_oid = NULL;
       cond_reev_class->rest_attrs = NULL;
       cond_reev_class->rest_regu_list = NULL;
@@ -10435,7 +10439,6 @@ prepare_mvcc_reev_data (THREAD_ENTRY * thread_p, XASL_NODE * aptr, XASL_STATE * 
   reev_data->curr_attrinfo = NULL;
   reev_data->copyarea = NULL;
   reev_data->cons_pred = cons_pred;
-  reev_data->vd = &xasl_state->vd;
 
   if (qexec_create_mvcc_reev_assignments (thread_p, aptr, has_delete, internal_classes, num_classes, num_assigns,
 					  assigns, mvcc_reev_assigns) != NO_ERROR)
@@ -10724,7 +10727,8 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
 	      upd_cls = &update->classes[class_oid_idx];
 	      internal_class = &internal_classes[class_oid_idx];
 
-	      if (mvcc_reev_class_cnt && mvcc_reev_classes[mvcc_reev_class_idx].class_index == class_oid_idx)
+	      if (mvcc_reev_class_idx < mvcc_reev_class_cnt
+		  && mvcc_reev_classes[mvcc_reev_class_idx].class_index == class_oid_idx)
 		{
 		  mvcc_reev_class = &mvcc_reev_classes[mvcc_reev_class_idx++];
 		}
@@ -10781,9 +10785,19 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
 		  /* temporary disable set filters when needs prunning */
 		  if (mvcc_reev_class != NULL)
 		    {
-		      error = qexec_upddel_mvcc_set_filters (thread_p, aptr, mvcc_reev_class, class_oid);
+		      bool has_spec = false;
+
+		      error = qexec_upddel_mvcc_set_filters (thread_p, aptr, mvcc_reev_class, class_oid, &has_spec);
 		      if (error != NO_ERROR)
 			{
+			  GOTO_EXIT_ON_ERROR;
+			}
+		      if (!has_spec)
+			{
+			  /* No access spec for this class: the filters of mvcc_reev_class stay uninitialized, so the
+			   * update phase has nothing to re-evaluate with. Fail the statement, as before the delete
+			   * path started distinguishing this case. */
+			  error = ER_FAILED;
 			  GOTO_EXIT_ON_ERROR;
 			}
 		    }
@@ -10968,9 +10982,17 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
 	      /* class has changed to a new subclass */
 	      if (class_oid && !OID_EQ (&mvcc_reev_class->cls_oid, class_oid))
 		{
-		  error = qexec_upddel_mvcc_set_filters (thread_p, aptr, mvcc_reev_class, class_oid);
+		  bool has_spec = false;
+
+		  error = qexec_upddel_mvcc_set_filters (thread_p, aptr, mvcc_reev_class, class_oid, &has_spec);
 		  if (error != NO_ERROR)
 		    {
+		      GOTO_EXIT_ON_ERROR;
+		    }
+		  if (!has_spec)
+		    {
+		      /* see the other call site: without an access spec there is nothing to re-evaluate with */
+		      error = ER_FAILED;
 		      GOTO_EXIT_ON_ERROR;
 		    }
 		}
@@ -11041,9 +11063,17 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
 	      internal_class = &internal_classes[class_oid_idx];
 	      upd_cls = &update->classes[class_oid_idx];
 
-	      if (mvcc_reev_class_cnt && mvcc_reev_classes[mvcc_reev_class_idx].class_index == class_oid_idx)
+	      /* The classes are walked right to left here, so the reevaluation cursor walks down with them.  It
+	       * starts above them -- a class that appears only on the right-hand side of an assignment carries a
+	       * class_index past the last updated class -- so step it down to this class first.  Walking it up,
+	       * as this loop used to, matched the first class and then read past the array. */
+	      while (mvcc_reev_class_idx >= 0 && mvcc_reev_classes[mvcc_reev_class_idx].class_index > class_oid_idx)
 		{
-		  mvcc_reev_class = &mvcc_reev_classes[mvcc_reev_class_idx++];
+		  mvcc_reev_class_idx--;
+		}
+	      if (mvcc_reev_class_idx >= 0 && mvcc_reev_classes[mvcc_reev_class_idx].class_index == class_oid_idx)
+		{
+		  mvcc_reev_class = &mvcc_reev_classes[mvcc_reev_class_idx--];
 		}
 	      else
 		{
@@ -11431,6 +11461,7 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
   MVCC_REEV_DATA mvcc_reev_data;
   MVCC_UPDDEL_REEV_DATA mvcc_upddel_reev_data;
   UPDDEL_MVCC_COND_REEVAL *mvcc_reev_classes = NULL, *mvcc_reev_class = NULL;
+  bool reev_disabled = false;	/* a subclass turned out to carry no access spec, so nothing re-checks it */
   LOCATOR_LOCK_POLICY base_lock_policy;	/* what the select phase left for the force phase to do */
   bool outermost_transient_scope;	/* a statement nested in another one keeps its locks to commit */
   bool statement_ends_locks;	/* whether this statement's row locks end with it */
@@ -11601,6 +11632,13 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
 		}
 	      oid = db_get_oid (valp);
 
+	      if (mvcc_reev_class != NULL)
+		{
+		  /* this class's own row, the way the UPDATE path binds it.  Binding it later, from the
+		   * loop over the classes being deleted, would hand every entry the target's OID. */
+		  mvcc_reev_class->inst_oid = oid;
+		}
+
 	      /* class OID */
 	      valp = val_list->next->val;
 	      if (valp == NULL)
@@ -11654,21 +11692,35 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
 		    }
 		}
 
-	      if (mvcc_reev_class != NULL)
+	      if (mvcc_reev_class != NULL && !reev_disabled)
 		{
 		  /* class has changed to a new subclass */
 		  if (class_oid && !OID_EQ (&mvcc_reev_class->cls_oid, class_oid))
 		    {
-		      error = qexec_upddel_mvcc_set_filters (thread_p, aptr, mvcc_reev_class, class_oid);
+		      bool has_spec = false;
+
+		      error = qexec_upddel_mvcc_set_filters (thread_p, aptr, mvcc_reev_class, class_oid, &has_spec);
 		      if (error != NO_ERROR)
 			{
 			  GOTO_EXIT_ON_ERROR;
+			}
+		      if (!has_spec)
+			{
+			  /* No access spec for this row's subclass, so no filters to re-check with -- see
+			   * qexec_upddel_mvcc_set_filters ().  Skip the version rather than delete what the
+			   * predicate never saw.  mvcc_reev_class_cnt bounds this loop over the value list's
+			   * OID pairs and must stay as it is. */
+			  reev_disabled = true;
+			  mvcc_reev_class = NULL;
+			  mvcc_upddel_reev_data.curr_upddel = NULL;
+			  mvcc_upddel_reev_data.mvcc_cond_reev_list = NULL;
+			  mvcc_upddel_reev_data.skip_unevaluated_version = true;
 			}
 		    }
 		}
 	    }
 
-	  if (mvcc_upddel_reev_data.mvcc_cond_reev_list == NULL)
+	  if (!reev_disabled && mvcc_upddel_reev_data.mvcc_cond_reev_list == NULL)
 	    {
 	      /* If scan order was not set then do it. This operation must be run only once. We do it here and not at
 	       * the beginning of this function because the class OIDs must be set for classes involved in reevaluation
@@ -11701,7 +11753,8 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
 		    }
 		}
 
-	      if (mvcc_reev_class_cnt && mvcc_reev_classes[mvcc_reev_class_idx].class_index == class_oid_idx)
+	      if (!reev_disabled && mvcc_reev_class_idx < mvcc_reev_class_cnt
+		  && mvcc_reev_classes[mvcc_reev_class_idx].class_index == class_oid_idx)
 		{
 		  mvcc_reev_class = &mvcc_reev_classes[mvcc_reev_class_idx++];
 		}
@@ -11710,6 +11763,7 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
 		  mvcc_reev_class = NULL;
 		}
 	      mvcc_upddel_reev_data.curr_upddel = mvcc_reev_class;
+	      /* inst_oid was bound per class while scanning; do not overwrite it with the target's */
 
 	      if (oid == NULL)
 		{
@@ -26824,9 +26878,11 @@ qexec_clear_internal_classes (THREAD_ENTRY * thread_p, UPDDEL_CLASS_INFO_INTERNA
  */
 static int
 qexec_upddel_mvcc_set_filters (THREAD_ENTRY * thread_p, XASL_NODE * aptr_list,
-			       UPDDEL_MVCC_COND_REEVAL * mvcc_reev_class, OID * class_oid)
+			       UPDDEL_MVCC_COND_REEVAL * mvcc_reev_class, OID * class_oid, bool * has_spec)
 {
   ACCESS_SPEC_TYPE *curr_spec = NULL;
+
+  *has_spec = false;
 
   while (aptr_list != NULL && curr_spec == NULL)
     {
@@ -26840,11 +26896,20 @@ qexec_upddel_mvcc_set_filters (THREAD_ENTRY * thread_p, XASL_NODE * aptr_list,
 
   if (curr_spec == NULL)
     {
-      return ER_FAILED;
+      /* The plan does not scan this class -- a path expression in the predicate makes the statement read
+       * an inner query's list instead -- so it carries no filters to re-evaluate with. Not an error;
+       * the caller decides what to do without reevaluation. */
+      return NO_ERROR;
     }
 
   mvcc_reev_class->init (curr_spec->s_id);
   mvcc_reev_class->cls_oid = *class_oid;
+  if (heap_get_class_info (thread_p, class_oid, &mvcc_reev_class->cls_hfid, NULL, NULL) != NO_ERROR)
+    {
+      ASSERT_ERROR ();
+      return er_errid ();
+    }
+  *has_spec = true;
 
   return NO_ERROR;
 }
