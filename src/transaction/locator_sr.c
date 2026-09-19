@@ -13947,11 +13947,8 @@ locator_mvcc_reeval_scan_filters (THREAD_ENTRY * thread_p, const OID * oid, HEAP
   cls_oid = &mvcc_cond_reeval->cls_oid;
   if (!is_upddel)
     {
-      /* Not the class being updated/deleted: re-read its own row out of its own heap.  Evaluating this
-       * class's filters against the target's record instead is what let a join DELETE act on rows whose
-       * predicate no longer held.  The read carries no snapshot, so a version a concurrent transaction
-       * deleted still reads; a failure here means the slot itself is gone. */
-      recdesp = &temp_recdes;
+      /* Not the spec being updated/deleted: re-read its own row.  Evaluating this spec's filters against the
+       * target's record instead is what let a join DELETE act on rows whose predicate no longer held. */
       oid_inst = mvcc_cond_reeval->inst_oid;
       if (oid_inst == NULL || OID_ISNULL (oid_inst))
 	{
@@ -13962,19 +13959,37 @@ locator_mvcc_reeval_scan_filters (THREAD_ENTRY * thread_p, const OID * oid, HEAP
 	  goto end;
 	}
 
-      if (heap_scancache_quick_start_with_class_hfid (thread_p, &local_scan_cache, &mvcc_cond_reeval->cls_hfid)
-	  != NO_ERROR)
+      if (OID_EQ (oid_inst, oid))
 	{
-	  ev_res = V_ERROR;
-	  goto end;
+	  /* It is the very row being updated/deleted, reached through a spec that is not the target's: a class
+	   * only an assignment reads comes here (UPDATE t SET v = v + 1 has no condition to make t a condition
+	   * class), and so does the other side of a self join.  That row is locked and settled and recdes is
+	   * its last version, which is the one the assignment has to be recomputed from. */
+	  recdesp = recdes;
 	}
-      scan_cache_inited = true;
-
-      scan_code = heap_get_visible_version (thread_p, oid_inst, NULL, recdesp, &local_scan_cache, PEEK, NULL_CHN);
-      if (scan_code != S_SUCCESS)
+      else
 	{
-	  ev_res = V_ERROR;
-	  goto end;
+	  /* Another row, and one that was never locked -- only a target's rows are.  Its last version may be
+	   * one another transaction has not committed, and a verdict taken from that is a dirty read: it may
+	   * rest on a value that is rolled back.  So it is read under the statement's snapshot, where it reads
+	   * as the select phase read it; that is all a row that is not a target was ever held to.  The select
+	   * phase found it there, so it is visible and the read cannot come back empty. */
+	  recdesp = &temp_recdes;
+	  if (heap_scancache_quick_start_with_class_hfid (thread_p, &local_scan_cache, &mvcc_cond_reeval->cls_hfid)
+	      != NO_ERROR)
+	    {
+	      ev_res = V_ERROR;
+	      goto end;
+	    }
+	  scan_cache_inited = true;
+	  local_scan_cache.mvcc_snapshot = logtb_get_mvcc_snapshot (thread_p);
+
+	  scan_code = heap_get_visible_version (thread_p, oid_inst, NULL, recdesp, &local_scan_cache, PEEK, NULL_CHN);
+	  if (scan_code != S_SUCCESS)
+	    {
+	      ev_res = V_ERROR;
+	      goto end;
+	    }
 	}
     }
   else
