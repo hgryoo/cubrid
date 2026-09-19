@@ -369,7 +369,13 @@ struct lk_res_block
 /* One class whose lock an escalation raised over the running statement's row locks.  It goes back down with the
  * statement (lock_end_escalated_class_lock) unless a request the statement will not give back arrives on it first
  * (the withdrawal at the end of lock_object_with_flag).  A statement can escalate more than one class -- each target
- * of a multi-table UPDATE, each partition a range reaches -- so the transaction keeps a bounded list of them. */
+ * of a multi-table UPDATE, each partition a range reaches -- so the transaction keeps a bounded list of them.
+ *
+ * These records are read and written without hold_mutex, on the same ground the walks of the hold lists state (see
+ * lock_release_transient_object_locks): a transaction runs one thread at a time, so no one else is on the list while
+ * we are.  hold_mutex is there for the other transactions that reach the hold lists through a resource; nothing but
+ * this transaction ever reaches these records.  The escalation writes its record after dropping the mutex for that
+ * reason, not by oversight. */
 #define LK_ESCALATION_RECORDS_PER_STATEMENT 16
 typedef struct lk_escalation_record LK_ESCALATION_RECORD;
 struct lk_escalation_record
@@ -3220,6 +3226,8 @@ lock_escalation_takes_only_transient (LK_TRAN_LOCK * tran_lock, const OID * clas
  *	are published, so a late arrival settles on the MVCCID self-lock exactly as it does for the rows the
  *	escalation did not reach.  The mode goes back to what it was, not away: the intention lock the DML
  *	holds on the class is the transaction's and stays to commit.
+ *
+ *	Takes no hold_mutex over the record list; see the premise stated where LK_ESCALATION_RECORD is declared.
  */
 static void
 lock_end_escalated_class_lock (THREAD_ENTRY * thread_p, bool lower)
@@ -3262,7 +3270,8 @@ lock_end_escalated_class_lock (THREAD_ENTRY * thread_p, bool lower)
  *   tran_lock(in): the transaction's lock list
  *   class_oid(in): the class a request the statement will not give back was just granted on
  *
- * Note: no-op when the class has no record.  The other records keep their order; order carries nothing.
+ * Note: no-op when the class has no record.  The other records keep their order; order carries nothing.  Takes no
+ *	hold_mutex; see the premise stated where LK_ESCALATION_RECORD is declared.
  */
 static void
 lock_withdraw_escalation_record (LK_TRAN_LOCK * tran_lock, const OID * class_oid)
