@@ -7633,6 +7633,34 @@ locator_attribute_info_force (THREAD_ENTRY * thread_p, const HFID * hfid, OID * 
 	  /* an in-place update requires the object to be exclusively held by the current transaction. */
 	  assert (lock_has_xlock_or_self_lock (thread_p, oid, &class_oid));
 	}
+      else if (mvcc_reev_data != NULL && mvcc_reev_data->type == REEV_DATA_UPDDEL
+	       && !mvcc_is_mvcc_disabled_class (&class_oid))
+	{
+	  /* The select phase did not lock this row, so the version locked here need not be the one it evaluated:
+	   * another transaction may have changed the row and committed in between.  When the last version is not the
+	   * one the statement's snapshot sees, reevaluate against it -- the predicate, and the assignments too.
+	   *
+	   * The assignments are why new_recdes is handed over: locator_mvcc_reev_cond_assigns () recomputes them only
+	   * when it is given somewhere to build the record.  What matters of its work is that it rebuilds attr_info
+	   * in place (curr_attrinfo is this attr_info), because the record is built again below from attr_info, the
+	   * same way it is when nothing had to be reevaluated.  The snapshot stays on the scan cache here, unlike in
+	   * the branch below: it is what tells a version that needs the reevaluation from one that does not.
+	   *
+	   * This is the only place an UPDATE reevaluates at force.  locator_update_force () has the same call under
+	   * oldrecdes == NULL, but this function always fills oldrecdes, so that one is never reached from here. */
+	  mvcc_reev_data->upddel_reev_data->new_recdes = &new_recdes;
+	  scan = locator_lock_and_get_object_with_evaluation (thread_p, oid, &class_oid, &copy_recdes, scan_cache, COPY,
+							      NULL_CHN, mvcc_reev_data, LOG_ERROR_IF_DELETED,
+							      LOCATOR_LOCK_IS_TRANSIENT (lock_policy),
+							      LOCATOR_LOCK_IS_TRANSIENT (lock_policy));
+	  /* new_recdes is this call's; the reevaluation data outlives it */
+	  mvcc_reev_data->upddel_reev_data->new_recdes = NULL;
+	  if (scan == S_SUCCESS && mvcc_reev_data->filter_result == V_FALSE)
+	    {
+	      /* the last version no longer satisfies the predicate; the lock was given back with the verdict */
+	      return ER_MVCC_NOT_SATISFIED_REEVALUATION;
+	    }
+	}
       else
 	{
 	  /* The oid has been already locked in select phase, however need to get the last object that may differ by
