@@ -21096,6 +21096,25 @@ pt_reev_reads_no_spec (PT_NODE * spec_list)
 }
 
 /*
+ * pt_cond_numbers_rows () - does a search condition count the rows it lets through?
+ *   return: true when INST_NUM () or ROWNUM appears in it
+ *   parser(in): parser context
+ *   cond(in): a list of AND-ed conditions, or NULL
+ */
+static bool
+pt_cond_numbers_rows (PARSER_CONTEXT * parser, PT_NODE * cond)
+{
+  bool inst_num = false;
+
+  if (cond != NULL)
+    {
+      (void) parser_walk_tree (parser, cond, pt_check_instnum_pre, NULL, pt_check_instnum_post, &inst_num);
+    }
+
+  return inst_num;
+}
+
+/*
  * pt_cond_spans_multiple_specs () - does any single conjunct reference more than one spec?
  *   return: true if some term relates two or more specs
  *   parser(in): parser context
@@ -21843,9 +21862,12 @@ pt_delete_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
     }
 
   /* the candidate list holds exactly n rows and a rejected one is never replaced, so the statement would
-   * delete fewer while rows that still qualify are left behind.
-   *   DELETE FROM t WHERE pk > 0 LIMIT 1; */
-  if (statement->info.delete_.limit != NULL)
+   * delete fewer while rows that still qualify are left behind.  A ROWNUM the user wrote counts rows the
+   * same way and leaves no limit node behind, so the condition is asked as well.
+   *   DELETE FROM t WHERE pk > 0 LIMIT 1;
+   *   DELETE FROM t WHERE v = 1 AND ROWNUM <= 3; */
+  if (statement->info.delete_.limit != NULL || pt_cond_numbers_rows (parser, where)
+      || pt_cond_numbers_rows (parser, aptr_statement->info.query.q.select.where))
     {
       PT_SELECT_INFO_SET_FLAG (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED);
       return true;
@@ -21888,6 +21910,17 @@ pt_delete_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
    * not how many specs the statement mentions.
    *   DELETE a FROM t a, side_t b WHERE a.pk = b.k; */
   if (pt_cond_spans_multiple_specs (parser, from, where))
+    {
+      PT_SELECT_INFO_SET_FLAG (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED);
+      return true;
+    }
+
+  /* the delete phase takes and re-checks one class at a time, and a class whose row fails the re-check is
+   * skipped on its own -- so with more than one target the statement can land on some of its classes and
+   * not on the others, and end in success.  No filter puts that back together, however independent the
+   * terms are; what the select-phase lock gave was every target row of a pair held at once.
+   *   DELETE a, b FROM t a, side_t b WHERE a.pk = 1 AND b.k = 1; */
+  if (aptr_statement->info.query.upd_del_class_cnt > 1)
     {
       PT_SELECT_INFO_SET_FLAG (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED);
       return true;
@@ -22648,8 +22681,10 @@ pt_update_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
       return true;
     }
 
-  /*   UPDATE t SET v = 1 WHERE pk > 0 LIMIT 1; */
-  if (statement->info.update.limit != NULL)
+  /*   UPDATE t SET v = 1 WHERE pk > 0 LIMIT 1;
+   *   UPDATE t SET v = 2 WHERE v = 1 AND ROWNUM <= 3; */
+  if (statement->info.update.limit != NULL || pt_cond_numbers_rows (parser, where)
+      || pt_cond_numbers_rows (parser, aptr_statement->info.query.q.select.where))
     {
       PT_SELECT_INFO_SET_FLAG (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED);
       return true;
@@ -22692,6 +22727,13 @@ pt_update_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
    *   UPDATE t a, side_t b SET a.v = b.v, b.v = 1 WHERE a.pk = 1 AND b.k = 1; */
   if (pt_cond_spans_multiple_specs (parser, from, where)
       || pt_cond_spans_multiple_specs (parser, from, statement->info.update.assignment))
+    {
+      PT_SELECT_INFO_SET_FLAG (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED);
+      return true;
+    }
+
+  /*   UPDATE t a, side_t b SET a.v = 1, b.v = 1 WHERE a.pk = 1 AND b.k = 1; */
+  if (aptr_statement->info.query.upd_del_class_cnt > 1)
     {
       PT_SELECT_INFO_SET_FLAG (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED);
       return true;
