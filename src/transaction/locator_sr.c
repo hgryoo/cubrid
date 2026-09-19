@@ -13365,6 +13365,14 @@ locator_lock_and_get_object_with_evaluation (THREAD_ENTRY * thread_p, OID * oid,
   bool lock_acquired = false;	/* whether the internal call took the row lock */
   int err = NO_ERROR;
 
+  if (mvcc_reev_data != NULL)
+    {
+      /* The verdict is about this row.  The reevaluation data is one per statement, and a row whose last version
+       * the snapshot sees leaves below without reevaluating and so without writing the verdict -- left alone, the
+       * verdict of the last row that was reevaluated would answer for every row after it. */
+      mvcc_reev_data->filter_result = V_TRUE;
+    }
+
   if (recdes == NULL && mvcc_reev_data != NULL)
     {
       /* peek if only for reevaluation */
