@@ -4150,7 +4150,9 @@ locator_check_foreign_key (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid
 	    }
 	  /* Foreign-key existence check: probe the parent key without locking the parent row (see
 	   * btree_key_find_and_lock_unique_of_unique ()).  The child has already published its foreign-key index
-	   * entries, so a concurrent parent DELETE meets them and waits this child out. */
+	   * entries, so a concurrent parent DELETE under RESTRICT or NO ACTION meets them and waits this child out.
+	   * A CASCADE or SET NULL parent does not -- its scan for children reads the statement's snapshot.  The
+	   * fk_existence comment in btree_key_find_and_lock_unique_of_unique () has the whole argument. */
 	  ret = xbtree_find_unique_fk_existence (thread_p, &local_btid, key_dbvalue, &part_oid, &unique_oid, true);
 	  if (ret == BTREE_KEY_NOTFOUND)
 	    {
@@ -4183,7 +4185,6 @@ locator_check_foreign_key (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid
 	      goto error;
 	    }
 	  assert (ret == BTREE_KEY_FOUND);
-	  /* TODO: For read committed... Do we need to keep the lock? */
 	}
 
       if (key_dbvalue == &dbvalue)
@@ -5261,9 +5262,10 @@ locator_insert_force (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid, OID
 	}
 
       /* check the foreign key constraints.  This stays after locator_add_or_remove_index () above: the check takes no
-       * lock on the parent row, and what keeps a concurrent parent DELETE from missing this child is that the child's
-       * foreign-key index entries are already published when the check runs (btree_key_find_and_lock_unique_of_unique (),
-       * fk_existence). */
+       * lock on the parent row, and what keeps a concurrent parent DELETE under RESTRICT or NO ACTION from missing this
+       * child is that the child's foreign-key index entries are already published when the check runs
+       * (btree_key_find_and_lock_unique_of_unique (), fk_existence).  A CASCADE or SET NULL parent can still miss it,
+       * for the reason given there. */
       if (has_index && !skip_checking_fk)
 	{
 	  error_code =
@@ -8138,7 +8140,9 @@ locator_add_or_remove_index_internal (THREAD_ENTRY * thread_p, RECDES * recdes, 
 	      /* The scan for children below stays after the key was delete-marked (btree_mvcc_delete () above) and after
 	       * the caller stamped the heap record: a child's foreign-key existence check takes no lock on this row, and
 	       * what keeps it from missing this delete is that a check running after this scan meets the stamp
-	       * (btree_key_find_and_lock_unique_of_unique (), fk_existence). */
+	       * (btree_key_find_and_lock_unique_of_unique (), fk_existence).  This is the direction that holds for every
+	       * referential action.  The other one -- this scan meeting a child that has not committed yet -- holds only
+	       * for RESTRICT and NO ACTION; the same comment says why. */
 	      assert (mvcc_is_mvcc_disabled_class (class_oid)
 		      || locator_record_deleted_by_me (thread_p, inst_oid, class_oid, scan_cache));
 	      if (idx_action_flag == FOR_MOVE)
