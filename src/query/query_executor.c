@@ -7630,7 +7630,10 @@ qexec_open_scan (THREAD_ENTRY * thread_p, ACCESS_SPEC_TYPE * curr_spec, VAL_LIST
    * one feeds the update or delete that follows, the other feeds increments that commit in an autonomous
    * subtransaction -- but both facts, upd_del_class_cnt and selected_upd_list, sit on the statement's top
    * XASL node alone, and the node reached here is one scan-chain level.  A join's inner level would read
-   * neither and hold its rows to commit, which is why the caller passes the answer in.  The class-level
+   * neither and hold its rows to commit, which is why the caller passes the answer in.  For the click
+   * counter the caller's answer is whether it opened a scope for the scan's locks, not whether the
+   * statement has an INCR: the variant that locks in qexec_execute_selupd_list () opens its scope there,
+   * after this scan, and a yes here would count requests no scope is open to give back.  The class-level
    * half is added by the opener, which knows the class (the pruned partition, after a switch). */
   upddel_target_scan = (mvcc_select_lock_needed && stmt_scoped_locks
 			&& lock_transient_scope_is_outermost (thread_p)
@@ -16879,8 +16882,7 @@ qexec_execute_mainblock_internal (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XAS
 					       force_select_lock, specp->fixed_scan, specp->grouped_scan,
 					       iscan_oid_order, &specp->s_id, xasl_state->query_id, xasl->scan_op_type,
 					       scan_immediately_stop, &mvcc_select_lock_needed, xasl,
-					       (xasl->upd_del_class_cnt > 0
-						|| xasl->selected_upd_list != NULL)) != NO_ERROR)
+					       (xasl->upd_del_class_cnt > 0 || selupd_transient_scope)) != NO_ERROR)
 			    {
 			      qexec_clear_mainblock_iterations (thread_p, xasl);
 			      GOTO_EXIT_ON_ERROR;
@@ -16907,8 +16909,7 @@ qexec_execute_mainblock_internal (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XAS
 					       specp->fixed_scan, specp->grouped_scan, iscan_oid_order, &specp->s_id,
 					       xasl_state->query_id, xptr->scan_op_type, scan_immediately_stop,
 					       &mvcc_select_lock_needed, xptr,
-					       (xasl->upd_del_class_cnt > 0
-						|| xasl->selected_upd_list != NULL)) != NO_ERROR)
+					       (xasl->upd_del_class_cnt > 0 || selupd_transient_scope)) != NO_ERROR)
 			    {
 			      qexec_clear_mainblock_iterations (thread_p, xasl);
 			      GOTO_EXIT_ON_ERROR;
