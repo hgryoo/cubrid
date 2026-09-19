@@ -4212,6 +4212,7 @@ locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 {
   OR_FOREIGN_KEY *fkref;
   int oid_cnt, force_count, i;
+  MVCCID wait_mvccid = MVCCID_NULL;	/* writer the child enumeration stopped on */
   RECDES recdes;
   HEAP_SCANCACHE scan_cache;
   HFID hfid;
@@ -4377,24 +4378,13 @@ locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 		  goto error2;
 		}
 
-	      if (bt_scan.referential_action_wait_mvccid != MVCCID_NULL)
-		{
-		  /* The enumeration met a writer on a child entry and stopped.  No page is latched here, so this is
-		   * where the wait belongs.  The loop then resumes at the same key and re-reads it. */
-		  MVCCID wait_mvccid = bt_scan.referential_action_wait_mvccid;
+	      /* The enumeration may have met a writer on a child entry and stopped.  The children it gathered before
+	       * that are acted on first and the wait comes after them, at the bottom of this loop: the scan resumes at
+	       * the key it stopped on, not at the start of the range, so a key it had already consumed is never read
+	       * again and what was gathered from it would be lost with the buffer. */
+	      wait_mvccid = bt_scan.referential_action_wait_mvccid;
+	      bt_scan.referential_action_wait_mvccid = MVCCID_NULL;
 
-		  bt_scan.referential_action_wait_mvccid = MVCCID_NULL;
-		  if (logtb_is_active_other_mvccid (thread_p, wait_mvccid))
-		    {
-		      error_code = logtb_wait_for_tran_end (thread_p, wait_mvccid);
-		      if (error_code != NO_ERROR)
-			{
-			  ASSERT_ERROR ();
-			  goto error2;
-			}
-		    }
-		  continue;
-		}
 	      oid_cnt = bt_scan.n_oids_read_last_iteration;
 
 	      if (oid_cnt < 0)
@@ -4403,7 +4393,7 @@ locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 		  error_code = ER_FAILED;
 		  goto error2;
 		}
-	      else if (oid_cnt == 0)
+	      else if (oid_cnt == 0 && wait_mvccid == MVCCID_NULL)
 		{
 		  break;
 		}
@@ -4545,6 +4535,19 @@ locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 		      assert (false);
 		    }
 		}
+
+	      if (wait_mvccid != MVCCID_NULL && logtb_is_active_other_mvccid (thread_p, wait_mvccid))
+		{
+		  /* No page is latched here, so this is where the wait belongs.  The scan then resumes at the key it
+		   * stopped on and reads that key again from its start; the children just acted on carry this
+		   * transaction's delete stamp by now and are passed over. */
+		  error_code = logtb_wait_for_tran_end (thread_p, wait_mvccid);
+		  if (error_code != NO_ERROR)
+		    {
+		      ASSERT_ERROR ();
+		      goto error1;
+		    }
+		}
 	    }
 	  while (!BTREE_END_OF_SCAN (&bt_scan));
 
@@ -4617,6 +4620,7 @@ locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 {
   OR_FOREIGN_KEY *fkref;
   int oid_cnt, force_count, i;
+  MVCCID wait_mvccid = MVCCID_NULL;	/* writer the child enumeration stopped on */
   RECDES recdes;
   HEAP_SCANCACHE scan_cache;
   HFID hfid;
@@ -4780,24 +4784,13 @@ locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 		  goto error2;
 		}
 
-	      if (bt_scan.referential_action_wait_mvccid != MVCCID_NULL)
-		{
-		  /* The enumeration met a writer on a child entry and stopped.  No page is latched here, so this is
-		   * where the wait belongs.  The loop then resumes at the same key and re-reads it. */
-		  MVCCID wait_mvccid = bt_scan.referential_action_wait_mvccid;
+	      /* The enumeration may have met a writer on a child entry and stopped.  The children it gathered before
+	       * that are acted on first and the wait comes after them, at the bottom of this loop: the scan resumes at
+	       * the key it stopped on, not at the start of the range, so a key it had already consumed is never read
+	       * again and what was gathered from it would be lost with the buffer. */
+	      wait_mvccid = bt_scan.referential_action_wait_mvccid;
+	      bt_scan.referential_action_wait_mvccid = MVCCID_NULL;
 
-		  bt_scan.referential_action_wait_mvccid = MVCCID_NULL;
-		  if (logtb_is_active_other_mvccid (thread_p, wait_mvccid))
-		    {
-		      error_code = logtb_wait_for_tran_end (thread_p, wait_mvccid);
-		      if (error_code != NO_ERROR)
-			{
-			  ASSERT_ERROR ();
-			  goto error2;
-			}
-		    }
-		  continue;
-		}
 	      oid_cnt = bt_scan.n_oids_read_last_iteration;
 	      if (oid_cnt < 0)
 		{
@@ -4810,7 +4803,7 @@ locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 
 		  goto error2;
 		}
-	      else if (oid_cnt == 0)
+	      else if (oid_cnt == 0 && wait_mvccid == MVCCID_NULL)
 		{
 		  break;
 		}
@@ -4905,6 +4898,19 @@ locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 			{
 			  goto error1;
 			}
+		    }
+		}
+
+	      if (wait_mvccid != MVCCID_NULL && logtb_is_active_other_mvccid (thread_p, wait_mvccid))
+		{
+		  /* No page is latched here, so this is where the wait belongs.  The scan then resumes at the key it
+		   * stopped on and reads that key again from its start; the children just acted on carry this
+		   * transaction's delete stamp by now and are passed over. */
+		  error_code = logtb_wait_for_tran_end (thread_p, wait_mvccid);
+		  if (error_code != NO_ERROR)
+		    {
+		      ASSERT_ERROR ();
+		      goto error1;
 		    }
 		}
 	    }
