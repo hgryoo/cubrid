@@ -137,6 +137,7 @@ namespace cubthread
     , no_supplemental_log (false)
     , trigger_involved (false)
     , is_cdc_daemon (false)
+    , no_reachable_savepoint (false)
 #if !defined (NDEBUG)
     , fi_test_array (NULL)
     , count_private_allocators (0)
@@ -306,6 +307,8 @@ namespace cubthread
     trigger_involved = false;
 
     is_cdc_daemon = false;
+
+    no_reachable_savepoint = false;
 
     end_resource_tracks ();
 

@@ -658,8 +658,11 @@ enum
   EXECUTE_QUERY_WITH_COMMIT = 0x1 << 15,
   TRAN_AUTO_COMMIT = 0x1 << 16,
   LIKE_RECOMPILE_CANDIDATE = 0x1 << 17,
-  HV_PRED_PLAN_UNPEEKED = 0x1 << 18	/* plan built with unbound host-var predicate markers; the
+  HV_PRED_PLAN_UNPEEKED = 0x1 << 18,	/* plan built with unbound host-var predicate markers; the
 					 * first execution replans under the actual bind values */
+  NO_REACHABLE_SAVEPOINT = 0x1 << 19	/* the client asserts that no savepoint a partial rollback could
+					 * still go back to precedes this query; a client that does not
+					 * know the bit never asserts it */
 };
 
 #define DO_NOT_COLLECT_EXEC_STATS(flag)    ((flag) & DONT_COLLECT_EXEC_STATS)
@@ -668,6 +671,7 @@ enum
 #define IS_XASL_TRACE_JSON(flag)    (((flag) & XASL_TRACE_JSON) != 0)
 
 #define IS_TRIGGER_INVOLVED(flag)   (((flag) & TRIGGER_IS_INVOLVED) != 0)
+#define IS_NO_REACHABLE_SAVEPOINT(flag)   (((flag) & NO_REACHABLE_SAVEPOINT) != 0)
 
 #define IS_XASL_CACHE_PINNED_REFERENCE(flag)   (((flag) & XASL_CACHE_PINNED_REFERENCE) != 0)
 #define IS_QUERY_EXECUTED_WITHOUT_DATA_BUFFERS(flag)   (((flag) & EXECUTE_QUERY_WITHOUT_DATA_BUFFERS) != 0)
