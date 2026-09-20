@@ -10513,6 +10513,7 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
   UPDATE_MVCC_REEV_ASSIGNMENT *mvcc_reev_assigns = NULL;
   LOCATOR_LOCK_POLICY base_lock_policy;	/* what the select phase left for the force phase to do */
   bool outermost_transient_scope;	/* a statement nested in another one keeps its locks to commit */
+  LOG_LSA savept_lsa_at_start;	/* a savepoint declared after this one is not the client's to vouch for */
   bool statement_ends_locks;	/* whether this statement's row locks end with it */
   LOCATOR_LOCK_POLICY lock_policy = LOCATOR_LOCK_AT_SELECT;	/* the same, narrowed by the current class */
   UPDDEL_CLASS_INSTANCE_LOCK_INFO class_instance_lock_info, *p_class_instance_lock_info = NULL;
@@ -10523,6 +10524,7 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
    * READ COMMITTED.  qexec_open_scan () gates the select phase on the same two facts, and the two phases
    * of one statement must not disagree about which of them the locks belong to. */
   outermost_transient_scope = lock_transient_scope_start (thread_p);	/* raises the scope depth */
+  logtb_get_savepoint_lsa (thread_p, &savept_lsa_at_start);
   statement_ends_locks = (outermost_transient_scope && logtb_find_current_isolation (thread_p) == TRAN_READ_COMMITTED);
 
   thread_p->no_logging = (bool) update->no_logging;
@@ -11162,9 +11164,9 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
     }
 
   /* Updates published: late arrivals settle on our MVCCID self-lock, so these row locks end with the
-   * statement -- but kept to commit under a savepoint, whose partial rollback could undo the change
-   * while a writer parks on our MVCCID. */
-  lock_transient_scope_end (thread_p, !logtb_has_active_savepoint (thread_p));
+   * statement -- but kept to commit under a savepoint that can still be rolled back to, whose partial
+   * rollback could undo the change while a writer parks on our MVCCID. */
+  lock_transient_scope_end (thread_p, !logtb_has_reachable_savepoint (thread_p, &savept_lsa_at_start));
 
   qexec_close_scan (thread_p, specp);
 
@@ -11433,6 +11435,7 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
   UPDDEL_MVCC_COND_REEVAL *mvcc_reev_classes = NULL, *mvcc_reev_class = NULL;
   LOCATOR_LOCK_POLICY base_lock_policy;	/* what the select phase left for the force phase to do */
   bool outermost_transient_scope;	/* a statement nested in another one keeps its locks to commit */
+  LOG_LSA savept_lsa_at_start;	/* a savepoint declared after this one is not the client's to vouch for */
   bool statement_ends_locks;	/* whether this statement's row locks end with it */
   LOCATOR_LOCK_POLICY lock_policy = LOCATOR_LOCK_AT_SELECT;	/* the same, narrowed by the current class */
   UPDDEL_CLASS_INSTANCE_LOCK_INFO class_instance_lock_info, *p_class_instance_lock_info = NULL;
@@ -11448,6 +11451,7 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
   /* from here every exit runs through one of the two lock_transient_scope_end () calls below.  See
    * qexec_execute_update () for why the scope and the lifetime question are not the same test. */
   outermost_transient_scope = lock_transient_scope_start (thread_p);	/* raises the scope depth */
+  logtb_get_savepoint_lsa (thread_p, &savept_lsa_at_start);
   statement_ends_locks = (outermost_transient_scope && logtb_find_current_isolation (thread_p) == TRAN_READ_COMMITTED);
 
   thread_p->no_logging = (bool) delete_->no_logging;
@@ -11838,12 +11842,11 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
     }
 
   /* Deletes published: late arrivals settle on our MVCCID self-lock (persisted across 2PC by the prepare
-   * record), so these row locks end with the statement -- but kept to commit under a savepoint, whose
-   * partial rollback could undo the delete while a writer parks on our MVCCID.
-   * TODO: logtb_has_active_savepoint () does not tell a user savepoint from a DDL/trigger system one, so a
-   *       transaction that ran DDL earlier forgoes the release (correct, but conservative).  CBRD-27238
-   *       adds a user-savepoint-only flag on tdes for both paths. */
-  lock_transient_scope_end (thread_p, !logtb_has_active_savepoint (thread_p));
+   * record), so these row locks end with the statement -- but kept to commit under a savepoint that can
+   * still be rolled back to, whose partial rollback could undo the delete while a writer parks on our
+   * MVCCID.  A system savepoint whose statement is over is not one; logtb_has_reachable_savepoint () says
+   * how that is known. */
+  lock_transient_scope_end (thread_p, !logtb_has_reachable_savepoint (thread_p, &savept_lsa_at_start));
 
   qexec_close_scan (thread_p, specp);
 
@@ -27032,12 +27035,10 @@ qexec_execute_merge (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xas
    * statement-scoped lock of their own.  That is why the end of this scope gives nothing back.
    *
    * It covers only the MERGE the server executes.  When a target carries a trigger or is a view, do_merge ()
-   * sends the two halves down as separate server statements (server_op in execute_statement.c), each of them
-   * outermost in its own scope -- and those halves do take transient row locks, because qexec_open_scan ()
-   * does not exclude MERGE (pt_to_merge_update_query () sets upd_del_class_cnt on the driving select) and the
-   * force phase never consults it.  What keeps their locks today is the system savepoint do_merge () takes,
-   * which logtb_has_active_savepoint () reports -- an unrelated guard that CBRD-27238 narrows to user
-   * savepoints.  This scope does not depend on it; that path does. */
+   * runs the statement from the client (server_op in execute_statement.c): what comes down is a SELECT for
+   * each half, and the client applies the changes object by object.  No scope is open while such a SELECT
+   * scans, so qexec_open_scan () answers no for it -- lock_transient_scope_is_outermost () is false at depth
+   * zero -- and its row locks are ordinary ones, held to commit.  That path asks nothing of this scope. */
   lock_transient_scope_start (thread_p);
 
   /* start a topop */
