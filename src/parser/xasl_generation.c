@@ -21844,6 +21844,15 @@ pt_delete_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
 {
   PT_NODE *cl_name_node = NULL;
 
+  /* the switch: off, and every DELETE locks its rows at select as it did before reevaluation was turned on.
+   * The parameter is part of the query string the plan cache hashes, so a plan compiled under one setting is
+   * not served under the other. */
+  if (!prm_get_bool_value (PRM_ID_MVCC_REEVALUATE_AT_FORCE))
+    {
+      PT_SELECT_INFO_SET_FLAG (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED);
+      return true;
+    }
+
   /* the rows are already locked at select, so this one abandons reevaluation without asking for a lock */
   if (aptr_statement->info.query.q.select.group_by != NULL)
     {
@@ -22665,6 +22674,13 @@ pt_update_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
 				   PT_NODE * from, PT_NODE * where, bool has_partitioned)
 {
   PT_NODE *cl_name_node = NULL;
+
+  /* the switch; see pt_delete_must_abort_reevaluation () */
+  if (!prm_get_bool_value (PRM_ID_MVCC_REEVALUATE_AT_FORCE))
+    {
+      PT_SELECT_INFO_SET_FLAG (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED);
+      return true;
+    }
 
   /* pt_to_upd_del_query () asks for the select-phase lock where it adds the GROUP BY, so the rows are
    * already locked and this one abandons reevaluation without asking again. */
