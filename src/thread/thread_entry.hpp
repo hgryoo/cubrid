@@ -306,6 +306,9 @@ namespace cubthread
       bool trigger_involved;
       bool is_cdc_daemon;
 
+      /* the query now running came with NO_REACHABLE_SAVEPOINT; see logtb_has_reachable_savepoint () */
+      bool no_reachable_savepoint;
+
       /* support multi-process unloaddb
        * _unload_parallel_process_idx is only valid when (_unload_cnt_parallel_process > 1).
        * At this time, _unload_parallel_process_idx can have values ​​between 0 and (_unload_cnt_parallel_process-1).
