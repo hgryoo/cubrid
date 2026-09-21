@@ -92,9 +92,9 @@ struct lk_entry
   LK_ENTRY *tran_prev;		/* list of locks that trans. holds */
   LK_ENTRY *class_entry;	/* ptr. to class lk_entry */
   int ngranules;		/* number of finer granules */
-  int instant_lock_count;	/* number of instant lock requests */
   int bind_index_in_tran;
   XASL_ID xasl_id;
+  int transient_count;		/* requests on this entry that the statement gives up before commit */
 #else				/* not SERVER_MODE */
   int dummy;
 #endif				/* not SERVER_MODE */
@@ -223,6 +223,14 @@ extern int lock_hold_object_instant (THREAD_ENTRY * thread_p, const OID * oid, c
 extern int lock_object_wait_msecs (THREAD_ENTRY * thread_p, const OID * oid, const OID * class_oid, LOCK lock,
 				   int cond_flag, int wait_msecs);
 extern int lock_object (THREAD_ENTRY * thread_p, const OID * oid, const OID * class_oid, LOCK lock, int cond_flag);
+extern int lock_object_transient (THREAD_ENTRY * thread_p, const OID * oid, const OID * class_oid, LOCK lock,
+				  int cond_flag);
+extern void lock_unlock_object_transient (THREAD_ENTRY * thread_p, const OID * oid, const OID * class_oid, LOCK lock);
+extern bool lock_transient_scope_is_outermost (THREAD_ENTRY * thread_p);
+extern bool lock_transient_scope_start (THREAD_ENTRY * thread_p);
+extern void lock_transient_scope_end (THREAD_ENTRY * thread_p, bool release);
+extern void lock_release_transient_object_locks (THREAD_ENTRY * thread_p);
+extern void lock_forget_transient_object_locks (THREAD_ENTRY * thread_p);
 extern int lock_transaction_mvccid (THREAD_ENTRY * thread_p, MVCCID mvccid, LOCK lock, int cond_flag);
 extern void lock_unlock_transaction_mvccid (THREAD_ENTRY * thread_p, MVCCID mvccid, LOCK lock);
 extern int lock_has_lock_on_transaction_mvccid (THREAD_ENTRY * thread_p, MVCCID mvccid, LOCK lock);
@@ -249,9 +257,6 @@ extern void lock_notify_isolation_incons (THREAD_ENTRY * thread_p,
 extern int lock_reacquire_crash_locks (THREAD_ENTRY * thread_p, LK_ACQUIRED_LOCKS * acqlocks, int tran_index);
 extern void lock_unlock_all_shared_get_all_exclusive (THREAD_ENTRY * thread_p, LK_ACQUIRED_LOCKS * acqlocks);
 extern void lock_dump_acquired (FILE * fp, LK_ACQUIRED_LOCKS * acqlocks);
-extern void lock_start_instant_lock_mode (int tran_index);
-extern void lock_stop_instant_lock_mode (THREAD_ENTRY * thread_p, int tran_index, bool need_unlock);
-extern bool lock_is_instant_lock_mode (int tran_index);
 extern void lock_clear_deadlock_victim (int tran_index);
 extern unsigned int lock_get_number_object_locks (void);
 extern int lock_initialize_composite_lock (THREAD_ENTRY * thread_p, LK_COMPOSITE_LOCK * comp_lock);
