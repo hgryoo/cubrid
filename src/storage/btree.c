@@ -25203,7 +25203,9 @@ btree_check_valid_record (THREAD_ENTRY * thread_p, BTID_INT * btid, RECDES * rec
 #endif
 
 /*
- * btree_check_foreign_key () -
+ * btree_check_foreign_key () - Check one existing row for ALTER ... ADD FOREIGN KEY, when the foreign key
+ *				 shares an existing plain index (xlocator_check_fk_validity ()).  A foreign key
+ *				 that gets a new index is checked by btree_load_check_fk () instead.
  *   return: NO_ERROR
  *   cls_oid(in):
  *   hfid(in):
@@ -25286,7 +25288,10 @@ btree_check_foreign_key (THREAD_ENTRY * thread_p, OID * cls_oid, HFID * hfid, OI
 	}
     }
 
-  ret_search = xbtree_find_unique_fk_existence (thread_p, &local_btid, keyval, &part_oid, &unique_oid, true);
+  /* Keep the S lock on the parent row to commit.  The parent learns of this foreign key only afterwards
+   * (update_foreign_key_ref ()), so a parent DELETE or key UPDATE in between does not scan for children -- only
+   * this lock stops it. */
+  ret_search = xbtree_find_unique (thread_p, &local_btid, S_SELECT_WITH_LOCK, keyval, &part_oid, &unique_oid, true);
   if (ret_search == BTREE_KEY_NOTFOUND)
     {
       char *val_print = NULL;
@@ -25307,7 +25312,6 @@ btree_check_foreign_key (THREAD_ENTRY * thread_p, OID * cls_oid, HFID * hfid, OI
     }
 
   assert (ret_search == BTREE_KEY_FOUND);
-  /* No lock is kept on the parent row: the probe ran in foreign-key existence mode (btree_find_unique_internal ()). */
 
   if (clear_pcontext == true)
     {
@@ -27293,6 +27297,8 @@ xbtree_find_unique (THREAD_ENTRY * thread_p, BTID * btid, SCAN_OPERATION_TYPE sc
  * xbtree_find_unique_fk_existence () - Foreign-key existence probe: like xbtree_find_unique () with
  *					S_SELECT_WITH_LOCK, but it takes no lock on the committed parent it
  *					finds.  See btree_key_find_and_lock_unique_of_unique ().
+ *
+ * For the DML check only (locator_check_foreign_key ()).  btree_check_foreign_key () keeps the lock.
  */
 BTREE_SEARCH
 xbtree_find_unique_fk_existence (THREAD_ENTRY * thread_p, BTID * btid, DB_VALUE * key, OID * class_oid, OID * oid,
