@@ -220,6 +220,8 @@ static int redistribute_partition_data (THREAD_ENTRY * thread_p, OID * class_oid
 static SCAN_CODE locator_lock_and_get_object_internal (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * context,
 						       LOCK lock_mode, bool transient, bool owner_bypass_ok,
 						       bool * lock_acquired_p);
+static SCAN_CODE locator_get_last_version_locked_at_select (THREAD_ENTRY * thread_p, OID * oid, OID * class_oid,
+							    RECDES * recdes, HEAP_SCANCACHE * scan_cache);
 static DB_LOGICAL locator_mvcc_reev_cond_assigns (THREAD_ENTRY * thread_p, OID * class_oid, const OID * oid,
 						  HEAP_SCANCACHE * scan_cache, RECDES * recdes,
 						  MVCC_UPDDEL_REEV_DATA * mvcc_reev_data);
@@ -6258,12 +6260,19 @@ locator_delete_force_internal (THREAD_ENTRY * thread_p, HFID * hfid, OID * oid, 
       mvcc_reev_data = NULL;
     }
 
-  /* IMPORTANT TODO: use a different get function when the select phase locked, but make sure it gets the last version,
-     not the visible one; we need only the last version to use it to retrieve the last version of the btree key */
-  scan_code =
-    locator_lock_and_get_object_with_evaluation (thread_p, oid, &class_oid, &copy_recdes, scan_cache, COPY, NULL_CHN,
-						 mvcc_reev_data, LOG_WARNING_IF_DELETED,
-						 LOCATOR_LOCK_IS_TRANSIENT (lock_policy), true);
+  if (LOCATOR_LOCKED_AT_SELECT (lock_policy))
+    {
+      /* The select phase holds the row lock, so do not ask for it again.  Read the last version, not the visible
+       * one: the index keys to remove are the last version's. */
+      scan_code = locator_get_last_version_locked_at_select (thread_p, oid, &class_oid, &copy_recdes, scan_cache);
+    }
+  else
+    {
+      scan_code =
+	locator_lock_and_get_object_with_evaluation (thread_p, oid, &class_oid, &copy_recdes, scan_cache, COPY,
+						     NULL_CHN, mvcc_reev_data, LOG_WARNING_IF_DELETED,
+						     LOCATOR_LOCK_IS_TRANSIENT (lock_policy), true);
+    }
 
   if (scan_code == S_SUCCESS && mvcc_reev_data != NULL && mvcc_reev_data->filter_result == V_FALSE)
     {
@@ -13321,6 +13330,59 @@ error:
     }
 
   return (scan != S_SUCCESS && scan != S_SUCCESS_CHN_UPTODATE) ? scan : S_ERROR;
+}
+
+/*
+ * locator_get_last_version_locked_at_select () - Read the last version of an object the select phase locked
+ *
+ * return	   : SCAN_CODE, as locator_lock_and_get_object_with_evaluation () returns it.
+ * thread_p (in)   :
+ * oid (in)	   : Object OID.
+ * class_oid (in/out) : Class OID; read from the object's page when null.
+ * recdes (out)	   : Record descriptor; the record is copied.
+ * scan_cache (in) : Heap scan cache.
+ *
+ * Note: No other writer can stamp a later version while the select phase's row lock is held, so the version is
+ *	 settled without asking for the lock again.
+ */
+static SCAN_CODE
+locator_get_last_version_locked_at_select (THREAD_ENTRY * thread_p, OID * oid, OID * class_oid, RECDES * recdes,
+					   HEAP_SCANCACHE * scan_cache)
+{
+  HEAP_GET_CONTEXT context;
+  MVCC_REC_HEADER recdes_header = MVCC_REC_HEADER_INITIALIZER;
+  SCAN_CODE scan = S_SUCCESS;
+  int err = NO_ERROR;
+
+  assert (scan_cache != NULL && recdes != NULL && class_oid != NULL);
+
+  if (heap_scan_cache_allocate_area (thread_p, scan_cache, DB_PAGESIZE * 2) != NO_ERROR)
+    {
+      return S_ERROR;
+    }
+  heap_init_get_context (thread_p, &context, oid, class_oid, recdes, scan_cache, COPY, NULL_CHN);
+
+  if (OID_ISNULL (class_oid))
+    {
+      err = heap_prepare_object_page (thread_p, oid, &context.home_page_watcher, context.latch_mode);
+      if (err != NO_ERROR)
+	{
+	  ASSERT_ERROR ();
+	  heap_clean_get_context (thread_p, &context);
+	  return err == ER_HEAP_UNKNOWN_OBJECT ? S_DOESNT_EXIST : S_ERROR;
+	}
+      if (heap_get_class_oid_from_page (thread_p, context.home_page_watcher.pgptr, class_oid) != NO_ERROR)
+	{
+	  heap_clean_get_context (thread_p, &context);
+	  return S_DOESNT_EXIST;
+	}
+    }
+
+  scan = locator_get_settled_last_version (thread_p, &context, !mvcc_is_mvcc_disabled_class (class_oid),
+					   &recdes_header);
+  heap_clean_get_context (thread_p, &context);
+
+  return scan;
 }
 
 /*
