@@ -4148,9 +4148,9 @@ locator_check_foreign_key (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid
 	    }
 	  /* Foreign-key existence check: probe the parent key without locking the parent row (see
 	   * btree_key_find_and_lock_unique_of_unique ()).  The child has already published its foreign-key index
-	   * entries, so a concurrent parent DELETE under RESTRICT or NO ACTION meets them and waits this child out.
-	   * A CASCADE or SET NULL parent does not -- its scan for children reads the statement's snapshot.  The
-	   * fk_existence comment in btree_key_find_and_lock_unique_of_unique () has the whole argument. */
+	   * entries, so a concurrent parent DELETE or key change meets them and waits this child out, whatever its
+	   * referential action.  The fk_existence comment in btree_key_find_and_lock_unique_of_unique () has the whole
+	   * argument. */
 	  ret = xbtree_find_unique_fk_existence (thread_p, &local_btid, key_dbvalue, &part_oid, &unique_oid, true);
 	  if (ret == BTREE_KEY_NOTFOUND)
 	    {
@@ -5390,10 +5390,9 @@ locator_insert_force (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid, OID
 	}
 
       /* check the foreign key constraints.  This stays after locator_add_or_remove_index () above: the check takes no
-       * lock on the parent row, and what keeps a concurrent parent DELETE under RESTRICT or NO ACTION from missing this
-       * child is that the child's foreign-key index entries are already published when the check runs
-       * (btree_key_find_and_lock_unique_of_unique (), fk_existence).  A CASCADE or SET NULL parent can still miss it,
-       * for the reason given there. */
+       * lock on the parent row, and what keeps a concurrent parent DELETE or key change from missing this child is
+       * that the child's foreign-key index entries are already published when the check runs
+       * (btree_key_find_and_lock_unique_of_unique (), fk_existence). */
       if (has_index && !skip_checking_fk)
 	{
 	  error_code =
@@ -8270,9 +8269,8 @@ locator_add_or_remove_index_internal (THREAD_ENTRY * thread_p, RECDES * recdes, 
 	       * keeps it from missing this delete is that a check running after this scan meets that mark
 	       * (btree_key_find_and_lock_unique_of_unique (), fk_existence).  It is the mark on the key that carries
 	       * this, not the stamp on the heap record -- the child's check never reads the heap -- so the order that
-	       * must not change is the one between the two calls here.  This is the direction that holds for every
-	       * referential action.  The other one -- this scan meeting a child that has not committed yet -- holds
-	       * only for RESTRICT and NO ACTION; the same comment says why. */
+	       * must not change is the one between the two calls here.  The other direction -- this scan meeting a
+	       * child that has not committed yet -- is the scan's own: it waits that child out. */
 	      if (idx_action_flag == FOR_MOVE)
 		{
 		  /* This delete is caused by 'UPDATE ... SET ...' between partitioned tables. It first delete a
