@@ -186,6 +186,8 @@ static int locator_check_foreign_key (THREAD_ENTRY * thread_p, HFID * hfid, OID 
 				      RECDES * recdes, RECDES * new_recdes, bool * is_cached, LC_COPYAREA ** copyarea);
 static int locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_VALUE * key);
 static int locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_VALUE * key);
+static int locator_child_still_refers (THREAD_ENTRY * thread_p, HEAP_CACHE_ATTRINFO * attr_info, BTID * fk_btid,
+				       OID * oid, RECDES * recdes, DB_VALUE * parent_key, bool * refers);
 #if defined(ENABLE_UNUSED_FUNCTION)
 static TP_DOMAIN *locator_make_midxkey_domain (OR_INDEX * index);
 #endif
@@ -4146,9 +4148,9 @@ locator_check_foreign_key (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid
 	    }
 	  /* Foreign-key existence check: probe the parent key without locking the parent row (see
 	   * btree_key_find_and_lock_unique_of_unique ()).  The child has already published its foreign-key index
-	   * entries, so a concurrent parent DELETE under RESTRICT or NO ACTION meets them and waits this child out.
-	   * A CASCADE or SET NULL parent does not -- its scan for children reads the statement's snapshot.  The
-	   * fk_existence comment in btree_key_find_and_lock_unique_of_unique () has the whole argument. */
+	   * entries, so a concurrent parent DELETE or key change meets them and waits this child out, whatever its
+	   * referential action.  The fk_existence comment in btree_key_find_and_lock_unique_of_unique () has the whole
+	   * argument. */
 	  ret = xbtree_find_unique_fk_existence (thread_p, &local_btid, key_dbvalue, &part_oid, &unique_oid, true);
 	  if (ret == BTREE_KEY_NOTFOUND)
 	    {
@@ -4203,6 +4205,86 @@ error:
 }
 
 /*
+ * locator_child_still_refers () - whether a locked child, read at its latest version, still refers to parent_key
+ *
+ * return: NO_ERROR or error code
+ *
+ *   parent_key(in): the key being deleted or updated; a midxkey carries the domain it was written with
+ *   refers(out): true when the child's foreign key still equals parent_key, or its latest version is ours
+ *
+ * The child was enumerated before its lock was granted; the writer the lock waited for may have moved it to another
+ * parent. A version of this transaction's own comes from a cascade of the same statement and is acted on as
+ * enumerated.
+ */
+static int
+locator_child_still_refers (THREAD_ENTRY * thread_p, HEAP_CACHE_ATTRINFO * attr_info, BTID * fk_btid, OID * oid,
+			    RECDES * recdes, DB_VALUE * parent_key, bool * refers)
+{
+  OR_CLASSREP *rep = attr_info->last_classrepr;
+  MVCC_REC_HEADER mvcc_header;
+  char buf[DBVAL_BUFSIZE + MAX_ALIGNMENT];
+  DB_VALUE child_key_buf;
+  DB_VALUE *child_key;
+  TP_DOMAIN *key_domain = NULL;
+  DB_VALUE_COMPARE_RESULT c;
+  BTID btid;
+  int index_pos;
+  int error_code = NO_ERROR;
+
+  if (or_mvcc_get_header (recdes, &mvcc_header) == NO_ERROR && MVCC_IS_HEADER_INSID_NOT_ALL_VISIBLE (&mvcc_header)
+      && logtb_is_current_mvccid (thread_p, MVCC_GET_INSID (&mvcc_header)))
+    {
+      *refers = true;
+      return NO_ERROR;
+    }
+
+  for (index_pos = 0; index_pos < rep->n_indexes; index_pos++)
+    {
+      if (BTID_IS_EQUAL (&rep->indexes[index_pos].btid, fk_btid))
+	{
+	  break;
+	}
+    }
+  assert (index_pos < rep->n_indexes);
+
+  error_code = heap_attrinfo_read_dbvalues (thread_p, oid, recdes, attr_info);
+  if (error_code != NO_ERROR)
+    {
+      return error_code;
+    }
+
+  db_make_null (&child_key_buf);
+  child_key = heap_attrvalue_get_key (thread_p, index_pos, attr_info, recdes, &btid, &child_key_buf,
+				      PTR_ALIGN (buf, MAX_ALIGNMENT), NULL, &key_domain, oid, true);
+  if (child_key == NULL)
+    {
+      return ER_FAILED;
+    }
+
+  *refers = false;
+  if (!DB_IS_NULL (child_key))
+    {
+      if (DB_VALUE_TYPE (child_key) == DB_TYPE_MIDXKEY)
+	{
+	  child_key->data.midxkey.domain = key_domain;
+	}
+      c = btree_compare_key (parent_key, child_key, key_domain, 1, 1, NULL);
+      if (c == DB_UNK)
+	{
+	  ASSERT_ERROR_AND_SET (error_code);
+	}
+      *refers = (c == DB_EQ);
+    }
+
+  if (child_key == &child_key_buf)
+    {
+      pr_clear_value (&child_key_buf);
+    }
+  (void) heap_attrinfo_clear_dbvalues (attr_info);
+  return error_code;
+}
+
+/*
  * locator_check_primary_key_delete () -
  *
  * return: NO_ERROR if all OK, ER_ status otherwise
@@ -4215,6 +4297,7 @@ locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 {
   OR_FOREIGN_KEY *fkref;
   int oid_cnt, force_count, i;
+  MVCCID wait_mvccid = MVCCID_NULL;	/* writer the child enumeration stopped on */
   RECDES recdes;
   HEAP_SCANCACHE scan_cache;
   HFID hfid;
@@ -4230,6 +4313,7 @@ locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
   int k;
   int *keys_prefix_length = NULL;
   MVCC_SNAPSHOT *mvcc_snapshot = NULL;
+  DB_VALUE parent_key;
   OID found_oid;
   BTREE_ISCAN_OID_LIST oid_list;
 
@@ -4243,6 +4327,7 @@ locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
       error_code = er_errid ();
       return (error_code == NO_ERROR ? ER_FAILED : error_code);
     }
+  parent_key = *key;
 
   db_make_null (&null_value);
   db_make_null (&key_val_range.key1);
@@ -4274,6 +4359,16 @@ locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 	}
       else if (fkref->del_action == SM_FOREIGN_KEY_CASCADE || fkref->del_action == SM_FOREIGN_KEY_SET_NULL)
 	{
+	  /* A key built without its domain (DELETE, a partition move) gets the PK's, read once for the re-check below. */
+	  if (DB_VALUE_TYPE (&parent_key) == DB_TYPE_MIDXKEY && parent_key.data.midxkey.domain == NULL)
+	    {
+	      parent_key.data.midxkey.domain = btree_read_key_type (thread_p, &index->btid);
+	      if (parent_key.data.midxkey.domain == NULL)
+		{
+		  ASSERT_ERROR_AND_SET (error_code);
+		  goto error3;
+		}
+	    }
 	  if (attr_ids)
 	    {
 	      db_private_free_and_init (thread_p, attr_ids);
@@ -4367,12 +4462,26 @@ locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 	       */
 	      bt_scan.is_key_partially_processed = false;
 #endif
+	      /* CASCADE and SET NULL enumerate the children to act on.  That answer must be the one that holds
+	       * after this statement's wait on the parent, not the one the statement snapshot carried into it --
+	       * otherwise a child committed during the wait is missed and a child that moved away during the wait
+	       * is still acted on.  RESTRICT has always asked the question this way. */
+	      bt_scan.select_children_for_referential_action = true;
+
 	      error_code = btree_range_scan (thread_p, &bt_scan, btree_range_scan_select_visible_oids);
 	      if (error_code != NO_ERROR)
 		{
 		  assert (er_errid () != NO_ERROR);
 		  goto error2;
 		}
+
+	      /* The enumeration may have met a writer on a child entry and stopped.  The children it gathered before
+	       * that are acted on first and the wait comes after them, at the bottom of this loop: the scan resumes at
+	       * the key it stopped on, not at the start of the range, so a key it had already consumed is never read
+	       * again and what was gathered from it would be lost with the buffer. */
+	      wait_mvccid = bt_scan.referential_action_wait_mvccid;
+	      bt_scan.referential_action_wait_mvccid = MVCCID_NULL;
+
 	      oid_cnt = bt_scan.n_oids_read_last_iteration;
 
 	      if (oid_cnt < 0)
@@ -4381,7 +4490,7 @@ locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 		  error_code = ER_FAILED;
 		  goto error2;
 		}
-	      else if (oid_cnt == 0)
+	      else if (oid_cnt == 0 && wait_mvccid == MVCCID_NULL)
 		{
 		  break;
 		}
@@ -4433,8 +4542,8 @@ locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 		{
 		  OID *oid_ptr = &(oid_list.oidp[i]);
 		  SCAN_CODE scan_code = S_SUCCESS;
+		  bool refers = false;
 		  recdes.data = NULL;
-		  /* TO DO - handle reevaluation */
 
 		  /* kept to commit, but a child row this transaction itself stamped is touched again without its lock */
 		  scan_code = locator_lock_and_get_object (thread_p, oid_ptr, &fkref->self_oid, &recdes, &scan_cache,
@@ -4457,6 +4566,19 @@ locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 		      error_code = er_errid ();
 		      error_code = (error_code == NO_ERROR ? ER_FAILED : error_code);
 		      goto error1;
+		    }
+
+		  error_code =
+		    locator_child_still_refers (thread_p, &attr_info, &fkref->self_btid, oid_ptr, &recdes, &parent_key,
+						&refers);
+		  if (error_code != NO_ERROR)
+		    {
+		      goto error1;
+		    }
+		  if (!refers)
+		    {
+		      lock_unlock_object_donot_move_to_non2pl (thread_p, oid_ptr, &fkref->self_oid, X_LOCK);
+		      continue;
 		    }
 
 		  if (fkref->del_action == SM_FOREIGN_KEY_CASCADE)
@@ -4521,6 +4643,19 @@ locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 		  else
 		    {
 		      assert (false);
+		    }
+		}
+
+	      if (wait_mvccid != MVCCID_NULL && logtb_is_active_other_mvccid (thread_p, wait_mvccid))
+		{
+		  /* No page is latched here, so this is where the wait belongs.  The scan then resumes at the key it
+		   * stopped on and reads that key again from its start; the children just acted on carry this
+		   * transaction's delete stamp by now and are passed over. */
+		  error_code = logtb_wait_for_tran_end (thread_p, wait_mvccid);
+		  if (error_code != NO_ERROR)
+		    {
+		      ASSERT_ERROR ();
+		      goto error1;
 		    }
 		}
 	    }
@@ -4595,6 +4730,7 @@ locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 {
   OR_FOREIGN_KEY *fkref;
   int oid_cnt, force_count, i;
+  MVCCID wait_mvccid = MVCCID_NULL;	/* writer the child enumeration stopped on */
   RECDES recdes;
   HEAP_SCANCACHE scan_cache;
   HFID hfid;
@@ -4610,6 +4746,7 @@ locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
   int k;
   int *keys_prefix_length = NULL;
   MVCC_SNAPSHOT *mvcc_snapshot = NULL;
+  DB_VALUE parent_key;
   OID found_oid;
   BTREE_ISCAN_OID_LIST oid_list;
 
@@ -4623,6 +4760,7 @@ locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
       error_code = er_errid ();
       return (error_code == NO_ERROR ? ER_FAILED : error_code);
     }
+  parent_key = *key;
 
   db_make_null (&key_val_range.key1);
   db_make_null (&key_val_range.key2);
@@ -4653,6 +4791,16 @@ locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 	}
       else if (fkref->upd_action == SM_FOREIGN_KEY_CASCADE || fkref->upd_action == SM_FOREIGN_KEY_SET_NULL)
 	{
+	  /* A key built without its domain (DELETE, a partition move) gets the PK's, read once for the re-check below. */
+	  if (DB_VALUE_TYPE (&parent_key) == DB_TYPE_MIDXKEY && parent_key.data.midxkey.domain == NULL)
+	    {
+	      parent_key.data.midxkey.domain = btree_read_key_type (thread_p, &index->btid);
+	      if (parent_key.data.midxkey.domain == NULL)
+		{
+		  ASSERT_ERROR_AND_SET (error_code);
+		  goto error3;
+		}
+	    }
 	  if (attr_ids)
 	    {
 	      db_private_free_and_init (thread_p, attr_ids);
@@ -4745,12 +4893,26 @@ locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 	       */
 	      bt_scan.is_key_partially_processed = false;
 #endif
+	      /* CASCADE and SET NULL enumerate the children to act on.  That answer must be the one that holds
+	       * after this statement's wait on the parent, not the one the statement snapshot carried into it --
+	       * otherwise a child committed during the wait is missed and a child that moved away during the wait
+	       * is still acted on.  RESTRICT has always asked the question this way. */
+	      bt_scan.select_children_for_referential_action = true;
+
 	      error_code = btree_range_scan (thread_p, &bt_scan, btree_range_scan_select_visible_oids);
 	      if (error_code != NO_ERROR)
 		{
 		  assert (er_errid () != NO_ERROR);
 		  goto error2;
 		}
+
+	      /* The enumeration may have met a writer on a child entry and stopped.  The children it gathered before
+	       * that are acted on first and the wait comes after them, at the bottom of this loop: the scan resumes at
+	       * the key it stopped on, not at the start of the range, so a key it had already consumed is never read
+	       * again and what was gathered from it would be lost with the buffer. */
+	      wait_mvccid = bt_scan.referential_action_wait_mvccid;
+	      bt_scan.referential_action_wait_mvccid = MVCCID_NULL;
+
 	      oid_cnt = bt_scan.n_oids_read_last_iteration;
 	      if (oid_cnt < 0)
 		{
@@ -4763,7 +4925,7 @@ locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 
 		  goto error2;
 		}
-	      else if (oid_cnt == 0)
+	      else if (oid_cnt == 0 && wait_mvccid == MVCCID_NULL)
 		{
 		  break;
 		}
@@ -4789,8 +4951,8 @@ locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 		{
 		  OID *oid_ptr = &(oid_list.oidp[i]);
 		  SCAN_CODE scan_code = S_SUCCESS;
+		  bool refers = false;
 		  recdes.data = NULL;
-		  /* TO DO - handle reevaluation */
 
 		  /* kept to commit, but a child row this transaction itself stamped is touched again without its lock */
 		  scan_code = locator_lock_and_get_object (thread_p, oid_ptr, &fkref->self_oid, &recdes, &scan_cache,
@@ -4812,6 +4974,19 @@ locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 		      error_code = er_errid ();
 		      error_code = (error_code == NO_ERROR ? ER_FAILED : error_code);
 		      goto error1;
+		    }
+
+		  error_code =
+		    locator_child_still_refers (thread_p, &attr_info, &fkref->self_btid, oid_ptr, &recdes, &parent_key,
+						&refers);
+		  if (error_code != NO_ERROR)
+		    {
+		      goto error1;
+		    }
+		  if (!refers)
+		    {
+		      lock_unlock_object_donot_move_to_non2pl (thread_p, oid_ptr, &fkref->self_oid, X_LOCK);
+		      continue;
 		    }
 
 		  if ((error_code = heap_attrinfo_clear_dbvalues (&attr_info)) != NO_ERROR)
@@ -4858,6 +5033,19 @@ locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 			{
 			  goto error1;
 			}
+		    }
+		}
+
+	      if (wait_mvccid != MVCCID_NULL && logtb_is_active_other_mvccid (thread_p, wait_mvccid))
+		{
+		  /* No page is latched here, so this is where the wait belongs.  The scan then resumes at the key it
+		   * stopped on and reads that key again from its start; the children just acted on carry this
+		   * transaction's delete stamp by now and are passed over. */
+		  error_code = logtb_wait_for_tran_end (thread_p, wait_mvccid);
+		  if (error_code != NO_ERROR)
+		    {
+		      ASSERT_ERROR ();
+		      goto error1;
 		    }
 		}
 	    }
@@ -5202,10 +5390,9 @@ locator_insert_force (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid, OID
 	}
 
       /* check the foreign key constraints.  This stays after locator_add_or_remove_index () above: the check takes no
-       * lock on the parent row, and what keeps a concurrent parent DELETE under RESTRICT or NO ACTION from missing this
-       * child is that the child's foreign-key index entries are already published when the check runs
-       * (btree_key_find_and_lock_unique_of_unique (), fk_existence).  A CASCADE or SET NULL parent can still miss it,
-       * for the reason given there. */
+       * lock on the parent row, and what keeps a concurrent parent DELETE or key change from missing this child is
+       * that the child's foreign-key index entries are already published when the check runs
+       * (btree_key_find_and_lock_unique_of_unique (), fk_existence). */
       if (has_index && !skip_checking_fk)
 	{
 	  error_code =
@@ -8082,9 +8269,8 @@ locator_add_or_remove_index_internal (THREAD_ENTRY * thread_p, RECDES * recdes, 
 	       * keeps it from missing this delete is that a check running after this scan meets that mark
 	       * (btree_key_find_and_lock_unique_of_unique (), fk_existence).  It is the mark on the key that carries
 	       * this, not the stamp on the heap record -- the child's check never reads the heap -- so the order that
-	       * must not change is the one between the two calls here.  This is the direction that holds for every
-	       * referential action.  The other one -- this scan meeting a child that has not committed yet -- holds
-	       * only for RESTRICT and NO ACTION; the same comment says why. */
+	       * must not change is the one between the two calls here.  The other direction -- this scan meeting a
+	       * child that has not committed yet -- is the scan's own: it waits that child out. */
 	      if (idx_action_flag == FOR_MOVE)
 		{
 		  /* This delete is caused by 'UPDATE ... SET ...' between partitioned tables. It first delete a
