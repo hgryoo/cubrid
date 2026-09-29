@@ -4144,8 +4144,12 @@ locator_check_foreign_key (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid
 		  goto error;
 		}
 	    }
-	  ret =
-	    xbtree_find_unique (thread_p, &local_btid, S_SELECT_WITH_LOCK, key_dbvalue, &part_oid, &unique_oid, true);
+	  /* Foreign-key existence check: probe the parent key without locking the parent row (see
+	   * btree_key_find_and_lock_unique_of_unique ()).  The child has already published its foreign-key index
+	   * entries, so a concurrent parent DELETE under RESTRICT or NO ACTION meets them and waits this child out.
+	   * A CASCADE or SET NULL parent does not -- its scan for children reads the statement's snapshot.  The
+	   * fk_existence comment in btree_key_find_and_lock_unique_of_unique () has the whole argument. */
+	  ret = xbtree_find_unique_fk_existence (thread_p, &local_btid, key_dbvalue, &part_oid, &unique_oid, true);
 	  if (ret == BTREE_KEY_NOTFOUND)
 	    {
 	      char *val_print = NULL;
@@ -4177,7 +4181,6 @@ locator_check_foreign_key (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid
 	      goto error;
 	    }
 	  assert (ret == BTREE_KEY_FOUND);
-	  /* TODO: For read committed... Do we need to keep the lock? */
 	}
 
       if (key_dbvalue == &dbvalue)
@@ -5198,7 +5201,11 @@ locator_insert_force (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid, OID
 	  goto error1;
 	}
 
-      /* check the foreign key constraints */
+      /* check the foreign key constraints.  This stays after locator_add_or_remove_index () above: the check takes no
+       * lock on the parent row, and what keeps a concurrent parent DELETE under RESTRICT or NO ACTION from missing this
+       * child is that the child's foreign-key index entries are already published when the check runs
+       * (btree_key_find_and_lock_unique_of_unique (), fk_existence).  A CASCADE or SET NULL parent can still miss it,
+       * for the reason given there. */
       if (has_index && !skip_checking_fk)
 	{
 	  error_code =
@@ -6012,7 +6019,9 @@ locator_update_force (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid, OID
 		}
 	    }
 
-	  /* check the foreign key constraints */
+	  /* check the foreign key constraints.  This stays after the index maintenance above for the same reason as in
+	   * locator_insert_force (): the check takes no lock on the parent row and relies on this row's foreign-key index
+	   * entries being published first. */
 	  if (!not_check_fk && !locator_Dont_check_foreign_key)
 	    {
 	      error_code =
@@ -8068,6 +8077,14 @@ locator_add_or_remove_index_internal (THREAD_ENTRY * thread_p, RECDES * recdes, 
 	    }
 	  else
 	    {
+	      /* The scan for children below stays after the key was delete-marked (btree_mvcc_delete () above, in this
+	       * same pass over the index): a child's foreign-key existence check takes no lock on this row, and what
+	       * keeps it from missing this delete is that a check running after this scan meets that mark
+	       * (btree_key_find_and_lock_unique_of_unique (), fk_existence).  It is the mark on the key that carries
+	       * this, not the stamp on the heap record -- the child's check never reads the heap -- so the order that
+	       * must not change is the one between the two calls here.  This is the direction that holds for every
+	       * referential action.  The other one -- this scan meeting a child that has not committed yet -- holds
+	       * only for RESTRICT and NO ACTION; the same comment says why. */
 	      if (idx_action_flag == FOR_MOVE)
 		{
 		  /* This delete is caused by 'UPDATE ... SET ...' between partitioned tables. It first delete a
@@ -8794,6 +8811,10 @@ locator_update_index (THREAD_ENTRY * thread_p, RECDES * new_recdes, RECDES * old
 		  LSA_SET_NULL (&tdes->repl_insert_lsa);
 		}
 
+	      /* Same ordering rule as in locator_add_or_remove_index_internal (): the old key is delete-marked before the
+	       * children are scanned.  The heap record is not stamped yet at this point -- locator_update_force ()
+	       * updates the index first and the heap after -- and does not have to be: a child's foreign-key existence
+	       * check reads the key, never the heap. */
 	      error_code = locator_check_primary_key_update (thread_p, index, old_key);
 	      if (error_code != NO_ERROR)
 		{
