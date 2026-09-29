@@ -13587,8 +13587,9 @@ error:
  * recdes (out)	   : Record descriptor; the record is copied.
  * scan_cache (in) : Heap scan cache.
  *
- * Note: No other writer can stamp a later version while the select phase's row lock is held, so the version is
- *	 settled without asking for the lock again.
+ * Note: the lock is not asked for again, but the version is still settled and checked as the locking path does:
+ *	 the lock does not keep out the owner of the last version, which passes it (locator_last_version_is_ours ()),
+ *	 and a REPLACE's lock comes from its unique-key lookup, which settles nothing.
  */
 static SCAN_CODE
 locator_get_last_version_locked_at_select (THREAD_ENTRY * thread_p, OID * oid, OID * class_oid, RECDES * recdes,
@@ -13597,6 +13598,8 @@ locator_get_last_version_locked_at_select (THREAD_ENTRY * thread_p, OID * oid, O
   HEAP_GET_CONTEXT context;
   MVCC_REC_HEADER recdes_header = MVCC_REC_HEADER_INITIALIZER;
   SCAN_CODE scan = S_SUCCESS;
+  bool is_mvcc_class;
+  bool found_version;
   int err = NO_ERROR;
 
   assert (scan_cache != NULL && recdes != NULL && class_oid != NULL);
@@ -13623,8 +13626,13 @@ locator_get_last_version_locked_at_select (THREAD_ENTRY * thread_p, OID * oid, O
 	}
     }
 
-  scan = locator_get_settled_last_version (thread_p, &context, !mvcc_is_mvcc_disabled_class (class_oid),
-					   &recdes_header);
+  is_mvcc_class = !mvcc_is_mvcc_disabled_class (class_oid);
+  scan = locator_get_settled_last_version (thread_p, &context, is_mvcc_class, &recdes_header);
+  found_version = (scan == S_SUCCESS || scan == S_SUCCESS_CHN_UPTODATE);
+  if (found_version && is_mvcc_class)
+    {
+      (void) locator_has_isolation_conflict (thread_p, &context, &recdes_header, &scan);
+    }
   heap_clean_get_context (thread_p, &context);
 
   return scan;
