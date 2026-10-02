@@ -2564,6 +2564,12 @@ respond:
 		return false;
 	      }
 	  }
+
+	/* nothing queued releases a context closed on the socket, so release it before the next wait */
+	if (!m_removed_context.empty ())
+	  {
+	    this->purge_stale_contexts ();
+	  }
       }
 
     return true;
