@@ -21121,11 +21121,7 @@ pt_cond_numbers_rows (PARSER_CONTEXT * parser, PT_NODE * cond)
  *   spec_list(in): the statement's spec list
  *   cond(in): a list of AND-ed conditions, or NULL
  *
- *  Note: Force-time reevaluation visits one spec at a time and matches it against that spec's own
- *	  range/key/data filters.  A term confined to a single spec survives that; a term relating
- *	  two specs does not, because no per-scan filter can carry the other spec's row.  Counting
- *	  the specs a statement mentions is a coarser test than this and pulls in statements whose
- *	  terms are all independent.
+ *  Note: reevaluation re-checks each spec against its own filters, which cannot carry another spec's row.
  */
 static bool
 pt_cond_spans_multiple_specs (PARSER_CONTEXT * parser, PT_NODE * spec_list, PT_NODE * cond)
@@ -21834,9 +21830,7 @@ pt_to_upd_del_query (PARSER_CONTEXT * parser, PT_NODE * select_names, PT_NODE * 
  *   where(in): the DELETE's search condition
  *   has_partitioned(in): a class being deleted from is partitioned
  *
- * Note: reevaluation matches one spec at a time against that spec's own range/key/data filters.  Each
- *	 test below is a shape those filters cannot decide, and an earlier test hides a later one -- the
- *	 subquery test hides the derived-table test for every derived table that holds a spec.
+ * Note: each test is a statement shape that reevaluation, one spec against its own filters, cannot re-check.
  */
 static bool
 pt_delete_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * aptr_statement,
@@ -21844,24 +21838,20 @@ pt_delete_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
 {
   PT_NODE *cl_name_node = NULL;
 
-  /* the switch: off, and every DELETE locks its rows at select as it did before reevaluation was turned on.
-   * The parameter is part of the query string the plan cache hashes, so a plan compiled under one setting is
-   * not served under the other. */
+  /* the switch: off, and every DELETE locks its rows at select, as before reevaluation was turned on. */
   if (!prm_get_bool_value (PRM_ID_MVCC_REEVALUATE_AT_FORCE))
     {
       PT_SELECT_INFO_SET_FLAG (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED);
       return true;
     }
 
-  /* the rows are already locked at select, so this one abandons reevaluation without asking for a lock */
+  /* the rows are already locked at select */
   if (aptr_statement->info.query.q.select.group_by != NULL)
     {
       return true;
     }
 
-  /* the flagging pass skips a partitioned class entirely, and a predicate under a subquery cannot be
-   * replayed as a scan filter.  Any spec below a subquery counts, which is why an inline view held back
-   * by the NO_MERGE hint stops here rather than at the derived-table test.
+  /* a partitioned class is never flagged, and a predicate under a subquery is not a scan filter.
    *   DELETE FROM part_t WHERE pk = 1;
    *   DELETE FROM t WHERE pk IN (SELECT k FROM side_t WHERE k = 1); */
   if (has_partitioned || pt_has_reev_in_subquery (parser, aptr_statement))
@@ -21870,9 +21860,7 @@ pt_delete_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
       return true;
     }
 
-  /* the candidate list holds exactly n rows and a rejected one is never replaced, so the statement would
-   * delete fewer while rows that still qualify are left behind.  A ROWNUM the user wrote counts rows the
-   * same way and leaves no limit node behind, so the condition is asked as well.
+  /* a row rejected at force is not replaced, so LIMIT or a user's ROWNUM would act on fewer rows than qualify.
    *   DELETE FROM t WHERE pk > 0 LIMIT 1;
    *   DELETE FROM t WHERE v = 1 AND ROWNUM <= 3; */
   if (statement->info.delete_.limit != NULL || pt_cond_numbers_rows (parser, where)
@@ -21882,12 +21870,7 @@ pt_delete_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
       return true;
     }
 
-  /* a spec reading a derived table has no heap of its own to re-read.  The flag is not what says so: the
-   * rewrite that puts a derived table there takes the heap and the flag together, so the spec that most
-   * needs this test is the one that no longer carries it.  An OID equality turns the target's own scan
-   * into a scan over a set -- FROM t becomes FROM table({:obj}) -- and leaves the DELETE's spec flagged
-   * while the SELECT's is not.  Only a derived table that contains no spec of its own gets this far --
-   * one that does is a spec below a subquery, and the test above already took it.
+  /* a derived table has no heap to re-read.  Test for it, not the flag, which the rewrite that adds one drops.
    *   DELETE FROM t WHERE t = :obj;
    *   DELETE a FROM t a, (SELECT 1 AS k) x WHERE a.pk = x.k; */
   for (cl_name_node = aptr_statement->info.query.q.select.from; cl_name_node != NULL; cl_name_node = cl_name_node->next)
@@ -21915,8 +21898,7 @@ pt_delete_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
 	}
     }
 
-  /* no per-scan filter can carry the other spec's row.  What decides is whether a single term crosses,
-   * not how many specs the statement mentions.
+  /* no per-scan filter can carry the other spec's row.
    *   DELETE a FROM t a, side_t b WHERE a.pk = b.k; */
   if (pt_cond_spans_multiple_specs (parser, from, where))
     {
@@ -21924,10 +21906,8 @@ pt_delete_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
       return true;
     }
 
-  /* the delete phase takes and re-checks one class at a time, and a class whose row fails the re-check is
-   * skipped on its own -- so with more than one target the statement can land on some of its classes and
-   * not on the others, and end in success.  No filter puts that back together, however independent the
-   * terms are; what the select-phase lock gave was every target row of a pair held at once.
+  /* the delete phase re-checks one class at a time and skips a class on its own, so with two targets it could apply
+   * to one and not the other.
    *   DELETE a, b FROM t a, side_t b WHERE a.pk = 1 AND b.k = 1; */
   if (aptr_statement->info.query.upd_del_class_cnt > 1)
     {
@@ -21935,10 +21915,9 @@ pt_delete_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
       return true;
     }
 
-  /* a search condition that flagged no spec of its own cannot be replayed as a scan filter, so there is
-   * no row to re-check it against.  Locking at select for it is what leaves "no reevaluation class"
-   * meaning "this statement reads no row of its own" -- the reading qexec_execute_delete () relies on.
-   * The generated SELECT is asked too, since the flagging pass reads only the statement's own WHERE.
+  /* a condition that flags no spec has no row to re-check, and qexec_execute_delete () takes "no reevaluation class"
+   * to mean the statement reads no row of its own.  The flagging pass reads only the statement's WHERE, so the
+   * generated SELECT's is asked too.
    *   DELETE FROM t WHERE ROWNUM <= 3; */
   if ((where != NULL || aptr_statement->info.query.q.select.where != NULL) && pt_reev_reads_no_spec (from))
     {
@@ -22664,10 +22643,8 @@ pt_check_dblink_trigger (PARSER_CONTEXT * parser, PT_NODE * statement)
  *   where(in): the UPDATE's search condition
  *   has_partitioned(in): a class being updated is partitioned
  *
- * Note: the same tests as pt_delete_must_abort_reevaluation (), in the same order and for the reasons
- *	 given there; only what the UPDATE side adds is said again here.  What it adds is the assignment
- *	 list -- an UPDATE recomputes its assignments, so an assignment reads rows the way a predicate
- *	 term does, and the specs it flags count wherever the DELETE side counts flagged specs.
+ * Note: the tests of pt_delete_must_abort_reevaluation (), with the assignments counted as terms: an UPDATE
+ *	 recomputes them, and an assignment reads rows as a predicate term does.
  */
 static bool
 pt_update_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * aptr_statement,
@@ -22682,8 +22659,7 @@ pt_update_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
       return true;
     }
 
-  /* pt_to_upd_del_query () asks for the select-phase lock where it adds the GROUP BY, so the rows are
-   * already locked and this one abandons reevaluation without asking again. */
+  /* pt_to_upd_del_query () locked the rows at select where it added the GROUP BY */
   if (aptr_statement->info.query.q.select.group_by != NULL)
     {
       return true;
@@ -22706,11 +22682,7 @@ pt_update_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
       return true;
     }
 
-  /* a spec reading a derived table has no heap of its own to re-read.  The flag is not what says so,
-   * no more than it does on the DELETE side: the rewrite that puts a derived table there takes the
-   * heap and the flag together, so the spec that most needs this test is the one that no longer
-   * carries it.  An OID equality turns the target's own scan into a scan over a set -- FROM t becomes
-   * FROM table({:obj}) -- and leaves the UPDATE's spec flagged while the SELECT's is not.
+  /* a derived table has no heap to re-read; see pt_delete_must_abort_reevaluation ().
    *   UPDATE t SET v = 1 WHERE t = :obj;
    *   UPDATE t a, (SELECT 1 AS k) x SET a.v = 1 WHERE a.pk = x.k; */
   for (cl_name_node = aptr_statement->info.query.q.select.from; cl_name_node != NULL; cl_name_node = cl_name_node->next)
@@ -22736,9 +22708,7 @@ pt_update_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
 	}
     }
 
-  /* the assignment list is read alongside the condition.  A single-target join UPDATE does not arrive
-   * here -- the GROUP BY rewrite above took it -- but that rewrite is gated on upd_del_class_cnt == 1,
-   * so a two-target join UPDATE would.
+  /* the assignments count as terms.  Only a two-target join UPDATE gets here: one target took the GROUP BY above.
    *   UPDATE t a, side_t b SET a.v = 1, b.v = 1 WHERE a.pk = b.k;
    *   UPDATE t a, side_t b SET a.v = b.v, b.v = 1 WHERE a.pk = 1 AND b.k = 1; */
   if (pt_cond_spans_multiple_specs (parser, from, where)
@@ -22755,8 +22725,7 @@ pt_update_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
       return true;
     }
 
-  /* the assignments need no test of their own here: one that reads a spec flags it, and one that does
-   * not is a constant the latest version can take as it stands.
+  /* an assignment that reads a spec flags it and one that does not is a constant, so they need no test here.
    *   UPDATE t SET v = 1 WHERE ROWNUM <= 3; */
   if ((where != NULL || aptr_statement->info.query.q.select.where != NULL) && pt_reev_reads_no_spec (from))
     {
