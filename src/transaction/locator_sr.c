@@ -14013,6 +14013,38 @@ locator_mvcc_reev_cond_and_assignment (THREAD_ENTRY * thread_p, HEAP_SCANCACHE *
 }
 
 /*
+ * locator_mvcc_reev_reads_other_row () - does the reevaluation read a row other than the one being updated?
+ *   return: true if one does
+ *   mvcc_reev_data(in): the statement's reevaluation data
+ *   oid(in): the row being updated
+ */
+static bool
+locator_mvcc_reev_reads_other_row (const MVCC_UPDDEL_REEV_DATA * mvcc_reev_data, const OID * oid)
+{
+  const UPDDEL_MVCC_COND_REEVAL *reev;
+  const OID *inst_oid;
+  int idx;
+
+  for (reev = mvcc_reev_data->mvcc_cond_reev_list; reev != NULL; reev = reev->next)
+    {
+      inst_oid = reev->inst_oid;
+      if (reev != mvcc_reev_data->curr_upddel && inst_oid != NULL && !OID_ISNULL (inst_oid) && !OID_EQ (inst_oid, oid))
+	{
+	  return true;
+	}
+    }
+  for (idx = 0; mvcc_reev_data->curr_extra_assign_reev != NULL && idx < mvcc_reev_data->curr_extra_assign_cnt; idx++)
+    {
+      inst_oid = mvcc_reev_data->curr_extra_assign_reev[idx]->inst_oid;
+      if (inst_oid != NULL && !OID_ISNULL (inst_oid) && !OID_EQ (inst_oid, oid))
+	{
+	  return true;
+	}
+    }
+  return false;
+}
+
+/*
  * locator_mvcc_reev_cond_assigns () - reevaluates conditions and assignments
  *				    at update/delete stage of an UPDATE/DELETE
  *				    statement
@@ -14060,6 +14092,17 @@ locator_mvcc_reev_cond_assigns (THREAD_ENTRY * thread_p, OID * class_oid, const 
   if (mvcc_reev_data->new_recdes == NULL)
     {
       /* Seems that the caller wants to reevaluate only the condition */
+      goto end;
+    }
+
+  /* A row other than the one being updated is read with PEEK under a scan cache ended before the assignments run,
+   * so they must not read it.  The parser locks such an UPDATE at select (pt_to_upd_del_query (),
+   * pt_update_must_abort_reevaluation ()). */
+  if (locator_mvcc_reev_reads_other_row (mvcc_reev_data, oid))
+    {
+      assert (false);
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_GENERIC_ERROR, 0);
+      ev_res = V_ERROR;
       goto end;
     }
 
