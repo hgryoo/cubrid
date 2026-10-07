@@ -367,15 +367,17 @@ struct lk_res_block
  * Transaction Lock Entry Structure
  */
 /* One class whose lock an escalation raised over the running statement's row locks.  It goes back down with the
- * statement (lock_end_escalated_class_lock) unless a request the statement will not give back arrives on it first
- * (the withdrawal at the end of lock_object_with_flag).  A statement can escalate more than one class -- each target
- * of a multi-table UPDATE, each partition a range reaches -- so the transaction keeps a bounded list of them.
+ * statement (lock_end_escalated_class_lock) unless a request the lowering would leave uncovered arrives on it first:
+ * a class lock the mode it goes back to does not cover (lock_internal_perform_lock_object), or a row request the
+ * statement will not give back (the end of lock_object_with_flag).  A statement can escalate more than one class --
+ * each target of a multi-table UPDATE, each partition a range reaches -- so the transaction keeps a bounded list.
  *
  * These records are read and written without hold_mutex, on the same ground the walks of the hold lists state (see
  * lock_release_transient_object_locks): a transaction runs one thread at a time, so no one else is on the list while
  * we are.  hold_mutex is there for the other transactions that reach the hold lists through a resource; nothing but
  * this transaction ever reaches these records.  The escalation writes its record after dropping the mutex for that
- * reason, not by oversight. */
+ * reason, not by oversight.  Parallel scan workers are the exception: they reach the class grant check, but only with
+ * IS, which every from_mode covers, so they only read. */
 #define LK_ESCALATION_RECORDS_PER_STATEMENT 16
 typedef struct lk_escalation_record LK_ESCALATION_RECORD;
 struct lk_escalation_record
@@ -591,6 +593,7 @@ static void lock_reset_transient_state (LK_TRAN_LOCK * tran_lock);
 static bool lock_escalation_takes_only_transient (LK_TRAN_LOCK * tran_lock, const OID * class_oid);
 static void lock_end_escalated_class_lock (THREAD_ENTRY * thread_p, bool lower);
 static void lock_withdraw_escalation_record (LK_TRAN_LOCK * tran_lock, const OID * class_oid);
+static void lock_withdraw_uncovered_escalation_record (LK_TRAN_LOCK * tran_lock, const OID * class_oid, LOCK lock);
 static int lock_escalate_if_needed (THREAD_ENTRY * thread_p, LK_ENTRY * class_entry, int tran_index);
 static int lock_internal_hold_lock_object_instant (THREAD_ENTRY * thread_p, int tran_index, const OID * oid,
 						   const OID * class_oid, LOCK lock);
@@ -3289,6 +3292,34 @@ lock_withdraw_escalation_record (LK_TRAN_LOCK * tran_lock, const OID * class_oid
 }
 
 /*
+ * lock_withdraw_uncovered_escalation_record () - Forget a class's lowering once a grant on it needs more than from_mode
+ *   return: void
+ *   tran_lock(in): the transaction's lock list
+ *   class_oid(in): the class the lock was just granted on
+ *   lock(in): the mode requested
+ *
+ * Note: a request the pre-escalation mode already covers keeps the record -- lowering takes nothing it was given.
+ *	Takes no hold_mutex; see the premise stated where LK_ESCALATION_RECORD is declared.
+ */
+static void
+lock_withdraw_uncovered_escalation_record (LK_TRAN_LOCK * tran_lock, const OID * class_oid, LOCK lock)
+{
+  int i;
+
+  for (i = 0; i < tran_lock->escalated_count; i++)
+    {
+      if (OID_EQ (&tran_lock->escalated[i].class_oid, class_oid))
+	{
+	  if (lock_conv (lock, tran_lock->escalated[i].from_mode) != tran_lock->escalated[i].from_mode)
+	    {
+	      tran_lock->escalated[i] = tran_lock->escalated[--tran_lock->escalated_count];
+	    }
+	  return;
+	}
+    }
+}
+
+/*
  * lock_escalate_if_needed -
  *
  * return: one of following values
@@ -3407,7 +3438,8 @@ lock_escalate_if_needed (THREAD_ENTRY * thread_p, LK_ENTRY * class_entry, int tr
       if (escalation_ends_with_statement)
 	{
 	  /* what this raise stands for is what the statement was going to give back, so the raise goes back
-	   * with it -- see lock_end_escalated_class_lock () */
+	   * with it -- see lock_end_escalated_class_lock ().  Written after the raise, not before: the raise is
+	   * itself a class grant its from_mode does not cover. */
 	  LK_ESCALATION_RECORD *rec = &tran_lock->escalated[tran_lock->escalated_count++];
 
 	  COPY_OID (&rec->class_oid, &escalated_class_oid);
@@ -4378,6 +4410,13 @@ lock_internal_perform_lock_object (THREAD_ENTRY * thread_p, int tran_index, LK_R
   if (entry_ptr != NULL && ret_val == LK_GRANTED)
     {
       lock_event_set_xasl_id_to_entry (tran_index, entry_ptr);
+    }
+
+  if (ret_val == LK_GRANTED && search_key.type == LOCK_RESOURCE_CLASS
+      && lk_Gl.tran_lock_table[tran_index].escalated_count > 0)
+    {
+      /* here rather than in the callers, so that no path to a class lock can skip it */
+      lock_withdraw_uncovered_escalation_record (&lk_Gl.tran_lock_table[tran_index], &search_key.oid, lock);
     }
 
   return ret_val;
@@ -6577,12 +6616,6 @@ lock_object_with_flag (THREAD_ENTRY * thread_p, const OID * oid, const OID * cla
       granted =
 	lock_internal_perform_lock_object (thread_p, tran_index, lock_create_search_key (oid, NULL), lock, wait_msecs,
 					   &class_entry, root_class_entry);
-      if (granted == LK_GRANTED)
-	{
-	  /* a class lock asked for in its own right, not as the shape an escalation left behind: this request
-	   * is the transaction's and the statement no longer knows what it would be lowering */
-	  lock_withdraw_escalation_record (&lk_Gl.tran_lock_table[tran_index], oid);
-	}
       goto end;
     }
   else
