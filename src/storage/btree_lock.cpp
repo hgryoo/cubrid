@@ -52,17 +52,32 @@ static void btree_key_release_locked_object_and_pages (THREAD_ENTRY *thread_p,
  * Note: neither writer holds a row lock the caller's object lock could suspend on, so that lock would be
  *	 granted at once and the re-check would spin.  Serialize on the writer's transaction end instead.
  */
+
+/*
+ * btree_conflicting_writer_mvccid () - Which transaction an in-progress verdict points at.
+ *
+ * return		  : MVCCID of the writer still working on the object.
+ * satisfies_delete (in)  : DELETE_RECORD_INSERT_IN_PROGRESS or DELETE_RECORD_DELETE_IN_PROGRESS.
+ * mvcc_header (in)	  : The object's MVCC header.
+ *
+ * Note: whether to wait for that transaction, and where, is the caller's.  A unique probe waits in place
+ *	 because it owns the pages it must release first; a range scan cannot, and hands the MVCCID up.
+ */
+MVCCID
+btree_conflicting_writer_mvccid (MVCC_SATISFIES_DELETE_RESULT satisfies_delete, MVCC_REC_HEADER *mvcc_header)
+{
+  assert (satisfies_delete == DELETE_RECORD_INSERT_IN_PROGRESS || satisfies_delete == DELETE_RECORD_DELETE_IN_PROGRESS);
+
+  return (satisfies_delete == DELETE_RECORD_INSERT_IN_PROGRESS)
+	 ? MVCC_GET_INSID (mvcc_header) : MVCC_GET_DELID (mvcc_header);
+}
+
 int
 btree_key_wait_out_conflicting_writer (THREAD_ENTRY *thread_p, MVCC_SATISFIES_DELETE_RESULT satisfies_delete,
 				       MVCC_REC_HEADER *mvcc_header, BTREE_FIND_UNIQUE_HELPER *find_unique_helper,
 				       PAGE_PTR *leaf_page, PAGE_PTR *overflow_page, bool *restart)
 {
-  MVCCID writer_mvccid;
-
-  assert (satisfies_delete == DELETE_RECORD_INSERT_IN_PROGRESS || satisfies_delete == DELETE_RECORD_DELETE_IN_PROGRESS);
-
-  writer_mvccid = (satisfies_delete == DELETE_RECORD_INSERT_IN_PROGRESS)
-		  ? MVCC_GET_INSID (mvcc_header) : MVCC_GET_DELID (mvcc_header);
+  MVCCID writer_mvccid = btree_conflicting_writer_mvccid (satisfies_delete, mvcc_header);
 
   if (logtb_is_active_other_mvccid (thread_p, writer_mvccid))
     {
