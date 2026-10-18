@@ -286,7 +286,8 @@ static REGU_VARIABLE *pt_to_cume_dist_percent_rank_regu_variable (PARSER_CONTEXT
 
 static REGU_VARIABLE *pt_to_regu_reserved_name (PARSER_CONTEXT * parser, PT_NODE * attr);
 static int pt_reserved_id_to_valuelist_index (PARSER_CONTEXT * parser, PT_RESERVED_NAME_ID reserved_id);
-static void pt_mark_spec_list_for_update_clause (PARSER_CONTEXT * parser, PT_NODE * statement, PT_SPEC_FLAG spec_flag);
+static void pt_mark_spec_list_for_update_clause (PARSER_CONTEXT * parser, PT_NODE * statement, PT_SPEC_FLAG spec_flag,
+						 PT_SPEC_FLAG mark);
 
 static void pt_optimize_min_max_list (PARSER_CONTEXT * parser, PT_NODE * select_node, QO_PLAN * plan,
 				      AGGREGATE_TYPE * aggregate);
@@ -12959,6 +12960,10 @@ pt_to_class_spec_list (PARSER_CONTEXT * parser, PT_NODE * spec, PT_NODE * where_
 		{
 		  ACCESS_SPEC_SET_FLAG (access, ACCESS_SPEC_FLAG_FOR_UPDATE);
 		}
+	      else if (spec->info.spec.flag & PT_SPEC_FLAG_FOR_UPDATE_ABOVE_READ_COMMITTED)
+		{
+		  ACCESS_SPEC_SET_FLAG (access, ACCESS_SPEC_FLAG_FOR_UPDATE_ABOVE_READ_COMMITTED);
+		}
 
 	      if (access->access == ACCESS_METHOD_SEQUENTIAL || access->access == ACCESS_METHOD_INDEX)
 		{
@@ -21676,16 +21681,18 @@ pt_mvcc_prepare_upd_del_select (PARSER_CONTEXT * parser, PT_NODE * select_stmt)
 }
 
 /*
- * pt_mark_spec_list_for_update_clause -- mark the spec which need be
- *                  updated/deleted with PT_SPEC_FLAG_FOR_UPDATE_CLAUSE flag
+ * pt_mark_spec_list_for_update_clause -- mark the specs to be updated/deleted with the given flag
  *   return:
  *   parser(in): context
  *   statement(in): select parse tree
  *   spec_flag(in): spec flag: PT_SPEC_FLAG_UPDATE or PT_SPEC_FLAG_DELETE
+ *   mark(in): PT_SPEC_FLAG_FOR_UPDATE_CLAUSE, or PT_SPEC_FLAG_FOR_UPDATE_ABOVE_READ_COMMITTED for a statement left to
+ *	       the force-phase reevaluation
  */
 
 void
-pt_mark_spec_list_for_update_clause (PARSER_CONTEXT * parser, PT_NODE * statement, PT_SPEC_FLAG spec_flag)
+pt_mark_spec_list_for_update_clause (PARSER_CONTEXT * parser, PT_NODE * statement, PT_SPEC_FLAG spec_flag,
+				     PT_SPEC_FLAG mark)
 {
   PT_NODE *spec;
 
@@ -21695,12 +21702,12 @@ pt_mark_spec_list_for_update_clause (PARSER_CONTEXT * parser, PT_NODE * statemen
     {
       if (spec->info.spec.flag & spec_flag)
 	{
-	  spec->info.spec.flag = (PT_SPEC_FLAG) (spec->info.spec.flag | PT_SPEC_FLAG_FOR_UPDATE_CLAUSE);
+	  spec->info.spec.flag = (PT_SPEC_FLAG) (spec->info.spec.flag | mark);
 	}
 
       if (spec->info.spec.derived_table != NULL && spec->info.spec.derived_table->node_type == PT_SELECT)
 	{
-	  pt_mark_spec_list_for_update_clause (parser, spec->info.spec.derived_table, spec_flag);
+	  pt_mark_spec_list_for_update_clause (parser, spec->info.spec.derived_table, spec_flag, mark);
 	}
     }
 }
@@ -22049,7 +22056,7 @@ pt_to_upd_del_query (PARSER_CONTEXT * parser, PT_NODE * select_names, PT_NODE * 
 
   if (PT_SELECT_INFO_IS_FLAGED (statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED))
     {
-      pt_mark_spec_list_for_update_clause (parser, statement, PT_SPEC_FLAG_UPDATE);
+      pt_mark_spec_list_for_update_clause (parser, statement, PT_SPEC_FLAG_UPDATE, PT_SPEC_FLAG_FOR_UPDATE_CLAUSE);
     }
 
   return statement;
@@ -22352,9 +22359,20 @@ pt_to_delete_xasl (PARSER_CONTEXT * parser, PT_NODE * statement)
 
       /* In case of locking at select stage add flag used at SELECT ... FOR UPDATE clause to each spec from which rows
        * will be deleted. This will ensure that rows will be locked at SELECT stage. */
+      /* a statement that gives up reevaluation locks its rows at select */
+      assert (!abort_reevaluation || PT_SELECT_INFO_IS_FLAGED (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED));
       if (PT_SELECT_INFO_IS_FLAGED (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED))
 	{
-	  pt_mark_spec_list_for_update_clause (parser, aptr_statement, PT_SPEC_FLAG_DELETE);
+	  pt_mark_spec_list_for_update_clause (parser, aptr_statement, PT_SPEC_FLAG_DELETE,
+					       PT_SPEC_FLAG_FOR_UPDATE_CLAUSE);
+	}
+      else if (!abort_reevaluation)
+	{
+	  /* Reevaluation re-checks a row only under READ COMMITTED; above it the force phase reports a serialization
+	   * conflict where a select-phase lock made the other writer wait.  The plan is shared by transactions of any
+	   * isolation level, so the executor decides. */
+	  pt_mark_spec_list_for_update_clause (parser, aptr_statement, PT_SPEC_FLAG_DELETE,
+					       PT_SPEC_FLAG_FOR_UPDATE_ABOVE_READ_COMMITTED);
 	}
 
       /* Prepare generated SELECT statement for mvcc reevaluation */
@@ -23184,9 +23202,17 @@ pt_to_update_xasl (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE ** non_
 
   /* In case of locking at select stage add flag used at SELECT ... FOR UPDATE clause to each spec from which rows will
    * be updated. This will ensure that rows will be locked at SELECT stage. */
+  /* a statement that gives up reevaluation locks its rows at select */
+  assert (!abort_reevaluation || PT_SELECT_INFO_IS_FLAGED (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED));
   if (PT_SELECT_INFO_IS_FLAGED (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED))
     {
-      pt_mark_spec_list_for_update_clause (parser, aptr_statement, PT_SPEC_FLAG_UPDATE);
+      pt_mark_spec_list_for_update_clause (parser, aptr_statement, PT_SPEC_FLAG_UPDATE, PT_SPEC_FLAG_FOR_UPDATE_CLAUSE);
+    }
+  else if (!abort_reevaluation)
+    {
+      /* see pt_to_delete_xasl () */
+      pt_mark_spec_list_for_update_clause (parser, aptr_statement, PT_SPEC_FLAG_UPDATE,
+					   PT_SPEC_FLAG_FOR_UPDATE_ABOVE_READ_COMMITTED);
     }
 
   /* Prepare generated SELECT statement for mvcc reevaluation */
@@ -27716,7 +27742,7 @@ pt_to_merge_update_query (PARSER_CONTEXT * parser, PT_NODE * select_list, PT_MER
 
   if (PT_SELECT_INFO_IS_FLAGED (statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED))
     {
-      pt_mark_spec_list_for_update_clause (parser, statement, PT_SPEC_FLAG_UPDATE);
+      pt_mark_spec_list_for_update_clause (parser, statement, PT_SPEC_FLAG_UPDATE, PT_SPEC_FLAG_FOR_UPDATE_CLAUSE);
     }
 
   return statement;
