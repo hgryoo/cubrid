@@ -22071,12 +22071,13 @@ pt_to_upd_del_query (PARSER_CONTEXT * parser, PT_NODE * select_names, PT_NODE * 
  *   from(in): the DELETE's own spec list
  *   where(in): the DELETE's search condition
  *   has_partitioned(in): a class being deleted from is partitioned
+ *   has_lob(in): a class being deleted from has a BLOB or CLOB attribute
  *
  * Note: each test is a statement shape that reevaluation, one spec against its own filters, cannot re-check.
  */
 static bool
 pt_delete_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * aptr_statement,
-				   PT_NODE * from, PT_NODE * where, bool has_partitioned)
+				   PT_NODE * from, PT_NODE * where, bool has_partitioned, bool has_lob)
 {
   PT_NODE *cl_name_node = NULL;
 
@@ -22090,6 +22091,15 @@ pt_delete_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
   /* the rows are already locked at select */
   if (aptr_statement->info.query.q.select.group_by != NULL)
     {
+      return true;
+    }
+
+  /* qexec_execute_delete () schedules the removal of a row's LOB files before the force phase asks whether the row
+   * still qualifies, so a row skipped there would stay and lose its files.
+   *   DELETE FROM lob_t WHERE v = 1; */
+  if (has_lob)
+    {
+      PT_SELECT_INFO_SET_FLAG (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED);
       return true;
     }
 
@@ -22197,7 +22207,7 @@ pt_to_delete_xasl (PARSER_CONTEXT * parser, PT_NODE * statement)
   int error = NO_ERROR;
   PT_NODE *hint_arg, *node;
   float hint_wait_secs;
-  bool has_partitioned = false, abort_reevaluation = false;
+  bool has_partitioned = false, abort_reevaluation = false, has_lob = false;
 
   assert (parser != NULL && statement != NULL);
 
@@ -22319,6 +22329,7 @@ pt_to_delete_xasl (PARSER_CONTEXT * parser, PT_NODE * statement)
 			    }
 
 			  select_list = parser_append_node (select_node, select_list);
+			  has_lob = true;
 			}
 		    }
 		  attr = db_attribute_next (attr);
@@ -22338,7 +22349,8 @@ pt_to_delete_xasl (PARSER_CONTEXT * parser, PT_NODE * statement)
 	}
 
       abort_reevaluation =
-	pt_delete_must_abort_reevaluation (parser, statement, aptr_statement, from, where, has_partitioned);
+	pt_delete_must_abort_reevaluation (parser, statement, aptr_statement, from, where, has_partitioned,
+					   has_lob);
 
       if (abort_reevaluation)
 	{
