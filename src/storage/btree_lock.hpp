@@ -48,8 +48,7 @@ struct btree_find_unique_helper
 				 * inserter wrote it, so only the heap shows the row's owner. */
   MVCC_SNAPSHOT *snapshot;	/* Snapshot used to filter objects not visible. If NULL, objects are not filtered. */
   bool found_object;		/* Set to true if object was found. */
-  bool fk_existence;		/* Foreign-key existence check: classify the key's first object and wait out an in-progress
-				 * writer as usual, but take no lock on a committed parent. */
+  bool fk_existence;		/* Foreign-key existence probe: take no lock on a committed parent. */
 
   PERF_UTIME_TRACKER time_track;
 

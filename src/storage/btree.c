@@ -26458,9 +26458,7 @@ btree_check_valid_record (THREAD_ENTRY * thread_p, BTID_INT * btid, RECDES * rec
 #endif
 
 /*
- * btree_check_foreign_key () - Check one existing row for ALTER ... ADD FOREIGN KEY, when the foreign key
- *				 shares an existing plain index (xlocator_check_fk_validity ()).  A foreign key
- *				 that gets a new index is checked by btree_load_check_fk () instead.
+ * btree_check_foreign_key () -
  *   return: NO_ERROR
  *   cls_oid(in):
  *   hfid(in):
@@ -26543,9 +26541,8 @@ btree_check_foreign_key (THREAD_ENTRY * thread_p, OID * cls_oid, HFID * hfid, OI
 	}
     }
 
-  /* Keep the S lock on the parent row to commit.  The parent learns of this foreign key only afterwards
-   * (update_foreign_key_ref ()), so a parent DELETE or key UPDATE in between does not scan for children -- only
-   * this lock stops it. */
+  /* Keep the parent row lock to commit: the parent learns of this foreign key only after this check
+   * (update_foreign_key_ref ()), so a parent DELETE in between scans no children for it. */
   ret_search = xbtree_find_unique (thread_p, &local_btid, S_SELECT_WITH_LOCK, keyval, &part_oid, &unique_oid, true);
   if (ret_search == BTREE_KEY_NOTFOUND)
     {
@@ -27617,9 +27614,8 @@ btree_key_find_and_lock_unique_of_unique (THREAD_ENTRY * thread_p, BTID_INT * bt
 	  if (find_unique_helper->fk_existence && satisfies_delete == DELETE_RECORD_INSERT_IN_PROGRESS
 	      && !logtb_is_current_mvccid (thread_p, MVCC_GET_INSID (&mvcc_header)))
 	    {
-	      /* The inserter ended in the race, so the verdict above is stale.  The lock path below gets its re-read from
-	       * the page refix its unconditional lock causes; with no lock to take, re-read the key here under the latch
-	       * still held.  An insert of our own is not re-read: it falls through as present. */
+	      /* The inserter just ended, so the verdict above is stale; re-read the key, which the lock path gets from
+	       * its page refix.  Our own insert falls through as present. */
 	      continue;
 	    }
 
@@ -27638,20 +27634,11 @@ btree_key_find_and_lock_unique_of_unique (THREAD_ENTRY * thread_p, BTID_INT * bt
 	    }
 	  if (find_unique_helper->fk_existence)
 	    {
-	      /* Foreign-key existence check: the committed parent is returned without a row lock.  The child has already
-	       * published its foreign-key index entry (locator_insert_force (), locator_update_force ()), and a parent
-	       * DELETE or key change stamps the key before it scans for children (locator_add_or_remove_index_internal ()).
-	       *
-	       * Under RESTRICT and NO ACTION that closes the window both ways.  The parent's scan for children is
-	       * btree_find_foreign_key (), which carries no snapshot and judges with mvcc_satisfies_delete (), so it meets
-	       * an uncommitted child's entry and waits the child out; and this probe meets the stamp above and waits the
-	       * deleter out.  The parent row lock used to close the same window, and collided with every parent UPDATE
-	       * that leaves the key alone.
-	       *
-	       * CASCADE and SET NULL are outside that argument.  Their scan for children reads the statement's snapshot
-	       * (locator_check_primary_key_delete (), locator_check_primary_key_update ()), so it neither sees an
-	       * uncommitted child nor waits for one.  Dropping the parent row lock does not open that gap -- it is older
-	       * than this change and CBRD-27464 is what closes it -- but only the other direction holds there. */
+	      /* No lock on a committed parent.  The child publishes its foreign-key entries before this probe, and a
+	       * parent DELETE or key change delete-marks the key before it scans for children, so one meets the other:
+	       * this probe meets the mark and waits the deleter out, or the parent's scan meets the child's entry.
+	       * Only the RESTRICT / NO ACTION scan (btree_find_foreign_key ()) waits that child out; the CASCADE /
+	       * SET NULL scan reads the statement snapshot and can miss it. */
 	      assert (OID_ISNULL (&find_unique_helper->locked_oid));
 	      COPY_OID (&find_unique_helper->oid, &unique_oid);
 	      find_unique_helper->found_object = true;
@@ -28544,11 +28531,7 @@ btree_record_satisfies_snapshot (THREAD_ENTRY * thread_p, BTID_INT * btid_int, R
 }
 
 /*
- * xbtree_find_unique_fk_existence () - Foreign-key existence probe: like xbtree_find_unique () with
- *					S_SELECT_WITH_LOCK, but it takes no lock on the committed parent it
- *					finds.  See btree_key_find_and_lock_unique_of_unique ().
- *
- * For the DML check only (locator_check_foreign_key ()).  btree_check_foreign_key () keeps the lock.
+ * xbtree_find_unique_fk_existence () - Foreign-key existence probe: no lock on the committed parent it finds.
  */
 BTREE_SEARCH
 xbtree_find_unique_fk_existence (THREAD_ENTRY * thread_p, BTID * btid, DB_VALUE * key, OID * class_oid, OID * oid,
@@ -28559,15 +28542,19 @@ xbtree_find_unique_fk_existence (THREAD_ENTRY * thread_p, BTID * btid, DB_VALUE 
 }
 
 /*
- * btree_find_unique_internal () - xbtree_find_unique () with the two modes that skip the object lock exposed.
+ * btree_find_unique_internal () - Find (and sometimes lock) object in key of unique index.
  *
  * return		  : BTREE_SEARCH result.
+ * thread_p (in)	  : Thread entry.
+ * btid (in)		  : B-tree identifier.
+ * scan_op_type (in)	  : Operation type (purpose) of finding unique key object.
+ * key (in)		  : Key value.
+ * class_oid (in)	  : Class OID.
+ * oid (out)		  : Found (and sometimes locked) object OID.
+ * is_all_class_srch (in) : True if search is based on all classes contained in the class hierarchy.
  * lock_found_object (in) : False to return the first object of an S_DELETE / S_UPDATE lookup without locking it; the
  *			    caller then settles on the heap's last version, where the row's owner is visible.
- * fk_existence (in)	  : True for the foreign-key existence check: the probe classifies the key's first object and
- *			    waits out an in-progress writer as usual, but takes no lock on a committed parent.  See
- *			    btree_key_find_and_lock_unique_of_unique ().
- * (other arguments)	  : As xbtree_find_unique ().
+ * fk_existence (in)	  : True to take no lock on a committed parent (foreign-key existence probe).
  */
 static BTREE_SEARCH
 btree_find_unique_internal (THREAD_ENTRY * thread_p, BTID * btid, SCAN_OPERATION_TYPE scan_op_type, DB_VALUE * key,
@@ -28747,9 +28734,7 @@ btree_find_unique_internal (THREAD_ENTRY * thread_p, BTID * btid, SCAN_OPERATION
       COPY_OID (oid, &find_unique_helper.oid);
 
 #if defined (SERVER_MODE)
-      /* Safe guard: object is supposed to be locked, unless the caller settles on the heap version itself
-       * (xbtree_find_unique_unlocked ()) or this is a foreign-key existence probe, which returns the
-       * committed parent without a lock (btree_key_find_and_lock_unique_of_unique ()). */
+      /* Safe guard: object is supposed to be locked. */
       assert (scan_op_type == S_SELECT || !lock_found_object || find_unique_helper.fk_existence
 	      || lock_has_lock_on_object (oid, class_oid, find_unique_helper.lock_mode) > 0);
 #endif /* SERVER_MODE */
