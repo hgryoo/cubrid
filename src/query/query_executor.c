@@ -738,6 +738,7 @@ static void qexec_clear_internal_classes (THREAD_ENTRY * thread_p, UPDDEL_CLASS_
 static bool qexec_class_ends_locks_with_statement (THREAD_ENTRY * thread_p,
 						   UPDDEL_CLASS_INFO_INTERNAL * internal_class, const OID * class_oid);
 static bool qexec_start_statement_lock_scope (THREAD_ENTRY * thread_p, LOG_LSA * savept_lsa_at_start);
+static bool qexec_spec_is_for_update (THREAD_ENTRY * thread_p, const ACCESS_SPEC_TYPE * spec);
 static LOCATOR_LOCK_POLICY qexec_base_lock_policy (const UPDDEL_CLASS_INSTANCE_LOCK_INFO * lock_info);
 static LOCATOR_LOCK_POLICY qexec_make_lock_policy_transient (THREAD_ENTRY * thread_p, LOCATOR_LOCK_POLICY base_policy,
 							     bool statement_ends_locks,
@@ -7405,7 +7406,7 @@ qexec_open_scan (THREAD_ENTRY * thread_p, ACCESS_SPEC_TYPE * curr_spec, VAL_LIST
 	}
       else
 	{
-	  mvcc_select_lock_needed = ACCESS_SPEC_IS_FLAGED (curr_spec, ACCESS_SPEC_FLAG_FOR_UPDATE);
+	  mvcc_select_lock_needed = qexec_spec_is_for_update (thread_p, curr_spec);
 	}
     }
 
@@ -8803,7 +8804,7 @@ qexec_execute_scan (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xasl
 	    {
 	      qexec_clear_head_lists (thread_p, xasl->bptr_list);
 	      scan_operation_type =
-		(ACCESS_SPEC_IS_FLAGED (xasl->curr_spec, ACCESS_SPEC_FLAG_FOR_UPDATE)) ? S_UPDATE : S_SELECT;
+		qexec_spec_is_for_update (thread_p, xasl->curr_spec) ? S_UPDATE : S_SELECT;
 	    }
 	  /* evaluate bptr list */
 	  for (xptr = xasl->bptr_list; qualified && xptr != NULL; xptr = xptr->next)
@@ -8865,7 +8866,7 @@ qexec_execute_scan (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xasl
 	    {
 	      qexec_clear_head_lists (thread_p, xasl->fptr_list);
 	      scan_operation_type =
-		(ACCESS_SPEC_IS_FLAGED (xasl->curr_spec, ACCESS_SPEC_FLAG_FOR_UPDATE)) ? S_UPDATE : S_SELECT;
+		qexec_spec_is_for_update (thread_p, xasl->curr_spec) ? S_UPDATE : S_SELECT;
 	    }
 	  /* evaluate fptr list */
 	  for (xptr = xasl->fptr_list; qualified && xptr != NULL; xptr = xptr->next)
@@ -9123,7 +9124,7 @@ qexec_prune_spec (THREAD_ENTRY * thread_p, ACCESS_SPEC_TYPE * spec, VAL_DESCR * 
       return error;
     }
 
-  if (!COMPOSITE_LOCK (scan_op_type) && !(ACCESS_SPEC_IS_FLAGED (spec, ACCESS_SPEC_FLAG_FOR_UPDATE)))
+  if (!COMPOSITE_LOCK (scan_op_type) && !qexec_spec_is_for_update (thread_p, spec))
     {
       lock = IS_LOCK;
     }
@@ -9761,7 +9762,7 @@ qexec_intprt_fnc (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xasl_s
 	  if (xasl->bptr_list)
 	    {
 	      scan_operation_type =
-		(ACCESS_SPEC_IS_FLAGED (xasl->curr_spec, ACCESS_SPEC_FLAG_FOR_UPDATE)) ? S_UPDATE : S_SELECT;
+		qexec_spec_is_for_update (thread_p, xasl->curr_spec) ? S_UPDATE : S_SELECT;
 	    }
 
 	  /* evaluate bptr list */
@@ -9819,7 +9820,7 @@ qexec_intprt_fnc (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xasl_s
 		  if (xasl->fptr_list)
 		    {
 		      scan_operation_type =
-			(ACCESS_SPEC_IS_FLAGED (xasl->curr_spec, ACCESS_SPEC_FLAG_FOR_UPDATE)) ? S_UPDATE : S_SELECT;
+			qexec_spec_is_for_update (thread_p, xasl->curr_spec) ? S_UPDATE : S_SELECT;
 		    }
 
 		  for (xptr = xasl->fptr_list; qualified && xptr != NULL; xptr = xptr->next)
@@ -24536,7 +24537,7 @@ qexec_for_update_set_class_locks (THREAD_ENTRY * thread_p, XASL_NODE * scan_list
     {
       for (specp = scan->spec_list; specp; specp = specp->next)
 	{
-	  if (specp->type == TARGET_CLASS && ACCESS_SPEC_IS_FLAGED (specp, ACCESS_SPEC_FLAG_FOR_UPDATE))
+	  if (specp->type == TARGET_CLASS && qexec_spec_is_for_update (thread_p, specp))
 	    {
 	      /* lock the class */
 	      if (lock_object (thread_p, &ACCESS_SPEC_CLS_OID (specp), oid_Root_class_oid, class_lock, LK_UNCOND_LOCK)
@@ -26405,6 +26406,25 @@ qexec_start_statement_lock_scope (THREAD_ENTRY * thread_p, LOG_LSA * savept_lsa_
 
   logtb_get_savepoint_lsa (thread_p, savept_lsa_at_start);
   return outermost && logtb_find_current_isolation (thread_p) == TRAN_READ_COMMITTED;
+}
+
+/*
+ * qexec_spec_is_for_update () - Does the scan of this spec lock its rows at select, as FOR UPDATE does?
+ *   return: true for a FOR UPDATE spec, and for a DML target left to the force-phase reevaluation when the transaction
+ *	     is above READ COMMITTED.  There the force phase reports a serialization conflict for a row changed after the
+ *	     snapshot, so the row is locked at select as before, and the other writer waits.
+ *   thread_p(in):
+ *   spec(in):
+ */
+static bool
+qexec_spec_is_for_update (THREAD_ENTRY * thread_p, const ACCESS_SPEC_TYPE * spec)
+{
+  if (ACCESS_SPEC_IS_FLAGED (spec, ACCESS_SPEC_FLAG_FOR_UPDATE))
+    {
+      return true;
+    }
+  return (ACCESS_SPEC_IS_FLAGED (spec, ACCESS_SPEC_FLAG_FOR_UPDATE_ABOVE_READ_COMMITTED)
+	  && logtb_find_current_isolation (thread_p) > TRAN_READ_COMMITTED);
 }
 
 /*
