@@ -22170,7 +22170,7 @@ pt_delete_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
   /* a condition that flags no spec has no row to re-check, and qexec_execute_delete () takes "no reevaluation class"
    * to mean the statement reads no row of its own.  The flagging pass reads only the statement's WHERE, so the
    * generated SELECT's is asked too.
-   *   DELETE FROM t WHERE ROWNUM <= 3; */
+   *   DELETE FROM t WHERE ? = 1; */
   if ((where != NULL || aptr_statement->info.query.q.select.where != NULL) && pt_reev_reads_no_spec (from))
     {
       PT_SELECT_INFO_SET_FLAG (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED);
@@ -22991,7 +22991,7 @@ pt_update_must_abort_reevaluation (PARSER_CONTEXT * parser, PT_NODE * statement,
     }
 
   /* an assignment that reads a spec flags it and one that does not is a constant, so they need no test here.
-   *   UPDATE t SET v = 1 WHERE ROWNUM <= 3; */
+   *   UPDATE t SET v = 1 WHERE ? = 1; */
   if ((where != NULL || aptr_statement->info.query.q.select.where != NULL) && pt_reev_reads_no_spec (from))
     {
       PT_SELECT_INFO_SET_FLAG (aptr_statement, PT_SELECT_INFO_MVCC_LOCK_NEEDED);
