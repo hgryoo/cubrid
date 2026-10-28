@@ -8205,8 +8205,7 @@ locator_attribute_info_force (THREAD_ENTRY * thread_p, const HFID * hfid, OID * 
 	  mvcc_reev_data->upddel_reev_data->new_recdes = &new_recdes;
 	  scan = locator_lock_and_get_object_with_evaluation (thread_p, oid, &class_oid, &copy_recdes, scan_cache, COPY,
 							      NULL_CHN, mvcc_reev_data, LOG_ERROR_IF_DELETED,
-							      LOCATOR_LOCK_IS_TRANSIENT (lock_policy),
-							      LOCATOR_LOCK_IS_TRANSIENT (lock_policy),
+							      LOCATOR_LOCK_IS_TRANSIENT (lock_policy), true,
 							      locator_scan_class_has_referenced_pk (thread_p, scan_cache, &class_oid)
 							      && locator_assigns_referenced_pk (thread_p, &class_oid, att_id,
 												n_att_id));
