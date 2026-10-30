@@ -30,11 +30,14 @@
 #endif
 
 #include "fetch.h"
+#include "domain_rules.h"
 #include "memory_alloc.h"
 #include "memory_hash.h"
 #include "object_domain.h"
+#include "object_domain_convert.h"
 #include "object_primitive.h"
 #include "object_representation.h"
+#include "query_executor.h"
 #include "query_opfunc.h"
 #include "string_opfunc.h"
 #include "query_hash_scan.h"
@@ -53,8 +56,6 @@
 // XXX: SHOULD BE THE LAST INCLUDE HEADER
 #include "memory_wrapper.hpp"
 
-
-static DB_VALUE_COMPARE_RESULT qdata_hscan_key_compare (HASH_SCAN_KEY * ckey1, HASH_SCAN_KEY * ckey2, int *diff_pos);
 
 /****************************************************************************/
 /************************ file hash structure *******************************/
@@ -279,6 +280,54 @@ qdata_free_hscan_key (cubthread::entry * thread_p, HASH_SCAN_KEY * key, int val_
 }
 
 /*
+ * qdata_hash_scan_value () - hash one key value; -0.0 and +0.0 compare equal, so a zero hashes as +0
+ *   returns: hash value
+ *   value(in): key value
+ *   ht_size(in): hash table size (in buckets)
+ */
+static unsigned int
+qdata_hash_scan_value (const DB_VALUE * value, unsigned int ht_size)
+{
+  DB_VALUE zero;
+
+  if (value != NULL && !DB_IS_NULL (value))
+    {
+      /* mht_get_hash_number hashes the raw bits (as qexec_connect_by_hash_column folds) */
+      switch (DB_VALUE_DOMAIN_TYPE (value))
+	{
+	case DB_TYPE_FLOAT:
+	  if (db_get_float (value) == 0.0f)
+	    {
+	      db_make_float (&zero, 0.0f);
+	      return mht_get_hash_number (ht_size, &zero);
+	    }
+	  break;
+
+	case DB_TYPE_DOUBLE:
+	  if (db_get_double (value) == 0.0)
+	    {
+	      db_make_double (&zero, 0.0);
+	      return mht_get_hash_number (ht_size, &zero);
+	    }
+	  break;
+
+	case DB_TYPE_MONETARY:
+	  if (db_get_monetary (value)->amount == 0.0)
+	    {
+	      db_make_monetary (&zero, db_get_monetary (value)->type, 0.0);
+	      return mht_get_hash_number (ht_size, &zero);
+	    }
+	  break;
+
+	default:
+	  break;
+	}
+    }
+
+  return mht_get_hash_number (ht_size, value);
+}
+
+/*
  * qdata_hash_scan_key () - compute hash of aggregate key
  *   returns: hash value
  *   key(in): key
@@ -295,7 +344,7 @@ qdata_hash_scan_key (const void *key, unsigned int ht_size, HASH_METHOD hash_met
   for (i = 0; i < ckey->val_count; i++)
     {
       hash_val = ROTL32 (hash_val, 13);
-      tmp_hash_val = mht_get_hash_number (ht_size, ckey->values[i]);
+      tmp_hash_val = qdata_hash_scan_value (ckey->values[i], ht_size);
       hash_val ^= tmp_hash_val;
       if (hash_val == 0)
 	{
@@ -309,64 +358,6 @@ qdata_hash_scan_key (const void *key, unsigned int ht_size, HASH_METHOD hash_met
     }
 
   return hash_val;
-}
-
-/*
- * qdata_hscan_key_compare () - compare two aggregate keys
- *   returns: comparison result
- *   key1(in): first key
- *   key2(in): second key
- *   diff_pos(out): if not equal, position of difference, otherwise -1
- */
-static DB_VALUE_COMPARE_RESULT
-qdata_hscan_key_compare (HASH_SCAN_KEY * ckey1, HASH_SCAN_KEY * ckey2, int *diff_pos)
-{
-  DB_VALUE_COMPARE_RESULT result;
-  int i;
-
-  assert (diff_pos);
-  *diff_pos = -1;
-
-  if (ckey1 == ckey2)
-    {
-      /* same pointer, same values */
-      return DB_EQ;
-    }
-
-  if (ckey1->val_count != ckey2->val_count)
-    {
-      /* can't compare keys of different sizes; shouldn't get here */
-      assert (false);
-      return DB_UNK;
-    }
-
-  for (i = 0; i < ckey1->val_count; i++)
-    {
-      result = tp_value_compare (ckey1->values[i], ckey2->values[i], 0, 1);
-      if (result != DB_EQ)
-	{
-	  *diff_pos = i;
-	  return result;
-	}
-    }
-
-  /* if we got this far, it's equal */
-  return DB_EQ;
-}
-
-/*
- * qdata_hscan_key_eq () - check equality of two aggregate keys
- *   returns: true if equal, false otherwise
- *   key1(in): first key
- *   key2(in): second key
- */
-int
-qdata_hscan_key_eq (const void *key1, const void *key2)
-{
-  int decoy;
-
-  /* compare for equality */
-  return (qdata_hscan_key_compare ((HASH_SCAN_KEY *) key1, (HASH_SCAN_KEY *) key2, &decoy) == DB_EQ);
 }
 
 /*
@@ -496,126 +487,6 @@ qdata_print_hash_scan_entry (THREAD_ENTRY * thread_p, FILE * fp, const void *dat
   fprintf (fp, "\n");
 
   return true;
-}
-
-/*
- * qdata_copy_hscan_key () - deep copy hash key
- *   returns: pointer to new hash key
- *   thread_p(in): thread
- *   key(in): source key
- */
-HASH_SCAN_KEY *
-qdata_copy_hscan_key (cubthread::entry * thread_p, HASH_SCAN_KEY * key, REGU_VARIABLE_LIST probe_regu_list,
-		      val_descr * vd)
-{
-  HASH_SCAN_KEY *new_key = NULL;
-  int i = 0;
-  DB_TYPE vtype1, vtype2;
-  TP_DOMAIN_STATUS status = DOMAIN_COMPATIBLE;
-
-  if (key)
-    {
-      /* make a copy */
-      new_key = qdata_alloc_hscan_key (thread_p, key->val_count, false);
-    }
-
-  if (new_key)
-    {
-      /* copy values */
-      new_key->val_count = key->val_count;
-      new_key->free_values = true;
-      for (i = 0; i < key->val_count; i++)
-	{
-	  vtype1 = REGU_VARIABLE_GET_TYPE (&probe_regu_list->value);
-	  vtype2 = DB_VALUE_DOMAIN_TYPE (key->values[i]);
-
-	  if (vtype1 != vtype2)
-	    {
-	      new_key->values[i] = pr_make_value ();
-	      if (new_key->values[i] == NULL)
-		{
-		  qdata_free_hscan_key (thread_p, new_key, i);
-		  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, sizeof (DB_VALUE *));
-		  return NULL;
-		}
-
-	      status = tp_value_coerce (key->values[i], new_key->values[i], probe_regu_list->value.domain);
-	      if (status != DOMAIN_COMPATIBLE)
-		{
-		  qdata_free_hscan_key (thread_p, new_key, ++i);
-		  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_TP_CANT_COERCE, 2, pr_type_name (vtype2),
-			  pr_type_name (vtype1));
-		  return NULL;
-		}
-	    }
-	  else
-	    {
-	      new_key->values[i] = pr_copy_value (key->values[i]);
-	      if (new_key->values[i] == NULL)
-		{
-		  qdata_free_hscan_key (thread_p, new_key, i);
-		  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, sizeof (DB_VALUE *));
-		  return NULL;
-		}
-	    }
-	  probe_regu_list = probe_regu_list->next;
-	}
-    }
-
-  return new_key;
-}
-
-/*
- * qdata_copy_hscan_key_without_alloc () - deep copy hash key
- *   returns: pointer to new hash key
- *   thread_p(in): thread
- *   key(in): source key
- */
-HASH_SCAN_KEY *
-qdata_copy_hscan_key_without_alloc (cubthread::entry * thread_p, HASH_SCAN_KEY * key,
-				    REGU_VARIABLE_LIST probe_regu_list, HASH_SCAN_KEY * new_key)
-{
-  DB_TYPE vtype1, vtype2;
-  TP_DOMAIN_STATUS status = DOMAIN_COMPATIBLE;
-
-  if (key == NULL)
-    {
-      return NULL;
-    }
-  if (new_key)
-    {
-      /* copy values */
-      new_key->val_count = key->val_count;
-      for (int i = 0; i < key->val_count; i++)
-	{
-	  vtype1 = REGU_VARIABLE_GET_TYPE (&probe_regu_list->value);
-	  vtype2 = DB_VALUE_DOMAIN_TYPE (key->values[i]);
-
-	  if (vtype1 != vtype2)
-	    {
-	      pr_clear_value (new_key->values[i]);
-	      status = tp_value_coerce (key->values[i], new_key->values[i], probe_regu_list->value.domain);
-	      if (status != DOMAIN_COMPATIBLE)
-		{
-		  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_TP_CANT_COERCE, 2, pr_type_name (vtype2),
-			  pr_type_name (vtype1));
-		  return NULL;
-		}
-	    }
-	  else
-	    {
-	      pr_clear_value (new_key->values[i]);
-	      if (pr_clone_value (key->values[i], new_key->values[i]) != NO_ERROR)
-		{
-		  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, sizeof (DB_VALUE *));
-		  return NULL;
-		}
-	    }
-	  probe_regu_list = probe_regu_list->next;
-	}
-    }
-
-  return new_key;
 }
 
 /*
@@ -2326,7 +2197,7 @@ fhs_connect_bucket (THREAD_ENTRY * thread_p, FHSID * fhsid_p, int local_depth, F
 static FHS_RESULT
 fhs_insert_to_bucket (THREAD_ENTRY * thread_p, FHSID * fhsid_p, PAGE_PTR bucket_page_p, void *key_p, TFTID * value_p)
 {
-  RECDES bucket_recdes;
+  RECDES bucket_recdes = RECDES_INITIALIZER;
   RECDES old_bucket_recdes;
 
   PGSLOTID slot_no, tmp_slot;
@@ -2352,8 +2223,7 @@ fhs_insert_to_bucket (THREAD_ENTRY * thread_p, FHSID * fhsid_p, PAGE_PTR bucket_
 	  /* insert new record into dk_bucket */
 	  if (fhs_insert_to_dk_bucket (thread_p, fhsid_p, &dk_bucket_vpid, key_p, value_p) != FHS_SUCCESSFUL_COMPLETION)
 	    {
-	      /* This should never happen. */
-	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_GENERIC_ERROR, 0);
+	      ASSERT_ERROR ();
 	      goto error;
 	    }
 	  return FHS_SUCCESSFUL_COMPLETION;
@@ -2367,7 +2237,7 @@ fhs_insert_to_bucket (THREAD_ENTRY * thread_p, FHSID * fhsid_p, PAGE_PTR bucket_
 			&dk_bucket_page_p);
 	  if (success != NO_ERROR || dk_bucket_page_p == NULL)
 	    {
-	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_GENERIC_ERROR, 0);
+	      ASSERT_ERROR ();
 	      goto error;
 	    }
 	  /* insert new record into dk_bucket */
@@ -2550,7 +2420,7 @@ fhs_insert_to_dk_bucket (THREAD_ENTRY * thread_p, FHSID * fhsid_p, VPID * next_b
 		    &new_dk_bucket_page_p);
       if (success != NO_ERROR || new_dk_bucket_page_p == NULL)
 	{
-	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_GENERIC_ERROR, 0);
+	  ASSERT_ERROR ();
 	  goto error;
 	}
       /* connect with prior page */

@@ -59,6 +59,7 @@ struct val_descr;
 typedef struct val_descr VAL_DESCR;
 struct valptr_list_node;
 
+struct DOMAIN_KEY_RANGES;
 // *INDENT-OFF*
 namespace cubxasl
 {
@@ -208,7 +209,6 @@ typedef struct multi_range_opt MULTI_RANGE_OPT;
 struct multi_range_opt
 {
   bool use;			/* true/false */
-  bool has_null_domain;		/* true, if sort col has null domain */
   int cnt;			/* current number of entries */
   int size;			/* expected number of entries */
   int num_attrs;		/* number of order by attributes */
@@ -288,7 +288,6 @@ struct indx_scan_id
   bool check_not_vacuumed;	/* if true then during index scan, the entries will be checked if they should've been
 				 * vacuumed. Used in checkdb. */
   DISK_ISVALID not_vacuumed_res;	/* The result of not vacuumed checking operation */
-  TP_DOMAIN **prebuilt_midxkey_domains;
   /* Parallel index scan pending state. Set in scan_open_parallel_index_scan when the spec is
    * parallel-eligible; consumed by scan_start_scan to attempt the promotion after
    * qexec_evaluate_aggregates_optimize has had a chance to set need_count_only. NULL means
@@ -342,7 +341,6 @@ struct parallel_index_scan_id
   bool check_not_vacuumed;	/* if true then during index scan, the entries will be checked if they should've been
 				 * vacuumed. Used in checkdb. */
   DISK_ISVALID not_vacuumed_res;	/* The result of not vacuumed checking operation */
-  TP_DOMAIN **prebuilt_midxkey_domains;
   void *parallel_pending;	/* mirror of INDX_SCAN_ID::parallel_pending */
   /* parallel-only fields (must follow all isid fields) */
   // *INDENT-OFF*
@@ -486,6 +484,9 @@ struct scan_id_struct
   SCAN_POSITION position;	/* Scan Position */
   SCAN_DIRECTION direction;	/* Forward/Backward Direction */
   bool mvcc_select_lock_needed;	/* true if lock at scanning needed in mvcc */
+  bool upddel_target_scan;	/* the row locks are the statement's: the outermost READ COMMITTED DELETE/UPDATE
+				 * target, not SELECT ... FOR UPDATE.  Kept across a partition switch. */
+  bool lock_ends_with_statement;	/* the same, narrowed by the class this scan is on now */
   SCAN_OPERATION_TYPE scan_op_type;	/* SELECT, DELETE, UPDATE */
 
   int fixed;			/* if true, pages containing scan items in a group keep fixed */
@@ -534,7 +535,8 @@ struct scan_id_struct
 
 extern int scan_open_heap_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 				/* fields of SCAN_ID */
-				bool mvcc_select_lock_needed, SCAN_OPERATION_TYPE scan_op_type, int fixed, int grouped,
+				bool mvcc_select_lock_needed, bool upddel_target_scan,
+				SCAN_OPERATION_TYPE scan_op_type, int fixed, int grouped,
 				QPROC_SINGLE_FETCH single_fetch, DB_VALUE * join_dbval, val_list_node * val_list,
 				val_descr * vd,
 				/* fields of HEAP_SCAN_ID */
@@ -560,7 +562,8 @@ extern int scan_open_class_attr_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id
 				      ATTR_ID * attrids_rest, HEAP_CACHE_ATTRINFO * cache_rest);
 extern int scan_open_index_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 				 /* fields of SCAN_ID */
-				 bool mvcc_select_lock_needed, SCAN_OPERATION_TYPE scan_op_type, int fixed, int grouped,
+				 bool mvcc_select_lock_needed, bool upddel_target_scan,
+				 SCAN_OPERATION_TYPE scan_op_type, int fixed, int grouped,
 				 QPROC_SINGLE_FETCH single_fetch, DB_VALUE * join_dbval, val_list_node * val_list,
 				 val_descr * vd,
 				 /* fields of INDX_SCAN_ID */
@@ -591,7 +594,8 @@ extern int scan_open_index_node_info_scan (THREAD_ENTRY * thread_p, SCAN_ID * sc
 extern int scan_regu_key_to_index_key (THREAD_ENTRY * thread_p, KEY_RANGE * key_ranges, KEY_VAL_RANGE * key_val_range,
 				       INDX_SCAN_ID * iscan_id, TP_DOMAIN * btree_domainp, VAL_DESCR * vd,
 				       int key_range_idx);
-extern int scan_dedup_or_merge_key_ranges (RANGE_TYPE range_type, KEY_VAL_RANGE * key_vals, int key_cnt);
+extern int scan_dedup_or_merge_key_ranges (RANGE_TYPE range_type, KEY_VAL_RANGE * key_vals, int key_cnt,
+					   const DOMAIN_KEY_RANGES * ranges);
 
 extern int scan_open_list_scan (THREAD_ENTRY * thread_p, SCAN_ID * scan_id,
 				/* fields of SCAN_ID */
