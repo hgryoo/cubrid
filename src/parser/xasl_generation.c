@@ -24865,7 +24865,6 @@ pt_reev_check_row_local (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int
  *   statement(in): the DELETE or the UPDATE
  *   aptr_statement(in): the SELECT generated for it
  *   has_partitioned(in): a class it changes is partitioned
- *   has_lob(in): a class it deletes from has a BLOB or CLOB attribute
  *
  * Note: a statement qualifies only by the shape tested here: one plain class read by itself, every row it picks a row
  *	 it acts on, and conditions and assignments the force phase can evaluate again from that row alone.  Reevaluation
@@ -24875,7 +24874,7 @@ pt_reev_check_row_local (PARSER_CONTEXT * parser, PT_NODE * node, void *arg, int
  */
 static bool
 pt_upd_del_reevaluates_at_force (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE * aptr_statement,
-				 bool has_partitioned, bool has_lob)
+				 bool has_partitioned)
 {
   PT_NODE *spec, *select_spec, *where, *limit, *using_index, *assignments = NULL;
   bool row_local = true;
@@ -24886,12 +24885,6 @@ pt_upd_del_reevaluates_at_force (PARSER_CONTEXT * parser, PT_NODE * statement, P
       where = statement->info.delete_.search_cond;
       limit = statement->info.delete_.limit;
       using_index = statement->info.delete_.using_index;
-
-      /* qexec_execute_delete () schedules the removal of a row's LOB files before the force phase re-checks it */
-      if (has_lob)
-	{
-	  return false;
-	}
     }
   else
     {
@@ -25646,7 +25639,7 @@ pt_to_delete_xasl (PARSER_CONTEXT * parser, PT_NODE * statement)
   int error = NO_ERROR;
   PT_NODE *hint_arg, *node;
   float hint_wait_secs;
-  bool has_partitioned = false, abort_reevaluation = false, has_lob = false;
+  bool has_partitioned = false, abort_reevaluation = false;
 
   assert (parser != NULL && statement != NULL);
 
@@ -25768,7 +25761,6 @@ pt_to_delete_xasl (PARSER_CONTEXT * parser, PT_NODE * statement)
 			    }
 
 			  select_list = parser_append_node (select_node, select_list);
-			  has_lob = true;
 			}
 		    }
 		  attr = db_attribute_next (attr);
@@ -25787,8 +25779,7 @@ pt_to_delete_xasl (PARSER_CONTEXT * parser, PT_NODE * statement)
 	  goto error_return;
 	}
 
-      abort_reevaluation =
-	!pt_upd_del_reevaluates_at_force (parser, statement, aptr_statement, has_partitioned, has_lob);
+      abort_reevaluation = !pt_upd_del_reevaluates_at_force (parser, statement, aptr_statement, has_partitioned);
 
       if (abort_reevaluation)
 	{
@@ -26451,7 +26442,7 @@ pt_to_update_xasl (PARSER_CONTEXT * parser, PT_NODE * statement, PT_NODE ** non_
       goto cleanup;
     }
 
-  abort_reevaluation = !pt_upd_del_reevaluates_at_force (parser, statement, aptr_statement, has_partitioned, false);
+  abort_reevaluation = !pt_upd_del_reevaluates_at_force (parser, statement, aptr_statement, has_partitioned);
 
   if (abort_reevaluation)
     {

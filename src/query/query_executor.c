@@ -904,6 +904,10 @@ static void qexec_settled_rows_clear (THREAD_ENTRY * thread_p, QEXEC_SETTLED_ROW
 static int qexec_settle_row (THREAD_ENTRY * thread_p, QEXEC_SETTLED_ROWS * settled, INT64 row,
 			     UPDDEL_CLASS_INFO_INTERNAL * internal_class, MVCC_REEV_DATA * mvcc_reev_data,
 			     LOCATOR_LOCK_POLICY lock_policy, bool removes_key);
+static int qexec_start_settled_lob_attrs (THREAD_ENTRY * thread_p, const XASL_NODE * aptr, int n_oids,
+					  const OID * class_oid, HEAP_CACHE_ATTRINFO * lob_attr_info);
+static int qexec_delete_lobs_of_last_version (THREAD_ENTRY * thread_p, OID * oid, OID * class_oid,
+					      HEAP_SCANCACHE * scan_cache, HEAP_CACHE_ATTRINFO * lob_attr_info);
 static LOCATOR_LOCK_POLICY qexec_base_lock_policy (const UPDDEL_CLASS_INSTANCE_LOCK_INFO * lock_info);
 static LOCATOR_LOCK_POLICY qexec_make_lock_policy_transient (THREAD_ENTRY * thread_p, LOCATOR_LOCK_POLICY base_policy,
 							     bool statement_ends_locks,
@@ -12371,6 +12375,9 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
   QEXEC_SETTLED_ROWS settled = { 0, NULL, NULL, NULL, 0 };
   bool settling = false;	/* the list is being scanned to settle the targets, not yet to write them */
   INT64 row = -1;
+  HEAP_CACHE_ATTRINFO lob_attr_info;	/* the LOB attributes the select list carries, read again when settled */
+
+  lob_attr_info.num_values = 0;
 
   /* remote DELETE + local subquery sink: evaluate the WHERE subquery locally and push one remote
    * DELETE per value via CCI; this has no local class (num_classes == 0) so it must not enter the local delete
@@ -12440,7 +12447,13 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
   base_lock_policy = qexec_base_lock_policy (p_class_instance_lock_info);
   if (qexec_upddel_reevaluates_at_force (thread_p, aptr))
     {
-      if (qexec_upddel_settles_first (thread_p, delete_->classes, true))
+      error = qexec_start_settled_lob_attrs (thread_p, aptr, 2, delete_->classes->class_oid, &lob_attr_info);
+      if (error != NO_ERROR)
+	{
+	  GOTO_EXIT_ON_ERROR;
+	}
+      /* a LOB file is deleted with its row, so only after the settle pass dropped the rows it drops */
+      if (lob_attr_info.num_values > 0 || qexec_upddel_settles_first (thread_p, delete_->classes, true))
 	{
 	  assert (class_oid_cnt == 1);
 	  error = qexec_settled_rows_init (thread_p, &settled, aptr->list_id->tuple_cnt, NULL, 0);
@@ -12670,6 +12683,17 @@ scan_list:
 		  continue;
 		}
 
+	      if (lob_attr_info.num_values > 0)
+		{
+		  error =
+		    qexec_delete_lobs_of_last_version (thread_p, oid, class_oid, internal_class->scan_cache,
+						       &lob_attr_info);
+		  if (error != NO_ERROR)
+		    {
+		      GOTO_EXIT_ON_ERROR;
+		    }
+		}
+
 	      if (internal_class->crt_del_lob_info)
 		{
 		  /* delete lob files */
@@ -12748,7 +12772,7 @@ scan_list:
 
 		  assert (db_value_type (valp) == DB_TYPE_BLOB || db_value_type (valp) == DB_TYPE_CLOB);
 		  elo = db_get_elo (valp);
-		  if (elo != NULL && !settling)
+		  if (elo != NULL && settled.keep == NULL)
 		    {
 		      error = db_elo_delete (elo);
 		    }
@@ -12816,6 +12840,10 @@ scan_list:
     }
 
   qexec_settled_rows_clear (thread_p, &settled, NULL);
+  if (lob_attr_info.num_values > 0)
+    {
+      heap_attrinfo_end (thread_p, &lob_attr_info);
+    }
   if (mvcc_reev_classes != NULL)
     {
       db_private_free (thread_p, mvcc_reev_classes);
@@ -12878,6 +12906,10 @@ exit_on_error:
     }
 
   qexec_settled_rows_clear (thread_p, &settled, NULL);
+  if (lob_attr_info.num_values > 0)
+    {
+      heap_attrinfo_end (thread_p, &lob_attr_info);
+    }
   if (mvcc_reev_classes != NULL)
     {
       db_private_free (thread_p, mvcc_reev_classes);
@@ -29735,6 +29767,93 @@ qexec_settle_row (THREAD_ENTRY * thread_p, QEXEC_SETTLED_ROWS * settled, INT64 r
       pr_clear_value (&settled->scratch[i]);
     }
   return NO_ERROR;
+}
+
+/*
+ * qexec_start_settled_lob_attrs () - Start the attribute cache of a DELETE's LOB attributes, for its settle pass
+ *   return: error code; lob_attr_info->num_values is 0 when the class has none
+ *   aptr(in): the SELECT generated for the DELETE, which carries the LOB attributes after n_oids OID columns
+ *   class_oid(in): the class the DELETE deletes from
+ */
+static int
+qexec_start_settled_lob_attrs (THREAD_ENTRY * thread_p, const XASL_NODE * aptr, int n_oids, const OID * class_oid,
+			       HEAP_CACHE_ATTRINFO * lob_attr_info)
+{
+  OR_CLASSREP *classrep;
+  ATTR_ID *ids;
+  int idx_in_cache = -1, i, n = 0, error;
+
+  if (aptr->outptr_list->valptr_cnt <= n_oids)
+    {
+      return NO_ERROR;
+    }
+
+  classrep = heap_classrepr_get (thread_p, class_oid, NULL, NULL_REPRID, &idx_in_cache);
+  if (classrep == NULL)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      return error;
+    }
+  ids = (ATTR_ID *) db_private_alloc (thread_p, MAX (classrep->n_attributes, 1) * sizeof (ATTR_ID));
+  if (ids == NULL)
+    {
+      heap_classrepr_free_and_init (classrep, &idx_in_cache);
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+  for (i = 0; i < classrep->n_attributes; i++)
+    {
+      if (classrep->attributes[i].type == DB_TYPE_BLOB || classrep->attributes[i].type == DB_TYPE_CLOB)
+	{
+	  ids[n++] = classrep->attributes[i].id;
+	}
+    }
+  heap_classrepr_free_and_init (classrep, &idx_in_cache);
+
+  error = (n > 0) ? heap_attrinfo_start (thread_p, class_oid, n, ids, lob_attr_info) : NO_ERROR;
+  db_private_free (thread_p, ids);
+  if (error != NO_ERROR || n == 0)
+    {
+      lob_attr_info->num_values = 0;
+    }
+  return error;
+}
+
+/*
+ * qexec_delete_lobs_of_last_version () - Delete the LOB files of the version a settled DELETE deletes
+ *   return: error code
+ *
+ * Note: the select list carries the LOBs of the version the snapshot saw; a row that changed since then holds others.
+ */
+static int
+qexec_delete_lobs_of_last_version (THREAD_ENTRY * thread_p, OID * oid, OID * class_oid, HEAP_SCANCACHE * scan_cache,
+				   HEAP_CACHE_ATTRINFO * lob_attr_info)
+{
+  HEAP_GET_CONTEXT context;
+  RECDES recdes = RECDES_INITIALIZER;
+  SCAN_CODE scan;
+  DB_ELO *elo;
+  int i, error;
+
+  heap_init_get_context (thread_p, &context, oid, class_oid, &recdes, scan_cache, COPY, NULL_CHN);
+  scan = heap_get_last_version (thread_p, &context);
+  heap_clean_get_context (thread_p, &context);
+  if (scan != S_SUCCESS)
+    {
+      ASSERT_ERROR_AND_SET (error);
+      return error;
+    }
+
+  error = heap_attrinfo_read_dbvalues (thread_p, oid, &recdes, lob_attr_info);
+  for (i = 0; error == NO_ERROR && i < lob_attr_info->num_values; i++)
+    {
+      elo = DB_IS_NULL (&lob_attr_info->values[i].dbvalue) ? NULL : db_get_elo (&lob_attr_info->values[i].dbvalue);
+      if (elo != NULL)
+	{
+	  error = db_elo_delete (elo);
+	}
+    }
+  (void) heap_attrinfo_clear_dbvalues (lob_attr_info);
+  return error;
 }
 
 /*
