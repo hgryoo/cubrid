@@ -186,6 +186,8 @@ static int locator_add_or_remove_index_internal (THREAD_ENTRY * thread_p, RECDES
 static bool locator_index_has_attr (OR_INDEX * index, ATTR_ID * att_id, int n_att_id);
 static bool locator_scan_class_has_referenced_pk (THREAD_ENTRY * thread_p, HEAP_SCANCACHE * scan_cache,
 						  const OID * class_oid);
+static bool locator_update_removes_key (THREAD_ENTRY * thread_p, HEAP_SCANCACHE * scan_cache, const OID * class_oid,
+					ATTR_ID * att_id, int n_att_id);
 static int locator_check_foreign_key (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid, OID * inst_oid,
 				      RECDES * recdes, RECDES * new_recdes, bool * is_cached, LC_COPYAREA ** copyarea,
 				      ATTR_ID * att_id, int n_att_id);
@@ -6139,8 +6141,8 @@ locator_update_force (THREAD_ENTRY * thread_p, HFID * hfid, OID * class_oid, OID
 	      if (!LOCATOR_LOCKED_AT_SELECT (lock_policy))
 		{
 		  /* the key change waits for a child's writer as a DELETE does */
-		  bool removes_key = (locator_scan_class_has_referenced_pk (thread_p, local_scan_cache, class_oid)
-				      && locator_assigns_referenced_pk (thread_p, class_oid, att_id, n_att_id));
+		  bool removes_key =
+		    locator_update_removes_key (thread_p, local_scan_cache, class_oid, att_id, n_att_id);
 
 		  scan = locator_lock_and_get_object_with_evaluation (thread_p, oid, class_oid, &copy_recdes,
 								      local_scan_cache, COPY, NULL_CHN, mvcc_reev_data,
@@ -6694,6 +6696,52 @@ locator_assigns_referenced_pk (THREAD_ENTRY * thread_p, const OID * class_oid, A
 }
 
 /*
+ * locator_referential_action_changes_rows () - does deleting a row of this class, or an UPDATE that assigns these
+ *						attributes, change rows of other classes?
+ *   return: true when a foreign key on the class's primary key cascades the change or sets the child's key to NULL
+ *   thread_p(in): thread entry
+ *   class_oid(in): the class
+ *   is_delete(in): the change is a DELETE; att_id is then ignored
+ *   att_id(in): the attributes the UPDATE assigns
+ *   n_att_id(in): their number
+ *
+ * Note: such an action locks each child row it changes to commit.  RESTRICT and NO ACTION only look at the children.
+ */
+bool
+locator_referential_action_changes_rows (THREAD_ENTRY * thread_p, const OID * class_oid, bool is_delete,
+					 ATTR_ID * att_id, int n_att_id)
+{
+  OR_CLASSREP *classrep;
+  OR_FOREIGN_KEY *fk;
+  int idx_in_cache = -1;
+  bool found = false;
+  int i, action;
+
+  classrep = heap_classrepr_get (thread_p, (OID *) class_oid, NULL, NULL_REPRID, &idx_in_cache);
+  if (classrep == NULL)
+    {
+      /* settling every row first is never wrong */
+      return true;
+    }
+  for (i = 0; i < classrep->n_indexes && !found; i++)
+    {
+      if (classrep->indexes[i].type != BTREE_PRIMARY_KEY
+	  || (!is_delete && !locator_index_has_attr (&classrep->indexes[i], att_id, n_att_id)))
+	{
+	  continue;
+	}
+      for (fk = classrep->indexes[i].fk; fk != NULL && !found; fk = fk->next)
+	{
+	  action = is_delete ? fk->del_action : fk->upd_action;
+	  found = (action == SM_FOREIGN_KEY_CASCADE || action == SM_FOREIGN_KEY_SET_NULL);
+	}
+    }
+  heap_classrepr_free_and_init (classrep, &idx_in_cache);
+
+  return found;
+}
+
+/*
  * locator_scan_class_has_referenced_pk () - locator_class_has_referenced_pk (), decided once for each class a scan
  *					      cache goes over
  *   return: true when a foreign key references the class's primary key
@@ -6710,6 +6758,18 @@ locator_scan_class_has_referenced_pk (THREAD_ENTRY * thread_p, HEAP_SCANCACHE * 
       COPY_OID (&scan_cache->referenced_pk_class, class_oid);
     }
   return scan_cache->has_referenced_pk;
+}
+
+/*
+ * locator_update_removes_key () - does an UPDATE that assigns these attributes remove a referenced key?
+ *   return: the removes_key argument of locator_lock_and_get_object_with_evaluation () for an UPDATE
+ */
+static bool
+locator_update_removes_key (THREAD_ENTRY * thread_p, HEAP_SCANCACHE * scan_cache, const OID * class_oid,
+			    ATTR_ID * att_id, int n_att_id)
+{
+  return (locator_scan_class_has_referenced_pk (thread_p, scan_cache, class_oid)
+	  && locator_assigns_referenced_pk (thread_p, class_oid, att_id, n_att_id));
 }
 
 /*
@@ -6832,7 +6892,8 @@ locator_delete_force_internal (THREAD_ENTRY * thread_p, HFID * hfid, OID * oid, 
       scan_code =
 	locator_lock_and_get_object_with_evaluation (thread_p, oid, &class_oid, &copy_recdes, scan_cache, COPY,
 						     NULL_CHN, mvcc_reev_data, LOG_WARNING_IF_DELETED,
-						     LOCATOR_LOCK_IS_TRANSIENT (lock_policy), true, idx_action_flag != FOR_MOVE);
+						     LOCATOR_LOCK_IS_TRANSIENT (lock_policy), true,
+						     idx_action_flag != FOR_MOVE);
     }
 
   if (scan_code == S_SUCCESS && mvcc_reev_data != NULL && mvcc_reev_data->filter_result == V_FALSE)
@@ -8206,9 +8267,9 @@ locator_attribute_info_force (THREAD_ENTRY * thread_p, const HFID * hfid, OID * 
 	  scan = locator_lock_and_get_object_with_evaluation (thread_p, oid, &class_oid, &copy_recdes, scan_cache, COPY,
 							      NULL_CHN, mvcc_reev_data, LOG_ERROR_IF_DELETED,
 							      LOCATOR_LOCK_IS_TRANSIENT (lock_policy), true,
-							      locator_scan_class_has_referenced_pk (thread_p, scan_cache, &class_oid)
-							      && locator_assigns_referenced_pk (thread_p, &class_oid, att_id,
-												n_att_id));
+							      locator_update_removes_key (thread_p, scan_cache,
+											  &class_oid, att_id,
+											  n_att_id));
 	  /* new_recdes is this call's; the reevaluation data outlives it */
 	  mvcc_reev_data->upddel_reev_data->new_recdes = NULL;
 	  if (scan == S_SUCCESS && mvcc_reev_data->filter_result == V_FALSE)
@@ -14599,6 +14660,11 @@ locator_mvcc_reev_cond_assigns (THREAD_ENTRY * thread_p, OID * class_oid, const 
 		}
 	      rc = heap_attrinfo_set_converted (oid, assign->att_id, dbval, mvcc_reev_data->curr_attrinfo, plan->domain,
 						plan->value_type, plan->conv);
+	      if (rc == NO_ERROR && assign->recomputed != NULL)
+		{
+		  pr_clear_value (assign->recomputed);
+		  rc = pr_clone_value (dbval, assign->recomputed);
+		}
 	    }
 	  if (rc != NO_ERROR)
 	    {
@@ -14632,6 +14698,7 @@ locator_mvcc_reev_cond_assigns (THREAD_ENTRY * thread_p, OID * class_oid, const 
 	  ev_res = V_ERROR;
 	  goto end;
 	}
+      mvcc_reev_data->assigns_recomputed = true;
     }
 
 end:

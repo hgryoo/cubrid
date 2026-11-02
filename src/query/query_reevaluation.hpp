@@ -58,6 +58,7 @@ namespace cubquery
     db_value *constant;		/* constant to be assigned to an attribute or NULL */
     regu_variable_node *regu_right;	/* regu variable for right side of an assignment */
     const update_assignment *assignment;	/* CBRD-27583: the XASL's - its domain and converter */
+    db_value *recomputed;	/* where a value computed again from the last version is copied, or NULL */
     update_mvcc_reev_assignment *next;	/* link to the next assignment */
   };
 
@@ -100,6 +101,7 @@ namespace cubquery
     lc_copy_area *copyarea;	/* used to build the tuple to be stored to disk after reevaluation */
     val_descr *vd;		/* values descriptor */
     recdes *new_recdes;		/* record descriptor after assignment reevaluation */
+    bool assigns_recomputed;	/* the assignments were computed again from the last version; set, never cleared */
 
     mvcc_update_reev_data ();
   };

@@ -448,6 +448,18 @@ struct upddel_class_info_internal
   UPDATE_MVCC_REEV_ASSIGNMENT *mvcc_reev_assigns;
 };
 
+/* The settle pass's outcome for each row of a DELETE's or UPDATE's select list, in list order (see
+ * qexec_upddel_settles_first ()). */
+typedef struct qexec_settled_rows QEXEC_SETTLED_ROWS;
+struct qexec_settled_rows
+{
+  INT64 n_rows;			/* rows in the select list */
+  bool *keep;			/* per row: it still qualifies; NULL when the settle pass does not run */
+  DB_VALUE **values;		/* per row: its assignments computed again from its last version, or NULL */
+  DB_VALUE *scratch;		/* where the reevaluation copies the assignments of the row being settled */
+  int n_values;			/* assignments of the statement; the slots of a constant stay empty */
+};
+
 enum analytic_stage
 {
   ANALYTIC_INTERM_PROC = 1,
@@ -883,6 +895,15 @@ static bool qexec_class_ends_locks_with_statement (THREAD_ENTRY * thread_p,
 						   UPDDEL_CLASS_INFO_INTERNAL * internal_class, const OID * class_oid);
 static bool qexec_start_statement_lock_scope (THREAD_ENTRY * thread_p);
 static bool qexec_spec_is_for_update (THREAD_ENTRY * thread_p, const ACCESS_SPEC_TYPE * spec);
+static bool qexec_upddel_reevaluates_at_force (THREAD_ENTRY * thread_p, const XASL_NODE * aptr);
+static bool qexec_upddel_settles_first (THREAD_ENTRY * thread_p, const UPDDEL_CLASS_INFO * query_class, bool is_delete);
+static int qexec_settled_rows_init (THREAD_ENTRY * thread_p, QEXEC_SETTLED_ROWS * settled, INT64 n_rows,
+				    UPDATE_MVCC_REEV_ASSIGNMENT * assigns, int n_assigns);
+static void qexec_settled_rows_clear (THREAD_ENTRY * thread_p, QEXEC_SETTLED_ROWS * settled,
+				      UPDATE_MVCC_REEV_ASSIGNMENT * assigns);
+static int qexec_settle_row (THREAD_ENTRY * thread_p, QEXEC_SETTLED_ROWS * settled, INT64 row,
+			     UPDDEL_CLASS_INFO_INTERNAL * internal_class, MVCC_REEV_DATA * mvcc_reev_data,
+			     LOCATOR_LOCK_POLICY lock_policy, bool removes_key);
 static LOCATOR_LOCK_POLICY qexec_base_lock_policy (const UPDDEL_CLASS_INSTANCE_LOCK_INFO * lock_info);
 static LOCATOR_LOCK_POLICY qexec_make_lock_policy_transient (THREAD_ENTRY * thread_p, LOCATOR_LOCK_POLICY base_policy,
 							     bool statement_ends_locks,
@@ -11393,6 +11414,11 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
   bool statement_ends_locks;
   LOCATOR_LOCK_POLICY lock_policy = LOCATOR_LOCK_AT_SELECT;	/* base_lock_policy, for the current class */
   UPDDEL_CLASS_INSTANCE_LOCK_INFO class_instance_lock_info, *p_class_instance_lock_info = NULL;
+  MVCC_REEV_DATA *p_mvcc_reev_data = NULL;	/* given to the force phase only when it reevaluates the rows */
+  QEXEC_SETTLED_ROWS settled = { 0, NULL, NULL, NULL, 0 };
+  bool settling = false;	/* the list is being scanned to settle the targets, not yet to write them */
+  bool removes_key = false;
+  INT64 row = -1;
 
   /* remote UPDATE + local subquery sink: evaluate the local subqueries here and push the remote UPDATE via
    * CCI; this has no local class (num_classes == 0) so it must not enter the local update path below. */
@@ -11460,6 +11486,26 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
     }
 
   base_lock_policy = qexec_base_lock_policy (p_class_instance_lock_info);
+  if (qexec_upddel_reevaluates_at_force (thread_p, aptr))
+    {
+      if (qexec_upddel_settles_first (thread_p, update->classes, false))
+	{
+	  assert (class_oid_cnt == 1);
+	  removes_key = locator_assigns_referenced_pk (thread_p, update->classes->class_oid, update->classes->att_id,
+						       update->classes->num_attrs);
+	  error = qexec_settled_rows_init (thread_p, &settled, aptr->list_id->tuple_cnt, mvcc_reev_assigns,
+					   update->num_assigns);
+	  if (error != NO_ERROR)
+	    {
+	      GOTO_EXIT_ON_ERROR;
+	    }
+	  settling = true;
+	}
+      else
+	{
+	  p_mvcc_reev_data = &mvcc_reev_data;
+	}
+    }
 
   /* This guarantees that the result list file will have a type list. Copying a list_id structure fails unless it has a
    * type list. */
@@ -11494,6 +11540,7 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
   specp = xasl->spec_list;
   /* force_select_lock = false */
   assert (xasl->scan_op_type == S_SELECT);
+scan_list:
   if (qexec_open_scan (thread_p, specp, xasl->val_list, &xasl_state->vd, false, specp->fixed_scan, specp->grouped_scan,
 		       true, &specp->s_id, xasl_state->query_id, S_SELECT, false, NULL, xasl,
 		       xasl->upd_del_class_cnt > 0) != NO_ERROR)
@@ -11504,11 +11551,18 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
   scan_open = true;
 
   tuple_cnt = 1;
+  row = -1;
   while ((xb_scan = qexec_next_scan_block_iterations (thread_p, xasl)) == S_SUCCESS)
     {
       s_id = &xasl->curr_spec->s_id;
       while ((ls_scan = scan_next_scan (thread_p, s_id)) == S_SUCCESS)
 	{
+	  row++;
+	  if (settled.keep != NULL && !settling && !settled.keep[row])
+	    {
+	      continue;
+	    }
+
 	  if (op_type == MULTI_ROW_UPDATE)
 	    {
 	      if (tuple_cnt == 1)
@@ -11532,7 +11586,7 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
 
 	  /* evaluate constraint predicate */
 	  satisfies_constraints = V_UNKNOWN;
-	  if (update->cons_pred != NULL)
+	  if (update->cons_pred != NULL && !settling)
 	    {
 	      satisfies_constraints = eval_pred (thread_p, update->cons_pred, &xasl_state->vd, NULL);
 	      if (satisfies_constraints == V_ERROR)
@@ -11541,7 +11595,7 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
 		}
 	    }
 
-	  if (update->cons_pred != NULL && satisfies_constraints != V_TRUE)
+	  if (update->cons_pred != NULL && !settling && satisfies_constraints != V_TRUE)
 	    {
 	      /* currently there are only NOT NULL constraints */
 	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_NULL_CONSTRAINT_VIOLATION, 0);
@@ -11752,7 +11806,7 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
 		    locator_attribute_info_force (thread_p, internal_class->class_hfid, internal_class->oid, NULL, NULL,
 						  0, LC_FLUSH_DELETE, current_op_type, internal_class->scan_cache,
 						  &force_count, false, REPL_INFO_TYPE_RBR_NORMAL,
-						  DB_NOT_PARTITIONED_CLASS, NULL, NULL, &mvcc_reev_data,
+						  DB_NOT_PARTITIONED_CLASS, NULL, NULL, p_mvcc_reev_data,
 						  UPDATE_INPLACE_NONE, NULL, lock_policy);
 
 		  if (error == ER_MVCC_NOT_SATISFIED_REEVALUATION)
@@ -11882,8 +11936,11 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
 		}
 	      else
 		{
-		  rc = heap_attrinfo_set_converted (oid, attr_id, vallist->val, attr_info, assign->domain,
-						    assign->value_type, assign->conv);
+		  /* the settle pass computed this value again where the row changed since the snapshot */
+		  valp = (settled.values != NULL && settled.values[row] != NULL) ? &settled.values[row][assign_idx]
+		    : vallist->val;
+		  rc = heap_attrinfo_set_converted (oid, attr_id, valp, attr_info, assign->domain, assign->value_type,
+						    assign->conv);
 		  vallist = vallist->next;
 		}
 	      if (rc != NO_ERROR)
@@ -11943,12 +12000,23 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
 	      lock_policy =
 		qexec_make_lock_policy_transient (thread_p, base_lock_policy, statement_ends_locks, internal_class,
 						  internal_class->class_oid);
+	      if (settling)
+		{
+		  error =
+		    qexec_settle_row (thread_p, &settled, row, internal_class, &mvcc_reev_data, lock_policy,
+				      removes_key);
+		  if (error != NO_ERROR)
+		    {
+		      GOTO_EXIT_ON_ERROR;
+		    }
+		  continue;
+		}
 	      error =
 		locator_attribute_info_force (thread_p, internal_class->class_hfid, oid, &internal_class->attr_info,
 					      &upd_cls->att_id[internal_class->subclass_idx * upd_cls->num_attrs],
 					      upd_cls->num_attrs, LC_FLUSH_UPDATE, op_type, internal_class->scan_cache,
 					      &force_count, false, repl_info, internal_class->needs_pruning, pcontext,
-					      NULL, &mvcc_reev_data, UPDATE_INPLACE_NONE, NULL, lock_policy);
+					      NULL, p_mvcc_reev_data, UPDATE_INPLACE_NONE, NULL, lock_policy);
 	      if (error == ER_MVCC_NOT_SATISFIED_REEVALUATION)
 		{
 		  error = NO_ERROR;
@@ -11991,6 +12059,16 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
   if (xb_scan != S_END)
     {
       GOTO_EXIT_ON_ERROR;
+    }
+
+  if (settling)
+    {
+      /* every target is held and re-checked: write the rows kept, as rows the select phase locked */
+      qexec_close_scan (thread_p, specp);
+      scan_open = false;
+      settling = false;
+      base_lock_policy = LOCATOR_LOCK_AT_SELECT;
+      goto scan_list;
     }
 
   for (s = 0; s < class_oid_cnt; s++)
@@ -12037,6 +12115,7 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
       db_private_free (thread_p, mvcc_reev_classes);
       mvcc_reev_classes = NULL;
     }
+  qexec_settled_rows_clear (thread_p, &settled, mvcc_reev_assigns);
   if (mvcc_reev_assigns != NULL)
     {
       db_private_free (thread_p, mvcc_reev_assigns);
@@ -12097,6 +12176,7 @@ exit_on_error:
       db_private_free (thread_p, mvcc_reev_classes);
       mvcc_reev_classes = NULL;
     }
+  qexec_settled_rows_clear (thread_p, &settled, mvcc_reev_assigns);
   if (mvcc_reev_assigns != NULL)
     {
       db_private_free (thread_p, mvcc_reev_assigns);
@@ -12287,6 +12367,10 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
   bool statement_ends_locks;
   LOCATOR_LOCK_POLICY lock_policy = LOCATOR_LOCK_AT_SELECT;	/* base_lock_policy, for the current class */
   UPDDEL_CLASS_INSTANCE_LOCK_INFO class_instance_lock_info, *p_class_instance_lock_info = NULL;
+  MVCC_REEV_DATA *p_mvcc_reev_data = NULL;	/* given to the force phase only when it reevaluates the rows */
+  QEXEC_SETTLED_ROWS settled = { 0, NULL, NULL, NULL, 0 };
+  bool settling = false;	/* the list is being scanned to settle the targets, not yet to write them */
+  INT64 row = -1;
 
   /* remote DELETE + local subquery sink: evaluate the WHERE subquery locally and push one remote
    * DELETE per value via CCI; this has no local class (num_classes == 0) so it must not enter the local delete
@@ -12354,6 +12438,23 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
     }
 
   base_lock_policy = qexec_base_lock_policy (p_class_instance_lock_info);
+  if (qexec_upddel_reevaluates_at_force (thread_p, aptr))
+    {
+      if (qexec_upddel_settles_first (thread_p, delete_->classes, true))
+	{
+	  assert (class_oid_cnt == 1);
+	  error = qexec_settled_rows_init (thread_p, &settled, aptr->list_id->tuple_cnt, NULL, 0);
+	  if (error != NO_ERROR)
+	    {
+	      GOTO_EXIT_ON_ERROR;
+	    }
+	  settling = true;
+	}
+      else
+	{
+	  p_mvcc_reev_data = &mvcc_reev_data;
+	}
+    }
   /* At force with no reevaluation class there is no predicate to re-check (pt_to_delete_xasl () keeps the
    * select-phase lock when it cannot replay one), so a changed version is deleted, not skipped. */
 
@@ -12390,6 +12491,7 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
   specp = xasl->spec_list;
   assert (xasl->scan_op_type == S_SELECT);
   /* force_select_lock = false */
+scan_list:
   if (qexec_open_scan (thread_p, specp, xasl->val_list, &xasl_state->vd, false, specp->fixed_scan, specp->grouped_scan,
 		       true, &specp->s_id, xasl_state->query_id, S_SELECT, false, NULL, xasl,
 		       xasl->upd_del_class_cnt > 0) != NO_ERROR)
@@ -12398,6 +12500,7 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
     }
 
   scan_open = true;
+  row = -1;
 
   while ((xb_scan = qexec_next_scan_block_iterations (thread_p, xasl)) == S_SUCCESS)
     {
@@ -12405,6 +12508,12 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
 
       while ((ls_scan = scan_next_scan (thread_p, s_id)) == S_SUCCESS)
 	{
+	  row++;
+	  if (settled.keep != NULL && !settling && !settled.keep[row])
+	    {
+	      continue;
+	    }
+
 	  val_list = s_id->val_list->valp;
 
 	  /* Get info for MVCC condition reevaluation */
@@ -12550,6 +12659,17 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
 		  continue;
 		}
 
+	      if (settling)
+		{
+		  error =
+		    qexec_settle_row (thread_p, &settled, row, internal_class, &mvcc_reev_data, lock_policy, true);
+		  if (error != NO_ERROR)
+		    {
+		      GOTO_EXIT_ON_ERROR;
+		    }
+		  continue;
+		}
+
 	      if (internal_class->crt_del_lob_info)
 		{
 		  /* delete lob files */
@@ -12603,7 +12723,7 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
 		locator_attribute_info_force (thread_p, internal_class->class_hfid, oid, NULL, NULL, 0, LC_FLUSH_DELETE,
 					      op_type, internal_class->scan_cache, &force_count, false,
 					      REPL_INFO_TYPE_RBR_NORMAL, DB_NOT_PARTITIONED_CLASS, NULL, NULL,
-					      &mvcc_reev_data, UPDATE_INPLACE_NONE, NULL, lock_policy);
+					      p_mvcc_reev_data, UPDATE_INPLACE_NONE, NULL, lock_policy);
 	      if (error == ER_MVCC_NOT_SATISFIED_REEVALUATION)
 		{
 		  error = NO_ERROR;
@@ -12628,7 +12748,7 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
 
 		  assert (db_value_type (valp) == DB_TYPE_BLOB || db_value_type (valp) == DB_TYPE_CLOB);
 		  elo = db_get_elo (valp);
-		  if (elo)
+		  if (elo != NULL && !settling)
 		    {
 		      error = db_elo_delete (elo);
 		    }
@@ -12650,6 +12770,16 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
   if (xb_scan != S_END)
     {
       GOTO_EXIT_ON_ERROR;
+    }
+
+  if (settling)
+    {
+      /* every target is held and re-checked: delete the rows kept, as rows the select phase locked */
+      qexec_close_scan (thread_p, specp);
+      scan_open = false;
+      settling = false;
+      base_lock_policy = LOCATOR_LOCK_AT_SELECT;
+      goto scan_list;
     }
 
   /* reflect local statistical information into transaction's statistical information */
@@ -12685,6 +12815,7 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
       db_private_free_and_init (thread_p, internal_classes);
     }
 
+  qexec_settled_rows_clear (thread_p, &settled, NULL);
   if (mvcc_reev_classes != NULL)
     {
       db_private_free (thread_p, mvcc_reev_classes);
@@ -12746,6 +12877,7 @@ exit_on_error:
       db_private_free_and_init (thread_p, internal_classes);
     }
 
+  qexec_settled_rows_clear (thread_p, &settled, NULL);
   if (mvcc_reev_classes != NULL)
     {
       db_private_free (thread_p, mvcc_reev_classes);
@@ -29239,6 +29371,7 @@ qexec_create_mvcc_reev_assignments (THREAD_ENTRY * thread_p, XASL_NODE * aptr, b
 	{
 	  new_assign->regu_right = NULL;
 	}
+      new_assign->recomputed = NULL;
       new_assign->next = NULL;
       if (claz->mvcc_reev_assigns == NULL)
 	{
@@ -29411,6 +29544,197 @@ qexec_spec_is_for_update (THREAD_ENTRY * thread_p, const ACCESS_SPEC_TYPE * spec
   return (ACCESS_SPEC_IS_FLAGED (spec, ACCESS_SPEC_FLAG_FOR_UPDATE_UNLESS_REEVALUATED)
 	  && (logtb_find_current_isolation (thread_p) > TRAN_READ_COMMITTED
 	      || !prm_get_bool_value (PRM_ID_MVCC_REEVALUATE_AT_FORCE)));
+}
+
+/*
+ * qexec_upddel_reevaluates_at_force () - Does the force phase re-check the rows of this DELETE or UPDATE?
+ *   return: true when the select phase left the target unlocked for the force phase to reevaluate
+ *   thread_p(in):
+ *   aptr(in): the SELECT generated for the statement
+ */
+static bool
+qexec_upddel_reevaluates_at_force (THREAD_ENTRY * thread_p, const XASL_NODE * aptr)
+{
+  const ACCESS_SPEC_TYPE *spec;
+
+  for (spec = aptr->spec_list; spec != NULL; spec = spec->next)
+    {
+      if (ACCESS_SPEC_IS_FLAGED (spec, ACCESS_SPEC_FLAG_FOR_UPDATE_UNLESS_REEVALUATED))
+	{
+	  return !qexec_spec_is_for_update (thread_p, spec);
+	}
+    }
+  return false;
+}
+
+/*
+ * qexec_upddel_settles_first () - Must a DELETE or UPDATE the force phase reevaluates hold every target before it
+ *				   writes any?
+ *   return: true when its writes lock rows of other classes
+ *   thread_p(in):
+ *   query_class(in): the one class the statement changes
+ *   is_delete(in): the statement is a DELETE
+ *
+ * Note: holding every target first keeps the order of a select phase that locks: no wait for a target's writer
+ *	 happens while a lock this statement's writes took is held, so that writer cannot be waiting for us.  Taking the
+ *	 targets one by one as the rows are written closes such a cycle on a referential action's child row.
+ */
+static bool
+qexec_upddel_settles_first (THREAD_ENTRY * thread_p, const UPDDEL_CLASS_INFO * query_class, bool is_delete)
+{
+  assert (query_class->num_subclasses == 1);
+  return locator_referential_action_changes_rows (thread_p, query_class->class_oid, is_delete, query_class->att_id,
+						  query_class->num_attrs);
+}
+
+/*
+ * qexec_settled_rows_init () - Prepare the settle pass of a statement whose select list has n_rows rows
+ *   return: error code
+ *   assigns(in/out): the statement's reevaluated assignments, indexed like its assignments; NULL for a DELETE
+ *   n_assigns(in): their number
+ */
+static int
+qexec_settled_rows_init (THREAD_ENTRY * thread_p, QEXEC_SETTLED_ROWS * settled, INT64 n_rows,
+			 UPDATE_MVCC_REEV_ASSIGNMENT * assigns, int n_assigns)
+{
+  int i;
+
+  settled->n_rows = n_rows;
+  settled->n_values = (assigns != NULL) ? n_assigns : 0;
+  settled->keep = (bool *) db_private_alloc (thread_p, MAX (n_rows, 1) * sizeof (bool));
+  if (settled->keep == NULL)
+    {
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+  if (settled->n_values == 0)
+    {
+      return NO_ERROR;
+    }
+
+  settled->values = (DB_VALUE **) db_private_alloc (thread_p, MAX (n_rows, 1) * sizeof (DB_VALUE *));
+  settled->scratch = (DB_VALUE *) db_private_alloc (thread_p, settled->n_values * sizeof (DB_VALUE));
+  if (settled->values == NULL || settled->scratch == NULL)
+    {
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
+  memset (settled->values, 0, MAX (n_rows, 1) * sizeof (DB_VALUE *));
+  for (i = 0; i < settled->n_values; i++)
+    {
+      db_make_null (&settled->scratch[i]);
+      assigns[i].recomputed = &settled->scratch[i];
+    }
+  return NO_ERROR;
+}
+
+/*
+ * qexec_settled_rows_clear () - Free what the settle pass kept, and stop the assignments from copying their values
+ */
+static void
+qexec_settled_rows_clear (THREAD_ENTRY * thread_p, QEXEC_SETTLED_ROWS * settled, UPDATE_MVCC_REEV_ASSIGNMENT * assigns)
+{
+  INT64 row;
+  int i;
+
+  if (settled->values != NULL)
+    {
+      for (row = 0; row < settled->n_rows; row++)
+	{
+	  if (settled->values[row] != NULL)
+	    {
+	      for (i = 0; i < settled->n_values; i++)
+		{
+		  pr_clear_value (&settled->values[row][i]);
+		}
+	      db_private_free (thread_p, settled->values[row]);
+	    }
+	}
+      db_private_free_and_init (thread_p, settled->values);
+    }
+  if (settled->scratch != NULL)
+    {
+      for (i = 0; i < settled->n_values; i++)
+	{
+	  pr_clear_value (&settled->scratch[i]);
+	  assigns[i].recomputed = NULL;
+	}
+      db_private_free_and_init (thread_p, settled->scratch);
+    }
+  if (settled->keep != NULL)
+    {
+      db_private_free_and_init (thread_p, settled->keep);
+    }
+}
+
+/*
+ * qexec_settle_row () - Lock a target of the settle pass, settle on its last version and re-check it
+ *   return: error code
+ *   settled(in/out): records whether the row still qualifies, and the assignments computed again if it changed
+ *   row(in): the row's position in the select list
+ *   internal_class(in): the row's class, bound to the row as the force phase binds it
+ *   mvcc_reev_data(in): the statement's reevaluation data, bound to the row
+ *   lock_policy(in): the policy the force phase would lock the row with
+ *   removes_key(in): see locator_lock_and_get_object_with_evaluation ()
+ *
+ * Note: the lock stays for the force phase to write under; a row that no longer qualifies gives back what this call
+ *	 took.  A row deleted since the snapshot is dropped, as the force phase skips it.
+ */
+static int
+qexec_settle_row (THREAD_ENTRY * thread_p, QEXEC_SETTLED_ROWS * settled, INT64 row,
+		  UPDDEL_CLASS_INFO_INTERNAL * internal_class, MVCC_REEV_DATA * mvcc_reev_data,
+		  LOCATOR_LOCK_POLICY lock_policy, bool removes_key)
+{
+  MVCC_UPDDEL_REEV_DATA *upddel_reev_data = mvcc_reev_data->upddel_reev_data;
+  RECDES recdes = RECDES_INITIALIZER, new_recdes = RECDES_INITIALIZER;
+  SCAN_CODE scan;
+  int i, error;
+
+  assert (row < settled->n_rows);
+
+  /* asking for the new record asks the reevaluation to compute the assignments as well */
+  upddel_reev_data->new_recdes = (settled->n_values > 0) ? &new_recdes : NULL;
+  upddel_reev_data->assigns_recomputed = false;
+  scan =
+    locator_lock_and_get_object_with_evaluation (thread_p, internal_class->oid, internal_class->class_oid, &recdes,
+						 internal_class->scan_cache, COPY, NULL_CHN, mvcc_reev_data,
+						 LOG_WARNING_IF_DELETED, LOCATOR_LOCK_IS_TRANSIENT (lock_policy), true,
+						 removes_key);
+  upddel_reev_data->new_recdes = NULL;
+
+  if (scan == S_SUCCESS)
+    {
+      settled->keep[row] = (mvcc_reev_data->filter_result != V_FALSE);
+    }
+  else if (scan == S_DOESNT_EXIST)
+    {
+      /* an immature record is written as the force phase writes it */
+      settled->keep[row] = (er_errid () == ER_HEAP_NODATA_NEWADDRESS);
+      er_clear ();
+    }
+  else
+    {
+      ASSERT_ERROR_AND_SET (error);
+      return error;
+    }
+
+  if (settled->keep[row] && upddel_reev_data->assigns_recomputed)
+    {
+      settled->values[row] = (DB_VALUE *) db_private_alloc (thread_p, settled->n_values * sizeof (DB_VALUE));
+      if (settled->values[row] == NULL)
+	{
+	  return ER_OUT_OF_VIRTUAL_MEMORY;
+	}
+      for (i = 0; i < settled->n_values; i++)
+	{
+	  /* hand the scratch values over */
+	  settled->values[row][i] = settled->scratch[i];
+	  db_make_null (&settled->scratch[i]);
+	}
+    }
+  for (i = 0; i < settled->n_values; i++)
+    {
+      pr_clear_value (&settled->scratch[i]);
+    }
+  return NO_ERROR;
 }
 
 /*
