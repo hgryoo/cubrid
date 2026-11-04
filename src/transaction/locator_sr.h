@@ -84,6 +84,8 @@ extern bool locator_class_keeps_row_locks (THREAD_ENTRY * thread_p, const OID * 
 extern bool locator_class_has_referenced_pk (THREAD_ENTRY * thread_p, const OID * class_oid);
 extern bool locator_assigns_referenced_pk (THREAD_ENTRY * thread_p, const OID * class_oid, ATTR_ID * att_id,
 					   int n_att_id);
+extern bool locator_referential_action_changes_rows (THREAD_ENTRY * thread_p, const OID * class_oid, bool is_delete,
+						     ATTR_ID * att_id, int n_att_id);
 
 
 extern int locator_initialize (THREAD_ENTRY * thread_p);
