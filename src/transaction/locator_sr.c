@@ -4401,9 +4401,12 @@ locator_wait_out_child_writer (THREAD_ENTRY * thread_p, const OID * oid, OID * c
   MVCCID writer;
   SCAN_CODE scan;
   int error_code;
+  UINT64 wake_gen;
 
   while (true)
     {
+      /* read before the header: see lock_wake_transaction_mvccid_waiters () */
+      wake_gen = lock_get_tran_wake_generation ();
       heap_init_get_context (thread_p, &context, oid, class_oid, NULL, NULL, PEEK, NULL_CHN);
       context.latch_mode = PGBUF_LATCH_READ;
       scan = locator_peek_last_header (thread_p, &context, &header);
@@ -4436,7 +4439,7 @@ locator_wait_out_child_writer (THREAD_ENTRY * thread_p, const OID * oid, OID * c
 	    }
 	  return NO_ERROR;
 	}
-      error_code = logtb_wait_for_tran_end (thread_p, writer);
+      error_code = logtb_wait_for_tran_end (thread_p, writer, wake_gen);
       if (error_code != NO_ERROR)
 	{
 	  return error_code;
@@ -14156,6 +14159,9 @@ locator_get_settled_last_version (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * co
 
       if (owner_mvccid != MVCCID_NULL)
 	{
+	  /* read while the page the stamp was seen on is still fixed: see lock_wake_transaction_mvccid_waiters () */
+	  UINT64 wake_gen = lock_get_tran_wake_generation ();
+
 	  if (context->scan_cache != NULL && context->scan_cache->cache_last_fix_page
 	      && context->home_page_watcher.pgptr != NULL)
 	    {
@@ -14163,7 +14169,7 @@ locator_get_settled_last_version (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * co
 	      pgbuf_ordered_unfix (thread_p, &context->home_page_watcher);
 	    }
 	  heap_clean_get_context (thread_p, context);
-	  if (logtb_wait_for_tran_end (thread_p, owner_mvccid) != NO_ERROR)
+	  if (logtb_wait_for_tran_end (thread_p, owner_mvccid, wake_gen) != NO_ERROR)
 	    {
 	      return S_ERROR;
 	    }

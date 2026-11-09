@@ -16267,9 +16267,9 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
 	}
     }
 
-  /* Later writers wait on our MVCCID self-lock, so the row locks can end here -- except under a savepoint, whose
-   * partial rollback would undo a change a writer is waiting on. */
-  lock_transient_scope_end (thread_p, !logtb_has_active_savepoint (thread_p));
+  /* Later writers wait on our MVCCID self-lock, so the row locks can end here. A rollback to a savepoint wakes those
+   * writers to read again (lock_wake_transaction_mvccid_waiters ()), so a savepoint does not keep the locks. */
+  lock_transient_scope_end (thread_p, true);
 
   qexec_close_scan (thread_p, specp);
 
@@ -16914,9 +16914,8 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
 	}
     }
 
-  /* As in qexec_execute_update (); the prepare record carries our MVCCID self-lock across 2PC.
-   * logtb_has_active_savepoint () also counts system savepoints, which keeps the locks more often than needed. */
-  lock_transient_scope_end (thread_p, !logtb_has_active_savepoint (thread_p));
+  /* As in qexec_execute_update (); the prepare record carries our MVCCID self-lock across 2PC. */
+  lock_transient_scope_end (thread_p, true);
 
   qexec_close_scan (thread_p, specp);
 
