@@ -898,6 +898,7 @@ static void qexec_clear_internal_classes (THREAD_ENTRY * thread_p, UPDDEL_CLASS_
 static bool qexec_class_ends_locks_with_statement (THREAD_ENTRY * thread_p,
 						   UPDDEL_CLASS_INFO_INTERNAL * internal_class, const OID * class_oid);
 static bool qexec_start_statement_lock_scope (THREAD_ENTRY * thread_p);
+static bool qexec_statement_error_releases_locks (THREAD_ENTRY * thread_p);
 static LOCATOR_LOCK_POLICY qexec_base_lock_policy (const UPDDEL_CLASS_INSTANCE_LOCK_INFO * lock_info);
 static LOCATOR_LOCK_POLICY qexec_make_lock_policy_transient (THREAD_ENTRY * thread_p, LOCATOR_LOCK_POLICY base_policy,
 							     bool statement_ends_locks,
@@ -16267,9 +16268,9 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
 	}
     }
 
-  /* Later writers wait on our MVCCID self-lock, so the row locks can end here -- except under a savepoint, whose
-   * partial rollback would undo a change a writer is waiting on. */
-  lock_transient_scope_end (thread_p, !logtb_has_active_savepoint (thread_p));
+  /* Later writers wait on our MVCCID self-lock, so the row locks can end here, under a savepoint too: a rollback to
+   * it sends those writers back to read (lock_deferred_wake_mark ()). */
+  lock_transient_scope_end (thread_p, true);
 
   qexec_close_scan (thread_p, specp);
 
@@ -16330,9 +16331,6 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
   return NO_ERROR;
 
 exit_on_error:
-  /* failed: the rows keep their locks to commit; drop the counts so no later statement gives them back */
-  lock_transient_scope_end (thread_p, false);
-
   if (scan_open)
     {
       qexec_end_scan (thread_p, specp);
@@ -16364,6 +16362,8 @@ exit_on_error:
     {
       xtran_server_end_topop (thread_p, LOG_RESULT_TOPOP_ABORT, &lsa);
     }
+  /* after the undo, so the rows carry no stamp of this statement */
+  lock_transient_scope_end (thread_p, qexec_statement_error_releases_locks (thread_p));
 
   if (internal_classes)
     {
@@ -16914,9 +16914,8 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
 	}
     }
 
-  /* As in qexec_execute_update (); the prepare record carries our MVCCID self-lock across 2PC.
-   * logtb_has_active_savepoint () also counts system savepoints, which keeps the locks more often than needed. */
-  lock_transient_scope_end (thread_p, !logtb_has_active_savepoint (thread_p));
+  /* As in qexec_execute_update (); the prepare record carries our MVCCID self-lock across 2PC. */
+  lock_transient_scope_end (thread_p, true);
 
   qexec_close_scan (thread_p, specp);
 
@@ -16969,9 +16968,6 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
   return NO_ERROR;
 
 exit_on_error:
-  /* failed: the rows keep their locks to commit; drop the counts so no later statement gives them back */
-  lock_transient_scope_end (thread_p, false);
-
   if (scan_open)
     {
       qexec_end_scan (thread_p, specp);
@@ -17004,6 +17000,8 @@ exit_on_error:
     {
       xtran_server_end_topop (thread_p, LOG_RESULT_TOPOP_ABORT, &lsa);
     }
+  /* as in qexec_execute_update (): after the undo */
+  lock_transient_scope_end (thread_p, qexec_statement_error_releases_locks (thread_p));
 
   return ER_FAILED;
 }
@@ -33801,6 +33799,21 @@ qexec_start_statement_lock_scope (THREAD_ENTRY * thread_p)
   bool outermost = lock_transient_scope_start (thread_p);
 
   return outermost && logtb_find_current_isolation (thread_p) == TRAN_READ_COMMITTED;
+}
+
+/*
+ * qexec_statement_error_releases_locks () - Whether a failed DELETE or UPDATE gives back the row locks it counted
+ *   return: true unless the transaction is being aborted as a whole; its abort gives everything back
+ *
+ * Note: called after the statement's system operation was aborted. A deadlock victim that loses only its statement
+ *	 (lock timeout not infinite) is not aborted as a whole and gives its row locks back too.
+ */
+static bool
+qexec_statement_error_releases_locks (THREAD_ENTRY * thread_p)
+{
+  LOG_TDES *tdes = LOG_FIND_CURRENT_TDES (thread_p);
+
+  return tdes != NULL && tdes->tran_abort_reason == TRAN_NORMAL;
 }
 
 /*

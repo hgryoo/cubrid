@@ -5304,6 +5304,10 @@ log_commit_local (THREAD_ENTRY * thread_p, LOG_TDES * tdes, bool retain_lock, bo
 	    {
 	      lock_unlock_all (thread_p);
 	    }
+	  else
+	    {
+	      lock_deferred_wake_clear (thread_p, tdes->tran_index);
+	    }
 
 	  /* Flush commit log and change the transaction state. */
 	  log_change_tran_as_completed (thread_p, tdes, LOG_COMMIT, &commit_lsa);
@@ -5331,6 +5335,10 @@ log_commit_local (THREAD_ENTRY * thread_p, LOG_TDES * tdes, bool retain_lock, bo
       if (retain_lock != true)
 	{
 	  lock_unlock_all (thread_p);
+	}
+      else
+	{
+	  lock_deferred_wake_clear (thread_p, tdes->tran_index);
 	}
 
       tdes->state = TRAN_UNACTIVE_COMMITTED;
@@ -5712,6 +5720,11 @@ log_abort_partial (THREAD_ENTRY * thread_p, const char *savepoint_name, LOG_LSA 
    * get undefined and cannot get call by the user any longer.
    */
   LSA_COPY (&tdes->savept_lsa, savept_lsa);
+
+  /* the undo may have removed stamps others wait on: they read again after our next row write, or hand us a row we
+   * come back to before that */
+  lock_deferred_wake_mark (thread_p, tdes->tran_index);
+
   return TRAN_UNACTIVE_ABORTED;
 }
 
