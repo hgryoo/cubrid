@@ -138,7 +138,7 @@ extern int locator_rv_redo_rename (THREAD_ENTRY * thread_p, LOG_RCV * rcv);
 extern SCAN_CODE locator_lock_and_get_object (THREAD_ENTRY * thread_p, const OID * oid, OID * class_oid,
 					      RECDES * recdes, HEAP_SCANCACHE * scan_cache, LOCK lock, int ispeeking,
 					      int old_chn, NON_EXISTENT_HANDLING non_ex_handling_type, bool transient,
-					      bool owner_bypass_ok);
+					      bool owner_bypass_ok, MVCC_REC_HEADER * mvcc_header);
 extern SCAN_CODE locator_lock_and_get_object_with_evaluation (THREAD_ENTRY * thread_p, OID * oid, OID * class_oid,
 							      RECDES * recdes, HEAP_SCANCACHE * scan_cache,
 							      int ispeeking, int old_chn,
