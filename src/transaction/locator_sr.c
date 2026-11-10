@@ -129,6 +129,9 @@ struct locator_kept_children
   int n_read;			/* returned by locator_kept_read () since the last rewind */
   int mem_limit;		/* held in memory up to this many, then in a list file; 0 for the list file at once */
   bool no_child;		/* phase 1 found no entry of a restrict check's key that could be a child */
+  BTREE_FK_SEEN *inserts;	/* the entries phase 1 found being inserted, sorted by OID */
+  int n_inserts;
+  int inserts_cap;
 };
 
 /* what phase 3 met on a gathered child instead of locking it: a lock another transaction holds or waits for, or a
@@ -151,6 +154,9 @@ struct locator_restrict_snapshot
 {
   MVCC_SNAPSHOT snapshot;	/* first, so that the snapshot function finds the rest */
   bool committed_child;
+  MVCCID *inserters;		/* per entry accepted in the current scan step: its active inserter, or MVCCID_NULL */
+  int n_accepted;
+  int inserters_cap;
 };
 
 bool locator_Dont_check_foreign_key = false;
@@ -233,7 +239,7 @@ static int locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX *
 static MVCC_SATISFIES_SNAPSHOT_RESULT locator_satisfies_child_of_locked_parent (THREAD_ENTRY * thread_p,
 										MVCC_REC_HEADER * rec_header,
 										MVCC_SNAPSHOT * snapshot);
-static int locator_wait_out_child_writer (THREAD_ENTRY * thread_p, const OID * oid, OID * class_oid);
+static int locator_wait_out_child_writer (THREAD_ENTRY * thread_p, const OID * oid, OID * class_oid, MVCCID inserter);
 static MVCC_SATISFIES_SNAPSHOT_RESULT locator_satisfies_child_being_written (THREAD_ENTRY * thread_p,
 									     MVCC_REC_HEADER * rec_header,
 									     MVCC_SNAPSHOT * snapshot);
@@ -243,12 +249,12 @@ static int locator_lock_gathered_child (THREAD_ENTRY * thread_p, OID * oid, OID 
 					HEAP_SCANCACHE * scan_cache, bool * gone);
 static int locator_keep_referring_children (THREAD_ENTRY * thread_p, OR_FOREIGN_KEY * fkref,
 					    HEAP_CACHE_ATTRINFO * fk_attr_info, DB_VALUE * parent_key, RECDES * recdes,
-					    HEAP_SCANCACHE * scan_cache, OID * oids, int n_oids, int *n_kept,
-					    LOCATOR_CHILD_CONFLICT * conflict, bool may_wait);
-static int locator_wait_out_child_conflict (THREAD_ENTRY * thread_p,
-					    LOCATOR_KEPT_CHILDREN * collected, int fk_i, OID * class_oid,
-					    LOCATOR_KEPT_CHILDREN * kept, OID * batch, int n_batch, int capacity,
-					    LOCATOR_CHILD_CONFLICT * conflict);
+					    HEAP_SCANCACHE * scan_cache, const LOCATOR_KEPT_CHILDREN * gathered,
+					    OID * oids, int n_oids, int *n_kept, LOCATOR_CHILD_CONFLICT * conflict,
+					    bool may_wait);
+static int locator_wait_out_child_conflict (THREAD_ENTRY * thread_p, LOCATOR_KEPT_CHILDREN * collected, int fk_i,
+					    OID * class_oid, LOCATOR_KEPT_CHILDREN * kept, OID * batch, int n_batch,
+					    int capacity, LOCATOR_CHILD_CONFLICT * conflict);
 static int locator_last_version_is_ours (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * context, bool * ours);
 static SCAN_CODE locator_get_settled_last_version (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * context,
 						   bool is_mvcc_class, MVCC_REC_HEADER * recdes_header,
@@ -261,8 +267,9 @@ static MVCC_SATISFIES_SNAPSHOT_RESULT locator_satisfies_restrict_entry (THREAD_E
 									MVCC_REC_HEADER * rec_header,
 									MVCC_SNAPSHOT * snapshot);
 static int locator_scan_fk_key (THREAD_ENTRY * thread_p, OR_FOREIGN_KEY * fkref, DB_VALUE * key,
-				MVCC_SNAPSHOT * snapshot, bool lock_class, BTREE_ISCAN_OID_LIST * oid_list,
+				LOCATOR_RESTRICT_SNAPSHOT * rs, bool lock_class, BTREE_ISCAN_OID_LIST * oid_list,
 				LOCATOR_KEPT_CHILDREN * into);
+static MVCCID locator_gathered_inserter (const LOCATOR_KEPT_CHILDREN * kept, const OID * oid);
 static int locator_check_restrict_in_place (THREAD_ENTRY * thread_p, OR_FOREIGN_KEY * fkref, DB_VALUE * key,
 					    LOCATOR_KEPT_CHILDREN * seen_list, OID * found_oid);
 static int locator_collect_children_of_key (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_VALUE * key,
@@ -4357,6 +4364,38 @@ error:
 }
 
 /*
+ * locator_note_accepted () - note the active inserter, if any, of an entry a phase 1 scan accepts
+ *
+ * Note: snapshot must be the snapshot member of a LOCATOR_RESTRICT_SNAPSHOT.
+ */
+static void
+locator_note_accepted (THREAD_ENTRY * thread_p, MVCC_SNAPSHOT * snapshot, MVCC_REC_HEADER * rec_header)
+{
+  LOCATOR_RESTRICT_SNAPSHOT *rs = (LOCATOR_RESTRICT_SNAPSHOT *) snapshot;
+
+  if (rs->n_accepted < rs->inserters_cap)
+    {
+      rs->inserters[rs->n_accepted] = (MVCC_IS_HEADER_INSID_NOT_ALL_VISIBLE (rec_header)
+				       && logtb_is_active_other_mvccid (thread_p, MVCC_GET_INSID (rec_header)))
+	? MVCC_GET_INSID (rec_header) : MVCCID_NULL;
+    }
+  rs->n_accepted++;
+}
+
+/*
+ * locator_is_other_row () - whether the last version at an OID phase 1 found being inserted is another row
+ *
+ * Note: undoing an insert frees its slot at once, and a later insert can take it. An update of the gathered row
+ *	 keeps a previous version; an insert id all can see is older than this statement's snapshot.
+ */
+static bool
+locator_is_other_row (const MVCC_REC_HEADER * header, MVCCID inserter)
+{
+  return (inserter != MVCCID_NULL && MVCC_IS_HEADER_INSID_NOT_ALL_VISIBLE (header)
+	  && MVCC_GET_INSID (header) != inserter && !MVCC_IS_HEADER_PREV_VERSION_VALID (header));
+}
+
+/*
  * locator_satisfies_child_of_locked_parent () - snapshot function for the children of a parent row this
  *						 transaction holds locked
  *
@@ -4375,6 +4414,7 @@ locator_satisfies_child_of_locked_parent (THREAD_ENTRY * thread_p, MVCC_REC_HEAD
     case DELETE_RECORD_CAN_DELETE:
     case DELETE_RECORD_DELETE_IN_PROGRESS:
     case DELETE_RECORD_INSERT_IN_PROGRESS:
+      locator_note_accepted (thread_p, snapshot, rec_header);
       return SNAPSHOT_SATISFIED;
     default:
       return TOO_OLD_FOR_SNAPSHOT;
@@ -4413,13 +4453,18 @@ locator_peek_last_header (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * context, M
  *
  * return: NO_ERROR or error code
  *
- * Note: the writer holds no row lock on its version, an inserter none at all and an updater none past its statement.
- *	 Locking the child first and then waiting in the locked read would hold the lock against the writer, and a
- *	 writer that reaches the row again where no owner check lets it pass (a unique-key check of the same key, say)
- *	 would wait for us: a deadlock. The locked read that follows settles whatever is left.
+ *   inserter(in): the active inserter phase 1 found writing the child, or MVCCID_NULL
+ *
+ * Note: a writer is found by its stamp, not by a row lock: an inserter takes none, and a READ COMMITTED updater
+ *	 gives its own back at the end of a successful statement. Locking the child first and waiting in the locked
+ *	 read would hold the lock against such a writer, and one that reaches the row again where no owner check lets
+ *	 it pass (a unique-key check of the same key, say) would wait for us: a deadlock. A transaction that holds
+ *	 the child's X with no stamp (a failed statement, a statement under a savepoint, SELECT ... FOR UPDATE, an
+ *	 updater before its heap write) is not seen here, and the locked read waits for it with the earlier children
+ *	 of the key held.
  */
 static int
-locator_wait_out_child_writer (THREAD_ENTRY * thread_p, const OID * oid, OID * class_oid)
+locator_wait_out_child_writer (THREAD_ENTRY * thread_p, const OID * oid, OID * class_oid, MVCCID inserter)
 {
   HEAP_GET_CONTEXT context;
   MVCC_REC_HEADER header;
@@ -4439,6 +4484,11 @@ locator_wait_out_child_writer (THREAD_ENTRY * thread_p, const OID * oid, OID * c
 	{
 	  ASSERT_ERROR_AND_SET (error_code);
 	  return error_code;
+	}
+      if (scan == S_SUCCESS && locator_is_other_row (&header, inserter))
+	{
+	  /* the gathered insert was undone; this row's writer came after phase 1 and may wait on our mark */
+	  return NO_ERROR;
 	}
       writer = MVCCID_NULL;
       if (scan == S_SUCCESS)
@@ -4482,13 +4532,12 @@ locator_wait_out_child_writer (THREAD_ENTRY * thread_p, const OID * oid, OID * c
 static MVCC_SATISFIES_SNAPSHOT_RESULT
 locator_satisfies_child_being_written (THREAD_ENTRY * thread_p, MVCC_REC_HEADER * rec_header, MVCC_SNAPSHOT * snapshot)
 {
-  if (MVCC_IS_HEADER_INSID_NOT_ALL_VISIBLE (rec_header)
-      && logtb_is_active_other_mvccid (thread_p, MVCC_GET_INSID (rec_header)))
+  if ((MVCC_IS_HEADER_INSID_NOT_ALL_VISIBLE (rec_header)
+       && logtb_is_active_other_mvccid (thread_p, MVCC_GET_INSID (rec_header)))
+      || (MVCC_IS_HEADER_DELID_VALID (rec_header)
+	  && logtb_is_active_other_mvccid (thread_p, MVCC_GET_DELID (rec_header))))
     {
-      return SNAPSHOT_SATISFIED;
-    }
-  if (MVCC_IS_HEADER_DELID_VALID (rec_header) && logtb_is_active_other_mvccid (thread_p, MVCC_GET_DELID (rec_header)))
-    {
+      locator_note_accepted (thread_p, snapshot, rec_header);
       return SNAPSHOT_SATISFIED;
     }
   return TOO_OLD_FOR_SNAPSHOT;
@@ -4762,10 +4811,43 @@ locator_try_lock_gathered_child (THREAD_ENTRY * thread_p, OID * oid, OID * class
 }
 
 /*
+ * locator_gathered_row_gone () - whether a row phase 1 found being inserted is gone: the slot is empty or taken by
+ *				   another row
+ *
+ * return: NO_ERROR or error code
+ */
+static int
+locator_gathered_row_gone (THREAD_ENTRY * thread_p, const OID * oid, OID * class_oid, MVCCID inserter, bool * gone)
+{
+  HEAP_GET_CONTEXT context;
+  MVCC_REC_HEADER header;
+  SCAN_CODE scan;
+  int error_code;
+
+  heap_init_get_context (thread_p, &context, oid, class_oid, NULL, NULL, PEEK, NULL_CHN);
+  context.latch_mode = PGBUF_LATCH_READ;
+  scan = locator_peek_last_header (thread_p, &context, &header);
+  if (scan == S_ERROR && er_errid () != ER_HEAP_UNKNOWN_OBJECT)
+    {
+      ASSERT_ERROR_AND_SET (error_code);
+      return error_code;
+    }
+  if (scan != S_SUCCESS)
+    {
+      er_clear ();
+      *gone = true;
+      return NO_ERROR;
+    }
+  *gone = locator_is_other_row (&header, inserter);
+  return NO_ERROR;
+}
+
+/*
  * locator_keep_referring_children () - lock and re-check one batch of gathered children
  *
  * return: NO_ERROR or error code
  *
+ *   gathered(in): the list the batch was read from, for the inserters phase 1 found
  *   oids(in/out): the batch; the children that still refer to parent_key are moved to its front
  *   n_kept(out): how many were moved to the front
  *   conflict(out): set when a child could not be locked without waiting; the batch stops there
@@ -4775,7 +4857,8 @@ locator_try_lock_gathered_child (THREAD_ENTRY * thread_p, OID * oid, OID * class
  */
 static int
 locator_keep_referring_children (THREAD_ENTRY * thread_p, OR_FOREIGN_KEY * fkref, HEAP_CACHE_ATTRINFO * fk_attr_info,
-				 DB_VALUE * parent_key, RECDES * recdes, HEAP_SCANCACHE * scan_cache, OID * oids,
+				 DB_VALUE * parent_key, RECDES * recdes, HEAP_SCANCACHE * scan_cache,
+				 const LOCATOR_KEPT_CHILDREN * gathered, OID * oids,
 				 int n_oids, int *n_kept, LOCATOR_CHILD_CONFLICT * conflict, bool may_wait)
 {
   int i, error_code;
@@ -4783,8 +4866,23 @@ locator_keep_referring_children (THREAD_ENTRY * thread_p, OR_FOREIGN_KEY * fkref
   *n_kept = 0;
   for (i = 0; i < n_oids; i++)
     {
+      MVCCID inserter = locator_gathered_inserter (gathered, &oids[i]);
       bool gone, refers = false;
 
+      if (inserter != MVCCID_NULL)
+	{
+	  /* phase 2 waited for the inserter, so its insert stays as read here; locking first would wait for the
+	   * writer of a row that took the slot */
+	  error_code = locator_gathered_row_gone (thread_p, &oids[i], &fkref->self_oid, inserter, &gone);
+	  if (error_code != NO_ERROR)
+	    {
+	      return error_code;
+	    }
+	  if (gone)
+	    {
+	      continue;
+	    }
+	}
       if (may_wait)
 	{
 	  error_code = locator_lock_gathered_child (thread_p, &oids[i], &fkref->self_oid, recdes, scan_cache, &gone);
@@ -4836,6 +4934,9 @@ locator_kept_init (LOCATOR_KEPT_CHILDREN * kept)
   kept->n_read = 0;
   kept->mem_limit = 0;
   kept->no_child = false;
+  kept->inserts = NULL;
+  kept->n_inserts = 0;
+  kept->inserts_cap = 0;
 }
 
 static void
@@ -4854,6 +4955,10 @@ locator_kept_clear (THREAD_ENTRY * thread_p, LOCATOR_KEPT_CHILDREN * kept)
   if (kept->mem != NULL)
     {
       db_private_free_and_init (thread_p, kept->mem);
+    }
+  if (kept->inserts != NULL)
+    {
+      db_private_free_and_init (thread_p, kept->inserts);
     }
   locator_kept_init (kept);
 }
@@ -5093,6 +5198,87 @@ locator_wait_out_child_conflict (THREAD_ENTRY * thread_p, LOCATOR_KEPT_CHILDREN 
   return NO_ERROR;
 }
 
+/*
+ * locator_gathered_inserter () - the active inserter phase 1 found writing oid, or MVCCID_NULL
+ */
+static MVCCID
+locator_gathered_inserter (const LOCATOR_KEPT_CHILDREN * kept, const OID * oid)
+{
+  const BTREE_FK_SEEN *entry = NULL;
+
+  if (kept != NULL && kept->n_inserts > 0)
+    {
+      entry = (const BTREE_FK_SEEN *) bsearch (oid, kept->inserts, kept->n_inserts, sizeof (BTREE_FK_SEEN),
+					       oid_compare);
+    }
+  return entry != NULL ? entry->inserter : MVCCID_NULL;
+}
+
+/*
+ * locator_kept_note_inserts () - hold the inserters of the entries one scan step kept
+ *
+ * return: NO_ERROR or error code
+ *
+ * Note: a foreign key index is not unique and the scan has no key limit, so every entry the snapshot accepts is
+ *	 kept, in order. A step that accepted a different count (a key resumed after an interrupt) reads the
+ *	 inserters from the heap instead.
+ */
+static int
+locator_kept_note_inserts (THREAD_ENTRY * thread_p, LOCATOR_KEPT_CHILDREN * kept, const LOCATOR_RESTRICT_SNAPSHOT * rs,
+			   const OID * oids, int n, OID * class_oid)
+{
+  bool paired = (rs->n_accepted == n && n <= rs->inserters_cap);
+  int i;
+
+  for (i = 0; i < n; i++)
+    {
+      MVCCID inserter = MVCCID_NULL;
+
+      if (paired)
+	{
+	  inserter = rs->inserters[i];
+	}
+      else
+	{
+	  HEAP_GET_CONTEXT context;
+	  MVCC_REC_HEADER header;
+
+	  heap_init_get_context (thread_p, &context, &oids[i], class_oid, NULL, NULL, PEEK, NULL_CHN);
+	  context.latch_mode = PGBUF_LATCH_READ;
+	  if (locator_peek_last_header (thread_p, &context, &header) == S_SUCCESS
+	      && MVCC_IS_HEADER_INSID_NOT_ALL_VISIBLE (&header)
+	      && logtb_is_active_other_mvccid (thread_p, MVCC_GET_INSID (&header)))
+	    {
+	      inserter = MVCC_GET_INSID (&header);
+	    }
+	  er_clear ();
+	}
+      if (inserter == MVCCID_NULL)
+	{
+	  continue;
+	}
+      if (kept->n_inserts == kept->inserts_cap)
+	{
+	  int cap = MAX (kept->inserts_cap * 2, 16);
+	  BTREE_FK_SEEN *inserts =
+	    (BTREE_FK_SEEN *) db_private_realloc (thread_p, kept->inserts, (size_t) cap * sizeof (BTREE_FK_SEEN));
+
+	  if (inserts == NULL)
+	    {
+	      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1,
+		      (size_t) cap * sizeof (BTREE_FK_SEEN));
+	      return ER_OUT_OF_VIRTUAL_MEMORY;
+	    }
+	  kept->inserts = inserts;
+	  kept->inserts_cap = cap;
+	}
+      COPY_OID (&kept->inserts[kept->n_inserts].oid, &oids[i]);
+      kept->inserts[kept->n_inserts].inserter = inserter;
+      kept->n_inserts++;
+    }
+  return NO_ERROR;
+}
+
 static void
 locator_collected_free (THREAD_ENTRY * thread_p, LOCATOR_KEPT_CHILDREN * collected, int n_fk)
 {
@@ -5141,7 +5327,7 @@ locator_satisfies_restrict_entry (THREAD_ENTRY * thread_p, MVCC_REC_HEADER * rec
  */
 static int
 locator_scan_fk_key (THREAD_ENTRY * thread_p, OR_FOREIGN_KEY * fkref, DB_VALUE * key,
-		     MVCC_SNAPSHOT * snapshot, bool lock_class, BTREE_ISCAN_OID_LIST * oid_list,
+		     LOCATOR_RESTRICT_SNAPSHOT * rs, bool lock_class, BTREE_ISCAN_OID_LIST * oid_list,
 		     LOCATOR_KEPT_CHILDREN * into)
 {
   INDX_SCAN_ID isid;
@@ -5167,7 +5353,7 @@ locator_scan_fk_key (THREAD_ENTRY * thread_p, OR_FOREIGN_KEY * fkref, DB_VALUE *
     {
       (void) heap_scancache_quick_start (&isid.scan_cache);
     }
-  scan_init_index_scan (&isid, oid_list, snapshot);
+  scan_init_index_scan (&isid, oid_list, &rs->snapshot);
   pr_clone_value (key, &range.key1);
   pr_clone_value (key, &range.key2);
   if (DB_VALUE_TYPE (key) == DB_TYPE_MIDXKEY)
@@ -5183,9 +5369,15 @@ locator_scan_fk_key (THREAD_ENTRY * thread_p, OR_FOREIGN_KEY * fkref, DB_VALUE *
       error_code =
 	btree_prepare_bts (thread_p, &bt_scan, &fkref->self_btid, &isid, &range, NULL, &fkref->self_oid, NULL, NULL,
 			   false, NULL);
+      rs->n_accepted = 0;
       if (error_code == NO_ERROR)
 	{
 	  error_code = btree_range_scan (thread_p, &bt_scan, btree_range_scan_select_visible_oids);
+	}
+      if (error_code == NO_ERROR && bt_scan.n_oids_read_last_iteration > 0)
+	{
+	  error_code = locator_kept_note_inserts (thread_p, into, rs, oid_list->oidp,
+						  bt_scan.n_oids_read_last_iteration, &fkref->self_oid);
 	}
       if (error_code == NO_ERROR && bt_scan.n_oids_read_last_iteration > 0)
 	{
@@ -5193,6 +5385,10 @@ locator_scan_fk_key (THREAD_ENTRY * thread_p, OR_FOREIGN_KEY * fkref, DB_VALUE *
 	}
     }
   while (error_code == NO_ERROR && !BTREE_END_OF_SCAN (&bt_scan));
+  if (into->n_inserts > 1)
+    {
+      qsort (into->inserts, into->n_inserts, sizeof (BTREE_FK_SEEN), oid_compare);
+    }
   btree_scan_clear_key (&bt_scan);
   pr_clear_value (&range.key1);
   pr_clear_value (&range.key2);
@@ -5213,24 +5409,39 @@ static int
 locator_check_restrict_in_place (THREAD_ENTRY * thread_p, OR_FOREIGN_KEY * fkref, DB_VALUE * key,
 				 LOCATOR_KEPT_CHILDREN * seen_list, OID * found_oid)
 {
-  OID *seen = NULL;
-  int n_seen = 0, error_code = NO_ERROR;
+  OID *oids = NULL;
+  BTREE_FK_SEEN *seen = NULL;
+  int n_seen = 0, i, error_code = NO_ERROR;
 
   if (seen_list->n_held > 0)
     {
-      seen = (OID *) db_private_alloc (thread_p, seen_list->n_held * sizeof (OID));
-      if (seen == NULL)
+      oids = (OID *) db_private_alloc (thread_p, seen_list->n_held * sizeof (OID));
+      seen = (BTREE_FK_SEEN *) db_private_alloc (thread_p, seen_list->n_held * sizeof (BTREE_FK_SEEN));
+      if (oids == NULL || seen == NULL)
 	{
-	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, seen_list->n_held * sizeof (OID));
-	  return ER_OUT_OF_VIRTUAL_MEMORY;
+	  er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1,
+		  seen_list->n_held * (sizeof (OID) + sizeof (BTREE_FK_SEEN)));
+	  error_code = ER_OUT_OF_VIRTUAL_MEMORY;
 	}
-      locator_kept_rewind (thread_p, seen_list);
-      error_code = locator_kept_read (thread_p, seen_list, seen, seen_list->n_held, &n_seen);
-      qsort (seen, n_seen, sizeof (OID), oid_compare);
+      else
+	{
+	  locator_kept_rewind (thread_p, seen_list);
+	  error_code = locator_kept_read (thread_p, seen_list, oids, seen_list->n_held, &n_seen);
+	  for (i = 0; i < n_seen; i++)
+	    {
+	      COPY_OID (&seen[i].oid, &oids[i]);
+	      seen[i].inserter = locator_gathered_inserter (seen_list, &oids[i]);
+	    }
+	  qsort (seen, n_seen, sizeof (BTREE_FK_SEEN), oid_compare);
+	}
     }
   if (error_code == NO_ERROR)
     {
       error_code = btree_find_foreign_key (thread_p, &fkref->self_btid, key, &fkref->self_oid, found_oid, seen, n_seen);
+    }
+  if (oids != NULL)
+    {
+      db_private_free (thread_p, oids);
     }
   if (seen != NULL)
     {
@@ -5264,6 +5475,7 @@ locator_collect_children_of_key (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_V
   OR_FOREIGN_KEY *fkref;
   LOCATOR_KEPT_CHILDREN *collected;
   BTREE_ISCAN_OID_LIST oid_list;
+  MVCCID *inserters;
   bool action_seen = false, fails = false;
   int n_fk = 0, fk_i, i, error_code = NO_ERROR;
 
@@ -5298,6 +5510,13 @@ locator_collect_children_of_key (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_V
   oid_list.capacity = ISCAN_OID_BUFFER_CAPACITY / OR_OID_SIZE;
   oid_list.max_oid_cnt = oid_list.capacity;
   oid_list.next_list = NULL;
+  inserters = (MVCCID *) db_private_alloc (thread_p, oid_list.capacity * sizeof (MVCCID));
+  if (inserters == NULL)
+    {
+      db_private_free_and_init (thread_p, oid_list.oidp);
+      er_set (ER_ERROR_SEVERITY, ARG_FILE_LINE, ER_OUT_OF_VIRTUAL_MEMORY, 1, oid_list.capacity * sizeof (MVCCID));
+      return ER_OUT_OF_VIRTUAL_MEMORY;
+    }
 
   /* phase 1, no wait and no lock: every child of an action, the entries of a restrict check being written */
   for (fkref = index->fk, fk_i = 0; fkref != NULL && error_code == NO_ERROR; fkref = fkref->next, fk_i++)
@@ -5306,10 +5525,13 @@ locator_collect_children_of_key (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_V
       LOCATOR_RESTRICT_SNAPSHOT rs;
 
       rs.committed_child = false;
+      rs.inserters = inserters;
+      rs.inserters_cap = oid_list.capacity;
+      rs.n_accepted = 0;
       if (action == SM_FOREIGN_KEY_CASCADE || action == SM_FOREIGN_KEY_SET_NULL)
 	{
 	  rs.snapshot.snapshot_fnc = locator_satisfies_child_of_locked_parent;
-	  error_code = locator_scan_fk_key (thread_p, fkref, key, &rs.snapshot, true, &oid_list, &collected[fk_i]);
+	  error_code = locator_scan_fk_key (thread_p, fkref, key, &rs, true, &oid_list, &collected[fk_i]);
 	  action_seen = true;
 	  continue;
 	}
@@ -5321,7 +5543,7 @@ locator_collect_children_of_key (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_V
       /* with no action before this check nothing can turn into a child of the key, so the scan also tells whether a
        * committed child fails the statement or there is nothing for the check to find */
       rs.snapshot.snapshot_fnc = action_seen ? locator_satisfies_child_being_written : locator_satisfies_restrict_entry;
-      error_code = locator_scan_fk_key (thread_p, fkref, key, &rs.snapshot, false, &oid_list, &collected[fk_i]);
+      error_code = locator_scan_fk_key (thread_p, fkref, key, &rs, false, &oid_list, &collected[fk_i]);
       if (error_code != NO_ERROR)
 	{
 	  break;
@@ -5337,6 +5559,7 @@ locator_collect_children_of_key (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_V
     }
 
   db_private_free_and_init (thread_p, oid_list.oidp);
+  db_private_free_and_init (thread_p, inserters);
   if (error_code == NO_ERROR && !fails)
     {
       error_code = locator_wait_out_collected_writers (thread_p, index, collected, 0);
@@ -5384,7 +5607,8 @@ locator_wait_out_collected_writers (THREAD_ENTRY * thread_p, OR_INDEX * index, L
 	  error_code = locator_kept_read (thread_p, &collected[fk_i], oids, capacity, &n);
 	  for (i = 0; error_code == NO_ERROR && i < n; i++)
 	    {
-	      error_code = locator_wait_out_child_writer (thread_p, &oids[i], &fkref->self_oid);
+	      error_code = locator_wait_out_child_writer (thread_p, &oids[i], &fkref->self_oid,
+							  locator_gathered_inserter (&collected[fk_i], &oids[i]));
 	    }
 	}
       while (error_code == NO_ERROR && n > 0);
@@ -5618,7 +5842,7 @@ locator_check_primary_key_delete (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 
 	      error_code =
 		locator_keep_referring_children (thread_p, fkref, &fk_attr_info, &parent_key, &recdes, &scan_cache,
-						 oid_list.oidp, oid_cnt, &n_buffered, &conflict,
+						 &collected[fk_i], oid_list.oidp, oid_cnt, &n_buffered, &conflict,
 						 n_restart >= LOCATOR_CHILD_RESTART_MAX);
 	      if (error_code != NO_ERROR)
 		{
@@ -6007,7 +6231,7 @@ locator_check_primary_key_update (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_
 
 	      error_code =
 		locator_keep_referring_children (thread_p, fkref, &fk_attr_info, &parent_key, &recdes, &scan_cache,
-						 oid_list.oidp, oid_cnt, &n_buffered, &conflict,
+						 &collected[fk_i], oid_list.oidp, oid_cnt, &n_buffered, &conflict,
 						 n_restart >= LOCATOR_CHILD_RESTART_MAX);
 	      if (error_code != NO_ERROR)
 		{
