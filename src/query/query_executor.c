@@ -898,6 +898,7 @@ static void qexec_clear_internal_classes (THREAD_ENTRY * thread_p, UPDDEL_CLASS_
 static bool qexec_class_ends_locks_with_statement (THREAD_ENTRY * thread_p,
 						   UPDDEL_CLASS_INFO_INTERNAL * internal_class, const OID * class_oid);
 static bool qexec_start_statement_lock_scope (THREAD_ENTRY * thread_p);
+static bool qexec_release_on_statement_error (THREAD_ENTRY * thread_p);
 static LOCATOR_LOCK_POLICY qexec_base_lock_policy (const UPDDEL_CLASS_INSTANCE_LOCK_INFO * lock_info);
 static LOCATOR_LOCK_POLICY qexec_make_lock_policy_transient (THREAD_ENTRY * thread_p, LOCATOR_LOCK_POLICY base_policy,
 							     bool statement_ends_locks,
@@ -16330,9 +16331,6 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
   return NO_ERROR;
 
 exit_on_error:
-  /* failed: the rows keep their locks to commit; drop the counts so no later statement gives them back */
-  lock_transient_scope_end (thread_p, false);
-
   if (scan_open)
     {
       qexec_end_scan (thread_p, specp);
@@ -16364,6 +16362,10 @@ exit_on_error:
     {
       xtran_server_end_topop (thread_p, LOG_RESULT_TOPOP_ABORT, &lsa);
     }
+  /* failed: the undo is done, so the rows this statement counted carry no stamp of it and go back now; a lock held
+   * before the statement stays.  If the undo erased stamps, their waiters are woken as after a rollback to a savepoint
+   * (xtran_server_end_topop ()). */
+  lock_transient_scope_end (thread_p, qexec_release_on_statement_error (thread_p));
 
   if (internal_classes)
     {
@@ -16968,9 +16970,6 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
   return NO_ERROR;
 
 exit_on_error:
-  /* failed: the rows keep their locks to commit; drop the counts so no later statement gives them back */
-  lock_transient_scope_end (thread_p, false);
-
   if (scan_open)
     {
       qexec_end_scan (thread_p, specp);
@@ -17003,6 +17002,8 @@ exit_on_error:
     {
       xtran_server_end_topop (thread_p, LOG_RESULT_TOPOP_ABORT, &lsa);
     }
+  /* as in qexec_execute_update (): after the undo */
+  lock_transient_scope_end (thread_p, qexec_release_on_statement_error (thread_p));
 
   return ER_FAILED;
 }
@@ -33800,6 +33801,23 @@ qexec_start_statement_lock_scope (THREAD_ENTRY * thread_p)
   bool outermost = lock_transient_scope_start (thread_p);
 
   return outermost && logtb_find_current_isolation (thread_p) == TRAN_READ_COMMITTED;
+}
+
+/*
+ * qexec_release_on_statement_error () - Whether a failed DELETE or UPDATE gives back the row locks it counted
+ *   return: true unless the transaction is being aborted as a whole; its abort gives everything back
+ *   thread_p(in): thread entry
+ *
+ * Note: called after the statement's system operation was aborted, so the rows carry no stamp of this statement
+ *	 (CBRD-27654 R, I104).  A deadlock victim that loses only its statement (lock timeout not infinite) is not aborted
+ *	 as a whole and gives its row locks back too.
+ */
+static bool
+qexec_release_on_statement_error (THREAD_ENTRY * thread_p)
+{
+  LOG_TDES *tdes = LOG_FIND_CURRENT_TDES (thread_p);
+
+  return tdes != NULL && tdes->tran_abort_reason == TRAN_NORMAL;
 }
 
 /*
