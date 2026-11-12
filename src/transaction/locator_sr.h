@@ -147,6 +147,23 @@ extern SCAN_CODE locator_lock_and_get_object_with_evaluation (THREAD_ENTRY * thr
 							      MVCC_REEV_DATA * mvcc_reev_data,
 							      NON_EXISTENT_HANDLING non_ex_handling_type,
 							      bool transient, bool owner_bypass_ok);
+/* the primary key of a class that foreign keys refer to, for one statement (locator_start_referenced_key ()) */
+typedef struct locator_referenced_key LOCATOR_REFERENCED_KEY;
+struct locator_referenced_key
+{
+  HEAP_CACHE_ATTRINFO index_attrinfo;	/* the indexed attributes of the class */
+  HEAP_CACHE_ATTRINFO key_attrinfo;	/* the attributes of the primary key, for an UPDATE's key check */
+  int pk_i;			/* the primary key among the indexes, -1 when none is referenced */
+};
+
+extern int locator_start_referenced_key (THREAD_ENTRY * thread_p, OID * class_oid, ATTR_ID * att_id, int n_att_id,
+					 LOCATOR_REFERENCED_KEY * rk);
+extern void locator_end_referenced_key (THREAD_ENTRY * thread_p, LOCATOR_REFERENCED_KEY * rk);
+extern int locator_key_changes (THREAD_ENTRY * thread_p, LOCATOR_REFERENCED_KEY * rk, OID * oid, RECDES * recdes,
+				HEAP_CACHE_ATTRINFO * new_values, bool * changes);
+extern int locator_wait_for_child_writers (THREAD_ENTRY * thread_p, LOCATOR_REFERENCED_KEY * rk, const OID * oids,
+					   int n_oids, const OID * class_oid, HEAP_SCANCACHE * scan_cache,
+					   bool on_update);
 extern SCAN_CODE locator_get_object (THREAD_ENTRY * thread_p, const OID * oid, OID * class_oid, RECDES * recdes,
 				     HEAP_SCANCACHE * scan_cache, SCAN_OPERATION_TYPE op_type, LOCK lock_mode,
 				     int ispeeking, int chn);
