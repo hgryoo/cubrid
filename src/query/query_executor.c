@@ -481,13 +481,14 @@ struct upddel_class_info_internal
   UPDATE_MVCC_REEV_ASSIGNMENT *mvcc_reev_assigns;
 };
 
-/* what the wait pass of a settling DELETE or UPDATE leaves for its write pass */
+/* what the wait pass of a settling DELETE or UPDATE leaves for its write pass; the destructor frees it */
 typedef struct qexec_settle_state QEXEC_SETTLE_STATE;
 // *INDENT-OFF*
 struct qexec_settle_state
 {
   template <typename T> using private_vector = std::vector<T, cubmem::private_allocator<T>>;
 
+  THREAD_ENTRY *thread_p;
   LOCATOR_REFERENCED_KEY key;		/* the class's referenced primary key, while started */
   private_vector<int> rows;		/* per row of the list, see qexec_settle_row () */
   private_vector<DB_VALUE> values;	/* the assignments the wait pass computed again */
@@ -495,12 +496,10 @@ struct qexec_settle_state
   size_t next = 0;			/* the write pass's position in rows */
   bool started = false;
 
-  explicit qexec_settle_state (THREAD_ENTRY *thread_p)
-    : rows (cubmem::private_allocator<int> (thread_p))
-    , values (cubmem::private_allocator<DB_VALUE> (thread_p))
-    , marked_rows (cubmem::private_allocator<OID> (thread_p))
-  {
-  }
+  explicit qexec_settle_state (THREAD_ENTRY *thread_p);
+  ~qexec_settle_state ();
+  int start (LOCATOR_LOCK_POLICY base_lock_policy, UPDDEL_CLASS_INSTANCE_LOCK_INFO *lock_info,
+	     UPDDEL_CLASS_INFO *upd_cls, INT64 tuple_cnt);
 };
 // *INDENT-ON*
 
@@ -688,16 +687,12 @@ static int qexec_init_upddel_ehash_files (THREAD_ENTRY * thread_p, XASL_NODE * b
 static void qexec_destroy_upddel_ehash_files (THREAD_ENTRY * thread_p, XASL_NODE * buildlist);
 static int qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete, XASL_STATE * xasl_state);
 static int qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xasl_state);
-static int qexec_start_settle (THREAD_ENTRY * thread_p, QEXEC_SETTLE_STATE * settle,
-			       LOCATOR_LOCK_POLICY base_lock_policy, UPDDEL_CLASS_INSTANCE_LOCK_INFO * lock_info,
-			       UPDDEL_CLASS_INFO * upd_cls, INT64 tuple_cnt);
 static int qexec_settle_row (THREAD_ENTRY * thread_p, QEXEC_SETTLE_STATE * settle,
 			     UPDDEL_CLASS_INFO_INTERNAL * internal_class, const OID * class_oid,
 			     MVCC_REEV_DATA * mvcc_reev_data, LOCATOR_LOCK_POLICY lock_policy, OID * oid,
 			     UPDDEL_CLASS_INFO * upd_cls);
 static int qexec_next_settled_row (QEXEC_SETTLE_STATE * settle, OID * oid, UPDDEL_CLASS_INFO_INTERNAL * internal_class,
 				   UPDDEL_CLASS_INFO * upd_cls, bool * writes);
-static void qexec_end_settle (THREAD_ENTRY * thread_p, QEXEC_SETTLE_STATE * settle);
 static int qexec_collect_remote_insert_vals (SCAN_ID * s_id, XASL_STATE * xasl_state, DB_VALUE ** vals, int num_vals,
 					     int odku_start, int num_odku);
 static int qexec_collect_remote_delete_key (SCAN_ID * s_id, XASL_STATE * xasl_state, DB_VALUE ** bindv,
@@ -15827,9 +15822,7 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
 
   if (!has_delete)
     {
-      error =
-	qexec_start_settle (thread_p, &settle, base_lock_policy, p_class_instance_lock_info, update->classes,
-			    aptr->list_id->tuple_cnt);
+      error = settle.start (base_lock_policy, p_class_instance_lock_info, update->classes, aptr->list_id->tuple_cnt);
       if (error != NO_ERROR)
 	{
 	  GOTO_EXIT_ON_ERROR;
@@ -16448,7 +16441,6 @@ scan_list:
     }
 
   assert (settle.next == settle.rows.size ());
-  qexec_end_settle (thread_p, &settle);
 
   /* Later writers wait on our MVCCID self-lock, so the row locks can end here -- except under a savepoint, whose
    * partial rollback would undo a change a writer is waiting on. */
@@ -16513,7 +16505,6 @@ scan_list:
   return NO_ERROR;
 
 exit_on_error:
-  qexec_end_settle (thread_p, &settle);
   /* failed: the rows keep their locks to commit; drop the counts so no later statement gives them back */
   lock_transient_scope_end (thread_p, false);
 
@@ -16795,9 +16786,7 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
   /* At force with no reevaluation class there is no predicate to re-check (pt_to_delete_xasl () keeps the
    * select-phase lock when it cannot replay one), so a changed version is deleted, not skipped. */
 
-  error =
-    qexec_start_settle (thread_p, &settle, base_lock_policy, p_class_instance_lock_info, NULL,
-			aptr->list_id->tuple_cnt);
+  error = settle.start (base_lock_policy, p_class_instance_lock_info, NULL, aptr->list_id->tuple_cnt);
   if (error != NO_ERROR)
     {
       GOTO_EXIT_ON_ERROR;
@@ -17161,7 +17150,6 @@ scan_list:
     }
 
   assert (settle.next == settle.rows.size ());
-  qexec_end_settle (thread_p, &settle);
 
   /* As in qexec_execute_update (); the prepare record carries our MVCCID self-lock across 2PC.
    * logtb_has_active_savepoint () also counts system savepoints, which keeps the locks more often than needed. */
@@ -17218,7 +17206,6 @@ scan_list:
   return NO_ERROR;
 
 exit_on_error:
-  qexec_end_settle (thread_p, &settle);
   /* failed: the rows keep their locks to commit; drop the counts so no later statement gives them back */
   lock_transient_scope_end (thread_p, false);
 
@@ -17259,20 +17246,41 @@ exit_on_error:
 }
 
 /*
- * qexec_start_settle () - decide whether a DELETE or UPDATE settles its rows before it writes any
+ * qexec_settle_state::start () - decide whether a DELETE or UPDATE settles its rows before it writes any
  *
  * return: NO_ERROR or error code
  *   lock_info(in): the statement's one target class, NULL for more
  *   upd_cls(in): an UPDATE's class, NULL for a DELETE
- *   settle(out): started when a foreign key refers to the class's primary key and the statement deletes or assigns it
  *
- * Note: a delete-marked key and the children its actions lock make other writers wait on the statement. Locking row
+ * Note: started when a foreign key refers to the class's primary key and the statement deletes or assigns it.
+ *	 A delete-marked key and the children its actions lock make other writers wait on the statement. Locking row
  *	 by row, it would wait on the writer of a later row holding them, so it settles every row and waits out the
  *	 children's writers first. A single row holds nothing while it waits and stays on the force path.
  */
-static int
-qexec_start_settle (THREAD_ENTRY * thread_p, QEXEC_SETTLE_STATE * settle, LOCATOR_LOCK_POLICY base_lock_policy,
-		    UPDDEL_CLASS_INSTANCE_LOCK_INFO * lock_info, UPDDEL_CLASS_INFO * upd_cls, INT64 tuple_cnt)
+// *INDENT-OFF*
+qexec_settle_state::qexec_settle_state (THREAD_ENTRY *thread_p)
+  : thread_p (thread_p)
+  , rows (cubmem::private_allocator<int> (thread_p))
+  , values (cubmem::private_allocator<DB_VALUE> (thread_p))
+  , marked_rows (cubmem::private_allocator<OID> (thread_p))
+{
+}
+
+qexec_settle_state::~qexec_settle_state ()
+{
+  for (DB_VALUE &value : values)
+    {
+      pr_clear_value (&value);
+    }
+  if (started)
+    {
+      locator_end_referenced_key (thread_p, &key);
+    }
+}
+
+int
+qexec_settle_state::start (LOCATOR_LOCK_POLICY base_lock_policy, UPDDEL_CLASS_INSTANCE_LOCK_INFO *lock_info,
+			   UPDDEL_CLASS_INFO *upd_cls, INT64 tuple_cnt)
 {
   int error;
 
@@ -17281,18 +17289,18 @@ qexec_start_settle (THREAD_ENTRY * thread_p, QEXEC_SETTLE_STATE * settle, LOCATO
     {
       return NO_ERROR;
     }
-  error =
-    locator_start_referenced_key (thread_p, &lock_info->class_oid, upd_cls != NULL ? upd_cls->att_id : NULL,
-				  upd_cls != NULL ? upd_cls->num_attrs : 0, &settle->key);
-  if (error != NO_ERROR || settle->key.pk_i < 0)
+  error = locator_start_referenced_key (thread_p, &lock_info->class_oid, upd_cls != NULL ? upd_cls->att_id : NULL,
+					upd_cls != NULL ? upd_cls->num_attrs : 0, &key);
+  if (error != NO_ERROR || key.pk_i < 0)
     {
-      locator_end_referenced_key (thread_p, &settle->key);
+      locator_end_referenced_key (thread_p, &key);
       return error;
     }
-  settle->started = true;
-  settle->rows.reserve (tuple_cnt);
+  started = true;
+  rows.reserve (tuple_cnt);
   return NO_ERROR;
 }
+// *INDENT-ON*
 
 /*
  * qexec_settle_row () - lock, settle and reevaluate a row in the wait pass
@@ -17413,23 +17421,6 @@ qexec_next_settled_row (QEXEC_SETTLE_STATE * settle, OID * oid, UPDDEL_CLASS_INF
 	}
     }
   return NO_ERROR;
-}
-
-/*
- * qexec_end_settle () - free what qexec_start_settle () and the wait pass kept
- */
-static void
-qexec_end_settle (THREAD_ENTRY * thread_p, QEXEC_SETTLE_STATE * settle)
-{
-  for (size_t i = 0; i < settle->values.size (); i++)
-    {
-      pr_clear_value (&settle->values[i]);
-    }
-  if (settle->started)
-    {
-      locator_end_referenced_key (thread_p, &settle->key);
-      settle->started = false;
-    }
 }
 
 /*
