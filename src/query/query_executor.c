@@ -481,6 +481,29 @@ struct upddel_class_info_internal
   UPDATE_MVCC_REEV_ASSIGNMENT *mvcc_reev_assigns;
 };
 
+/* what the wait pass of a settling DELETE or UPDATE leaves for its write pass */
+typedef struct qexec_settle_state QEXEC_SETTLE_STATE;
+// *INDENT-OFF*
+struct qexec_settle_state
+{
+  template <typename T> using private_vector = std::vector<T, cubmem::private_allocator<T>>;
+
+  LOCATOR_REFERENCED_KEY key;		/* the class's referenced primary key, while started */
+  private_vector<int> rows;		/* per row of the list, see qexec_settle_row () */
+  private_vector<DB_VALUE> values;	/* the assignments the wait pass computed again */
+  private_vector<OID> marked_rows;	/* the rows whose keys the write pass will delete-mark */
+  size_t next = 0;			/* the write pass's position in rows */
+  bool started = false;
+
+  explicit qexec_settle_state (THREAD_ENTRY *thread_p)
+    : rows (cubmem::private_allocator<int> (thread_p))
+    , values (cubmem::private_allocator<DB_VALUE> (thread_p))
+    , marked_rows (cubmem::private_allocator<OID> (thread_p))
+  {
+  }
+};
+// *INDENT-ON*
+
 enum analytic_stage
 {
   ANALYTIC_INTERM_PROC = 1,
@@ -665,29 +688,6 @@ static int qexec_init_upddel_ehash_files (THREAD_ENTRY * thread_p, XASL_NODE * b
 static void qexec_destroy_upddel_ehash_files (THREAD_ENTRY * thread_p, XASL_NODE * buildlist);
 static int qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete, XASL_STATE * xasl_state);
 static int qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xasl_state);
-/* what the wait pass of a settling DELETE or UPDATE leaves for its write pass */
-typedef struct qexec_settle_state QEXEC_SETTLE_STATE;
-// *INDENT-OFF*
-struct qexec_settle_state
-{
-  template <typename T> using private_vector = std::vector<T, cubmem::private_allocator<T>>;
-
-  LOCATOR_REFERENCED_KEY key;		/* the class's referenced primary key, while started */
-  private_vector<int> rows;		/* per row of the list, see qexec_settle_row () */
-  private_vector<DB_VALUE> values;	/* the assignments the wait pass computed again */
-  private_vector<OID> marked_rows;	/* the rows whose keys the write pass will delete-mark */
-  size_t next = 0;			/* the write pass's position in rows */
-  bool started = false;
-
-  explicit qexec_settle_state (THREAD_ENTRY *thread_p)
-    : rows (cubmem::private_allocator<int> (thread_p))
-    , values (cubmem::private_allocator<DB_VALUE> (thread_p))
-    , marked_rows (cubmem::private_allocator<OID> (thread_p))
-  {
-  }
-};
-// *INDENT-ON*
-
 static int qexec_start_settle (THREAD_ENTRY * thread_p, QEXEC_SETTLE_STATE * settle,
 			       LOCATOR_LOCK_POLICY base_lock_policy, UPDDEL_CLASS_INSTANCE_LOCK_INFO * lock_info,
 			       UPDDEL_CLASS_INFO * upd_cls, INT64 tuple_cnt);
