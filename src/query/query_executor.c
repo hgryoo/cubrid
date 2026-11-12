@@ -15863,7 +15863,8 @@ qexec_execute_update (THREAD_ENTRY * thread_p, XASL_NODE * xasl, bool has_delete
   specp = xasl->spec_list;
   /* force_select_lock = false */
   assert (xasl->scan_op_type == S_SELECT);
-scan_list:
+  /* each pass over the list starts here: the wait pass of a settling statement, then its write pass */
+scan_targets:
   if (qexec_open_scan (thread_p, specp, xasl->val_list, &xasl_state->vd, false, specp->fixed_scan, specp->grouped_scan,
 		       true, &specp->s_id, xasl_state->query_id, S_SELECT, false, NULL, xasl,
 		       xasl->upd_del_class_cnt > 0) != NO_ERROR)
@@ -16415,7 +16416,8 @@ scan_list:
 	}
       wait_pass = false;
       base_lock_policy = LOCATOR_LOCK_AT_SELECT;
-      goto scan_list;
+      /* the write pass */
+      goto scan_targets;
     }
 
   for (s = 0; s < class_oid_cnt; s++)
@@ -16825,7 +16827,8 @@ qexec_execute_delete (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xa
 
   specp = xasl->spec_list;
   assert (xasl->scan_op_type == S_SELECT);
-scan_list:
+  /* each pass over the list starts here: the wait pass of a settling statement, then its write pass */
+scan_targets:
   /* force_select_lock = false */
   if (qexec_open_scan (thread_p, specp, xasl->val_list, &xasl_state->vd, false, specp->fixed_scan, specp->grouped_scan,
 		       true, &specp->s_id, xasl_state->query_id, S_SELECT, false, NULL, xasl,
@@ -17127,7 +17130,8 @@ scan_list:
 	}
       wait_pass = false;
       base_lock_policy = LOCATOR_LOCK_AT_SELECT;
-      goto scan_list;
+      /* the write pass */
+      goto scan_targets;
     }
 
   /* reflect local statistical information into transaction's statistical information */
