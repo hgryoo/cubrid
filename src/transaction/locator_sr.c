@@ -154,8 +154,9 @@ struct locator_restrict_snapshot
 {
   MVCC_SNAPSHOT snapshot;	/* first, so that the snapshot function finds the rest */
   bool committed_child;
-  MVCCID *inserters;		/* per entry accepted in the current scan step: its active inserter, or MVCCID_NULL */
-  int n_accepted;
+  MVCCID *inserters;		/* at the position of each OID the current scan step saved: its active inserter, or
+				 * MVCCID_NULL */
+  const int *n_saved;		/* how many OIDs the scan step has saved: the position of the next one */
   int inserters_cap;
 };
 
@@ -4373,20 +4374,22 @@ error:
 /*
  * locator_note_accepted () - note the active inserter, if any, of an entry a phase 1 scan accepts
  *
- * Note: snapshot must be the snapshot member of a LOCATOR_RESTRICT_SNAPSHOT.
+ * Note: snapshot must be the snapshot member of a LOCATOR_RESTRICT_SNAPSHOT. The scan saves the entry's OID right
+ *	 after this at position *n_saved, so the inserter goes to the same position; an entry accepted but not saved
+ *	 is overwritten by the next one.
  */
 static void
 locator_note_accepted (THREAD_ENTRY * thread_p, MVCC_SNAPSHOT * snapshot, MVCC_REC_HEADER * rec_header)
 {
   LOCATOR_RESTRICT_SNAPSHOT *rs = (LOCATOR_RESTRICT_SNAPSHOT *) snapshot;
+  int at = *rs->n_saved;
 
-  if (rs->n_accepted < rs->inserters_cap)
+  if (at < rs->inserters_cap)
     {
-      rs->inserters[rs->n_accepted] = (MVCC_IS_HEADER_INSID_NOT_ALL_VISIBLE (rec_header)
-				       && logtb_is_active_other_mvccid (thread_p, MVCC_GET_INSID (rec_header)))
+      rs->inserters[at] = (MVCC_IS_HEADER_INSID_NOT_ALL_VISIBLE (rec_header)
+			   && logtb_is_active_other_mvccid (thread_p, MVCC_GET_INSID (rec_header)))
 	? MVCC_GET_INSID (rec_header) : MVCCID_NULL;
     }
-  rs->n_accepted++;
 }
 
 /*
@@ -4439,7 +4442,9 @@ locator_peek_last_header (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * context, M
 {
   SCAN_CODE scan;
 
-  scan = heap_prepare_get_context (thread_p, context, false, LOG_WARNING_IF_DELETED);
+  /* read the slot as a heap scan does: a slot an undone insert freed may hold another row's REC_NEWHOME by now, and
+   * that, like an empty slot, is S_DOESNT_EXIST rather than an error */
+  scan = heap_prepare_get_context (thread_p, context, true, LOG_WARNING_IF_DELETED);
   if (scan == S_SUCCESS)
     {
       scan = heap_get_mvcc_header (thread_p, context, header);
@@ -4519,8 +4524,8 @@ locator_wait_out_child_writer (THREAD_ENTRY * thread_p, const OID * oid, OID * c
       writer = (scan == S_SUCCESS) ? locator_header_writer (thread_p, &header) : MVCCID_NULL;
       if (writer == MVCCID_NULL)
 	{
-	  /* nothing to wait for, or nothing left to read (a slot freed, or taken by another row's address): the locked
-	   * read decides, and skips the child as it always has */
+	  /* nothing to wait for, or nothing left to read (a slot freed, or taken by another row's address or moved
+	   * record): the locked read decides, and skips the child as it always has */
 	  if (scan != S_SUCCESS)
 	    {
 	      er_clear ();
@@ -5229,40 +5234,20 @@ locator_gathered_inserter (const LOCATOR_KEPT_CHILDREN * kept, const OID * oid)
  *
  * return: NO_ERROR or error code
  *
- * Note: a foreign key index is not unique and the scan has no key limit, so every entry the snapshot accepts is
- *	 kept, in order. A step that accepted a different count (a key resumed after an interrupt) reads the
- *	 inserters from the heap instead.
+ * Note: locator_note_accepted () wrote the inserter of each OID at the OID's position in the step's buffer, from the
+ *	 index entry the scan read, so no heap read can meet a slot reused since.
  */
 static int
 locator_kept_note_inserts (THREAD_ENTRY * thread_p, LOCATOR_KEPT_CHILDREN * kept, const LOCATOR_RESTRICT_SNAPSHOT * rs,
-			   const OID * oids, int n, OID * class_oid)
+			   const OID * oids, int n)
 {
-  bool paired = (rs->n_accepted == n && n <= rs->inserters_cap);
   int i;
 
+  assert (n <= rs->inserters_cap);
   for (i = 0; i < n; i++)
     {
-      MVCCID inserter = MVCCID_NULL;
+      MVCCID inserter = rs->inserters[i];
 
-      if (paired)
-	{
-	  inserter = rs->inserters[i];
-	}
-      else
-	{
-	  HEAP_GET_CONTEXT context;
-	  MVCC_REC_HEADER header;
-
-	  heap_init_get_context (thread_p, &context, &oids[i], class_oid, NULL, NULL, PEEK, NULL_CHN);
-	  context.latch_mode = PGBUF_LATCH_READ;
-	  if (locator_peek_last_header (thread_p, &context, &header) == S_SUCCESS
-	      && MVCC_IS_HEADER_INSID_NOT_ALL_VISIBLE (&header)
-	      && logtb_is_active_other_mvccid (thread_p, MVCC_GET_INSID (&header)))
-	    {
-	      inserter = MVCC_GET_INSID (&header);
-	    }
-	  er_clear ();
-	}
       if (inserter == MVCCID_NULL)
 	{
 	  continue;
@@ -5374,20 +5359,20 @@ locator_scan_fk_key (THREAD_ENTRY * thread_p, OR_FOREIGN_KEY * fkref, DB_VALUE *
   range.range = GE_LE;
   range.num_index_term = 0;
   BTREE_INIT_SCAN (&bt_scan);
+  rs->n_saved = &bt_scan.n_oids_read_last_iteration;
   do
     {
       error_code =
 	btree_prepare_bts (thread_p, &bt_scan, &fkref->self_btid, &isid, &range, NULL, &fkref->self_oid, NULL, NULL,
 			   false, NULL);
-      rs->n_accepted = 0;
       if (error_code == NO_ERROR)
 	{
 	  error_code = btree_range_scan (thread_p, &bt_scan, btree_range_scan_select_visible_oids);
 	}
       if (error_code == NO_ERROR && bt_scan.n_oids_read_last_iteration > 0)
 	{
-	  error_code = locator_kept_note_inserts (thread_p, into, rs, oid_list->oidp,
-						  bt_scan.n_oids_read_last_iteration, &fkref->self_oid);
+	  error_code =
+	    locator_kept_note_inserts (thread_p, into, rs, oid_list->oidp, bt_scan.n_oids_read_last_iteration);
 	}
       if (error_code == NO_ERROR && bt_scan.n_oids_read_last_iteration > 0)
 	{
@@ -5395,6 +5380,7 @@ locator_scan_fk_key (THREAD_ENTRY * thread_p, OR_FOREIGN_KEY * fkref, DB_VALUE *
 	}
     }
   while (error_code == NO_ERROR && !BTREE_END_OF_SCAN (&bt_scan));
+  rs->n_saved = NULL;
   if (into->n_inserts > 1)
     {
       qsort (into->inserts, into->n_inserts, sizeof (BTREE_FK_SEEN), oid_compare);
@@ -5537,7 +5523,7 @@ locator_collect_children_of_key (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_V
       rs.committed_child = false;
       rs.inserters = inserters;
       rs.inserters_cap = oid_list.capacity;
-      rs.n_accepted = 0;
+      rs.n_saved = NULL;
       if (action == SM_FOREIGN_KEY_CASCADE || action == SM_FOREIGN_KEY_SET_NULL)
 	{
 	  rs.snapshot.snapshot_fnc = locator_satisfies_child_of_locked_parent;
@@ -5553,6 +5539,8 @@ locator_collect_children_of_key (THREAD_ENTRY * thread_p, OR_INDEX * index, DB_V
       /* with no action before this check nothing can turn into a child of the key, so the scan also tells whether a
        * committed child fails the statement or there is nothing for the check to find */
       rs.snapshot.snapshot_fnc = action_seen ? locator_satisfies_child_being_written : locator_satisfies_restrict_entry;
+      /* in memory only: the check reads the list whole, to look up each entry its index scan meets */
+      collected[fk_i].mem_limit = INT_MAX;
       error_code = locator_scan_fk_key (thread_p, fkref, key, &rs, false, &oid_list, &collected[fk_i]);
       if (error_code != NO_ERROR)
 	{
