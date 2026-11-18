@@ -20543,6 +20543,7 @@ qexec_execute_selupd_list (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE
   bool need_ha_replication = !LOG_CHECK_LOG_APPLIER (thread_p) && log_does_allow_replication () == true;
   bool sysop_started = false;
   bool joins_transaction = false;	/* a target is a row the transaction has already changed */
+  LOG_LSA sysop_start_lsa = LSA_INITIALIZER;
 
   // *INDENT-OFF*
   struct incr_info
@@ -20776,6 +20777,12 @@ qexec_execute_selupd_list (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE
       logtb_get_new_subtransaction_mvccid (thread_p, &tdes->mvccinfo);
       subtransaction_started = true;
     }
+  else
+    {
+      tdes = LOG_FIND_TDES (LOG_FIND_THREAD_TRAN_INDEX (thread_p));
+      assert (tdes != NULL);
+      LSA_COPY (&sysop_start_lsa, &tdes->tail_lsa);
+    }
 
   for (selupd = list; selupd; selupd = selupd->next)
     {
@@ -20868,8 +20875,16 @@ exit_on_error:
 
   if (sysop_started)
     {
+      /* before the abort appends its own records: did increments that carry the transaction's MVCCID write anything? */
+      bool logged = joins_transaction && LSA_LT (&sysop_start_lsa, &tdes->tail_lsa);
+
       log_sysop_abort (thread_p);
       sysop_started = false;
+      if (logged)
+	{
+	  /* the undo may have erased stamps others wait on, as a failed statement's does */
+	  lock_deferred_wake_mark (thread_p, tdes->tran_index);
+	}
     }
 
   /* clear some kinds of error code; it's click counter! */
