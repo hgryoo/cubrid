@@ -87,6 +87,15 @@ typedef enum
   STMT_ROW_CHANGE_UNCOMMITTED	/* changed, not committed: DELETE/UPDATE, an increment that joined the transaction */
 } STMT_ROW_CHANGE;
 
+/* the primary key of a class that foreign keys refer to, for one statement (locator_start_referenced_key ()) */
+typedef struct locator_referenced_key LOCATOR_REFERENCED_KEY;
+struct locator_referenced_key
+{
+  HEAP_CACHE_ATTRINFO index_attrinfo;	/* the indexed attributes of the class */
+  HEAP_CACHE_ATTRINFO key_attrinfo;	/* the attributes of the primary key, for an UPDATE's key check */
+  int pk_i;			/* the primary key among the indexes, -1 when none is referenced */
+};
+
 extern bool locator_class_has_online_index (THREAD_ENTRY * thread_p, const OID * class_oid);
 extern bool locator_class_keeps_row_locks (THREAD_ENTRY * thread_p, const OID * class_oid);
 extern bool locator_statement_ends_row_locks (THREAD_ENTRY * thread_p, STMT_ROW_CHANGE change);
@@ -134,11 +143,18 @@ extern int locator_delete_force (THREAD_ENTRY * thread_p, HFID * hfid, OID * oid
 				 LOCATOR_LOCK_POLICY lock_policy);
 extern int locator_add_or_remove_index (THREAD_ENTRY * thread_p, RECDES * recdes, OID * inst_oid, OID * class_oid,
 					int is_insert, int op_type, HEAP_SCANCACHE * scan_cache, bool datayn,
-					bool replyn, HFID * hfid, FUNC_PRED_UNPACK_INFO * func_preds, bool has_BU_lock,
-					bool skip_checking_fk);
+					bool replyn, HFID * hfid, FUNC_PRED_UNPACK_INFO * func_preds, bool has_BU_lock);
 extern int locator_update_index (THREAD_ENTRY * thread_p, RECDES * new_recdes, RECDES * old_recdes, ATTR_ID * att_id,
 				 int n_att_id, OID * oid, OID * class_oid, int op_type,
 				 HEAP_SCANCACHE * scan_cache, REPL_INFO * repl_info);
+extern int locator_start_referenced_key (THREAD_ENTRY * thread_p, OID * class_oid, ATTR_ID * att_id, int n_att_id,
+					 LOCATOR_REFERENCED_KEY * rk);
+extern void locator_end_referenced_key (THREAD_ENTRY * thread_p, LOCATOR_REFERENCED_KEY * rk);
+extern int locator_key_changes (THREAD_ENTRY * thread_p, LOCATOR_REFERENCED_KEY * rk, OID * oid, RECDES * recdes,
+				HEAP_CACHE_ATTRINFO * new_values, bool * changes);
+extern int locator_wait_for_child_writers (THREAD_ENTRY * thread_p, LOCATOR_REFERENCED_KEY * rk, const OID * oids,
+					   int n_oids, const OID * class_oid, HEAP_SCANCACHE * scan_cache,
+					   bool on_update);
 extern int locator_delete_lob_force (THREAD_ENTRY * thread_p, OID * class_oid, OID * oid, RECDES * recdes);
 extern PRUNING_SCAN_CACHE *locator_get_partition_scancache (PRUNING_CONTEXT * pcontext, const OID * class_oid,
 							    const HFID * hfid, int op_type, bool has_function_index);
@@ -146,10 +162,13 @@ extern int xlocator_redistribute_partition_data (THREAD_ENTRY * thread_p, OID * 
 
 extern int locator_rv_redo_rename (THREAD_ENTRY * thread_p, LOG_RCV * rcv);
 
+extern int locator_lock_object_unless_ours (THREAD_ENTRY * thread_p, HEAP_GET_CONTEXT * context, LOCK lock_mode,
+					    bool transient, bool owner_bypass_ok);
+
 extern SCAN_CODE locator_lock_and_get_object (THREAD_ENTRY * thread_p, const OID * oid, OID * class_oid,
 					      RECDES * recdes, HEAP_SCANCACHE * scan_cache, LOCK lock, int ispeeking,
 					      int old_chn, NON_EXISTENT_HANDLING non_ex_handling_type, bool transient,
-					      bool owner_bypass_ok);
+					      bool owner_bypass_ok, MVCC_REC_HEADER * mvcc_header);
 extern SCAN_CODE locator_lock_and_get_object_with_evaluation (THREAD_ENTRY * thread_p, OID * oid, OID * class_oid,
 							      RECDES * recdes, HEAP_SCANCACHE * scan_cache,
 							      int ispeeking, int old_chn,
