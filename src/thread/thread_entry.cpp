@@ -132,7 +132,7 @@ namespace cubthread
     , no_logging (false)
     , net_request_index (-1)
     , deferred_wake_epoch_seen (0)
-    , exec_tdes (NULL)
+    , exec_token (NULL)
     , vacuum_worker (NULL)
     , sort_stats_active (false)
     , event_stats ()
