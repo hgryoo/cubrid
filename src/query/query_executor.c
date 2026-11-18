@@ -1022,6 +1022,7 @@ static bool qexec_start_statement_lock_scope (THREAD_ENTRY * thread_p);
 static bool qexec_spec_is_for_update (THREAD_ENTRY * thread_p, const ACCESS_SPEC_TYPE * spec);
 static bool qexec_is_value_error (int error);
 static bool qexec_defer_update_row (THREAD_ENTRY * thread_p, XASL_NODE * xasl);
+static bool qexec_statement_error_releases_locks (THREAD_ENTRY * thread_p);
 static LOCATOR_LOCK_POLICY qexec_base_lock_policy (const UPDDEL_CLASS_INSTANCE_LOCK_INFO * lock_info);
 static LOCATOR_LOCK_POLICY qexec_make_lock_policy_transient (THREAD_ENTRY * thread_p, LOCATOR_LOCK_POLICY base_policy,
 							     bool statement_ends_locks,
@@ -16829,7 +16830,8 @@ scan_targets:
 
   assert (settle.next == settle.rows.size ());
 
-  /* Later writers wait on our MVCCID self-lock, so the row locks can end here unless our stamp can go before commit */
+  /* Later writers wait on our MVCCID self-lock, so the row locks can end here, under a savepoint too: a rollback to
+   * it sends those writers back to read (lock_deferred_wake_mark ()). */
   lock_transient_scope_end (thread_p, locator_statement_ends_row_locks (thread_p, STMT_ROW_CHANGE_UNCOMMITTED));
 
   qexec_close_scan (thread_p, specp);
@@ -16891,9 +16893,6 @@ scan_targets:
   return NO_ERROR;
 
 exit_on_error:
-  /* failed: the rows keep their locks to commit; drop the counts so no later statement gives them back */
-  lock_transient_scope_end (thread_p, false);
-
   if (scan_open)
     {
       qexec_end_scan (thread_p, specp);
@@ -16925,6 +16924,8 @@ exit_on_error:
     {
       xtran_server_end_topop (thread_p, LOG_RESULT_TOPOP_ABORT, &lsa);
     }
+  /* after the undo, so the rows carry no stamp of this statement */
+  lock_transient_scope_end (thread_p, qexec_statement_error_releases_locks (thread_p));
 
   if (internal_classes)
     {
@@ -17593,9 +17594,6 @@ scan_targets:
   return NO_ERROR;
 
 exit_on_error:
-  /* failed: the rows keep their locks to commit; drop the counts so no later statement gives them back */
-  lock_transient_scope_end (thread_p, false);
-
   if (scan_open)
     {
       qexec_end_scan (thread_p, specp);
@@ -17628,6 +17626,8 @@ exit_on_error:
     {
       xtran_server_end_topop (thread_p, LOG_RESULT_TOPOP_ABORT, &lsa);
     }
+  /* as in qexec_execute_update (): after the undo */
+  lock_transient_scope_end (thread_p, qexec_statement_error_releases_locks (thread_p));
 
   return ER_FAILED;
 }
@@ -35561,6 +35561,23 @@ qexec_spec_is_for_update (THREAD_ENTRY * thread_p, const ACCESS_SPEC_TYPE * spec
   return (ACCESS_SPEC_IS_FLAGED (spec, ACCESS_SPEC_FLAG_FOR_UPDATE_UNLESS_REEVALUATED)
 	  && (logtb_find_current_isolation (thread_p) > TRAN_READ_COMMITTED
 	      || !prm_get_bool_value (PRM_ID_MVCC_REEVALUATE_AT_FORCE)));
+}
+
+/*
+ * qexec_statement_error_releases_locks () - Whether a failed DELETE or UPDATE gives back the row locks it counted
+ *   return: true unless the transaction is being aborted as a whole, whose abort gives everything back, or the
+ *	     statement keeps its row locks anyway (locator_statement_ends_row_locks ())
+ *
+ * Note: called after the statement's system operation was aborted. A deadlock victim that loses only its statement
+ *	 (lock timeout not infinite) is not aborted as a whole and gives its row locks back too.
+ */
+static bool
+qexec_statement_error_releases_locks (THREAD_ENTRY * thread_p)
+{
+  LOG_TDES *tdes = LOG_FIND_CURRENT_TDES (thread_p);
+
+  return (tdes != NULL && tdes->tran_abort_reason == TRAN_NORMAL
+	  && locator_statement_ends_row_locks (thread_p, STMT_ROW_CHANGE_UNCOMMITTED));
 }
 
 /*
