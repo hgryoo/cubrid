@@ -211,7 +211,7 @@ process_object (THREAD_ENTRY * thread_p, HEAP_SCANCACHE * upd_scancache, HEAP_CA
 
   /* get object with X_LOCK */
   scan_code = locator_lock_and_get_object (thread_p, oid, &upd_scancache->node.class_oid, &copy_recdes, upd_scancache,
-					   X_LOCK, COPY, NULL_CHN, LOG_WARNING_IF_DELETED, false, false);
+					   X_LOCK, COPY, NULL_CHN, LOG_WARNING_IF_DELETED, false, false, NULL);
   if (scan_code != S_SUCCESS)
     {
       if (er_errid () == ER_HEAP_UNKNOWN_OBJECT)
